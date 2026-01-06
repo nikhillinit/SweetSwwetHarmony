@@ -1,0 +1,38 @@
+{
+  "exported_at": "2026-01-06T09:25:22.517939+00:00",
+  "schema_version": 1,
+  "signals": [
+    {
+      "id": 1,
+      "signal_type": "github_spike",
+      "source_api": "github",
+      "canonical_key": "domain:acme.ai",
+      "company_name": "Acme Inc",
+      "confidence": 0.85,
+      "raw_data": "{\"repo\": \"acme/awesome-ml\", \"stars\": 1500, \"recent_stars\": 200, \"topics\": [\"ai\", \"machine-learning\"]}",
+      "detected_at": "2026-01-06T09:24:26.485578+00:00",
+      "created_at": "2026-01-06T09:24:26.485578+00:00"
+    }
+  ],
+  "processing": [
+    {
+      "signal_id": 1,
+      "status": "pushed",
+      "notion_page_id": "notion-abc-123",
+      "processed_at": "2026-01-06T09:24:26.500615+00:00",
+      "error_message": null,
+      "metadata": "{\"status\": \"Source\", \"confidence\": 0.85}"
+    }
+  ],
+  "suppression_cache": [
+    {
+      "canonical_key": "domain:acme.ai",
+      "notion_page_id": "notion-abc-123",
+      "status": "Source",
+      "company_name": "Acme Inc",
+      "cached_at": "2026-01-06T09:24:26.511976+00:00",
+      "expires_at": "2026-01-13T09:24:26.511976+00:00",
+      "metadata": null
+    }
+  ]
+}

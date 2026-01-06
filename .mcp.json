@@ -1,0 +1,20 @@
+{
+  "mcpServers": {
+    "discovery-engine": {
+      "command": "python",
+      "args": ["-m", "discovery_engine.mcp_server"],
+      "env": {
+        "DATABASE_URL": "${DATABASE_URL}",
+        "NOTION_API_KEY": "${NOTION_API_KEY}",
+        "NOTION_DATABASE_ID": "${NOTION_DATABASE_ID}",
+        "GITHUB_TOKEN": "${GITHUB_TOKEN}",
+        "COMPANIES_HOUSE_API_KEY": "${COMPANIES_HOUSE_API_KEY}"
+      }
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@anthropic/mcp-server-filesystem", "--allow-dir", "."],
+      "env": {}
+    }
+  }
+}
