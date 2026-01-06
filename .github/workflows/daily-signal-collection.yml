@@ -9,7 +9,7 @@ on:
       collectors:
         description: 'Comma-separated list of collectors to run'
         required: false
-        default: 'github,sec_edgar,companies_house,domain_whois'
+        default: 'github,sec_edgar,companies_house,domain_whois,job_postings,arxiv,product_hunt,uspto'
       dry_run:
         description: 'Run in dry-run mode (no Notion push)'
         type: boolean
@@ -47,9 +47,10 @@ jobs:
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           COMPANIES_HOUSE_API_KEY: ${{ secrets.COMPANIES_HOUSE_API_KEY }}
+          PH_API_KEY: ${{ secrets.PH_API_KEY }}
           DISCOVERY_DB_PATH: signals.db
         run: |
-          COLLECTORS="${{ github.event.inputs.collectors || 'github,sec_edgar,companies_house,domain_whois' }}"
+          COLLECTORS="${{ github.event.inputs.collectors || 'github,sec_edgar,companies_house,domain_whois,job_postings,arxiv,uspto' }}"
           DRY_RUN="${{ github.event.inputs.dry_run || 'false' }}"
 
           if [ "$DRY_RUN" = "true" ]; then

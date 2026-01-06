@@ -7,10 +7,11 @@ Automated deal sourcing system for Press On Ventures (early-stage VC).
 **Fund Focus:** Healthtech, Cleantech, AI Infrastructure | Pre-Seed to Seed+ | $500K-$3M checks | US/UK
 
 **What This Does:**
-1. Collects signals (GitHub spikes, incorporations, domain registrations, SEC filings)
-2. Ranks by thesis fit with multi-source verification
+1. Collects signals (GitHub spikes, incorporations, domain registrations, SEC filings, job postings, ArXiv papers, patents, Product Hunt launches)
+2. Ranks by thesis fit with multi-source verification and keyword matching
 3. Pushes qualified prospects to Notion CRM
 4. Maintains suppression to avoid duplicates
+5. Monitors signal health and detects anomalies
 
 ## Critical: Notion Schema
 
@@ -36,12 +37,28 @@ Automated deal sourcing system for Press On Ventures (early-stage VC).
 | `workflows/notion_pusher.py` | Batch push processor with confidence routing |
 | `workflows/suppression_sync.py` | Sync Notion → local cache |
 | `collectors/base.py` | BaseCollector with storage integration |
-| `collectors/*.py` | Signal collectors (github, sec_edgar, companies_house, domain_whois) |
+| `collectors/*.py` | Signal collectors (see Collectors section below) |
 | `storage/signal_store.py` | SQLite storage for signals & suppression cache |
 | `discovery_engine/mcp_server.py` | Internal MCP server (5 prompts, 3 tools) |
 | `connectors/notion_connector_v2.py` | Notion integration (use v2, not v1) |
 | `verification/verification_gate_v2.py` | Signal verification (use v2) |
 | `utils/canonical_keys.py` | Multi-candidate deduplication |
+| `utils/thesis_matcher.py` | Keyword-based thesis fit scoring |
+| `utils/signal_health.py` | Signal quality and anomaly detection |
+
+## Collectors
+
+| Collector | Source | Signal Strength | API Key |
+|-----------|--------|-----------------|---------|
+| `github.py` | GitHub trending repos | 0.5-0.7 | GITHUB_TOKEN |
+| `github_activity.py` | Founder GitHub activity | 0.5-0.7 | GITHUB_TOKEN |
+| `sec_edgar.py` | SEC Form D filings | 0.6-0.8 | None |
+| `companies_house.py` | UK incorporations | 0.6-0.8 | COMPANIES_HOUSE_API_KEY |
+| `domain_whois.py` | Domain registrations | 0.4-0.6 | None |
+| `job_postings.py` | Greenhouse/Lever ATS | 0.7-0.95 | None |
+| `product_hunt.py` | Product Hunt launches | 0.5-0.7 | PH_API_KEY |
+| `arxiv.py` | ArXiv research papers | 0.3-0.5 | None |
+| `uspto.py` | USPTO patent filings | 0.4-0.6 | None |
 
 ## Architecture Rules
 
@@ -121,4 +138,6 @@ NOTION_DATABASE_ID=xxx
 DATABASE_URL=postgresql://... (read-only)
 GITHUB_TOKEN=ghp_xxx (public repos only)
 COMPANIES_HOUSE_API_KEY=xxx
+PH_API_KEY=xxx (Product Hunt API key)
+DISCOVERY_DB_PATH=signals.db (default)
 ```
