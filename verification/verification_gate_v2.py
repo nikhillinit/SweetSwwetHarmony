@@ -21,7 +21,7 @@ Additional fixes:
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Optional, List, Dict, Any
 from collections import defaultdict
@@ -128,11 +128,14 @@ class Signal:
     
     @property
     def age_days(self) -> int:
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         detected = self.detected_at
-        # Handle timezone-aware datetimes
+        # Handle timezone-aware datetimes by converting to UTC first
         if detected.tzinfo is not None:
-            detected = detected.replace(tzinfo=None)
+            detected = detected.astimezone(timezone.utc)
+        else:
+            # Assume naive datetimes are UTC
+            detected = detected.replace(tzinfo=timezone.utc)
         return (now - detected).days
 
 
