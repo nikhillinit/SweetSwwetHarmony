@@ -128,7 +128,12 @@ class Signal:
     
     @property
     def age_days(self) -> int:
-        return (datetime.utcnow() - self.detected_at).days
+        now = datetime.utcnow()
+        detected = self.detected_at
+        # Handle timezone-aware datetimes
+        if detected.tzinfo is not None:
+            detected = detected.replace(tzinfo=None)
+        return (now - detected).days
 
 
 @dataclass
