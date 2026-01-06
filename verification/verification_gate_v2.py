@@ -54,6 +54,7 @@ class PushDecision(str, Enum):
 
 # Signal weights (from Evertrace methodology)
 SIGNAL_WEIGHTS = {
+    # Core signals
     "incorporation": 0.25,
     "github_spike": 0.20,
     "domain_registration": 0.15,
@@ -63,10 +64,15 @@ SIGNAL_WEIGHTS = {
     "cofounder_search": 0.05,
     "research_paper": 0.05,
     "funding_event": 0.20,
+
+    # NEW: Activity signals (multi-source integration v2.1)
+    "github_activity": 0.20,      # New repo, commit spike, org creation
+    "hiring_signal": 0.35,        # Strongest - company is hiring = funded
 }
 
 # Decay half-lives (days)
 HALF_LIVES = {
+    # Core signals
     "incorporation": 365,
     "github_spike": 14,
     "domain_registration": 90,
@@ -76,6 +82,10 @@ HALF_LIVES = {
     "cofounder_search": 60,
     "research_paper": 180,
     "funding_event": 180,
+
+    # NEW: Activity signals (multi-source integration v2.1)
+    "github_activity": 60,        # Decays faster - activity is transient
+    "hiring_signal": 120,         # Jobs typically stay open ~4 months
 }
 
 # Negative signals and their multipliers
