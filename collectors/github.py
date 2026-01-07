@@ -36,20 +36,16 @@ class TopicMode(str, Enum):
     CONSUMER = "consumer"  # Consumer thesis categories
 
 import httpx
-from tenacity import (
-    retry,
-    stop_after_attempt,
-    wait_exponential,
-    retry_if_exception_type,
-)
 
 # Add parent directory to path for imports
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from collectors.base import BaseCollector
+from collectors.retry_strategy import with_retry, RetryConfig
 from discovery_engine.mcp_server import CollectorResult, CollectorStatus
 from storage.signal_store import SignalStore
+from utils.rate_limiter import get_rate_limiter
 from verification.verification_gate_v2 import Signal, VerificationStatus
 from utils.canonical_keys import (
     build_canonical_key,
@@ -307,11 +303,6 @@ class GitHubCollector(BaseCollector):
 
         return signals
 
-    @retry(
-        stop=stop_after_attempt(GITHUB_MAX_RETRIES),
-        wait=wait_exponential(multiplier=1, min=2, max=10),
-        retry=retry_if_exception_type(httpx.HTTPStatusError),
-    )
     async def _github_request(
         self,
         method: str,
@@ -319,45 +310,50 @@ class GitHubCollector(BaseCollector):
         **kwargs
     ) -> Dict[str, Any]:
         """
-        Make a rate-limited request to GitHub API.
+        Make a rate-limited request to GitHub API with retry logic.
 
         Handles:
-        - Rate limiting (both proactive and reactive)
-        - Retries on 5xx errors
+        - Rate limiting (both proactive via rate_limiter and reactive)
+        - Retries on 5xx errors and 429 rate limit errors
         - Response validation
         """
-        # Proactive rate limiting
-        await self._rate_limit()
+        # Use rate limiter from BaseCollector
+        await self.rate_limiter.acquire()
 
-        url = f"{self.base_url}{endpoint}"
+        # Define the actual request function to be retried
+        async def make_request() -> Dict[str, Any]:
+            url = f"{self.base_url}{endpoint}"
 
-        logger.debug(f"GitHub API: {method} {endpoint}")
-        response = await self.client.request(
-            method,
-            url,
-            headers=self.headers,
-            **kwargs
-        )
+            logger.debug(f"GitHub API: {method} {endpoint}")
+            response = await self.client.request(
+                method,
+                url,
+                headers=self.headers,
+                **kwargs
+            )
 
-        # Check for rate limit headers
-        remaining = response.headers.get("X-RateLimit-Remaining")
-        if remaining and int(remaining) < 10:
-            logger.warning(f"GitHub rate limit low: {remaining} remaining")
+            # Check for rate limit headers
+            remaining = response.headers.get("X-RateLimit-Remaining")
+            if remaining and int(remaining) < 10:
+                logger.warning(f"GitHub rate limit low: {remaining} remaining")
 
-        # Handle rate limit exceeded
-        if response.status_code == 403 and "rate limit" in response.text.lower():
-            reset_time = response.headers.get("X-RateLimit-Reset")
-            if reset_time:
-                wait_seconds = int(reset_time) - int(datetime.now(timezone.utc).timestamp())
-                logger.warning(f"Rate limit exceeded. Waiting {wait_seconds}s")
-                await asyncio.sleep(min(wait_seconds, 60))
+            # Handle rate limit exceeded
+            if response.status_code == 403 and "rate limit" in response.text.lower():
+                reset_time = response.headers.get("X-RateLimit-Reset")
+                if reset_time:
+                    wait_seconds = int(reset_time) - int(datetime.now(timezone.utc).timestamp())
+                    logger.warning(f"Rate limit exceeded. Waiting {wait_seconds}s")
+                    await asyncio.sleep(min(wait_seconds, 60))
 
-        response.raise_for_status()
+            response.raise_for_status()
 
-        self._request_count += 1
-        self._last_request_time = datetime.now(timezone.utc)
+            self._request_count += 1
+            self._last_request_time = datetime.now(timezone.utc)
 
-        return response.json()
+            return response.json()
+
+        # Wrap the request with retry logic
+        return await with_retry(make_request, self.retry_config)
 
     async def _rate_limit(self):
         """Proactive rate limiting between requests"""
