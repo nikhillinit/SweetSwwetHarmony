@@ -36,8 +36,10 @@ import httpx
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from collectors.base import BaseCollector
+from collectors.retry_strategy import with_retry, RetryConfig
 from discovery_engine.mcp_server import CollectorResult, CollectorStatus
 from storage.signal_store import SignalStore
+from utils.rate_limiter import get_rate_limiter
 from verification.verification_gate_v2 import Signal, VerificationStatus
 
 logger = logging.getLogger(__name__)
@@ -268,17 +270,24 @@ class ProductHuntCollector(BaseCollector):
             }
 
             try:
-                response = await self.client.post(
-                    PRODUCT_HUNT_API,
-                    headers=headers,
-                    json={"query": query, "variables": variables},
-                )
+                # Use rate limiter before making request
+                await self.rate_limiter.acquire()
 
-                if response.status_code != 200:
-                    logger.error(f"Product Hunt API error: {response.status_code}")
-                    break
+                # Wrap HTTP request with retry logic
+                async def fetch_product_hunt():
+                    response = await self.client.post(
+                        PRODUCT_HUNT_API,
+                        headers=headers,
+                        json={"query": query, "variables": variables},
+                    )
 
-                data = response.json()
+                    if response.status_code != 200:
+                        logger.error(f"Product Hunt API error: {response.status_code}")
+                        response.raise_for_status()
+
+                    return response.json()
+
+                data = await with_retry(fetch_product_hunt, self.retry_config)
 
                 if "errors" in data:
                     logger.error(f"Product Hunt GraphQL errors: {data['errors']}")

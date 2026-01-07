@@ -43,8 +43,10 @@ import httpx
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from collectors.base import BaseCollector
+from collectors.retry_strategy import with_retry, RetryConfig
 from discovery_engine.mcp_server import CollectorResult, CollectorStatus
 from storage.signal_store import SignalStore
+from utils.rate_limiter import get_rate_limiter
 from verification.verification_gate_v2 import Signal, VerificationStatus
 
 logger = logging.getLogger(__name__)
@@ -310,13 +312,20 @@ class HackerNewsCollector(BaseCollector):
             }
 
             try:
-                response = await self.client.get(HN_ALGOLIA_API, params=params)
+                # Use rate limiter before making request
+                await self.rate_limiter.acquire()
 
-                if response.status_code != 200:
-                    logger.error(f"HN API error: {response.status_code}")
-                    break
+                # Wrap HTTP request with retry logic
+                async def fetch_hn():
+                    response = await self.client.get(HN_ALGOLIA_API, params=params)
 
-                data = response.json()
+                    if response.status_code != 200:
+                        logger.error(f"HN API error: {response.status_code}")
+                        response.raise_for_status()
+
+                    return response.json()
+
+                data = await with_retry(fetch_hn, self.retry_config)
                 hits = data.get("hits", [])
 
                 if not hits:
@@ -357,13 +366,20 @@ class HackerNewsCollector(BaseCollector):
         }
 
         try:
-            response = await self.client.get(HN_ALGOLIA_API, params=params)
+            # Use rate limiter before making request
+            await self.rate_limiter.acquire()
 
-            if response.status_code != 200:
-                logger.error(f"HN API error for {domain}: {response.status_code}")
-                return posts
+            # Wrap HTTP request with retry logic
+            async def fetch_domain_posts():
+                response = await self.client.get(HN_ALGOLIA_API, params=params)
 
-            data = response.json()
+                if response.status_code != 200:
+                    logger.error(f"HN API error for {domain}: {response.status_code}")
+                    response.raise_for_status()
+
+                return response.json()
+
+            data = await with_retry(fetch_domain_posts, self.retry_config)
 
             for hit in data.get("hits", []):
                 # Verify the URL actually contains the domain

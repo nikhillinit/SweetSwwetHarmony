@@ -55,8 +55,10 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from collectors.base import BaseCollector
+from collectors.retry_strategy import with_retry, RetryConfig
 from discovery_engine.mcp_server import CollectorResult, CollectorStatus
 from storage.signal_store import SignalStore
+from utils.rate_limiter import get_rate_limiter
 from utils.canonical_keys import build_canonical_key, build_canonical_key_candidates, normalize_domain
 from verification.verification_gate_v2 import Signal, VerificationStatus
 
@@ -461,17 +463,26 @@ class DomainWhoisCollector(BaseCollector):
         logger.debug(f"Fetching RDAP data: {rdap_url}")
 
         try:
-            response = await self._client.get(rdap_url)
+            # Use rate limiter before making request
+            await self.rate_limiter.acquire()
 
-            # 404 is expected for non-registered domains
-            if response.status_code == 404:
-                logger.debug(f"Domain not found in RDAP: {domain}")
+            # Wrap HTTP request with retry logic
+            async def fetch_rdap():
+                response = await self._client.get(rdap_url)
+
+                # 404 is expected for non-registered domains - don't retry
+                if response.status_code == 404:
+                    logger.debug(f"Domain not found in RDAP: {domain}")
+                    return None
+
+                response.raise_for_status()
+                return response.json()
+
+            rdap_data = await with_retry(fetch_rdap, self.retry_config)
+
+            # If we got None from 404, return early
+            if rdap_data is None:
                 return None
-
-            response.raise_for_status()
-
-            # Parse RDAP JSON
-            rdap_data = response.json()
 
             return self._parse_rdap_response(domain, tld, rdap_url, rdap_data)
 
