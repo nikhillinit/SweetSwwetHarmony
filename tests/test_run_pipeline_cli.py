@@ -84,21 +84,23 @@ class TestHealthCommand:
         args = MagicMock()
         args.db_path = None
 
-        # Mock pipeline
-        mock_pipeline = AsyncMock()
+        # Mock pipeline - use MagicMock for sync properties, AsyncMock for async methods
+        mock_pipeline = MagicMock()
+        mock_pipeline.initialize = AsyncMock()
+        mock_pipeline.close = AsyncMock()
         mock_pipeline.config = MagicMock()
         mock_pipeline.config.db_path = "signals.db"
-        mock_pipeline.signal_store = AsyncMock()
-        mock_pipeline.signal_store._conn = MagicMock()  # DB connected
+        mock_pipeline._store = MagicMock()
+        mock_pipeline._store._db = MagicMock()  # DB connected
+        mock_pipeline._notion = None
 
         # Mock health report
         mock_report = HealthReport()
         mock_report.overall_status = "HEALTHY"
-        mock_pipeline.signal_store.get_stats = AsyncMock(return_value={})
 
         with patch("run_pipeline.DiscoveryPipeline", return_value=mock_pipeline):
             with patch("run_pipeline.SignalHealthMonitor") as mock_monitor_cls:
-                mock_monitor = AsyncMock()
+                mock_monitor = MagicMock()
                 mock_monitor.generate_report = AsyncMock(return_value=mock_report)
                 mock_monitor_cls.return_value = mock_monitor
 
@@ -114,22 +116,24 @@ class TestHealthCommand:
         args = MagicMock()
         args.db_path = None
 
-        mock_pipeline = AsyncMock()
+        mock_pipeline = MagicMock()
+        mock_pipeline.initialize = AsyncMock()
+        mock_pipeline.close = AsyncMock()
         mock_pipeline.config = MagicMock()
         mock_pipeline.config.db_path = "signals.db"
-        mock_pipeline.signal_store = AsyncMock()
-        mock_pipeline.signal_store._conn = MagicMock()
-        mock_pipeline.notion_connector = AsyncMock()
+        mock_pipeline._store = MagicMock()
+        mock_pipeline._store._db = MagicMock()
+        mock_pipeline._notion = MagicMock()
 
         # Mock Notion API check
-        mock_pipeline.notion_connector.test_connection = AsyncMock(return_value=True)
+        mock_pipeline._notion.test_connection = AsyncMock(return_value=True)
 
         mock_report = HealthReport()
         mock_report.overall_status = "HEALTHY"
 
         with patch("run_pipeline.DiscoveryPipeline", return_value=mock_pipeline):
             with patch("run_pipeline.SignalHealthMonitor") as mock_monitor_cls:
-                mock_monitor = AsyncMock()
+                mock_monitor = MagicMock()
                 mock_monitor.generate_report = AsyncMock(return_value=mock_report)
                 mock_monitor_cls.return_value = mock_monitor
 
@@ -144,11 +148,14 @@ class TestHealthCommand:
         args = MagicMock()
         args.db_path = None
 
-        mock_pipeline = AsyncMock()
+        mock_pipeline = MagicMock()
+        mock_pipeline.initialize = AsyncMock()
+        mock_pipeline.close = AsyncMock()
         mock_pipeline.config = MagicMock()
         mock_pipeline.config.db_path = "signals.db"
-        mock_pipeline.signal_store = AsyncMock()
-        mock_pipeline.signal_store._conn = MagicMock()
+        mock_pipeline._store = MagicMock()
+        mock_pipeline._store._db = MagicMock()
+        mock_pipeline._notion = None
 
         mock_report = HealthReport()
         mock_report.overall_status = "HEALTHY"
@@ -156,7 +163,7 @@ class TestHealthCommand:
 
         with patch("run_pipeline.DiscoveryPipeline", return_value=mock_pipeline):
             with patch("run_pipeline.SignalHealthMonitor") as mock_monitor_cls:
-                mock_monitor = AsyncMock()
+                mock_monitor = MagicMock()
                 mock_monitor.generate_report = AsyncMock(return_value=mock_report)
                 mock_monitor_cls.return_value = mock_monitor
 
@@ -172,18 +179,21 @@ class TestHealthCommand:
         args = MagicMock()
         args.db_path = None
 
-        mock_pipeline = AsyncMock()
+        mock_pipeline = MagicMock()
+        mock_pipeline.initialize = AsyncMock()
+        mock_pipeline.close = AsyncMock()
         mock_pipeline.config = MagicMock()
         mock_pipeline.config.db_path = "signals.db"
-        mock_pipeline.signal_store = AsyncMock()
-        mock_pipeline.signal_store._conn = MagicMock()
+        mock_pipeline._store = MagicMock()
+        mock_pipeline._store._db = MagicMock()
+        mock_pipeline._notion = None
 
         mock_report = HealthReport()
         mock_report.overall_status = "HEALTHY"
 
         with patch("run_pipeline.DiscoveryPipeline", return_value=mock_pipeline):
             with patch("run_pipeline.SignalHealthMonitor") as mock_monitor_cls:
-                mock_monitor = AsyncMock()
+                mock_monitor = MagicMock()
                 mock_monitor.generate_report = AsyncMock(return_value=mock_report)
                 mock_monitor_cls.return_value = mock_monitor
 
@@ -197,18 +207,21 @@ class TestHealthCommand:
         args = MagicMock()
         args.db_path = None
 
-        mock_pipeline = AsyncMock()
+        mock_pipeline = MagicMock()
+        mock_pipeline.initialize = AsyncMock()
+        mock_pipeline.close = AsyncMock()
         mock_pipeline.config = MagicMock()
         mock_pipeline.config.db_path = "signals.db"
-        mock_pipeline.signal_store = AsyncMock()
-        mock_pipeline.signal_store._conn = MagicMock()
+        mock_pipeline._store = MagicMock()
+        mock_pipeline._store._db = MagicMock()
+        mock_pipeline._notion = None
 
         mock_report = HealthReport()
         mock_report.overall_status = "DEGRADED"
 
         with patch("run_pipeline.DiscoveryPipeline", return_value=mock_pipeline):
             with patch("run_pipeline.SignalHealthMonitor") as mock_monitor_cls:
-                mock_monitor = AsyncMock()
+                mock_monitor = MagicMock()
                 mock_monitor.generate_report = AsyncMock(return_value=mock_report)
                 mock_monitor_cls.return_value = mock_monitor
 
@@ -222,18 +235,21 @@ class TestHealthCommand:
         args = MagicMock()
         args.db_path = None
 
-        mock_pipeline = AsyncMock()
+        mock_pipeline = MagicMock()
+        mock_pipeline.initialize = AsyncMock()
+        mock_pipeline.close = AsyncMock()
         mock_pipeline.config = MagicMock()
         mock_pipeline.config.db_path = "signals.db"
-        mock_pipeline.signal_store = AsyncMock()
-        mock_pipeline.signal_store._conn = MagicMock()
+        mock_pipeline._store = MagicMock()
+        mock_pipeline._store._db = MagicMock()
+        mock_pipeline._notion = None
 
         mock_report = HealthReport()
         mock_report.overall_status = "CRITICAL"
 
         with patch("run_pipeline.DiscoveryPipeline", return_value=mock_pipeline):
             with patch("run_pipeline.SignalHealthMonitor") as mock_monitor_cls:
-                mock_monitor = AsyncMock()
+                mock_monitor = MagicMock()
                 mock_monitor.generate_report = AsyncMock(return_value=mock_report)
                 mock_monitor_cls.return_value = mock_monitor
 
@@ -247,11 +263,14 @@ class TestHealthCommand:
         args = MagicMock()
         args.db_path = None
 
-        mock_pipeline = AsyncMock()
+        mock_pipeline = MagicMock()
+        mock_pipeline.initialize = AsyncMock()
+        mock_pipeline.close = AsyncMock()
         mock_pipeline.config = MagicMock()
         mock_pipeline.config.db_path = "signals.db"
-        mock_pipeline.signal_store = AsyncMock()
-        mock_pipeline.signal_store._conn = None  # DB NOT connected
+        mock_pipeline._store = MagicMock()
+        mock_pipeline._store._db = None  # DB NOT connected
+        mock_pipeline._notion = None
 
         with patch("run_pipeline.DiscoveryPipeline", return_value=mock_pipeline):
             exit_code = await cmd_health(args)

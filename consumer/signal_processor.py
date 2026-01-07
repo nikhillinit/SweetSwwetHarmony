@@ -265,21 +265,68 @@ class SignalProcessor:
         stats.completed_at = datetime.utcnow()
         return stats
 
-    async def process_pending_with_gating(self) -> ProcessingStats:
+    async def process_pending_with_gating(
+        self,
+        store: Any,
+        limit: Optional[int] = None,
+        signal_type: Optional[str] = None,
+    ) -> ProcessingStats:
         """
         Process pending signals from storage with gating.
 
-        This method is designed to be called from the pipeline.
-        It fetches pending signals, processes them through gating,
-        and returns stats.
+        This method fetches pending signals from SignalStore, processes
+        them through the two-stage gating system (TriggerGate + LLMClassifier),
+        and returns aggregated stats.
 
-        Note: In production, this would integrate with SignalStore
-        to fetch pending signals. For now, it's a placeholder.
+        Args:
+            store: SignalStore instance to fetch pending signals from.
+            limit: Maximum number of signals to process (None = all pending).
+            signal_type: Filter by signal type (None = all types).
+
+        Returns:
+            ProcessingStats with aggregated metrics from processing.
         """
-        # TODO: Integrate with SignalStore to fetch pending signals
-        # For now, return empty stats
-        logger.info("process_pending_with_gating called (placeholder)")
-        return ProcessingStats()
+        logger.info(
+            f"Processing pending signals with gating "
+            f"(limit={limit}, signal_type={signal_type})"
+        )
+
+        # Fetch pending signals from store
+        pending_signals = await store.get_pending_signals(
+            limit=limit,
+            signal_type=signal_type,
+        )
+
+        if not pending_signals:
+            logger.info("No pending signals to process")
+            return ProcessingStats()
+
+        logger.info(f"Found {len(pending_signals)} pending signals to process")
+
+        # Convert StoredSignal objects to dict format expected by process_signal
+        signal_dicts = [
+            {
+                "id": str(sig.id),
+                "signal_type": sig.signal_type,
+                "source_api": sig.source_api,
+                "canonical_key": sig.canonical_key,
+                "company_name": sig.company_name,
+                "confidence": sig.confidence,
+                "raw_data": sig.raw_data,
+                "detected_at": sig.detected_at,
+            }
+            for sig in pending_signals
+        ]
+
+        # Process through batch gating
+        stats = await self.process_batch(signal_dicts)
+
+        logger.info(
+            f"Gating complete: {stats.triggered}/{stats.total} triggered, "
+            f"{stats.skipped} skipped, {stats.errors} errors"
+        )
+
+        return stats
 
     def save_classifier_cache(self, path: str) -> None:
         """Save classifier cache to file."""
