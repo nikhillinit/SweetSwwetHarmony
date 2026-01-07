@@ -79,6 +79,25 @@ class TestArxivCollectorBaseIntegration:
 
         assert collector.categories == ["cs.AI", "cs.LG"]
 
+    @pytest.mark.asyncio
+    async def test_fetch_papers_uses_retry_wrapper(self):
+        """ArxivCollector should use _fetch_with_retry for API calls"""
+        from collectors.arxiv import ArxivCollector
+
+        collector = ArxivCollector(categories=["cs.AI"])
+
+        # Mock _fetch_with_retry to verify it's called
+        mock_response = """<?xml version="1.0" encoding="UTF-8"?>
+        <feed xmlns="http://www.w3.org/2005/Atom"></feed>"""
+
+        with patch.object(collector, '_fetch_with_retry', new_callable=AsyncMock) as mock_retry:
+            mock_retry.return_value = mock_response
+            async with collector:
+                await collector._fetch_papers()
+
+            # Verify _fetch_with_retry was called (which includes retry logic)
+            mock_retry.assert_called_once()
+
 
 class TestArxivPaper:
     """Test ArxivPaper dataclass"""
@@ -176,12 +195,9 @@ class TestArxivAPIIntegration:
     </entry>
 </feed>'''
 
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.content = mock_xml.encode()
-
         async with collector:
-            with patch.object(collector.client, "get", return_value=mock_response):
+            with patch.object(collector, "_fetch_with_retry", new_callable=AsyncMock) as mock_retry:
+                mock_retry.return_value = mock_xml.encode()
                 papers = await collector._fetch_papers()
 
                 assert len(papers) == 1
@@ -213,12 +229,9 @@ class TestArxivAPIIntegration:
     </entry>
 </feed>'''
 
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.content = mock_xml.encode()
-
         async with collector:
-            with patch.object(collector.client, "get", return_value=mock_response):
+            with patch.object(collector, "_fetch_with_retry", new_callable=AsyncMock) as mock_retry:
+                mock_retry.return_value = mock_xml.encode()
                 papers = await collector._fetch_papers()
 
                 # Old paper should be filtered out
@@ -228,14 +241,16 @@ class TestArxivAPIIntegration:
     async def test_fetch_papers_api_error(self):
         """Should handle API errors gracefully."""
         from collectors.arxiv import ArxivCollector
+        import httpx
 
         collector = ArxivCollector(categories=["cs.AI"])
 
-        mock_response = Mock()
-        mock_response.status_code = 500
-
         async with collector:
-            with patch.object(collector.client, "get", return_value=mock_response):
+            with patch.object(collector, "_fetch_with_retry", new_callable=AsyncMock) as mock_retry:
+                # Simulate API error by raising HTTPStatusError
+                mock_retry.side_effect = httpx.HTTPStatusError(
+                    "Server Error", request=Mock(), response=Mock(status_code=500)
+                )
                 papers = await collector._fetch_papers()
 
                 # Should return empty list on error
@@ -248,12 +263,9 @@ class TestArxivAPIIntegration:
 
         collector = ArxivCollector(categories=["cs.AI"])
 
-        mock_response = Mock()
-        mock_response.status_code = 200
-        mock_response.content = b"<invalid xml>"
-
         async with collector:
-            with patch.object(collector.client, "get", return_value=mock_response):
+            with patch.object(collector, "_fetch_with_retry", new_callable=AsyncMock) as mock_retry:
+                mock_retry.return_value = b"<invalid xml>"
                 papers = await collector._fetch_papers()
 
                 # Should handle parse error gracefully
@@ -268,7 +280,8 @@ class TestArxivAPIIntegration:
         collector = ArxivCollector(categories=["cs.AI"])
 
         async with collector:
-            with patch.object(collector.client, "get", side_effect=httpx.NetworkError("Connection failed")):
+            with patch.object(collector, "_fetch_with_retry", new_callable=AsyncMock) as mock_retry:
+                mock_retry.side_effect = httpx.NetworkError("Connection failed")
                 papers = await collector._fetch_papers()
 
                 assert papers == []
@@ -416,12 +429,9 @@ async def test_full_collection_flow():
     </entry>
 </feed>'''
 
-    mock_response = Mock()
-    mock_response.status_code = 200
-    mock_response.content = mock_xml.encode()
-
     async with collector:
-        with patch.object(collector.client, "get", return_value=mock_response):
+        with patch.object(collector, "_fetch_with_retry", new_callable=AsyncMock) as mock_retry:
+            mock_retry.return_value = mock_xml.encode()
             signals = await collector._collect_signals()
 
             assert len(signals) == 1
