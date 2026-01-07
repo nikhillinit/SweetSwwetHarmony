@@ -14,12 +14,11 @@ This collector is different from the main GitHubCollector (github.py):
 - github_activity.py: Monitors specific users/orgs for activity signals
 
 Usage:
-    collector = GitHubActivityCollector(github_token="ghp_xxx")
-    result = await collector.run(
+    collector = GitHubActivityCollector(
         usernames=["founder1", "founder2"],
         org_names=["startup-org"],
-        dry_run=True
     )
+    result = await collector.run(dry_run=True)
 """
 
 from __future__ import annotations
@@ -39,6 +38,9 @@ import httpx
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from collectors.base import BaseCollector
+from collectors.retry_strategy import RetryConfig
+from storage.signal_store import SignalStore
 from verification.verification_gate_v2 import Signal, VerificationStatus
 
 logger = logging.getLogger(__name__)
@@ -159,7 +161,7 @@ class GitHubActivitySignal:
 # COLLECTOR
 # =============================================================================
 
-class GitHubActivityCollector:
+class GitHubActivityCollector(BaseCollector):
     """
     Collector for GitHub activity signals.
 
@@ -169,20 +171,39 @@ class GitHubActivityCollector:
     - Organization creation
 
     Usage:
-        async with GitHubActivityCollector() as collector:
-            signals = await collector.check_user("founder_username")
+        collector = GitHubActivityCollector(
+            usernames=["founder1"],
+            org_names=["startup-org"],
+        )
+        result = await collector.run(dry_run=True)
     """
 
     def __init__(
         self,
+        usernames: Optional[List[str]] = None,
+        org_names: Optional[List[str]] = None,
+        store: Optional[SignalStore] = None,
+        retry_config: Optional[RetryConfig] = None,
         github_token: Optional[str] = None,
-        lookback_days: int = 90
+        lookback_days: int = 90,
     ):
         """
         Args:
+            usernames: List of GitHub usernames to monitor
+            org_names: List of GitHub org names to monitor
+            store: Optional SignalStore for persistence
+            retry_config: Configuration for retry behavior
             github_token: GitHub API token (or set GITHUB_TOKEN env var)
             lookback_days: How far back to look for activity
         """
+        super().__init__(
+            store=store,
+            collector_name="github_activity",
+            retry_config=retry_config,
+            api_name="github_activity",  # 5000/hour rate limit
+        )
+        self.usernames = usernames or []
+        self.org_names = org_names or []
         self.github_token = github_token or os.environ.get("GITHUB_TOKEN")
         self.lookback_days = lookback_days
         self.client: Optional[httpx.AsyncClient] = None
@@ -341,61 +362,40 @@ class GitHubActivityCollector:
 
         return signals
 
-    async def run(
-        self,
-        usernames: Optional[List[str]] = None,
-        org_names: Optional[List[str]] = None,
-        dry_run: bool = True,
-    ) -> Dict[str, Any]:
+    async def _collect_signals(self) -> List[Signal]:
         """
-        Main entry point for GitHub activity collection.
+        Collect GitHub activity signals from configured users and orgs.
 
-        Args:
-            usernames: List of GitHub usernames to check
-            org_names: List of GitHub org names to check
-            dry_run: If True, don't persist signals
+        Implements BaseCollector._collect_signals() abstract method.
 
         Returns:
-            CollectorResult-compatible dict
+            List of Signal objects for activity signals found
         """
-        signals: List[GitHubActivitySignal] = []
-        errors: List[str] = []
+        signals: List[Signal] = []
 
-        async with self:
-            # Check users
-            if usernames:
-                for username in usernames:
-                    try:
-                        user_signals = await self.check_user(username)
-                        signals.extend(user_signals)
-                        await asyncio.sleep(0.1)  # Rate limit courtesy
-                    except Exception as e:
-                        error_msg = f"User {username}: {e}"
-                        errors.append(error_msg)
-                        logger.error(f"Error checking user {username}: {e}")
+        # Check users
+        for username in self.usernames:
+            try:
+                user_signals = await self.check_user(username)
+                signals.extend([s.to_signal() for s in user_signals])
+                await asyncio.sleep(0.1)  # Rate limit courtesy
+            except Exception as e:
+                error_msg = f"User {username}: {e}"
+                self._errors.append(error_msg)
+                logger.error(f"Error checking user {username}: {e}")
 
-            # Check orgs
-            if org_names:
-                for org in org_names:
-                    try:
-                        org_signals = await self.check_org(org)
-                        signals.extend(org_signals)
-                        await asyncio.sleep(0.1)
-                    except Exception as e:
-                        error_msg = f"Org {org}: {e}"
-                        errors.append(error_msg)
-                        logger.error(f"Error checking org {org}: {e}")
+        # Check orgs
+        for org in self.org_names:
+            try:
+                org_signals = await self.check_org(org)
+                signals.extend([s.to_signal() for s in org_signals])
+                await asyncio.sleep(0.1)
+            except Exception as e:
+                error_msg = f"Org {org}: {e}"
+                self._errors.append(error_msg)
+                logger.error(f"Error checking org {org}: {e}")
 
-        # Convert to Signal objects
-        converted_signals = [s.to_signal() for s in signals]
-
-        return {
-            "status": "SUCCESS" if not errors else "PARTIAL",
-            "signals_found": len(signals),
-            "signals": converted_signals,
-            "errors": errors or None,
-            "dry_run": dry_run,
-        }
+        return signals
 
 
 # =============================================================================
@@ -419,35 +419,30 @@ async def main():
     else:
         logging.basicConfig(level=logging.INFO)
 
-    usernames = args.users.split(",") if args.users else None
-    org_names = args.orgs.split(",") if args.orgs else None
+    usernames = args.users.split(",") if args.users else []
+    org_names = args.orgs.split(",") if args.orgs else []
 
     if not usernames and not org_names:
         print("Usage: python github_activity.py --users=user1,user2 --orgs=org1,org2")
         return
 
-    collector = GitHubActivityCollector(lookback_days=args.lookback_days)
-    result = await collector.run(
+    collector = GitHubActivityCollector(
         usernames=usernames,
         org_names=org_names,
-        dry_run=True
+        lookback_days=args.lookback_days,
     )
+    result = await collector.run(dry_run=True)
 
     print("\n" + "=" * 60)
     print("GITHUB ACTIVITY COLLECTOR RESULTS")
     print("=" * 60)
-    print(f"Status: {result['status']}")
-    print(f"Signals found: {result['signals_found']}")
-    if result.get('errors'):
-        print(f"Errors: {result['errors']}")
+    print(f"Status: {result.status.value}")
+    print(f"Signals found: {result.signals_found}")
+    if result.error_message:
+        print(f"Errors: {result.error_message}")
 
-    if result['signals']:
-        print("\nSignals:")
-        for sig in result['signals'][:5]:
-            raw = sig.raw_data
-            print(f"  - {raw.get('activity_type')}: {raw.get('repo_name')} "
-                  f"(by {raw.get('username')}, {raw.get('stars', 0)} stars)")
-
+    print(f"Signals new: {result.signals_new}")
+    print(f"Signals suppressed: {result.signals_suppressed}")
     print("=" * 60)
 
 

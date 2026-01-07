@@ -63,6 +63,9 @@ from connectors.notion_connector_v2 import (
 # Collectors (import dynamically to avoid circular imports)
 from discovery_engine.mcp_server import CollectorResult, CollectorStatus
 
+# Suppression sync (for cache warmup)
+from workflows.suppression_sync import SuppressionSync
+
 logger = logging.getLogger(__name__)
 
 
@@ -100,6 +103,9 @@ class PipelineConfig:
     # Verification
     strict_mode: bool = False        # Require 2+ sources for auto-push
 
+    # Warmup
+    warmup_suppression_cache: bool = True  # Auto-sync suppression cache on init
+
     @classmethod
     def from_env(cls) -> PipelineConfig:
         """Load configuration from environment variables"""
@@ -112,6 +118,7 @@ class PipelineConfig:
             parallel_collectors=os.getenv("PARALLEL_COLLECTORS", "true").lower() == "true",
             batch_size=int(os.getenv("BATCH_SIZE", "50")),
             strict_mode=os.getenv("STRICT_MODE", "false").lower() == "true",
+            warmup_suppression_cache=os.getenv("WARMUP_SUPPRESSION_CACHE", "true").lower() == "true",
         )
 
 
@@ -257,6 +264,13 @@ class DiscoveryPipeline:
         # Initialize verification gate
         self._gate = VerificationGate(strict_mode=self.config.strict_mode)
 
+        # Warmup suppression cache (non-fatal if it fails)
+        if self.config.warmup_suppression_cache:
+            try:
+                await self._warmup_suppression_cache()
+            except Exception as e:
+                logger.warning(f"Suppression cache warmup failed (non-fatal): {e}")
+
         self._initialized = True
         logger.info("Pipeline initialization complete")
 
@@ -265,6 +279,37 @@ class DiscoveryPipeline:
         if self._store:
             await self._store.close()
         self._initialized = False
+
+    async def _warmup_suppression_cache(self) -> None:
+        """
+        Warm up suppression cache from Notion on pipeline startup.
+
+        This ensures the local cache is fresh before processing signals,
+        preventing duplicate pushes to Notion on first run.
+
+        Non-fatal: Called with try/except in initialize().
+        """
+        if not self._notion:
+            logger.info("Notion connector not available, skipping warmup")
+            return
+
+        if not self._store:
+            logger.warning("SignalStore not initialized for warmup")
+            return
+
+        logger.info("Warming up suppression cache from Notion...")
+
+        sync = SuppressionSync(
+            notion_connector=self._notion,
+            signal_store=self._store,
+        )
+
+        result = await sync.sync(dry_run=False)
+
+        logger.info(
+            f"Suppression cache warmup complete: "
+            f"{result.entries_synced} entries cached"
+        )
 
     # =========================================================================
     # HIGH-LEVEL PIPELINE METHODS
