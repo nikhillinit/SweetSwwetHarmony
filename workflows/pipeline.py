@@ -72,6 +72,9 @@ from workflows.suppression_sync import SuppressionSync
 # Health monitoring
 from utils.signal_health import SignalHealthMonitor
 
+# Notifications
+from utils.slack_notifier import SlackNotifier, SlackConfig
+
 logger = logging.getLogger(__name__)
 
 
@@ -260,6 +263,7 @@ class DiscoveryPipeline:
         self._signal_processor: Optional[SignalProcessor] = None
         self._entity_resolver: Optional[EntityResolver] = None
         self._health_monitor: Optional[SignalHealthMonitor] = None
+        self._notifier: Optional[SlackNotifier] = None
 
         # State
         self._initialized = False
@@ -314,6 +318,17 @@ class DiscoveryPipeline:
             logger.warning(f"SignalHealthMonitor initialization failed (non-fatal): {e}")
             self._health_monitor = None
 
+        # Initialize Slack notifier (non-fatal if not configured)
+        try:
+            self._notifier = SlackNotifier()
+            if self._notifier.is_configured:
+                logger.info("SlackNotifier initialized")
+            else:
+                logger.debug("SlackNotifier not configured (SLACK_WEBHOOK_URL not set)")
+        except Exception as e:
+            logger.warning(f"SlackNotifier initialization failed (non-fatal): {e}")
+            self._notifier = None
+
         # Warmup suppression cache (non-fatal if it fails)
         if self.config.warmup_suppression_cache:
             try:
@@ -331,6 +346,9 @@ class DiscoveryPipeline:
         if self._asset_store:
             await self._asset_store.close()
             self._asset_store = None
+        if self._notifier:
+            await self._notifier.close()
+            self._notifier = None
         self._initialized = False
 
     async def _warmup_suppression_cache(self) -> None:
@@ -427,6 +445,24 @@ class DiscoveryPipeline:
                     stats.health_report = await self._health_monitor.generate_report(lookback_days=30)
                 except Exception as e:
                     logger.warning(f"Failed to generate health report (non-fatal): {e}")
+
+            # Send daily summary to Slack
+            if self._notifier and self._notifier.is_configured and not dry_run:
+                try:
+                    health_status = "HEALTHY"
+                    if stats.health_report:
+                        health_status = stats.health_report.overall_status
+
+                    await self._notifier.notify_daily_summary(
+                        signals_collected=stats.signals_collected,
+                        signals_pushed=stats.prospects_created + stats.prospects_updated,
+                        high_confidence_count=stats.signals_auto_push,
+                        collectors_succeeded=stats.collectors_succeeded,
+                        collectors_failed=stats.collectors_failed,
+                        health_status=health_status,
+                    )
+                except Exception as e:
+                    logger.warning(f"Slack daily summary failed (non-fatal): {e}")
 
             logger.info("Full pipeline completed successfully")
 
@@ -814,6 +850,33 @@ class DiscoveryPipeline:
                             "status": verification.suggested_status,
                         },
                     )
+
+                # Notify Slack for high-confidence signals
+                if (
+                    verification.decision == PushDecision.AUTO_PUSH
+                    and self._notifier
+                    and self._notifier.is_configured
+                ):
+                    try:
+                        company_name = signals[0].company_name or canonical_key
+                        signal_types = list(set(s.signal_type for s in signals))
+                        sources_count = len(set(s.source_api for s in signals))
+                        why_now = self._build_why_now(signals)
+
+                        # Build Notion URL
+                        notion_url = f"https://notion.so/{notion_result['page_id'].replace('-', '')}"
+
+                        await self._notifier.notify_high_confidence_signal(
+                            company_name=company_name,
+                            confidence=verification.confidence_score,
+                            signal_types=signal_types,
+                            sources_count=sources_count,
+                            notion_url=notion_url,
+                            canonical_key=canonical_key,
+                            why_now=why_now,
+                        )
+                    except Exception as e:
+                        logger.warning(f"Slack notification failed (non-fatal): {e}")
             else:
                 # Dry run or no Notion connector
                 logger.info(
@@ -982,6 +1045,24 @@ class DiscoveryPipeline:
                     logger.error(f"Anomaly detected: {anomaly.description}")
                 else:
                     logger.warning(f"Anomaly detected: {anomaly.description}")
+
+            # Send Slack alert for DEGRADED or CRITICAL health
+            if (
+                report.overall_status in ("DEGRADED", "CRITICAL")
+                and self._notifier
+                and self._notifier.is_configured
+            ):
+                try:
+                    anomaly_descriptions = [a.description for a in report.anomalies]
+                    await self._notifier.notify_health_alert(
+                        status=report.overall_status,
+                        anomalies=anomaly_descriptions,
+                        total_signals=report.total_signals,
+                        stale_signals=report.stale_signals,
+                        suspicious_signals=report.suspicious_signals,
+                    )
+                except Exception as e:
+                    logger.warning(f"Slack health alert failed (non-fatal): {e}")
 
         except Exception as e:
             logger.warning(f"Health check failed (non-fatal): {e}")
