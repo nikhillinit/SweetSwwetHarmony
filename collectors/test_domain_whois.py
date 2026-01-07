@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from domain_whois import (
+from collectors.domain_whois import (
     DomainWhoisCollector,
     DomainRegistration,
     TECH_TLDS,
