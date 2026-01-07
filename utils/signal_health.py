@@ -256,12 +256,12 @@ class SignalHealthMonitor:
 
     async def _get_signals(self, lookback_days: int) -> List[Dict]:
         """Get signals from store for analysis."""
-        if not self.store or not self.store._conn:
+        if not self.store or not self.store._db:
             return []
 
         cutoff = datetime.now(timezone.utc) - timedelta(days=lookback_days)
 
-        cursor = self.store._conn.execute(
+        cursor = await self.store._db.execute(
             """
             SELECT
                 id, signal_type, source_api, canonical_key,
@@ -273,6 +273,8 @@ class SignalHealthMonitor:
             (cutoff.isoformat(),)
         )
 
+        rows = await cursor.fetchall()
+
         return [
             {
                 "id": row[0],
@@ -283,7 +285,7 @@ class SignalHealthMonitor:
                 "detected_at": datetime.fromisoformat(row[5]),
                 "created_at": datetime.fromisoformat(row[6]),
             }
-            for row in cursor.fetchall()
+            for row in rows
         ]
 
     async def _analyze_sources(

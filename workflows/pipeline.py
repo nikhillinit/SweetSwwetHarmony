@@ -69,6 +69,9 @@ from discovery_engine.mcp_server import CollectorResult, CollectorStatus
 # Suppression sync (for cache warmup)
 from workflows.suppression_sync import SuppressionSync
 
+# Health monitoring
+from utils.signal_health import SignalHealthMonitor
+
 logger = logging.getLogger(__name__)
 
 
@@ -164,6 +167,9 @@ class PipelineStats:
     # Errors
     errors: List[str] = field(default_factory=list)
 
+    # Health monitoring
+    health_report: Optional[Any] = None  # HealthReport from signal_health
+
     # Timing
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     completed_at: Optional[datetime] = None
@@ -205,6 +211,7 @@ class PipelineStats:
                 "prospects_skipped": self.prospects_skipped,
             },
             "errors": self.errors,
+            "health": self.health_report.to_dict() if self.health_report else None,
             "timing": {
                 "started_at": self.started_at.isoformat(),
                 "completed_at": self.completed_at.isoformat() if self.completed_at else None,
@@ -252,6 +259,7 @@ class DiscoveryPipeline:
         self._asset_store: Optional[SourceAssetStore] = None
         self._signal_processor: Optional[SignalProcessor] = None
         self._entity_resolver: Optional[EntityResolver] = None
+        self._health_monitor: Optional[SignalHealthMonitor] = None
 
         # State
         self._initialized = False
@@ -297,6 +305,14 @@ class DiscoveryPipeline:
             resolver_config = ResolverConfig()
             self._entity_resolver = EntityResolver(resolver_config)
             logger.info("EntityResolver initialized (asset-to-lead resolution enabled)")
+
+        # Initialize SignalHealthMonitor (non-fatal if it fails)
+        try:
+            self._health_monitor = SignalHealthMonitor(self._store)
+            logger.info("SignalHealthMonitor initialized")
+        except Exception as e:
+            logger.warning(f"SignalHealthMonitor initialization failed (non-fatal): {e}")
+            self._health_monitor = None
 
         # Warmup suppression cache (non-fatal if it fails)
         if self.config.warmup_suppression_cache:
@@ -404,6 +420,13 @@ class DiscoveryPipeline:
             stats.prospects_created = process_stats["prospects_created"]
             stats.prospects_updated = process_stats["prospects_updated"]
             stats.prospects_skipped = process_stats["prospects_skipped"]
+
+            # Generate final health report
+            if self._health_monitor:
+                try:
+                    stats.health_report = await self._health_monitor.generate_report(lookback_days=30)
+                except Exception as e:
+                    logger.warning(f"Failed to generate health report (non-fatal): {e}")
 
             logger.info("Full pipeline completed successfully")
 
@@ -581,6 +604,9 @@ class DiscoveryPipeline:
             f"Collector stage complete: {succeeded}/{len(results)} succeeded, "
             f"{total_signals} signals collected"
         )
+
+        # Run health monitor after collectors (non-fatal if it fails)
+        await self._check_signal_health()
 
         return results
 
@@ -921,6 +947,44 @@ class DiscoveryPipeline:
         # Fallback
         signal_types = [sig.signal_type for sig in signals]
         return f"Detected via {', '.join(set(signal_types))}"
+
+    async def _check_signal_health(self) -> None:
+        """
+        Run health monitor and log any warnings.
+
+        Called after collector runs to check signal quality.
+        Non-fatal - errors are logged but don't crash the pipeline.
+        """
+        if not self._health_monitor:
+            return
+
+        try:
+            report = await self._health_monitor.generate_report(lookback_days=30)
+
+            # Log overall status
+            if report.overall_status == "CRITICAL":
+                logger.error(f"Signal health CRITICAL: {len(report.anomalies)} anomalies detected")
+            elif report.overall_status == "DEGRADED":
+                logger.warning(f"Signal health DEGRADED: {len(report.anomalies)} anomalies detected")
+            else:
+                logger.info(f"Signal health HEALTHY: {report.total_signals} signals from {report.total_sources} sources")
+
+            # Log warnings from source health
+            for source_name, health in report.source_health.items():
+                if health.status == "CRITICAL":
+                    logger.error(f"Source {source_name} CRITICAL: {', '.join(health.warnings)}")
+                elif health.status == "WARNING":
+                    logger.warning(f"Source {source_name} WARNING: {', '.join(health.warnings)}")
+
+            # Log anomalies
+            for anomaly in report.anomalies:
+                if anomaly.severity == "CRITICAL":
+                    logger.error(f"Anomaly detected: {anomaly.description}")
+                else:
+                    logger.warning(f"Anomaly detected: {anomaly.description}")
+
+        except Exception as e:
+            logger.warning(f"Health check failed (non-fatal): {e}")
 
 
 # =============================================================================
