@@ -48,6 +48,8 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           COMPANIES_HOUSE_API_KEY: ${{ secrets.COMPANIES_HOUSE_API_KEY }}
           PH_API_KEY: ${{ secrets.PH_API_KEY }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
           DISCOVERY_DB_PATH: signals.db
         run: |
           COLLECTORS="${{ github.event.inputs.collectors || 'github,sec_edgar,companies_house,domain_whois,job_postings,arxiv,uspto' }}"
@@ -120,6 +122,44 @@ jobs:
     if: failure()
 
     steps:
+      - name: Send Slack failure notification
+        if: ${{ secrets.SLACK_WEBHOOK_URL != '' }}
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: |
+          curl -X POST -H 'Content-type: application/json' \
+            --data '{
+              "blocks": [
+                {
+                  "type": "header",
+                  "text": {
+                    "type": "plain_text",
+                    "text": "🚨 Pipeline Failed",
+                    "emoji": true
+                  }
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    {"type": "mrkdwn", "text": "*Run:* #${{ github.run_number }}"},
+                    {"type": "mrkdwn", "text": "*Trigger:* ${{ github.event_name }}"}
+                  ]
+                },
+                {
+                  "type": "actions",
+                  "elements": [
+                    {
+                      "type": "button",
+                      "text": {"type": "plain_text", "text": "View Logs"},
+                      "url": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                    }
+                  ]
+                }
+              ],
+              "text": "Daily Signal Collection Failed - Run #${{ github.run_number }}"
+            }' \
+            "$SLACK_WEBHOOK_URL"
+
       - name: Create failure issue
         uses: actions/github-script@v7
         with:
