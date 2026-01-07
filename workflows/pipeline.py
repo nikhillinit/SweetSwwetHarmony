@@ -43,6 +43,7 @@ from typing import Any, Dict, List, Optional, Set
 # Storage
 from storage.signal_store import SignalStore, StoredSignal
 from storage.source_asset_store import SourceAssetStore
+from consumer.signal_processor import SignalProcessor, ProcessorConfig
 
 # Verification
 from verification.verification_gate_v2 import (
@@ -248,6 +249,7 @@ class DiscoveryPipeline:
         self._notion: Optional[NotionConnector] = None
         self._gate: Optional[VerificationGate] = None
         self._asset_store: Optional[SourceAssetStore] = None
+        self._signal_processor: Optional[SignalProcessor] = None
 
         # State
         self._initialized = False
@@ -281,6 +283,12 @@ class DiscoveryPipeline:
             self._asset_store = SourceAssetStore(db_path=self.config.asset_store_path)
             await self._asset_store.initialize()
             logger.info("SourceAssetStore initialized")
+
+        # Initialize SignalProcessor (if gating enabled)
+        if self.config.use_gating:
+            processor_config = ProcessorConfig()
+            self._signal_processor = SignalProcessor(processor_config)
+            logger.info("SignalProcessor initialized (two-stage gating enabled)")
 
         # Warmup suppression cache (non-fatal if it fails)
         if self.config.warmup_suppression_cache:
