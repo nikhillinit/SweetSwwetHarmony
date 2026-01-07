@@ -29,9 +29,13 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 
 import streamlit as st
+from dotenv import load_dotenv
 
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
+
+# Load .env from project root
+load_dotenv(Path(__file__).parent.parent / ".env")
 
 from storage.signal_store import SignalStore
 from utils.signal_health import SignalHealthMonitor
