@@ -257,12 +257,21 @@ class JobPostingsCollector(BaseCollector):
         """
         try:
             url = f"{GREENHOUSE_API}/{board_id}/jobs"
-            response = await self.client.get(url)
 
-            if response.status_code != 200:
+            # Use BaseCollector's retry and rate-limiting
+            async def do_request():
+                response = await self.client.get(url)
+                if response.status_code != 200:
+                    # Return None for non-200 status (not found, etc.)
+                    # Don't raise - this is expected behavior
+                    return None
+                return response.json()
+
+            data = await self._fetch_with_retry(do_request)
+
+            if data is None:
                 return None
 
-            data = response.json()
             jobs = data.get("jobs", [])
 
             if not jobs:
@@ -336,14 +345,19 @@ class JobPostingsCollector(BaseCollector):
         """
         try:
             url = f"{LEVER_API}/{company_id}"
-            response = await self.client.get(url)
 
-            if response.status_code != 200:
-                return None
+            # Use BaseCollector's retry and rate-limiting
+            async def do_request():
+                response = await self.client.get(url)
+                if response.status_code != 200:
+                    # Return None for non-200 status (not found, etc.)
+                    # Don't raise - this is expected behavior
+                    return None
+                return response.json()
 
-            jobs = response.json()
+            jobs = await self._fetch_with_retry(do_request)
 
-            if not jobs:
+            if jobs is None or not jobs:
                 return None
 
             # Count engineering positions

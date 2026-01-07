@@ -136,6 +136,80 @@ class TestJobPostingsUsesRetryLogic:
         assert result == {"jobs": []}
         assert len(attempts) == 2  # Initial + 1 retry
 
+    @pytest.mark.asyncio
+    async def test_greenhouse_api_uses_retry_on_transient_error(self):
+        """_check_greenhouse should retry on transient HTTP errors (500, 502, 503, 504)"""
+        from collectors.job_postings import JobPostingsCollector
+        from collectors.retry_strategy import RetryConfig
+        import httpx
+
+        attempt_count = []
+
+        async def mock_get(*args, **kwargs):
+            attempt_count.append(1)
+            if len(attempt_count) == 1:
+                # First attempt fails with 503
+                request = httpx.Request("GET", args[0] if args else kwargs.get('url', 'http://test'))
+                response = httpx.Response(503, request=request)
+                raise httpx.HTTPStatusError("Service Unavailable", request=request, response=response)
+            else:
+                # Second attempt succeeds
+                class MockResponse:
+                    status_code = 200
+                    def json(self):
+                        return {"jobs": [{"title": "Engineer", "absolute_url": "http://job"}]}
+                return MockResponse()
+
+        collector = JobPostingsCollector(
+            domains=["test.com"],
+            retry_config=RetryConfig(max_retries=3, backoff_base=0.01, jitter=False),
+        )
+
+        async with collector:
+            with patch.object(collector.client, 'get', side_effect=mock_get):
+                result = await collector._check_greenhouse("test", "test.com")
+
+        # Should have retried and succeeded
+        assert result is not None
+        assert len(attempt_count) == 2
+
+    @pytest.mark.asyncio
+    async def test_lever_api_uses_retry_on_transient_error(self):
+        """_check_lever should retry on transient HTTP errors (500, 502, 503, 504)"""
+        from collectors.job_postings import JobPostingsCollector
+        from collectors.retry_strategy import RetryConfig
+        import httpx
+
+        attempt_count = []
+
+        async def mock_get(*args, **kwargs):
+            attempt_count.append(1)
+            if len(attempt_count) == 1:
+                # First attempt fails with 502
+                request = httpx.Request("GET", args[0] if args else kwargs.get('url', 'http://test'))
+                response = httpx.Response(502, request=request)
+                raise httpx.HTTPStatusError("Bad Gateway", request=request, response=response)
+            else:
+                # Second attempt succeeds
+                class MockResponse:
+                    status_code = 200
+                    def json(self):
+                        return [{"text": "Developer", "hostedUrl": "http://job"}]
+                return MockResponse()
+
+        collector = JobPostingsCollector(
+            domains=["test.com"],
+            retry_config=RetryConfig(max_retries=3, backoff_base=0.01, jitter=False),
+        )
+
+        async with collector:
+            with patch.object(collector.client, 'get', side_effect=mock_get):
+                result = await collector._check_lever("test", "test.com")
+
+        # Should have retried and succeeded
+        assert result is not None
+        assert len(attempt_count) == 2
+
 
 class TestJobPostingsUsesRateLimiter:
     """Test that rate limiting is applied"""
