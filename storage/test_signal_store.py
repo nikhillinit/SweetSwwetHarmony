@@ -10,7 +10,7 @@ import tempfile
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-from signal_store import (
+from storage.signal_store import (
     SignalStore,
     StoredSignal,
     SuppressionEntry,
