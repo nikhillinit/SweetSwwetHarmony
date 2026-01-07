@@ -7,10 +7,10 @@ from workflows.pipeline import PipelineConfig
 class TestPipelineConfigFlags:
     """Test new feature flags in PipelineConfig."""
 
-    def test_use_gating_default_false(self):
-        """use_gating should default to False."""
+    def test_use_gating_default_true(self):
+        """use_gating should default to True (consumer filtering enabled)."""
         config = PipelineConfig()
-        assert config.use_gating is False
+        assert config.use_gating is True, "Consumer gating should be enabled by default"
 
     def test_use_entities_default_false(self):
         """use_entities should default to False."""
