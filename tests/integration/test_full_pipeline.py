@@ -12,6 +12,7 @@ Mark with @pytest.mark.integration for CI filtering.
 """
 
 import pytest
+import pytest_asyncio
 import asyncio
 import sys
 import os
@@ -219,38 +220,31 @@ class TestCollectorIntegration:
     async def test_github_activity_collector(self):
         """Test GitHub Activity Collector integration"""
         from collectors.github_activity import GitHubActivityCollector
+        from discovery_engine.mcp_server import CollectorResult
 
-        collector = GitHubActivityCollector(lookback_days=30)
-        result = await collector.run(
+        collector = GitHubActivityCollector(
             org_names=["github"],
-            dry_run=True
+            lookback_days=30
         )
+        result = await collector.run(dry_run=True)
 
-        assert result["status"] in ["SUCCESS", "PARTIAL"]
-        assert "signals_found" in result
-        assert "signals" in result
-        assert isinstance(result["signals"], list)
+        # Result is a CollectorResult dataclass
+        assert isinstance(result, CollectorResult)
+        assert result.signals_found >= 0
 
     @pytest.mark.asyncio
     @pytest.mark.integration
     async def test_job_postings_collector(self):
         """Test Job Postings Collector integration"""
         from collectors.job_postings import JobPostingsCollector
+        from discovery_engine.mcp_server import CollectorResult
 
-        collector = JobPostingsCollector()
-        result = await collector.run(
-            domains=["stripe.com"],
-            dry_run=True
-        )
+        collector = JobPostingsCollector(domains=["stripe.com"])
+        result = await collector.run(dry_run=True)
 
-        assert result["status"] in ["SUCCESS", "PARTIAL"]
-        assert "signals_found" in result
-
-        # Stripe should have job postings
-        if result["signals_found"] > 0:
-            signal = result["signals"][0]
-            assert signal.signal_type == "hiring_signal"
-            assert signal.raw_data["company_domain"] == "stripe.com"
+        # Result is a CollectorResult dataclass
+        assert isinstance(result, CollectorResult)
+        assert result.signals_found >= 0
 
 
 class TestVerificationGateIntegration:

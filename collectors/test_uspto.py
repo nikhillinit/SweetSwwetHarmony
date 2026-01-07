@@ -278,5 +278,108 @@ async def test_full_collection_flow():
             assert signals[0].confidence >= 0.4
 
 
+# =============================================================================
+# RETRY LOGIC TESTS
+# =============================================================================
+
+class TestUSPTORetryIntegration:
+    """Test USPTOCollector retry infrastructure integration."""
+
+    def test_uspto_uses_retry_config(self):
+        """USPTOCollector should have retry_config from BaseCollector."""
+        from collectors.uspto import USPTOCollector
+        from collectors.retry_strategy import RetryConfig
+
+        collector = USPTOCollector(keywords=["ai"])
+
+        # Should have retry_config attribute from BaseCollector
+        assert hasattr(collector, 'retry_config')
+        assert isinstance(collector.retry_config, RetryConfig)
+
+    def test_uspto_uses_rate_limiter(self):
+        """USPTOCollector should have rate_limiter from BaseCollector."""
+        from collectors.uspto import USPTOCollector
+        from utils.rate_limiter import AsyncRateLimiter
+
+        collector = USPTOCollector(keywords=["ai"])
+
+        # Should have rate_limiter attribute from BaseCollector
+        assert hasattr(collector, 'rate_limiter')
+        assert isinstance(collector.rate_limiter, AsyncRateLimiter)
+
+    def test_uspto_passes_api_name_to_base(self):
+        """USPTOCollector should pass api_name to BaseCollector for rate limiting."""
+        from collectors.uspto import USPTOCollector
+
+        collector = USPTOCollector(keywords=["ai"])
+
+        # Should have api_name set (for clarity, even if unlimited)
+        assert hasattr(collector, 'api_name')
+        assert collector.api_name == "uspto"
+
+    @pytest.mark.asyncio
+    async def test_uspto_retries_on_http_error(self):
+        """USPTOCollector should retry on HTTP errors via _fetch_with_retry."""
+        from collectors.uspto import USPTOCollector
+        from collectors.retry_strategy import RetryConfig
+        import httpx
+
+        # Use custom retry config with fewer retries for faster test
+        retry_config = RetryConfig(max_retries=2, backoff_base=0.1, backoff_max=0.2)
+        collector = USPTOCollector(
+            keywords=["ai"],
+            max_results=10,
+        )
+        collector.retry_config = retry_config
+
+        # Track number of attempts
+        attempt_count = 0
+
+        async def failing_fetch():
+            nonlocal attempt_count
+            attempt_count += 1
+            if attempt_count < 3:
+                # Fail first 2 attempts with retryable error
+                mock_response = Mock()
+                mock_response.status_code = 503
+                mock_response.headers = {}  # Empty headers dict
+                raise httpx.HTTPStatusError(
+                    "Server Error",
+                    request=Mock(),
+                    response=mock_response
+                )
+            # Succeed on 3rd attempt
+            return {"patents": []}
+
+        async with collector:
+            # Test that _fetch_with_retry properly handles retries
+            result = await collector._fetch_with_retry(failing_fetch)
+            assert result == {"patents": []}
+            # Should have tried 3 times total (1 initial + 2 retries)
+            assert attempt_count == 3
+
+    @pytest.mark.asyncio
+    async def test_uspto_respects_rate_limiter(self):
+        """USPTOCollector should respect rate limiter during API calls."""
+        from collectors.uspto import USPTOCollector
+        from unittest.mock import AsyncMock
+        import time
+
+        collector = USPTOCollector(keywords=["ai"], max_results=10)
+
+        # Mock the rate limiter to track acquire calls
+        mock_acquire = AsyncMock()
+        collector._rate_limiter.acquire = mock_acquire
+
+        async with collector:
+            with patch.object(collector, "_fetch_with_retry", new_callable=AsyncMock) as mock_retry:
+                mock_retry.return_value = {"patents": []}
+                await collector._fetch_patents()
+
+                # Rate limiter should have been called
+                # The _fetch_patents method calls rate_limiter.acquire() at line 288
+                mock_acquire.assert_called()
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])

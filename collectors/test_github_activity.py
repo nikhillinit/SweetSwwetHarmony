@@ -5,6 +5,7 @@ Tests the GitHubActivitySignal and GitHubActivityCollector classes.
 """
 
 import pytest
+import pytest_asyncio
 from datetime import datetime, timezone, timedelta
 from collectors.github_activity import (
     GitHubActivitySignal,
@@ -146,30 +147,39 @@ class TestGitHubActivityCollector:
     @pytest.mark.asyncio
     async def test_run_returns_result_dict(self):
         """Run method returns proper result structure"""
-        collector = GitHubActivityCollector(lookback_days=30)
-        result = await collector.run(
-            usernames=["octocat"],
-            dry_run=True
-        )
+        from discovery_engine.mcp_server import CollectorResult
 
-        assert isinstance(result, dict)
-        assert "status" in result
-        assert "signals_found" in result
-        assert "signals" in result
-        assert "dry_run" in result
-        assert result["dry_run"] is True
+        collector = GitHubActivityCollector(
+            usernames=["octocat"],
+            lookback_days=30
+        )
+        result = await collector.run(dry_run=True)
+
+        # Result is a CollectorResult dataclass
+        assert isinstance(result, CollectorResult)
+        assert result.collector == "github_activity"
+        assert hasattr(result, "signals_found")
+        assert result.dry_run is True
+
+        # Can be converted to dict
+        result_dict = result.to_dict()
+        assert isinstance(result_dict, dict)
+        assert "status" in result_dict
+        assert "signals_found" in result_dict
 
     @pytest.mark.asyncio
     async def test_run_with_invalid_user(self):
         """Run handles non-existent users gracefully"""
-        collector = GitHubActivityCollector(lookback_days=30)
-        result = await collector.run(
-            usernames=["definitely-not-a-real-user-12345678"],
-            dry_run=True
-        )
+        from discovery_engine.mcp_server import CollectorResult
 
-        assert isinstance(result, dict)
-        assert result["signals_found"] == 0
+        collector = GitHubActivityCollector(
+            usernames=["definitely-not-a-real-user-12345678"],
+            lookback_days=30
+        )
+        result = await collector.run(dry_run=True)
+
+        assert isinstance(result, CollectorResult)
+        assert result.signals_found == 0
 
     @pytest.mark.asyncio
     async def test_check_org_returns_signals(self):

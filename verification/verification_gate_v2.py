@@ -21,7 +21,7 @@ Additional fixes:
 """
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Optional, List, Dict, Any
 from collections import defaultdict
@@ -63,6 +63,8 @@ SIGNAL_WEIGHTS = {
     "cofounder_search": 0.05,
     "research_paper": 0.05,
     "funding_event": 0.20,
+    "hiring_signal": 0.30,  # High weight - active hiring is strong signal
+    "github_activity": 0.18,  # Medium-high weight - founder activity
 }
 
 # Decay half-lives (days)
@@ -76,6 +78,8 @@ HALF_LIVES = {
     "cofounder_search": 60,
     "research_paper": 180,
     "funding_event": 180,
+    "hiring_signal": 45,  # Slower decay - hiring signals stay relevant longer
+    "github_activity": 30,  # Medium decay - activity signals fade moderately
 }
 
 # Negative signals and their multipliers
@@ -107,18 +111,18 @@ class Signal:
     source_api: str
     source_url: Optional[str] = None
     source_response_hash: Optional[str] = None
-    retrieved_at: datetime = field(default_factory=datetime.utcnow)
-    
+    retrieved_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
     # Verification
     verified_by_sources: List[str] = field(default_factory=list)
     verification_status: VerificationStatus = VerificationStatus.UNVERIFIED
-    
+
     raw_data: Dict[str, Any] = field(default_factory=dict)
-    detected_at: datetime = field(default_factory=datetime.utcnow)
-    
+    detected_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+
     @property
     def age_days(self) -> int:
-        return (datetime.utcnow() - self.detected_at).days
+        return (datetime.now(timezone.utc) - self.detected_at).days
 
 
 @dataclass
@@ -151,7 +155,7 @@ class ConfidenceBreakdown:
     sources: List[str]
     signal_details: List[Dict[str, Any]]
     calculation_method: str = "glass_ai_v2"
-    calculated_at: datetime = field(default_factory=datetime.utcnow)
+    calculated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -532,7 +536,7 @@ def create_provenance_record(
         "event_type": event_type,
         "event_data": event_data,
         "source_documents": source_documents,
-        "created_at": datetime.utcnow().isoformat()
+        "created_at": datetime.now(timezone.utc).isoformat()
     }
 
 
@@ -552,7 +556,7 @@ def example_usage():
             source_api="companies_house",
             source_url="https://api.company-information.service.gov.uk/company/12345678",
             source_response_hash="abc123...",
-            detected_at=datetime.utcnow() - timedelta(days=30)
+            detected_at=datetime.now(timezone.utc) - timedelta(days=30)
         ),
         Signal(
             id="sig-002",
@@ -560,14 +564,14 @@ def example_usage():
             confidence=0.7,
             source_api="github",
             source_url="https://api.github.com/users/founder/repos",
-            detected_at=datetime.utcnow() - timedelta(days=7)
+            detected_at=datetime.now(timezone.utc) - timedelta(days=7)
         ),
         Signal(
             id="sig-003",
             signal_type="domain_registration",
             confidence=0.8,
             source_api="whois",
-            detected_at=datetime.utcnow() - timedelta(days=14)
+            detected_at=datetime.now(timezone.utc) - timedelta(days=14)
         ),
     ]
     
@@ -608,14 +612,14 @@ def example_hard_kill():
             signal_type="incorporation",
             confidence=0.95,
             source_api="companies_house",
-            detected_at=datetime.utcnow() - timedelta(days=30)
+            detected_at=datetime.now(timezone.utc) - timedelta(days=30)
         ),
         Signal(
             id="sig-kill",
             signal_type="company_dissolved",
             confidence=1.0,
             source_api="companies_house",
-            detected_at=datetime.utcnow() - timedelta(days=5)
+            detected_at=datetime.now(timezone.utc) - timedelta(days=5)
         ),
     ]
     
@@ -640,21 +644,21 @@ def example_anti_inflation():
             signal_type="github_spike",
             confidence=0.6,
             source_api="github",
-            detected_at=datetime.utcnow() - timedelta(days=1)
+            detected_at=datetime.now(timezone.utc) - timedelta(days=1)
         ),
         Signal(
             id="sig-gh-2",
             signal_type="github_spike",
             confidence=0.8,
             source_api="github",
-            detected_at=datetime.utcnow() - timedelta(days=3)
+            detected_at=datetime.now(timezone.utc) - timedelta(days=3)
         ),
         Signal(
             id="sig-gh-3",
             signal_type="github_spike",
             confidence=0.7,
             source_api="github",
-            detected_at=datetime.utcnow() - timedelta(days=7)
+            detected_at=datetime.now(timezone.utc) - timedelta(days=7)
         ),
     ]
     

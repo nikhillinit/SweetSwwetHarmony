@@ -14,6 +14,9 @@ import os
 import sys
 from pathlib import Path
 
+import pytest
+import pytest_asyncio
+
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -24,6 +27,19 @@ from collectors.domain_whois import DomainWhoisCollector
 from storage.signal_store import signal_store
 
 
+@pytest_asyncio.fixture
+async def clean_test_db():
+    """Clean up test database before and after each test"""
+    test_db = Path("test_signals.db")
+    if test_db.exists():
+        test_db.unlink()
+    yield
+    # Cleanup after test
+    if test_db.exists():
+        test_db.unlink()
+
+
+@pytest.mark.asyncio
 async def test_github_collector():
     """Test GitHub collector with SignalStore"""
     print("\n" + "=" * 60)
@@ -82,6 +98,7 @@ async def test_github_collector():
         print(f"  Processing status: {stats['processing_status']}")
 
 
+@pytest.mark.asyncio
 async def test_sec_edgar_collector():
     """Test SEC EDGAR collector with SignalStore"""
     print("\n" + "=" * 60)
@@ -115,6 +132,7 @@ async def test_sec_edgar_collector():
             print(f"  - {sig.signal_type}: {sig.company_name} ({sig.canonical_key})")
 
 
+@pytest.mark.asyncio
 async def test_companies_house_collector():
     """Test Companies House collector with SignalStore"""
     print("\n" + "=" * 60)
@@ -148,6 +166,7 @@ async def test_companies_house_collector():
             print(f"  Error: {result.error_message}")
 
 
+@pytest.mark.asyncio
 async def test_domain_whois_collector():
     """Test Domain WHOIS collector with SignalStore"""
     print("\n" + "=" * 60)
@@ -182,6 +201,7 @@ async def test_domain_whois_collector():
             print(f"  Error: {result.error_message}")
 
 
+@pytest.mark.asyncio
 async def test_dry_run_mode():
     """Test that dry run mode doesn't persist signals"""
     print("\n" + "=" * 60)
@@ -223,8 +243,31 @@ async def test_dry_run_mode():
             print("SKIP: GITHUB_TOKEN not set")
 
 
+@pytest.mark.asyncio
+async def test_final_stats():
+    """Show final database stats after all tests"""
+    print("\n" + "=" * 60)
+    print("FINAL DATABASE STATS")
+    print("=" * 60)
+
+    test_db = Path("test_signals.db")
+    if not test_db.exists():
+        print("No test database found")
+        return
+
+    async with signal_store("test_signals.db") as store:
+        stats = await store.get_stats()
+        print("\nFinal Database Stats:")
+        print(f"  Database: {stats['database_path']}")
+        print(f"  Total signals: {stats['total_signals']}")
+        print(f"  By type: {stats['signals_by_type']}")
+        print(f"  Processing status: {stats['processing_status']}")
+        print(f"  Active cache entries: {stats['active_suppression_entries']}")
+
+
+# Optional: Keep the main() function for standalone execution
 async def main():
-    """Run all tests"""
+    """Run all tests manually (for standalone execution)"""
     # Set up logging
     logging.basicConfig(
         level=logging.INFO,
@@ -248,20 +291,11 @@ async def main():
         await test_companies_house_collector()
         await test_domain_whois_collector()
         await test_dry_run_mode()
+        await test_final_stats()
 
         print("\n" + "=" * 60)
         print("ALL TESTS COMPLETE")
         print("=" * 60)
-
-        # Show final database stats
-        async with signal_store("test_signals.db") as store:
-            stats = await store.get_stats()
-            print("\nFinal Database Stats:")
-            print(f"  Database: {stats['database_path']}")
-            print(f"  Total signals: {stats['total_signals']}")
-            print(f"  By type: {stats['signals_by_type']}")
-            print(f"  Processing status: {stats['processing_status']}")
-            print(f"  Active cache entries: {stats['active_suppression_entries']}")
 
     except KeyboardInterrupt:
         print("\n\nTests interrupted by user")
@@ -271,4 +305,5 @@ async def main():
 
 
 if __name__ == "__main__":
+    # For standalone execution with: python test_collector_storage.py
     asyncio.run(main())

@@ -9,17 +9,24 @@ from utils.signal_health import HealthReport, SourceHealth
 class TestCLIFlags:
     """Test CLI argument parsing for new feature flags."""
 
-    def test_full_parser_has_use_gating_flag(self):
-        """Full command should have --use-gating flag."""
+    def test_full_parser_has_enable_gating_flag(self):
+        """Full command should have --enable-gating flag."""
         parser = create_parser()
-        args = parser.parse_args(["full", "--use-gating"])
-        assert args.use_gating is True
+        args = parser.parse_args(["full", "--enable-gating"])
+        assert args.enable_gating is True
 
-    def test_full_parser_use_gating_default_false(self):
-        """--use-gating should default to False."""
+    def test_full_parser_has_disable_gating_flag(self):
+        """Full command should have --disable-gating flag."""
+        parser = create_parser()
+        args = parser.parse_args(["full", "--disable-gating"])
+        assert args.disable_gating is True
+
+    def test_full_parser_gating_defaults(self):
+        """Gating flags should default to False (use PipelineConfig default)."""
         parser = create_parser()
         args = parser.parse_args(["full"])
-        assert args.use_gating is False
+        assert args.enable_gating is False
+        assert args.disable_gating is False
 
     def test_full_parser_has_use_entities_flag(self):
         """Full command should have --use-entities flag."""
@@ -44,12 +51,12 @@ class TestCLIFlags:
         parser = create_parser()
         args = parser.parse_args([
             "full",
-            "--use-gating",
+            "--enable-gating",
             "--use-entities",
             "--use-asset-store",
             "--dry-run",
         ])
-        assert args.use_gating is True
+        assert args.enable_gating is True
         assert args.use_entities is True
         assert args.use_asset_store is True
         assert args.dry_run is True

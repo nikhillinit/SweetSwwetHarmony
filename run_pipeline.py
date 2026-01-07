@@ -49,6 +49,11 @@ from workflows.pipeline import (
 )
 from utils.signal_health import SignalHealthMonitor
 
+try:
+    import httpx
+except ImportError:
+    httpx = None
+
 
 # =============================================================================
 # LOGGING SETUP
@@ -95,6 +100,104 @@ def setup_logging(verbose: bool = False):
     # Reduce noise from some modules
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+
+# =============================================================================
+# API CONNECTIVITY HELPERS
+# =============================================================================
+
+async def check_github_api(timeout: float = 5.0) -> tuple[bool, str | None]:
+    """Check GitHub API connectivity"""
+    if not httpx:
+        return False, "httpx not installed"
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get("https://api.github.com/zen")
+            if response.status_code == 200:
+                return True, None
+            else:
+                return False, f"HTTP {response.status_code}"
+    except httpx.TimeoutException:
+        return False, "Connection timeout"
+    except Exception as e:
+        return False, str(e)
+
+
+async def check_sec_edgar_api(timeout: float = 5.0) -> tuple[bool, str | None]:
+    """Check SEC EDGAR API connectivity"""
+    if not httpx:
+        return False, "httpx not installed"
+
+    try:
+        # SEC requires User-Agent header
+        headers = {
+            "User-Agent": "Discovery Engine Health Check contact@example.com",
+        }
+        async with httpx.AsyncClient(timeout=timeout, headers=headers) as client:
+            # Try the CIK lookup endpoint (lightweight)
+            response = await client.get("https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&CIK=0000320193&count=1")
+            if response.status_code == 200:
+                return True, None
+            else:
+                return False, f"HTTP {response.status_code}"
+    except httpx.TimeoutException:
+        return False, "Connection timeout"
+    except Exception as e:
+        return False, str(e)
+
+
+async def check_notion_api(api_key: str, timeout: float = 5.0) -> tuple[bool, str | None]:
+    """Check Notion API connectivity"""
+    if not httpx:
+        return False, "httpx not installed"
+
+    if not api_key:
+        return False, "No API key configured"
+
+    try:
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Notion-Version": "2022-06-28",
+        }
+        async with httpx.AsyncClient(timeout=timeout, headers=headers) as client:
+            # Try to get user info (lightweight endpoint)
+            response = await client.get("https://api.notion.com/v1/users/me", headers=headers)
+            if response.status_code == 200:
+                return True, None
+            elif response.status_code == 401:
+                return False, "Invalid API key"
+            else:
+                return False, f"HTTP {response.status_code}"
+    except httpx.TimeoutException:
+        return False, "Connection timeout"
+    except Exception as e:
+        return False, str(e)
+
+
+async def check_gemini_api(api_key: str, timeout: float = 5.0) -> tuple[bool, str | None]:
+    """Check Gemini API connectivity"""
+    if not httpx:
+        return False, "httpx not installed"
+
+    if not api_key:
+        return False, "No API key configured"
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            # Try to list models (lightweight endpoint)
+            url = f"https://generativelanguage.googleapis.com/v1beta/models?key={api_key}"
+            response = await client.get(url)
+            if response.status_code == 200:
+                return True, None
+            elif response.status_code == 400:
+                return False, "Invalid API key"
+            else:
+                return False, f"HTTP {response.status_code}"
+    except httpx.TimeoutException:
+        return False, "Connection timeout"
+    except Exception as e:
+        return False, str(e)
 
 
 # =============================================================================
@@ -184,8 +287,12 @@ async def cmd_collect(args):
         config.parallel_collectors = args.parallel
 
     # Feature flags
-    if hasattr(args, "no_gating") and args.no_gating:
+    if hasattr(args, "disable_gating") and args.disable_gating:
         config.use_gating = False
+    elif hasattr(args, "enable_gating") and args.enable_gating:
+        config.use_gating = True
+    # Otherwise use default from config (True)
+
     if hasattr(args, "use_asset_store") and args.use_asset_store:
         config.use_asset_store = True
 
@@ -254,8 +361,12 @@ async def cmd_process(args):
         config.batch_size = args.batch_size
 
     # Feature flags
-    if hasattr(args, "no_gating") and args.no_gating:
+    if hasattr(args, "disable_gating") and args.disable_gating:
         config.use_gating = False
+    elif hasattr(args, "enable_gating") and args.enable_gating:
+        config.use_gating = True
+    # Otherwise use default from config (True)
+
     if hasattr(args, "use_entities") and args.use_entities:
         config.use_entities = True
 
@@ -459,27 +570,59 @@ async def cmd_health(args):
                 print(f"  Configuration: FAILED ({e})")
             checks.append(("Configuration", False, str(e)))
 
-        # 3. Notion API connectivity check
+        # 3. API connectivity checks
         if not output_json:
-            print("Checking Notion API connectivity...")
+            print("Checking API connectivity...")
+
+        # GitHub API
         try:
-            if hasattr(pipeline, 'notion_connector') and pipeline.notion_connector:
-                # Try to test connection if method exists
-                if hasattr(pipeline.notion_connector, 'test_connection'):
-                    notion_ok = await pipeline.notion_connector.test_connection()
-                    if notion_ok:
-                        if not output_json:
-                            print("  Notion API: HEALTHY")
-                        checks.append(("Notion API", True, None))
-                    else:
-                        if not output_json:
-                            print("  Notion API: DEGRADED (connection test failed)")
-                        checks.append(("Notion API", False, "Connection test failed"))
-                        all_healthy = False
+            ok, msg = await check_github_api()
+            if ok:
+                if not output_json:
+                    print("  GitHub API: OK")
+                checks.append(("GitHub API", True, None))
+            else:
+                if not output_json:
+                    print(f"  GitHub API: FAILED ({msg})")
+                checks.append(("GitHub API", False, msg))
+                all_healthy = False
+        except Exception as e:
+            if not output_json:
+                print(f"  GitHub API: FAILED ({e})")
+            checks.append(("GitHub API", False, str(e)))
+            all_healthy = False
+
+        # SEC EDGAR API
+        try:
+            ok, msg = await check_sec_edgar_api()
+            if ok:
+                if not output_json:
+                    print("  SEC EDGAR API: OK")
+                checks.append(("SEC EDGAR API", True, None))
+            else:
+                if not output_json:
+                    print(f"  SEC EDGAR API: FAILED ({msg})")
+                checks.append(("SEC EDGAR API", False, msg))
+                all_healthy = False
+        except Exception as e:
+            if not output_json:
+                print(f"  SEC EDGAR API: FAILED ({e})")
+            checks.append(("SEC EDGAR API", False, str(e)))
+            all_healthy = False
+
+        # Notion API
+        try:
+            if config.notion_api_key:
+                ok, msg = await check_notion_api(config.notion_api_key)
+                if ok:
+                    if not output_json:
+                        print("  Notion API: OK")
+                    checks.append(("Notion API", True, None))
                 else:
                     if not output_json:
-                        print("  Notion API: UNKNOWN (no test method)")
-                    checks.append(("Notion API", True, "No test method available"))
+                        print(f"  Notion API: FAILED ({msg})")
+                    checks.append(("Notion API", False, msg))
+                    all_healthy = False
             else:
                 if not output_json:
                     print("  Notion API: SKIPPED (not configured)")
@@ -488,6 +631,30 @@ async def cmd_health(args):
             if not output_json:
                 print(f"  Notion API: FAILED ({e})")
             checks.append(("Notion API", False, str(e)))
+            all_healthy = False
+
+        # Gemini API
+        try:
+            gemini_key = os.getenv("GOOGLE_API_KEY", "")
+            if gemini_key:
+                ok, msg = await check_gemini_api(gemini_key)
+                if ok:
+                    if not output_json:
+                        print("  Gemini API: OK")
+                    checks.append(("Gemini API", True, None))
+                else:
+                    if not output_json:
+                        print(f"  Gemini API: FAILED ({msg})")
+                    checks.append(("Gemini API", False, msg))
+                    all_healthy = False
+            else:
+                if not output_json:
+                    print("  Gemini API: SKIPPED (not configured)")
+                checks.append(("Gemini API", True, "Not configured"))
+        except Exception as e:
+            if not output_json:
+                print(f"  Gemini API: FAILED ({e})")
+            checks.append(("Gemini API", False, str(e)))
             all_healthy = False
 
         # 4. Suppression cache stats
@@ -761,16 +928,16 @@ Environment variables:
         type=str,
         help="Save results to JSON file",
     )
-    # Feature flags - gating is ON by default, use --no-gating to disable
+    # Feature flags - gating is ON by default
     full_parser.add_argument(
-        "--no-gating",
-        action="store_true",
-        help="Disable two-stage gating (TriggerGate + LLMClassifierV2)",
-    )
-    full_parser.add_argument(
-        "--use-gating",
+        "--enable-gating",
         action="store_true",
         help="Explicitly enable two-stage gating (enabled by default)",
+    )
+    full_parser.add_argument(
+        "--disable-gating",
+        action="store_true",
+        help="Disable two-stage gating (TriggerGate + LLMClassifierV2)",
     )
     full_parser.add_argument(
         "--use-entities",
@@ -811,7 +978,12 @@ Environment variables:
     )
     # Feature flags for collect
     collect_parser.add_argument(
-        "--no-gating",
+        "--enable-gating",
+        action="store_true",
+        help="Explicitly enable two-stage gating (enabled by default)",
+    )
+    collect_parser.add_argument(
+        "--disable-gating",
         action="store_true",
         help="Disable two-stage gating",
     )
@@ -843,7 +1015,12 @@ Environment variables:
     )
     # Feature flags for process
     process_parser.add_argument(
-        "--no-gating",
+        "--enable-gating",
+        action="store_true",
+        help="Explicitly enable two-stage gating (enabled by default)",
+    )
+    process_parser.add_argument(
+        "--disable-gating",
         action="store_true",
         help="Disable two-stage gating",
     )
