@@ -44,6 +44,7 @@ from typing import Any, Dict, List, Optional, Set
 from storage.signal_store import SignalStore, StoredSignal
 from storage.source_asset_store import SourceAssetStore
 from consumer.signal_processor import SignalProcessor, ProcessorConfig
+from consumer.entity_resolver import EntityResolver, ResolverConfig
 
 # Verification
 from verification.verification_gate_v2 import (
@@ -250,6 +251,7 @@ class DiscoveryPipeline:
         self._gate: Optional[VerificationGate] = None
         self._asset_store: Optional[SourceAssetStore] = None
         self._signal_processor: Optional[SignalProcessor] = None
+        self._entity_resolver: Optional[EntityResolver] = None
 
         # State
         self._initialized = False
@@ -289,6 +291,12 @@ class DiscoveryPipeline:
             processor_config = ProcessorConfig()
             self._signal_processor = SignalProcessor(processor_config)
             logger.info("SignalProcessor initialized (two-stage gating enabled)")
+
+        # Initialize EntityResolver (if entity resolution enabled)
+        if self.config.use_entities:
+            resolver_config = ResolverConfig()
+            self._entity_resolver = EntityResolver(resolver_config)
+            logger.info("EntityResolver initialized (asset-to-lead resolution enabled)")
 
         # Warmup suppression cache (non-fatal if it fails)
         if self.config.warmup_suppression_cache:
