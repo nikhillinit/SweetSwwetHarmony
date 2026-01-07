@@ -21,6 +21,8 @@ import sys
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, Mock, patch
 
+import pytest
+
 # Add parent directory to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -284,6 +286,7 @@ def test_canonical_key_building():
     print("\n[SUCCESS] Canonical key building successful")
 
 
+@pytest.mark.asyncio
 async def test_collector_with_mock_api():
     """Test collector with mocked API responses"""
 

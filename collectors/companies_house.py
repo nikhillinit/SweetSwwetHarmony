@@ -222,8 +222,8 @@ class CompanyProfile:
         canonical_key_candidates = build_canonical_key_candidates(
             domain_or_website=self.website or "",
             companies_house_number=self.company_number,
-            crunchbase_uuid="",
-            pitchbook_uuid="",
+            crunchbase_id="",
+            pitchbook_id="",
             github_org="",
             github_repo="",
             fallback_company_name=self.company_name,
@@ -503,11 +503,6 @@ class CompaniesHouseCollector(BaseCollector):
         logger.info(f"Fetched {len(companies)} company profiles")
         return companies
 
-    @retry(
-        stop=stop_after_attempt(MAX_RETRIES),
-        wait=wait_exponential(multiplier=1, min=2, max=10),
-        retry=retry_if_exception_type(httpx.HTTPStatusError),
-    )
     async def _fetch_company_profile(self, company_number: str) -> Optional[CompanyProfile]:
         """
         Fetch full company profile from Companies House API.

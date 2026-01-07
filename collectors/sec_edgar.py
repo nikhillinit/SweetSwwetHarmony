@@ -180,8 +180,8 @@ class FormDFiling:
         canonical_key_candidates = build_canonical_key_candidates(
             domain_or_website=self.website or "",
             companies_house_number="",
-            crunchbase_uuid="",
-            pitchbook_uuid="",
+            crunchbase_id="",
+            pitchbook_id="",
             github_org="",
             github_repo="",
             fallback_company_name=self.company_name,
