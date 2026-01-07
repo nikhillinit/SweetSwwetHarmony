@@ -1,24 +1,17 @@
 """
-Discovery Engine Dashboard - Signal Viewer for Non-Technical Users
+Discovery Engine Dashboard - Deal Pipeline for Press On Ventures
 
-A simple Streamlit dashboard for viewing signals and Notion pipeline.
+A refined, editorial-style dashboard for viewing deals and signals.
 
-Features:
-- View discovery signals with filtering
-- View Notion deal pipeline (live from Notion API)
-- Pipeline health status
-- Direct links to Notion records
+Design Direction: Editorial/Refined
+- Magazine-style typography (DM Serif Display + DM Sans)
+- Dark mode with warm accent colors
+- Card-based layout with generous whitespace
+- Status-driven color coding
+- Subtle animations and hover states
 
 Run:
     streamlit run dashboard/app.py
-
-Or from project root:
-    python -m streamlit run dashboard/app.py
-
-Environment Variables:
-    NOTION_API_KEY - Required for Pipeline tab
-    NOTION_DATABASE_ID - Required for Pipeline tab
-    DISCOVERY_DB_PATH - Path to signals database (default: signals.db)
 """
 
 import asyncio
@@ -50,23 +43,282 @@ NOTION_DATABASE_ID = os.environ.get("NOTION_DATABASE_ID", "")
 
 # Notion statuses in pipeline order
 NOTION_STATUSES = [
-    "Source",
-    "Initial Meeting / Call",
-    "Dilligence",
-    "Tracking",
-    "Committed",
-    "Funded",
-    "Passed",
-    "Lost",
+    "Source", "Initial Meeting / Call", "Dilligence", "Tracking",
+    "Committed", "Funded", "Passed", "Lost",
 ]
 
-# Page config
+# Status colors (warm, refined palette)
+STATUS_COLORS = {
+    "Source": "#F59E0B",           # Amber - new opportunities
+    "Initial Meeting / Call": "#3B82F6",  # Blue - in conversation
+    "Dilligence": "#8B5CF6",       # Purple - deep dive
+    "Tracking": "#6B7280",         # Gray - watching
+    "Committed": "#10B981",        # Emerald - committed
+    "Funded": "#059669",           # Green - portfolio
+    "Passed": "#EF4444",           # Red - passed
+    "Lost": "#991B1B",             # Dark red - lost
+}
+
+# =============================================================================
+# PAGE CONFIG & CUSTOM CSS
+# =============================================================================
+
 st.set_page_config(
-    page_title="Discovery Engine",
-    page_icon="🔍",
+    page_title="Discovery Engine | Press On Ventures",
+    page_icon="◆",
     layout="wide",
     initial_sidebar_state="expanded",
 )
+
+# Custom CSS for editorial design
+st.markdown("""
+<style>
+    /* Import distinctive fonts */
+    @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&display=swap');
+
+    /* Root variables */
+    :root {
+        --bg-primary: #0F0F0F;
+        --bg-secondary: #1A1A1A;
+        --bg-card: #242424;
+        --bg-hover: #2A2A2A;
+        --text-primary: #FAFAFA;
+        --text-secondary: #A3A3A3;
+        --text-muted: #737373;
+        --border-color: #333333;
+        --accent-gold: #F59E0B;
+        --accent-emerald: #10B981;
+        --accent-blue: #3B82F6;
+    }
+
+    /* Global styles */
+    .stApp {
+        background-color: var(--bg-primary);
+    }
+
+    /* Hide default Streamlit elements */
+    #MainMenu {visibility: hidden;}
+    footer {visibility: hidden;}
+    header {visibility: hidden;}
+
+    /* Typography overrides */
+    h1, h2, h3 {
+        font-family: 'DM Serif Display', serif !important;
+        color: var(--text-primary) !important;
+        letter-spacing: -0.02em;
+    }
+
+    h1 {
+        font-size: 2.5rem !important;
+        font-weight: 400 !important;
+        margin-bottom: 0.5rem !important;
+    }
+
+    p, span, div, label {
+        font-family: 'DM Sans', sans-serif !important;
+    }
+
+    /* Sidebar styling */
+    [data-testid="stSidebar"] {
+        background-color: var(--bg-secondary) !important;
+        border-right: 1px solid var(--border-color);
+    }
+
+    [data-testid="stSidebar"] .stRadio > label {
+        color: var(--text-secondary) !important;
+    }
+
+    /* Metric cards */
+    [data-testid="stMetricValue"] {
+        font-family: 'DM Serif Display', serif !important;
+        font-size: 2.25rem !important;
+        color: var(--text-primary) !important;
+    }
+
+    [data-testid="stMetricLabel"] {
+        font-family: 'DM Sans', sans-serif !important;
+        color: var(--text-secondary) !important;
+        text-transform: uppercase;
+        font-size: 0.7rem !important;
+        letter-spacing: 0.1em;
+    }
+
+    /* Custom card styling */
+    .deal-card {
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 1.5rem;
+        margin-bottom: 1rem;
+        transition: all 0.2s ease;
+    }
+
+    .deal-card:hover {
+        background: var(--bg-hover);
+        border-color: var(--accent-gold);
+        transform: translateY(-2px);
+    }
+
+    .deal-name {
+        font-family: 'DM Serif Display', serif;
+        font-size: 1.25rem;
+        color: var(--text-primary);
+        margin-bottom: 0.25rem;
+    }
+
+    .deal-meta {
+        font-family: 'DM Sans', sans-serif;
+        font-size: 0.85rem;
+        color: var(--text-secondary);
+    }
+
+    .deal-link {
+        color: var(--text-muted);
+        text-decoration: none;
+        font-size: 0.8rem;
+    }
+
+    .deal-link:hover {
+        color: var(--accent-gold);
+    }
+
+    /* Status badges */
+    .status-badge {
+        display: inline-block;
+        padding: 0.25rem 0.75rem;
+        border-radius: 9999px;
+        font-size: 0.7rem;
+        font-weight: 500;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+    }
+
+    /* Confidence indicator */
+    .confidence-high { color: #10B981; }
+    .confidence-med { color: #F59E0B; }
+    .confidence-low { color: #EF4444; }
+
+    /* Section headers */
+    .section-header {
+        font-family: 'DM Sans', sans-serif;
+        font-size: 0.75rem;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.15em;
+        margin-bottom: 1rem;
+        padding-bottom: 0.5rem;
+        border-bottom: 1px solid var(--border-color);
+    }
+
+    /* Expander styling */
+    .streamlit-expanderHeader {
+        font-family: 'DM Sans', sans-serif !important;
+        font-weight: 500 !important;
+        background-color: var(--bg-card) !important;
+        border-radius: 8px !important;
+    }
+
+    /* Tabs styling */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 0;
+        border-bottom: 1px solid var(--border-color);
+    }
+
+    .stTabs [data-baseweb="tab"] {
+        font-family: 'DM Sans', sans-serif !important;
+        font-size: 0.85rem;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        padding: 1rem 1.5rem;
+        color: var(--text-secondary);
+        border-bottom: 2px solid transparent;
+    }
+
+    .stTabs [aria-selected="true"] {
+        color: var(--accent-gold) !important;
+        border-bottom-color: var(--accent-gold) !important;
+    }
+
+    /* Button styling */
+    .stButton > button {
+        font-family: 'DM Sans', sans-serif !important;
+        background-color: var(--bg-card) !important;
+        border: 1px solid var(--border-color) !important;
+        color: var(--text-primary) !important;
+        border-radius: 8px !important;
+        transition: all 0.2s ease !important;
+    }
+
+    .stButton > button:hover {
+        background-color: var(--bg-hover) !important;
+        border-color: var(--accent-gold) !important;
+    }
+
+    /* Select boxes */
+    .stSelectbox > div > div {
+        background-color: var(--bg-card) !important;
+        border-color: var(--border-color) !important;
+    }
+
+    /* Hero section */
+    .hero-section {
+        padding: 2rem 0;
+        margin-bottom: 2rem;
+        border-bottom: 1px solid var(--border-color);
+    }
+
+    .hero-title {
+        font-family: 'DM Serif Display', serif;
+        font-size: 2.5rem;
+        color: var(--text-primary);
+        margin-bottom: 0.5rem;
+    }
+
+    .hero-subtitle {
+        font-family: 'DM Sans', sans-serif;
+        font-size: 1rem;
+        color: var(--text-secondary);
+    }
+
+    /* Stats grid */
+    .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 1.5rem;
+        margin: 2rem 0;
+    }
+
+    .stat-card {
+        background: var(--bg-card);
+        border: 1px solid var(--border-color);
+        border-radius: 12px;
+        padding: 1.5rem;
+        text-align: center;
+    }
+
+    .stat-value {
+        font-family: 'DM Serif Display', serif;
+        font-size: 2.5rem;
+        color: var(--text-primary);
+    }
+
+    .stat-label {
+        font-family: 'DM Sans', sans-serif;
+        font-size: 0.7rem;
+        color: var(--text-muted);
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        margin-top: 0.5rem;
+    }
+
+    /* Divider */
+    hr {
+        border: none;
+        border-top: 1px solid var(--border-color);
+        margin: 2rem 0;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 
 # =============================================================================
@@ -95,34 +347,30 @@ def get_store():
 # DATA LOADING
 # =============================================================================
 
-@st.cache_data(ttl=60)  # Cache for 60 seconds
-def load_signals(_store, days_back: int = 7, status_filter: str = "all"):
+@st.cache_data(ttl=60)
+def load_signals(_store, days_back: int = 7):
     """Load signals from database."""
     async def _load():
         if not _store._db:
             await _store.initialize()
 
-        # Get date range
         cutoff = datetime.now(timezone.utc) - timedelta(days=days_back)
 
-        # Query signals with processing status
         cursor = await _store._db.execute(
             """
-            SELECT
-                s.id, s.signal_type, s.source_api, s.canonical_key,
-                s.company_name, s.confidence, s.raw_data,
-                s.detected_at, s.created_at,
-                p.status as processing_status, p.notion_page_id
+            SELECT s.id, s.signal_type, s.source_api, s.canonical_key,
+                   s.company_name, s.confidence, s.raw_data,
+                   s.detected_at, s.created_at,
+                   p.status as processing_status, p.notion_page_id
             FROM signals s
             LEFT JOIN signal_processing p ON s.id = p.signal_id
             WHERE s.created_at >= ?
-            ORDER BY s.created_at DESC
+            ORDER BY s.confidence DESC, s.created_at DESC
             """,
             (cutoff.isoformat(),)
         )
 
         rows = await cursor.fetchall()
-
         signals = []
         for row in rows:
             import json
@@ -139,7 +387,6 @@ def load_signals(_store, days_back: int = 7, status_filter: str = "all"):
                 "processing_status": row[9] or "pending",
                 "notion_page_id": row[10],
             })
-
         return signals
 
     return run_async(_load())
@@ -151,21 +398,10 @@ def load_health_report(_store, lookback_days: int = 30):
     async def _load():
         monitor = SignalHealthMonitor(_store)
         return await monitor.generate_report(lookback_days=lookback_days)
-
     return run_async(_load())
 
 
-@st.cache_data(ttl=60)
-def load_stats(_store):
-    """Load database stats."""
-    return run_async(_store.get_stats())
-
-
-# =============================================================================
-# NOTION DATA LOADING
-# =============================================================================
-
-@st.cache_data(ttl=120)  # Cache for 2 minutes (Notion rate limits)
+@st.cache_data(ttl=120)
 def load_notion_deals(status_filter: Optional[str] = None) -> List[Dict[str, Any]]:
     """Load deals from Notion pipeline."""
     if not NOTION_API_KEY or not NOTION_DATABASE_ID:
@@ -184,20 +420,13 @@ def load_notion_deals(status_filter: Optional[str] = None) -> List[Dict[str, Any
         has_more = True
         start_cursor = None
 
-        # Build filter
-        if status_filter and status_filter != "All":
-            filter_obj = {
-                "property": "Status",
-                "select": {"equals": status_filter}
-            }
+        if status_filter and status_filter not in ["All", "All Active"]:
+            filter_obj = {"property": "Status", "select": {"equals": status_filter}}
         else:
-            # Get all active deals (exclude Passed/Lost by default)
-            filter_obj = {
-                "or": [
-                    {"property": "Status", "select": {"equals": s}}
-                    for s in ["Source", "Initial Meeting / Call", "Dilligence", "Tracking", "Committed", "Funded"]
-                ]
-            }
+            active_statuses = ["Source", "Initial Meeting / Call", "Dilligence",
+                              "Tracking", "Committed", "Funded"]
+            filter_obj = {"or": [{"property": "Status", "select": {"equals": s}}
+                                 for s in active_statuses]}
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             while has_more:
@@ -216,23 +445,18 @@ def load_notion_deals(status_filter: Optional[str] = None) -> List[Dict[str, Any
                 )
 
                 if resp.status_code != 200:
-                    st.error(f"Notion API error: {resp.status_code}")
                     return []
 
                 data = resp.json()
                 all_deals.extend(data.get("results", []))
                 has_more = data.get("has_more", False)
                 start_cursor = data.get("next_cursor")
-
-                # Rate limit protection
                 await asyncio.sleep(0.35)
 
-        # Parse deals
         deals = []
         for page in all_deals:
             props = page.get("properties", {})
 
-            # Extract properties safely
             def get_title(p):
                 title = p.get("title", [])
                 return title[0].get("text", {}).get("content", "") if title else ""
@@ -265,7 +489,6 @@ def load_notion_deals(status_filter: Optional[str] = None) -> List[Dict[str, Any
                 "confidence": get_number(props.get("Confidence Score", {})),
                 "signal_types": get_multi_select(props.get("Signal Types", {})),
                 "why_now": get_text(props.get("Why Now", {})),
-                "canonical_key": get_text(props.get("Canonical Key", {})),
                 "location": get_text(props.get("Location", {})),
                 "created_time": page.get("created_time", ""),
             })
@@ -275,357 +498,211 @@ def load_notion_deals(status_filter: Optional[str] = None) -> List[Dict[str, Any
     return run_async(_load())
 
 
-def get_notion_stats(deals: List[Dict]) -> Dict[str, Any]:
-    """Calculate stats from Notion deals."""
+# =============================================================================
+# UI COMPONENTS
+# =============================================================================
+
+def render_hero(title: str, subtitle: str):
+    """Render hero section."""
+    st.markdown(f"""
+    <div class="hero-section">
+        <div class="hero-title">{title}</div>
+        <div class="hero-subtitle">{subtitle}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def render_deal_card(deal: Dict, show_status: bool = True):
+    """Render a single deal card with refined styling."""
+    company = deal.get("company_name") or "Unnamed Company"
+    website = deal.get("website", "")
+    status = deal.get("status", "")
+    stage = deal.get("stage", "")
+    sector = deal.get("sector", "")
+    confidence = deal.get("confidence", 0)
+    why_now = deal.get("why_now", "")
+    location = deal.get("location", "")
+    signal_types = deal.get("signal_types", [])
+    page_id = deal.get("page_id", "").replace("-", "")
+
+    # Confidence color
+    if confidence >= 0.7:
+        conf_class = "confidence-high"
+        conf_icon = "●"
+    elif confidence >= 0.4:
+        conf_class = "confidence-med"
+        conf_icon = "●"
+    else:
+        conf_class = "confidence-low"
+        conf_icon = "○"
+
+    # Status color
+    status_color = STATUS_COLORS.get(status, "#6B7280")
+
+    # Build card HTML
+    website_html = f'<a href="{website}" target="_blank" class="deal-link">{website}</a>' if website else ""
+    status_html = f'<span class="status-badge" style="background-color: {status_color}20; color: {status_color};">{status}</span>' if show_status and status else ""
+
+    meta_parts = []
+    if stage:
+        meta_parts.append(stage)
+    if sector:
+        meta_parts.append(sector)
+    if location:
+        meta_parts.append(f"📍 {location}")
+
+    signals_html = ""
+    if signal_types:
+        signals_html = " · ".join(signal_types[:3])
+
+    notion_url = f"https://notion.so/{page_id}" if page_id else ""
+
+    st.markdown(f"""
+    <div class="deal-card">
+        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+            <div style="flex: 1;">
+                <div class="deal-name">{company}</div>
+                {f'<div class="deal-meta" style="margin-bottom: 0.5rem;">{website_html}</div>' if website_html else ''}
+                <div class="deal-meta">{" · ".join(meta_parts)}</div>
+                {f'<div class="deal-meta" style="margin-top: 0.75rem; color: #737373; font-style: italic;">"{why_now[:120]}..."</div>' if why_now else ''}
+            </div>
+            <div style="text-align: right; min-width: 120px;">
+                {status_html}
+                <div style="margin-top: 0.75rem;">
+                    <span class="{conf_class}" style="font-size: 1.5rem;">{conf_icon}</span>
+                    <span style="font-family: 'DM Serif Display', serif; font-size: 1.25rem; color: #FAFAFA; margin-left: 0.25rem;">{confidence:.0%}</span>
+                </div>
+                {f'<div class="deal-meta" style="margin-top: 0.5rem;">{signals_html}</div>' if signals_html else ''}
+                {f'<a href="{notion_url}" target="_blank" class="deal-link" style="display: block; margin-top: 0.75rem;">Open in Notion →</a>' if notion_url else ''}
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def render_pipeline_section(deals: List[Dict], status: str):
+    """Render a pipeline section with deals."""
+    status_deals = [d for d in deals if d.get("status") == status]
+    if not status_deals:
+        return
+
+    status_color = STATUS_COLORS.get(status, "#6B7280")
+    count = len(status_deals)
+
+    with st.expander(f"**{status}** — {count} {'deal' if count == 1 else 'deals'}", expanded=(status == "Source")):
+        for deal in status_deals:
+            render_deal_card(deal, show_status=False)
+
+
+def render_stats_overview(deals: List[Dict]):
+    """Render statistics overview."""
+    total = len(deals)
     by_status = {}
     by_stage = {}
     by_sector = {}
 
     for deal in deals:
         status = deal.get("status", "Unknown")
-        stage = deal.get("stage", "Unknown")
-        sector = deal.get("sector", "Unknown") or "Unknown"
+        stage = deal.get("stage") or "Unknown"
+        sector = deal.get("sector") or "Unknown"
 
         by_status[status] = by_status.get(status, 0) + 1
         by_stage[stage] = by_stage.get(stage, 0) + 1
         by_sector[sector] = by_sector.get(sector, 0) + 1
 
-    return {
-        "total": len(deals),
-        "by_status": by_status,
-        "by_stage": by_stage,
-        "by_sector": by_sector,
-    }
-
-
-# =============================================================================
-# UI COMPONENTS
-# =============================================================================
-
-def render_sidebar():
-    """Render sidebar filters."""
-    st.sidebar.title("🔍 Discovery Engine")
-    st.sidebar.markdown("---")
-
-    # Date range
-    days_back = st.sidebar.selectbox(
-        "Time Range",
-        options=[1, 7, 14, 30, 90],
-        index=1,
-        format_func=lambda x: f"Last {x} day{'s' if x > 1 else ''}"
-    )
-
-    # Source filter
-    sources = ["All", "github", "sec_edgar", "companies_house", "domain_whois",
-               "job_postings", "product_hunt", "hacker_news", "arxiv", "uspto"]
-    source_filter = st.sidebar.selectbox("Source", sources)
-
-    # Confidence filter
-    min_confidence = st.sidebar.slider(
-        "Min Confidence",
-        min_value=0.0,
-        max_value=1.0,
-        value=0.0,
-        step=0.1
-    )
-
-    # Status filter
-    status_filter = st.sidebar.selectbox(
-        "Processing Status",
-        ["all", "pending", "pushed", "rejected"]
-    )
-
-    st.sidebar.markdown("---")
-
-    # Refresh button
-    if st.sidebar.button("🔄 Refresh Data"):
-        st.cache_data.clear()
-        st.rerun()
-
-    return {
-        "days_back": days_back,
-        "source_filter": source_filter if source_filter != "All" else None,
-        "min_confidence": min_confidence,
-        "status_filter": status_filter,
-    }
-
-
-def render_metrics(signals, health_report):
-    """Render top-level metrics."""
+    # Top metrics
     col1, col2, col3, col4 = st.columns(4)
 
     with col1:
-        st.metric(
-            "Total Signals",
-            len(signals),
-            help="Signals in selected time range"
-        )
+        st.metric("Total Deals", total)
+    with col2:
+        active = sum(v for k, v in by_status.items() if k not in ["Passed", "Lost", "Funded"])
+        st.metric("Active Pipeline", active)
+    with col3:
+        st.metric("Portfolio", by_status.get("Funded", 0))
+    with col4:
+        st.metric("New This Week", by_status.get("Source", 0))
+
+    st.markdown("---")
+
+    # Breakdown
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.markdown('<div class="section-header">By Status</div>', unsafe_allow_html=True)
+        for status in ["Source", "Initial Meeting / Call", "Dilligence", "Tracking", "Committed", "Funded"]:
+            count = by_status.get(status, 0)
+            if count > 0:
+                color = STATUS_COLORS.get(status, "#6B7280")
+                st.markdown(f"""
+                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
+                    <span style="color: {color};">● {status}</span>
+                    <span style="color: #A3A3A3;">{count}</span>
+                </div>
+                """, unsafe_allow_html=True)
 
     with col2:
-        pending = sum(1 for s in signals if s["processing_status"] == "pending")
-        st.metric(
-            "Pending",
-            pending,
-            help="Signals awaiting processing"
-        )
+        st.markdown('<div class="section-header">By Stage</div>', unsafe_allow_html=True)
+        for stage, count in sorted(by_stage.items(), key=lambda x: -x[1])[:6]:
+            if stage and stage != "Unknown":
+                st.markdown(f"""
+                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
+                    <span style="color: #FAFAFA;">{stage}</span>
+                    <span style="color: #A3A3A3;">{count}</span>
+                </div>
+                """, unsafe_allow_html=True)
 
     with col3:
-        high_conf = sum(1 for s in signals if s["confidence"] >= 0.7)
-        st.metric(
-            "High Confidence",
-            high_conf,
-            help="Signals with confidence >= 0.7"
-        )
-
-    with col4:
-        status_color = {
-            "HEALTHY": "🟢",
-            "DEGRADED": "🟡",
-            "CRITICAL": "🔴"
-        }
-        status = health_report.overall_status if health_report else "UNKNOWN"
-        st.metric(
-            "Pipeline Health",
-            f"{status_color.get(status, '⚪')} {status}",
-        )
+        st.markdown('<div class="section-header">By Sector</div>', unsafe_allow_html=True)
+        for sector, count in sorted(by_sector.items(), key=lambda x: -x[1])[:6]:
+            if sector and sector != "Unknown":
+                st.markdown(f"""
+                <div style="display: flex; justify-content: space-between; margin-bottom: 0.5rem;">
+                    <span style="color: #FAFAFA;">{sector}</span>
+                    <span style="color: #A3A3A3;">{count}</span>
+                </div>
+                """, unsafe_allow_html=True)
 
 
-def render_signal_table(signals, filters):
-    """Render signal table with filters applied."""
-    # Apply filters
+def render_signals_view(signals: List[Dict], filters: Dict):
+    """Render signals view with filtering."""
     filtered = signals
 
-    if filters["source_filter"]:
+    if filters.get("source_filter"):
         filtered = [s for s in filtered if s["source_api"] == filters["source_filter"]]
-
-    if filters["min_confidence"] > 0:
+    if filters.get("min_confidence", 0) > 0:
         filtered = [s for s in filtered if s["confidence"] >= filters["min_confidence"]]
-
-    if filters["status_filter"] != "all":
-        filtered = [s for s in filtered if s["processing_status"] == filters["status_filter"]]
 
     if not filtered:
         st.info("No signals match the current filters.")
         return
 
-    st.subheader(f"📋 Signals ({len(filtered)})")
+    st.markdown(f'<div class="section-header">Signals ({len(filtered)})</div>', unsafe_allow_html=True)
 
-    # Create display data
-    for signal in filtered[:50]:  # Limit to 50 for performance
-        with st.container():
-            col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
+    for signal in filtered[:30]:
+        company = signal["company_name"]
+        source = signal["source_api"]
+        sig_type = signal["signal_type"]
+        confidence = signal["confidence"]
+        status = signal["processing_status"]
 
-            with col1:
-                company = signal["company_name"]
-                canonical = signal["canonical_key"]
-                st.markdown(f"**{company}**")
-                st.caption(f"`{canonical}`")
+        conf_class = "confidence-high" if confidence >= 0.7 else "confidence-med" if confidence >= 0.4 else "confidence-low"
+        status_icon = {"pending": "○", "pushed": "●", "rejected": "✕"}.get(status, "○")
 
-            with col2:
-                conf = signal["confidence"]
-                conf_color = "🟢" if conf >= 0.7 else "🟡" if conf >= 0.4 else "🔴"
-                st.markdown(f"{conf_color} **{conf:.2f}**")
-
-            with col3:
-                st.markdown(f"📡 {signal['source_api']}")
-                st.caption(signal["signal_type"])
-
-            with col4:
-                status = signal["processing_status"]
-                status_icon = {"pending": "⏳", "pushed": "✅", "rejected": "❌"}.get(status, "❓")
-                st.markdown(f"{status_icon} {status}")
-
-                # Notion link if pushed
-                if signal["notion_page_id"] and NOTION_DATABASE_ID:
-                    notion_url = f"https://notion.so/{signal['notion_page_id'].replace('-', '')}"
-                    st.markdown(f"[Open in Notion]({notion_url})")
-
-            st.markdown("---")
-
-
-def render_health_details(health_report):
-    """Render health report details."""
-    if not health_report:
-        st.warning("Health report not available")
-        return
-
-    st.subheader("🏥 Pipeline Health Details")
-
-    # Source health table
-    if health_report.source_health:
-        cols = st.columns(min(len(health_report.source_health), 4))
-
-        for idx, (source_name, health) in enumerate(health_report.source_health.items()):
-            with cols[idx % 4]:
-                status_icon = {"HEALTHY": "🟢", "WARNING": "🟡", "CRITICAL": "🔴"}.get(health.status, "⚪")
-                st.markdown(f"**{status_icon} {source_name}**")
-                st.caption(f"{health.signal_count} signals")
-                st.caption(f"Avg confidence: {health.avg_confidence:.2f}")
-
-                if health.warnings:
-                    for w in health.warnings[:2]:
-                        st.warning(w, icon="⚠️")
-
-    # Anomalies
-    if health_report.anomalies:
-        st.subheader("⚠️ Anomalies Detected")
-        for anomaly in health_report.anomalies[:5]:
-            severity_icon = "🔴" if anomaly.severity == "CRITICAL" else "🟡"
-            st.warning(f"{severity_icon} **{anomaly.anomaly_type}**: {anomaly.description}")
-
-
-def render_stats(stats):
-    """Render database statistics."""
-    st.subheader("📊 Statistics")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.markdown("**Signals by Type**")
-        if stats.get("signals_by_type"):
-            for sig_type, count in sorted(stats["signals_by_type"].items(), key=lambda x: -x[1]):
-                st.text(f"  {sig_type}: {count}")
-        else:
-            st.text("  No signals yet")
-
-    with col2:
-        st.markdown("**Processing Status**")
-        if stats.get("processing_status"):
-            for status, count in stats["processing_status"].items():
-                icon = {"pending": "⏳", "pushed": "✅", "rejected": "❌"}.get(status, "❓")
-                st.text(f"  {icon} {status}: {count}")
-        else:
-            st.text("  No processing data")
-
-
-def render_pipeline_deals(deals: List[Dict], status_filter: str):
-    """Render Notion pipeline deals."""
-    if not deals:
-        if not NOTION_API_KEY:
-            st.warning("Set NOTION_API_KEY environment variable to view pipeline")
-        elif not NOTION_DATABASE_ID:
-            st.warning("Set NOTION_DATABASE_ID environment variable to view pipeline")
-        else:
-            st.info("No deals found matching the filter.")
-        return
-
-    # Group by status for better visualization
-    by_status = {}
-    for deal in deals:
-        status = deal.get("status", "Unknown")
-        if status not in by_status:
-            by_status[status] = []
-        by_status[status].append(deal)
-
-    # Status order
-    status_order = ["Source", "Initial Meeting / Call", "Dilligence", "Tracking", "Committed", "Funded", "Passed", "Lost"]
-
-    for status in status_order:
-        if status not in by_status:
-            continue
-
-        status_deals = by_status[status]
-        status_icons = {
-            "Source": "🆕",
-            "Initial Meeting / Call": "📞",
-            "Dilligence": "🔍",
-            "Tracking": "👀",
-            "Committed": "🤝",
-            "Funded": "💰",
-            "Passed": "❌",
-            "Lost": "💔",
-        }
-
-        with st.expander(f"{status_icons.get(status, '📋')} {status} ({len(status_deals)})", expanded=(status == "Source")):
-            for deal in status_deals:
-                with st.container():
-                    col1, col2, col3, col4 = st.columns([3, 1, 1, 1])
-
-                    with col1:
-                        company = deal["company_name"] or "Unnamed"
-                        website = deal.get("website", "")
-                        st.markdown(f"**{company}**")
-                        if website:
-                            st.caption(f"[{website}]({website})")
-                        if deal.get("why_now"):
-                            st.caption(f"💡 {deal['why_now'][:100]}...")
-
-                    with col2:
-                        stage = deal.get("stage", "")
-                        if stage:
-                            st.markdown(f"📊 {stage}")
-                        sector = deal.get("sector", "")
-                        if sector:
-                            st.caption(sector)
-
-                    with col3:
-                        conf = deal.get("confidence", 0)
-                        if conf:
-                            conf_color = "🟢" if conf >= 0.7 else "🟡" if conf >= 0.4 else "🔴"
-                            st.markdown(f"{conf_color} **{conf:.2f}**")
-                        signal_types = deal.get("signal_types", [])
-                        if signal_types:
-                            st.caption(", ".join(signal_types[:3]))
-
-                    with col4:
-                        page_id = deal["page_id"].replace("-", "")
-                        notion_url = f"https://notion.so/{page_id}"
-                        st.markdown(f"[Open in Notion]({notion_url})")
-                        if deal.get("location"):
-                            st.caption(f"📍 {deal['location']}")
-
-                    st.markdown("---")
-
-
-def render_pipeline_stats(deals: List[Dict]):
-    """Render pipeline statistics."""
-    if not deals:
-        st.info("No pipeline data available")
-        return
-
-    stats = get_notion_stats(deals)
-
-    st.subheader("📊 Pipeline Overview")
-
-    # Top metrics
-    col1, col2, col3, col4 = st.columns(4)
-
-    with col1:
-        st.metric("Total Deals", stats["total"])
-
-    with col2:
-        active = sum(v for k, v in stats["by_status"].items() if k not in ["Passed", "Lost", "Funded"])
-        st.metric("Active Pipeline", active)
-
-    with col3:
-        funded = stats["by_status"].get("Funded", 0)
-        st.metric("Funded", funded)
-
-    with col4:
-        source = stats["by_status"].get("Source", 0)
-        st.metric("New (Source)", source)
-
-    st.markdown("---")
-
-    # Breakdown charts
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-        st.markdown("**By Status**")
-        for status, count in sorted(stats["by_status"].items(), key=lambda x: -x[1]):
-            st.text(f"  {status}: {count}")
-
-    with col2:
-        st.markdown("**By Stage**")
-        for stage, count in sorted(stats["by_stage"].items(), key=lambda x: -x[1]):
-            if stage:
-                st.text(f"  {stage}: {count}")
-
-    with col3:
-        st.markdown("**By Sector**")
-        for sector, count in sorted(stats["by_sector"].items(), key=lambda x: -x[1])[:8]:
-            if sector and sector != "Unknown":
-                st.text(f"  {sector}: {count}")
+        st.markdown(f"""
+        <div class="deal-card">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+                <div>
+                    <div class="deal-name">{company}</div>
+                    <div class="deal-meta">{source} · {sig_type}</div>
+                </div>
+                <div style="text-align: right;">
+                    <span class="{conf_class}" style="font-size: 1.25rem;">{confidence:.0%}</span>
+                    <div class="deal-meta" style="margin-top: 0.25rem;">{status_icon} {status}</div>
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
 
 # =============================================================================
@@ -634,163 +711,129 @@ def render_pipeline_stats(deals: List[Dict]):
 
 def main():
     """Main dashboard entry point."""
-    # Main content
-    st.title("🔍 Discovery Engine Dashboard")
-
-    # Check Notion connection
+    # Check data sources
     has_notion = bool(NOTION_API_KEY and NOTION_DATABASE_ID)
     has_db = Path(DB_PATH).exists()
 
     if not has_notion and not has_db:
-        st.error("No data sources configured!")
-        st.info("Set NOTION_API_KEY + NOTION_DATABASE_ID for pipeline view")
-        st.info("Or run the pipeline to create signals database")
+        st.error("No data sources configured")
         return
 
     # Sidebar
-    st.sidebar.title("🔍 Discovery Engine")
-    st.sidebar.markdown("---")
+    with st.sidebar:
+        st.markdown("""
+        <div style="padding: 1rem 0; border-bottom: 1px solid #333;">
+            <div style="font-family: 'DM Serif Display', serif; font-size: 1.5rem; color: #FAFAFA;">
+                ◆ Discovery
+            </div>
+            <div style="font-family: 'DM Sans', sans-serif; font-size: 0.8rem; color: #737373; margin-top: 0.25rem;">
+                Press On Ventures
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
-    # Data source selection
-    if has_notion and has_db:
-        data_source = st.sidebar.radio("Data Source", ["Pipeline (Notion)", "Signals (Local)"])
-    elif has_notion:
-        data_source = "Pipeline (Notion)"
-        st.sidebar.info("Viewing Notion Pipeline")
-    else:
-        data_source = "Signals (Local)"
-        st.sidebar.info("Viewing Local Signals")
+        st.markdown("<br>", unsafe_allow_html=True)
 
-    st.sidebar.markdown("---")
+        # View selector
+        if has_notion and has_db:
+            view = st.radio("View", ["Pipeline", "Signals"], label_visibility="collapsed")
+        elif has_notion:
+            view = "Pipeline"
+        else:
+            view = "Signals"
 
-    # Refresh button
-    if st.sidebar.button("🔄 Refresh Data"):
-        st.cache_data.clear()
-        st.rerun()
+        st.markdown("<br>", unsafe_allow_html=True)
 
-    # =========================================================================
-    # NOTION PIPELINE VIEW
-    # =========================================================================
-    if data_source == "Pipeline (Notion)":
-        st.markdown("Live view of the Notion deal pipeline.")
+        if st.button("↻ Refresh", use_container_width=True):
+            st.cache_data.clear()
+            st.rerun()
 
-        # Pipeline-specific filters
-        status_filter = st.sidebar.selectbox(
-            "Filter by Status",
-            ["All Active", "All"] + NOTION_STATUSES,
-            index=0
-        )
+    # ==========================================================================
+    # PIPELINE VIEW
+    # ==========================================================================
+    if view == "Pipeline":
+        render_hero("Deal Pipeline", "Live view of your Notion deal flow")
 
-        # Load Notion data
-        try:
-            if status_filter == "All Active":
-                deals = load_notion_deals(None)  # Active deals only
-            elif status_filter == "All":
-                # Load all including Passed/Lost
-                deals = load_notion_deals("All")
-            else:
-                deals = load_notion_deals(status_filter)
-        except Exception as e:
-            st.error(f"Failed to load from Notion: {e}")
-            deals = []
-
-        # Tabs for pipeline
-        tab1, tab2 = st.tabs(["📋 Deals", "📊 Stats"])
-
-        with tab1:
-            render_pipeline_deals(deals, status_filter)
-
-        with tab2:
-            render_pipeline_stats(deals)
-
-        # Footer
-        st.markdown("---")
-        notion_url = f"https://notion.so/{NOTION_DATABASE_ID.replace('-', '')}"
-        st.caption(f"[Open in Notion]({notion_url}) | Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-
-    # =========================================================================
-    # LOCAL SIGNALS VIEW
-    # =========================================================================
-    else:
-        st.markdown("View of discovery signals from the local database.")
-
-        if not has_db:
-            st.error(f"Database not found at `{DB_PATH}`")
-            st.info("Run: `python run_pipeline.py collect --collectors github`")
-            return
-
-        # Get store
-        try:
-            store = get_store()
-        except Exception as e:
-            st.error(f"Failed to connect to database: {e}")
-            return
-
-        # Render signal-specific sidebar filters
-        # Date range
-        days_back = st.sidebar.selectbox(
-            "Time Range",
-            options=[1, 7, 14, 30, 90],
-            index=1,
-            format_func=lambda x: f"Last {x} day{'s' if x > 1 else ''}"
-        )
-
-        # Source filter
-        sources = ["All", "github", "sec_edgar", "companies_house", "domain_whois",
-                   "job_postings", "product_hunt", "hacker_news", "arxiv", "uspto"]
-        source_filter = st.sidebar.selectbox("Source", sources)
-
-        # Confidence filter
-        min_confidence = st.sidebar.slider(
-            "Min Confidence",
-            min_value=0.0,
-            max_value=1.0,
-            value=0.0,
-            step=0.1
-        )
-
-        # Status filter
-        status_filter = st.sidebar.selectbox(
-            "Processing Status",
-            ["all", "pending", "pushed", "rejected"]
-        )
-
-        filters = {
-            "days_back": days_back,
-            "source_filter": source_filter if source_filter != "All" else None,
-            "min_confidence": min_confidence,
-            "status_filter": status_filter,
-        }
+        # Filters in sidebar
+        with st.sidebar:
+            st.markdown('<div class="section-header">Filters</div>', unsafe_allow_html=True)
+            status_filter = st.selectbox(
+                "Status",
+                ["All Active", "All"] + NOTION_STATUSES,
+                label_visibility="collapsed"
+            )
 
         # Load data
-        try:
-            signals = load_signals(store, days_back=filters["days_back"])
-            health_report = load_health_report(store)
-            stats = load_stats(store)
-        except Exception as e:
-            st.error(f"Failed to load data: {e}")
+        deals = load_notion_deals(status_filter)
+
+        if not deals:
+            if not NOTION_API_KEY:
+                st.warning("Configure NOTION_API_KEY to view pipeline")
+            else:
+                st.info("No deals found")
             return
 
-        # Metrics row
-        render_metrics(signals, health_report)
-
-        st.markdown("---")
-
-        # Tabs for different views
-        tab1, tab2, tab3 = st.tabs(["📋 Signals", "🏥 Health", "📊 Stats"])
+        # Tabs
+        tab1, tab2 = st.tabs(["DEALS", "ANALYTICS"])
 
         with tab1:
-            render_signal_table(signals, filters)
+            # Pipeline sections
+            for status in ["Source", "Initial Meeting / Call", "Dilligence", "Tracking", "Committed", "Funded"]:
+                render_pipeline_section(deals, status)
 
         with tab2:
-            render_health_details(health_report)
+            render_stats_overview(deals)
 
-        with tab3:
-            render_stats(stats)
+    # ==========================================================================
+    # SIGNALS VIEW
+    # ==========================================================================
+    else:
+        render_hero("Discovery Signals", "Automated signal detection from 10+ sources")
 
-        # Footer
+        if not has_db:
+            st.error(f"Database not found: {DB_PATH}")
+            return
+
+        store = get_store()
+
+        # Filters
+        with st.sidebar:
+            st.markdown('<div class="section-header">Filters</div>', unsafe_allow_html=True)
+            days = st.selectbox("Time Range", [7, 14, 30, 90], format_func=lambda x: f"Last {x} days")
+            source = st.selectbox("Source", ["All", "github", "sec_edgar", "companies_house",
+                                             "product_hunt", "hacker_news", "arxiv", "uspto"])
+            min_conf = st.slider("Min Confidence", 0.0, 1.0, 0.0, 0.1)
+
+        signals = load_signals(store, days_back=days)
+        health = load_health_report(store)
+
+        # Top metrics
+        col1, col2, col3, col4 = st.columns(4)
+        with col1:
+            st.metric("Total Signals", len(signals))
+        with col2:
+            st.metric("High Confidence", sum(1 for s in signals if s["confidence"] >= 0.7))
+        with col3:
+            st.metric("Pending", sum(1 for s in signals if s["processing_status"] == "pending"))
+        with col4:
+            status_icon = {"HEALTHY": "●", "DEGRADED": "◐", "CRITICAL": "○"}.get(
+                health.overall_status if health else "UNKNOWN", "○")
+            st.metric("Health", f"{status_icon} {health.overall_status if health else 'N/A'}")
+
         st.markdown("---")
-        st.caption(f"Database: `{DB_PATH}` | Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+
+        filters = {
+            "source_filter": source if source != "All" else None,
+            "min_confidence": min_conf,
+        }
+        render_signals_view(signals, filters)
+
+    # Footer
+    st.markdown("""
+    <div style="text-align: center; padding: 2rem 0; color: #525252; font-size: 0.75rem;">
+        Updated {timestamp}
+    </div>
+    """.format(timestamp=datetime.now().strftime("%Y-%m-%d %H:%M")), unsafe_allow_html=True)
 
 
 if __name__ == "__main__":
