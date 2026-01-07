@@ -332,10 +332,10 @@ python storage/migrations.py info signals.db
 
 ## Testing
 
-Run the test suite:
+Run the manual test suite:
 
 ```bash
-python storage/test_signal_store.py
+python storage/manual_test_signal_store.py
 ```
 
 Tests cover:

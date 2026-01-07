@@ -9,7 +9,7 @@ Get started with the Discovery Engine signal storage layer in 5 minutes.
 pip install aiosqlite
 
 # Test the installation
-python storage/test_signal_store.py
+python storage/manual_test_signal_store.py
 ```
 
 ## Basic Example
@@ -207,7 +207,7 @@ This will:
 
 - Read the [full README](README.md) for detailed API documentation
 - Check [integration_example.py](integration_example.py) for complete workflow
-- Review [test_signal_store.py](test_signal_store.py) for usage examples
+- Review [manual_test_signal_store.py](manual_test_signal_store.py) for usage examples
 
 ## Database Location
 
