@@ -37,8 +37,10 @@ from urllib.parse import urlencode
 import httpx
 
 from collectors.base import BaseCollector
+from collectors.retry_strategy import with_retry, RetryConfig
 from discovery_engine.mcp_server import CollectorResult, CollectorStatus
 from storage.signal_store import SignalStore
+from utils.rate_limiter import get_rate_limiter
 from utils.canonical_keys import build_canonical_key_candidates, canonical_key_from_external_refs
 from verification.verification_gate_v2 import Signal, VerificationStatus
 
@@ -352,11 +354,19 @@ class SECEdgarCollector(BaseCollector):
         logger.info(f"Fetching Form D RSS feed: {url}")
 
         try:
-            response = await self._client.get(url)
-            response.raise_for_status()
+            # Use rate limiter before making request
+            await self.rate_limiter.acquire()
+
+            # Wrap HTTP request with retry logic
+            async def fetch_atom_feed():
+                response = await self._client.get(url)
+                response.raise_for_status()
+                return response.text
+
+            response_text = await with_retry(fetch_atom_feed, self.retry_config)
 
             # Parse Atom XML feed
-            filings = self._parse_form_d_atom_feed(response.text)
+            filings = self._parse_form_d_atom_feed(response_text)
 
             # Filter by date
             cutoff_date = datetime.now(timezone.utc) - timedelta(days=self.lookback_days)
@@ -507,17 +517,26 @@ class SECEdgarCollector(BaseCollector):
 
             logger.debug(f"Fetching Form D XML: {doc_url}")
 
-            response = await self._client.get(doc_url)
+            # Use rate limiter before making request
+            await self.rate_limiter.acquire()
 
-            # If primary_doc.xml doesn't exist, try searching for the D filing
-            if response.status_code == 404:
-                logger.debug(f"primary_doc.xml not found for {filing.accession_number}, skipping enrichment")
-                return
+            # Wrap HTTP request with retry logic
+            async def fetch_form_d_xml():
+                response = await self._client.get(doc_url)
 
-            response.raise_for_status()
+                # If primary_doc.xml doesn't exist, return None (don't retry 404s)
+                if response.status_code == 404:
+                    logger.debug(f"primary_doc.xml not found for {filing.accession_number}, skipping enrichment")
+                    return None
 
-            # Parse Form D XML and extract detailed fields
-            self._parse_form_d_xml(filing, response.text)
+                response.raise_for_status()
+                return response.text
+
+            response_text = await with_retry(fetch_form_d_xml, self.retry_config)
+
+            # Parse Form D XML if we got content (not 404)
+            if response_text:
+                self._parse_form_d_xml(filing, response_text)
 
         except Exception as e:
             logger.warning(f"Could not enrich filing {filing.accession_number}: {e}")
