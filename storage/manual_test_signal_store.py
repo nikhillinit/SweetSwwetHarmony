@@ -1,8 +1,10 @@
 """
-Tests for SignalStore
+Manual tests for SignalStore
+
+This is a standalone test script (not run by pytest).
 
 Run with:
-    python storage/test_signal_store.py
+    python storage/manual_test_signal_store.py
 """
 
 import asyncio

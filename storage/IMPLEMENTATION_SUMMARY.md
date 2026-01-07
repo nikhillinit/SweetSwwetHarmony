@@ -30,7 +30,7 @@ Production-ready SQLite storage layer for the Discovery Engine with async suppor
    - Schema validation
    - Database statistics
 
-4. **Testing (`test_signal_store.py`)**
+4. **Testing (`manual_test_signal_store.py`)**
    - 12 comprehensive tests
    - 100% core functionality coverage
    - All tests passing
@@ -80,7 +80,7 @@ storage/
 ├── __init__.py                  # Package exports
 ├── signal_store.py              # Core storage implementation
 ├── migrations.py                # Migration and backup tools
-├── test_signal_store.py         # Comprehensive test suite
+├── manual_test_signal_store.py  # Manual test suite (standalone)
 ├── integration_example.py       # Full workflow example
 ├── README.md                    # API documentation
 ├── QUICKSTART.md                # Quick start guide
@@ -334,7 +334,7 @@ Already in project:
 - `storage/__init__.py`
 - `storage/signal_store.py`
 - `storage/migrations.py`
-- `storage/test_signal_store.py`
+- `storage/manual_test_signal_store.py`
 - `storage/integration_example.py`
 - `storage/README.md`
 - `storage/QUICKSTART.md`

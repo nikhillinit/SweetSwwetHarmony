@@ -159,7 +159,7 @@ async def run_verification():
         print("=" * 70)
         print("\nThe signal storage layer is properly installed!")
         print("\nNext steps:")
-        print("  - Run tests: python storage/test_signal_store.py")
+        print("  - Run tests: python storage/manual_test_signal_store.py")
         print("  - View example: python storage/integration_example.py")
         print("  - Read docs: storage/README.md")
         return 0

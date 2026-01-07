@@ -108,8 +108,8 @@ python run_pipeline.py stats
 # Run canonical key tests
 python utils/canonical_keys.py
 
-# Test signal storage
-python storage/test_signal_store.py
+# Test signal storage (manual tests)
+python storage/manual_test_signal_store.py
 ```
 
 ## Development Practices (Superpowers-Inspired)
