@@ -4,11 +4,19 @@ Automated deal sourcing system for Press On Ventures (early-stage VC).
 
 ## Quick Context
 
-**Fund Focus:** Healthtech, Cleantech, AI Infrastructure | Pre-Seed to Seed+ | $500K-$3M checks | US/UK
+**Fund Focus:** Consumer | Pre-Seed to Series A | US/UK
+
+**Thesis Categories:**
+- **Consumer CPG**: Food, beverage, snacks, beauty, personal care, household products
+- **Consumer Health Tech**: Fitness apps, wellness, mental health, supplements, wearables
+- **Travel & Hospitality**: Travel booking, hospitality tech, restaurants, experiences
+- **Consumer Marketplaces**: Consumer-facing two-sided markets
+
+**Exclusions:** B2B/Enterprise, developer tools, crypto/Web3, services/agencies, Series B+, hardware-only
 
 **What This Does:**
-1. Collects signals (GitHub spikes, incorporations, domain registrations, SEC filings, job postings, ArXiv papers, patents, Product Hunt launches)
-2. Ranks by thesis fit with multi-source verification and keyword matching
+1. Collects signals (GitHub, incorporations, domains, SEC filings, job postings, Product Hunt, Hacker News, ArXiv, patents)
+2. Filters by thesis fit using two-stage classification (keyword pre-filter + Gemini LLM)
 3. Pushes qualified prospects to Notion CRM
 4. Maintains suppression to avoid duplicates
 5. Monitors signal health and detects anomalies
@@ -43,8 +51,9 @@ Automated deal sourcing system for Press On Ventures (early-stage VC).
 | `connectors/notion_connector_v2.py` | Notion integration (use v2, not v1) |
 | `verification/verification_gate_v2.py` | Signal verification (use v2) |
 | `utils/canonical_keys.py` | Multi-candidate deduplication |
-| `utils/thesis_matcher.py` | Keyword-based thesis fit scoring |
+| `utils/thesis_matcher.py` | Keyword-based thesis fit scoring (stage 1) |
 | `utils/signal_health.py` | Signal quality and anomaly detection |
+| `consumer/thesis_filter/llm_classifier.py` | Gemini LLM thesis classification (stage 2) |
 
 ## Collectors
 
@@ -57,6 +66,7 @@ Automated deal sourcing system for Press On Ventures (early-stage VC).
 | `domain_whois.py` | Domain registrations | 0.4-0.6 | None |
 | `job_postings.py` | Greenhouse/Lever ATS | 0.7-0.95 | None |
 | `product_hunt.py` | Product Hunt launches | 0.5-0.7 | PH_API_KEY |
+| `hacker_news.py` | HN mentions/Show HN | 0.5-0.7 | None |
 | `arxiv.py` | ArXiv research papers | 0.3-0.5 | None |
 | `uspto.py` | USPTO patent filings | 0.4-0.6 | None |
 
@@ -194,5 +204,6 @@ DATABASE_URL=postgresql://... (read-only)
 GITHUB_TOKEN=ghp_xxx (public repos only)
 COMPANIES_HOUSE_API_KEY=xxx
 PH_API_KEY=xxx (Product Hunt API key)
+GOOGLE_API_KEY=xxx (Gemini - free at aistudio.google.com/apikey)
 DISCOVERY_DB_PATH=signals.db (default)
 ```

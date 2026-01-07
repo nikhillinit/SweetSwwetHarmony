@@ -107,6 +107,7 @@ class RateLimiterPool:
         "product_hunt": {"rate": 100, "period": 3600},      # 100/hour (conservative)
         "arxiv": {"rate": None, "period": 1},               # Unlimited
         "uspto": {"rate": None, "period": 1},               # Unlimited
+        "hacker_news": {"rate": 100, "period": 60},         # 100/min (conservative)
     }
 
     def __init__(self):
