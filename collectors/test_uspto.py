@@ -79,7 +79,8 @@ class TestUSPTOAPIIntegration:
         })
 
         async with collector:
-            with patch.object(collector.client, "post", return_value=mock_response):
+            with patch.object(collector, "_fetch_with_retry", new_callable=AsyncMock) as mock_retry:
+                mock_retry.return_value = mock_response.json()
                 patents = await collector._fetch_patents()
 
                 assert len(patents) == 1
@@ -90,14 +91,15 @@ class TestUSPTOAPIIntegration:
     async def test_fetch_patents_api_error(self):
         """Should handle API errors gracefully."""
         from collectors.uspto import USPTOCollector
+        import httpx
 
         collector = USPTOCollector(keywords=["ai"])
 
-        mock_response = Mock()
-        mock_response.status_code = 500
-
         async with collector:
-            with patch.object(collector.client, "post", return_value=mock_response):
+            with patch.object(collector, "_fetch_with_retry", new_callable=AsyncMock) as mock_retry:
+                mock_retry.side_effect = httpx.HTTPStatusError(
+                    "Server Error", request=Mock(), response=Mock(status_code=500)
+                )
                 patents = await collector._fetch_patents()
 
                 # Should return empty list on error
@@ -112,7 +114,8 @@ class TestUSPTOAPIIntegration:
         collector = USPTOCollector(keywords=["ai"])
 
         async with collector:
-            with patch.object(collector.client, "post", side_effect=httpx.NetworkError("Connection failed")):
+            with patch.object(collector, "_fetch_with_retry", new_callable=AsyncMock) as mock_retry:
+                mock_retry.side_effect = httpx.NetworkError("Connection failed")
                 patents = await collector._fetch_patents()
 
                 assert patents == []
@@ -265,7 +268,8 @@ async def test_full_collection_flow():
     })
 
     async with collector:
-        with patch.object(collector.client, "post", return_value=mock_response):
+        with patch.object(collector, "_fetch_with_retry", new_callable=AsyncMock) as mock_retry:
+            mock_retry.return_value = mock_response.json()
             signals = await collector._collect_signals()
 
             assert len(signals) == 1
