@@ -112,6 +112,14 @@ async def cmd_full(args):
     if args.batch_size:
         config.batch_size = args.batch_size
 
+    # Feature flags
+    if args.use_gating:
+        config.use_gating = True
+    if args.use_entities:
+        config.use_entities = True
+    if args.use_asset_store:
+        config.use_asset_store = True
+
     pipeline = DiscoveryPipeline(config)
 
     try:
@@ -125,6 +133,9 @@ async def cmd_full(args):
         print(f"\nCollectors: {', '.join(collectors) if collectors else 'None specified'}")
         print(f"Dry run: {args.dry_run}")
         print(f"Database: {config.db_path}")
+        print(f"Use gating: {config.use_gating}")
+        print(f"Use entities: {config.use_entities}")
+        print(f"Use asset store: {config.use_asset_store}")
         print()
 
         # Run pipeline
@@ -501,6 +512,21 @@ Environment variables:
         "--output",
         type=str,
         help="Save results to JSON file",
+    )
+    full_parser.add_argument(
+        "--use-gating",
+        action="store_true",
+        help="Enable two-stage gating (TriggerGate + LLMClassifierV2)",
+    )
+    full_parser.add_argument(
+        "--use-entities",
+        action="store_true",
+        help="Enable entity resolution (asset → lead mapping)",
+    )
+    full_parser.add_argument(
+        "--use-asset-store",
+        action="store_true",
+        help="Save raw snapshots to SourceAssetStore",
     )
 
     # Collect command
