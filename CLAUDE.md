@@ -102,7 +102,62 @@ python utils/canonical_keys.py
 python storage/test_signal_store.py
 ```
 
-## Current Sprint: Storage & Collectors ✅ COMPLETE
+## Development Practices (Superpowers-Inspired)
+
+### TDD Enforcement (The Iron Law)
+Write failing tests first, then minimal code to pass them.
+
+**RED-GREEN-REFACTOR Cycle:**
+1. Write failing test → 2. Verify RED → 3. Implement minimal code → 4. Verify GREEN → 5. Commit
+
+**Red Flags Requiring Restart:**
+- Code written before failing tests
+- Tests passing immediately upon writing
+- Tests marked for "later" addition
+
+### Git Worktrees
+- Worktree directory: `.worktrees/` (in .gitignore)
+- Create isolated workspace: `git worktree add .worktrees/<feature> -b <branch>`
+- Run baseline tests before claiming readiness
+
+### Code Review Checkpoints
+| Severity | Action |
+|----------|--------|
+| Critical | Fix immediately before progression |
+| Important | Fix before proceeding |
+| Minor | Document for later |
+
+### Planning
+- Plans stored in `docs/plans/YYYY-MM-DD-<feature>.md`
+- Tasks should be 2-5 minutes each
+- Explicit git commits after each task completion
+- Follow DRY, YAGNI, TDD principles
+
+---
+
+## Current Sprint: Production Hardening 🚧 IN PROGRESS
+
+**Phase 1: Quick Wins**
+- [ ] Suppression cache warmup on pipeline init
+- [ ] Health check CLI command
+- [ ] Wire up SignalHealthMonitor
+
+**Phase 2: Collector Hardening**
+- [ ] Centralized retry strategy module
+- [ ] Per-API rate limiter
+- [ ] Add retry to 6 collectors
+
+**Phase 3: BaseCollector Refactor**
+- [ ] Migrate job_postings.py
+- [ ] Migrate github_activity.py
+
+**Phase 4: Test Coverage**
+- [ ] Tests for github.py, product_hunt.py, arxiv.py, uspto.py
+- [ ] Consumer module tests
+
+---
+
+## Previous Sprint: Storage & Collectors ✅ COMPLETE
 
 - [x] Fix Notion status strings
 - [x] Implement canonical key system
