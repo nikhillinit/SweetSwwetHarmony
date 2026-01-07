@@ -1,7 +1,7 @@
 """Tests for _process_company with gating integration."""
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from datetime import datetime
+from datetime import datetime, timezone
 from workflows.pipeline import DiscoveryPipeline, PipelineConfig
 from storage.signal_store import StoredSignal
 
@@ -26,7 +26,7 @@ class TestProcessCompanyWithGating:
                 "name": "Test Company",
             }
 
-        now = datetime.utcnow()  # Use naive datetime to match verification gate
+        now = datetime.now(timezone.utc)  # Use timezone-aware datetime
         return StoredSignal(
             id=signal_id,
             canonical_key=canonical_key,

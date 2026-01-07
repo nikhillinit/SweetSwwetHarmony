@@ -4,14 +4,17 @@ Test script for Notion schema validation.
 Tests the new validate_schema() method and ValidationResult class.
 
 Usage:
-    python test_schema_validation.py
+    pytest test_schema_validation.py -v
 """
 
+import pytest
+import pytest_asyncio
 import asyncio
 import os
 from connectors.notion_connector_v2 import NotionConnector, ValidationResult
 
 
+@pytest.mark.asyncio
 async def test_validation():
     """Test schema validation"""
     print("=" * 80)

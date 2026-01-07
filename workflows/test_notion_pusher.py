@@ -6,6 +6,7 @@ Run with: pytest workflows/test_notion_pusher.py -v
 
 import asyncio
 import pytest
+import pytest_asyncio
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 import tempfile
@@ -32,7 +33,7 @@ from verification.verification_gate_v2 import (
 # FIXTURES
 # =============================================================================
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def temp_db():
     """Create temporary database for testing"""
     with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:

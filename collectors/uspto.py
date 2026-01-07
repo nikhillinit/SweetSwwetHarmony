@@ -186,7 +186,7 @@ class USPTOCollector(BaseCollector):
             lookback_days: How far back to search
             max_results: Maximum patents to fetch
         """
-        super().__init__(store=store, collector_name="uspto")
+        super().__init__(store=store, collector_name="uspto", api_name="uspto")
         self.keywords = keywords or [
             "artificial intelligence",
             "machine learning",

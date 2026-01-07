@@ -668,6 +668,13 @@ class SignalStore:
 
     def _row_to_signal(self, row: tuple) -> StoredSignal:
         """Convert database row to StoredSignal object."""
+        # Helper to ensure timezone-aware datetimes
+        def parse_datetime(dt_str: str) -> datetime:
+            dt = datetime.fromisoformat(dt_str)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
+
         return StoredSignal(
             id=row[0],
             signal_type=row[1],
@@ -676,11 +683,11 @@ class SignalStore:
             company_name=row[4],
             confidence=row[5],
             raw_data=json.loads(row[6]),
-            detected_at=datetime.fromisoformat(row[7]),
-            created_at=datetime.fromisoformat(row[8]),
+            detected_at=parse_datetime(row[7]),
+            created_at=parse_datetime(row[8]),
             processing_status=row[9] if len(row) > 9 else None,
             notion_page_id=row[10] if len(row) > 10 else None,
-            processed_at=datetime.fromisoformat(row[11]) if len(row) > 11 and row[11] else None,
+            processed_at=parse_datetime(row[11]) if len(row) > 11 and row[11] else None,
             error_message=row[12] if len(row) > 12 else None,
         )
 

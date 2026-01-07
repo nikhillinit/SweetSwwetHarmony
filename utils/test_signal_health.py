@@ -27,6 +27,7 @@ from utils.signal_health import (
     CRITICAL_VOLUME_THRESHOLD,
     STALE_SIGNAL_DAYS,
     SUSPICIOUS_CONFIDENCE_VALUES,
+    detect_anomalies,
 )
 
 
@@ -342,6 +343,105 @@ class TestSignalHealthMonitor:
             assert report.source_health["sec_edgar"].avg_confidence == 0.3
 
     @pytest.mark.asyncio
+    async def test_healthy_status_with_recent_signals(self):
+        """Should return HEALTHY with normal recent signals."""
+        now = datetime.now(timezone.utc)
+
+        # Create a normal number of recent signals
+        signals = [
+            make_signal("github", 0.7, signal_id=1, detected_at=now, created_at=now),
+            make_signal("github", 0.8, signal_id=2, detected_at=now, created_at=now - timedelta(hours=5)),
+            make_signal("sec_edgar", 0.6, signal_id=3, detected_at=now, created_at=now - timedelta(hours=12)),
+        ]
+
+        mock_store = MagicMock()
+        monitor = SignalHealthMonitor(mock_store)
+
+        with patch.object(monitor, "_get_signals", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = signals
+            report = await monitor.generate_report(lookback_days=30)
+
+            # Should be healthy with normal signals
+            assert report.overall_status == "HEALTHY"
+            assert report.total_signals == 3
+            assert report.signals_last_24h == 3
+            assert len(report.anomalies) == 0
+
+    @pytest.mark.asyncio
+    async def test_warning_status_with_stale_signals(self):
+        """Should return WARNING when all signals are old (no recent activity)."""
+        now = datetime.now(timezone.utc)
+        old_date = now - timedelta(days=10)
+
+        # Create signals that are all old (10 days)
+        signals = [
+            make_signal("github", 0.7, signal_id=1, detected_at=old_date, created_at=old_date),
+            make_signal("github", 0.8, signal_id=2, detected_at=old_date, created_at=old_date),
+            make_signal("github", 0.6, signal_id=3, detected_at=old_date, created_at=old_date),
+        ]
+
+        mock_store = MagicMock()
+        monitor = SignalHealthMonitor(mock_store)
+
+        with patch.object(monitor, "_get_signals", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = signals
+            report = await monitor.generate_report(lookback_days=30)
+
+            # Should have warning due to no recent signals
+            github_health = report.source_health["github"]
+            assert github_health.status == "WARNING"
+            assert any("No new signals" in w for w in github_health.warnings)
+            assert github_health.newest_signal_days >= 10
+            assert report.overall_status == "DEGRADED"
+
+    @pytest.mark.asyncio
+    async def test_critical_status_with_no_signals(self):
+        """Should handle empty signals gracefully."""
+        mock_store = MagicMock()
+        monitor = SignalHealthMonitor(mock_store)
+
+        with patch.object(monitor, "_get_signals", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = []
+            report = await monitor.generate_report(lookback_days=30)
+
+            # With no signals, should be HEALTHY (no issues detected)
+            assert report.overall_status == "HEALTHY"
+            assert report.total_signals == 0
+            assert report.total_sources == 0
+
+    @pytest.mark.asyncio
+    async def test_anomaly_detection_volume_drop(self):
+        """Should detect volume drops (no recent signals from active source)."""
+        now = datetime.now(timezone.utc)
+
+        # All signals are 15 days old - indicates source stopped producing
+        signals = [
+            make_signal(
+                "github",
+                0.7,
+                signal_id=i,
+                detected_at=now - timedelta(days=15),
+                created_at=now - timedelta(days=15),
+            )
+            for i in range(10)
+        ]
+
+        mock_store = MagicMock()
+        monitor = SignalHealthMonitor(mock_store)
+
+        with patch.object(monitor, "_get_signals", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = signals
+            report = await monitor.generate_report(lookback_days=30)
+
+            # Should detect that source hasn't produced new signals
+            github_health = report.source_health["github"]
+            assert github_health.status == "WARNING"
+            assert any("No new signals" in w for w in github_health.warnings)
+            assert github_health.signals_last_24h == 0
+            assert github_health.signals_last_7d == 0
+            assert github_health.newest_signal_days >= 15
+
+    @pytest.mark.asyncio
     async def test_overall_status_degraded_on_warning(self):
         """Overall status should be DEGRADED when warnings exist."""
         now = datetime.now(timezone.utc)
@@ -457,6 +557,92 @@ class TestEdgeCases:
             # Should have duplicate anomaly
             dupe_anomalies = [a for a in report.anomalies if a.anomaly_type == "HIGH_DUPLICATES"]
             assert len(dupe_anomalies) > 0
+
+
+# =============================================================================
+# CONVENIENCE FUNCTION TESTS
+# =============================================================================
+
+class TestDetectAnomalies:
+    """Test the convenience function detect_anomalies."""
+
+    def test_detect_anomalies_high_volume(self):
+        """Should detect high volume from a single source."""
+        now = datetime.now(timezone.utc)
+
+        # Create high volume signals
+        signals = [
+            make_signal("github", 0.7, signal_id=i, detected_at=now, created_at=now)
+            for i in range(HIGH_VOLUME_THRESHOLD + 10)
+        ]
+
+        warnings = detect_anomalies(signals)
+
+        assert len(warnings) > 0
+        assert any("High volume" in w for w in warnings)
+        assert any("github" in w for w in warnings)
+
+    def test_detect_anomalies_duplicates(self):
+        """Should detect high duplicate keys."""
+        now = datetime.now(timezone.utc)
+
+        # Create many signals with same canonical key (6 signals per key, 15 keys = 90 signals)
+        signals = []
+        for i in range(15):
+            for j in range(6):
+                sig = make_signal(
+                    "github",
+                    0.7,
+                    signal_id=i * 10 + j,
+                    canonical_key=f"duplicate:key{i}",
+                    detected_at=now,
+                    created_at=now,
+                )
+                signals.append(sig)
+
+        warnings = detect_anomalies(signals)
+
+        assert len(warnings) > 0
+        assert any("duplication" in w.lower() for w in warnings)
+
+    def test_detect_anomalies_healthy_signals(self):
+        """Should return empty list for healthy signals."""
+        now = datetime.now(timezone.utc)
+
+        signals = [
+            make_signal("github", 0.7, signal_id=1, detected_at=now, created_at=now),
+            make_signal("sec_edgar", 0.8, signal_id=2, detected_at=now, created_at=now),
+            make_signal("product_hunt", 0.6, signal_id=3, detected_at=now, created_at=now),
+        ]
+
+        warnings = detect_anomalies(signals)
+
+        assert warnings == []
+
+    def test_detect_anomalies_empty_signals(self):
+        """Should handle empty signals list."""
+        warnings = detect_anomalies([])
+        assert warnings == []
+
+    def test_detect_anomalies_multiple_sources(self):
+        """Should detect anomalies across multiple sources."""
+        now = datetime.now(timezone.utc)
+
+        # Create high volume from two different sources
+        signals = []
+        for i in range(HIGH_VOLUME_THRESHOLD + 5):
+            signals.append(make_signal("github", 0.7, signal_id=i, detected_at=now, created_at=now))
+        for i in range(HIGH_VOLUME_THRESHOLD + 3):
+            signals.append(make_signal("sec_edgar", 0.8, signal_id=i + 100, detected_at=now, created_at=now))
+
+        warnings = detect_anomalies(signals)
+
+        # Should detect both sources
+        assert len(warnings) >= 2
+        github_warnings = [w for w in warnings if "github" in w]
+        edgar_warnings = [w for w in warnings if "sec_edgar" in w]
+        assert len(github_warnings) > 0
+        assert len(edgar_warnings) > 0
 
 
 if __name__ == "__main__":
