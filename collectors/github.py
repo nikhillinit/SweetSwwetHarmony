@@ -25,8 +25,15 @@ import logging
 import os
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from enum import Enum
 from typing import Any, Dict, List, Optional, Set
 from urllib.parse import urlparse
+
+
+class TopicMode(str, Enum):
+    """Topic mode for GitHub collector filtering."""
+    TECH = "tech"  # AI/ML/Developer tools (default)
+    CONSUMER = "consumer"  # Consumer thesis categories
 
 import httpx
 from tenacity import (
@@ -77,6 +84,26 @@ RELEVANT_TOPICS = {
     # Data/ML
     "data-engineering", "data-science", "deep-learning",
     "neural-networks", "pytorch", "tensorflow",
+}
+
+# Consumer thesis topics (Press On Ventures fund focus)
+CONSUMER_TOPICS = {
+    # Consumer CPG
+    "food-delivery", "meal-kit", "grocery", "food-tech", "foodtech",
+    "beverage", "snacks", "beauty", "skincare", "personal-care",
+    "household", "subscription-box",
+
+    # Consumer Health Tech
+    "fitness-app", "fitness", "wellness", "mental-health", "health-tech",
+    "healthtech", "supplements", "wearables", "nutrition", "meditation",
+
+    # Travel & Hospitality
+    "travel-booking", "travel", "hospitality", "restaurant", "experiences",
+    "travel-tech", "traveltech", "booking", "hotels",
+
+    # Consumer Marketplaces
+    "marketplace", "consumer", "d2c", "dtc", "direct-to-consumer",
+    "ecommerce", "retail-tech", "retailtech",
 }
 
 # Minimum thresholds
@@ -187,6 +214,8 @@ class GitHubCollector(BaseCollector):
         github_token: Optional[str] = None,
         lookback_days: int = 30,
         max_repos: int = 100,
+        topic_mode: TopicMode = TopicMode.TECH,
+        star_change_threshold: float = 0.10,
     ):
         """
         Args:
@@ -194,6 +223,8 @@ class GitHubCollector(BaseCollector):
             github_token: GitHub API token (or set GITHUB_TOKEN env var)
             lookback_days: How far back to look for star spikes
             max_repos: Maximum repos to analyze per run
+            topic_mode: TopicMode.TECH (default) or TopicMode.CONSUMER
+            star_change_threshold: Minimum percentage change in stars to detect (default 10%)
         """
         super().__init__(store=store, collector_name="github")
 
@@ -203,6 +234,8 @@ class GitHubCollector(BaseCollector):
 
         self.lookback_days = lookback_days
         self.max_repos = max_repos
+        self.topic_mode = topic_mode
+        self.star_change_threshold = star_change_threshold
 
         self.base_url = "https://api.github.com"
         self.headers = {
@@ -506,6 +539,23 @@ class GitHubCollector(BaseCollector):
         self._org_cache[login] = owner_data
         return owner_data
 
+    def is_topic_relevant(self, repo: RepoMetrics) -> bool:
+        """
+        Check if repository topics match the current topic mode.
+
+        Args:
+            repo: RepoMetrics to check.
+
+        Returns:
+            True if repo matches current topic_mode topics.
+        """
+        repo_topics = {t.lower() for t in repo.topics}
+
+        if self.topic_mode == TopicMode.CONSUMER:
+            return bool(repo_topics & CONSUMER_TOPICS)
+        else:
+            return bool(repo_topics & RELEVANT_TOPICS)
+
     def _filter_for_spikes(self, repos: List[RepoMetrics]) -> List[RepoMetrics]:
         """
         Filter repositories to only those showing spike signals.
@@ -513,14 +563,14 @@ class GitHubCollector(BaseCollector):
         Criteria:
         - Recent stars > MIN_RECENT_STARS
         - Growth rate > MIN_GROWTH_RATE
-        - Relevant topics
+        - Relevant topics (based on topic_mode)
         """
         spiking = []
 
         for repo in repos:
             if (repo.recent_stars >= MIN_RECENT_STARS and
                 repo.growth_rate >= MIN_GROWTH_RATE and
-                repo.is_relevant):
+                self.is_topic_relevant(repo)):
                 spiking.append(repo)
 
         # Sort by recent stars (strongest signals first)
@@ -675,11 +725,52 @@ class GitHubCollector(BaseCollector):
         Assess how well this signal fits Press On Ventures thesis.
 
         Returns:
-            Thesis category: "AI Infrastructure", "Developer Tools", "Healthtech", etc.
+            Thesis category based on topic_mode:
+            - TECH: "AI Infrastructure", "Developer Tools", "Other"
+            - CONSUMER: "Consumer CPG", "Consumer Health Tech", "Travel & Hospitality",
+                        "Consumer Marketplaces", "Other"
         """
         repo_topics = {t.lower() for t in repo.topics}
         description = (repo.description or "").lower()
 
+        # Consumer thesis categories (when in CONSUMER mode)
+        if self.topic_mode == TopicMode.CONSUMER:
+            # Consumer CPG
+            cpg_keywords = {
+                "food-delivery", "meal-kit", "grocery", "food-tech", "foodtech",
+                "beverage", "snacks", "beauty", "skincare", "personal-care",
+                "household", "subscription-box"
+            }
+            if repo_topics & cpg_keywords or any(k in description for k in ["meal kit", "food delivery", "grocery", "beauty", "skincare"]):
+                return "Consumer CPG"
+
+            # Consumer Health Tech
+            health_keywords = {
+                "fitness-app", "fitness", "wellness", "mental-health", "health-tech",
+                "healthtech", "supplements", "wearables", "nutrition", "meditation"
+            }
+            if repo_topics & health_keywords or any(k in description for k in ["fitness", "wellness", "mental health", "health"]):
+                return "Consumer Health Tech"
+
+            # Travel & Hospitality
+            travel_keywords = {
+                "travel-booking", "travel", "hospitality", "restaurant", "experiences",
+                "travel-tech", "traveltech", "booking", "hotels"
+            }
+            if repo_topics & travel_keywords or any(k in description for k in ["travel", "hospitality", "restaurant", "booking"]):
+                return "Travel & Hospitality"
+
+            # Consumer Marketplaces
+            marketplace_keywords = {
+                "marketplace", "consumer", "d2c", "dtc", "direct-to-consumer",
+                "ecommerce", "retail-tech", "retailtech"
+            }
+            if repo_topics & marketplace_keywords or any(k in description for k in ["marketplace", "d2c", "dtc", "ecommerce"]):
+                return "Consumer Marketplaces"
+
+            return "Other"
+
+        # Tech thesis categories (default TECH mode)
         # AI Infrastructure
         ai_infra_keywords = {"ai", "llm", "ml", "machine-learning", "embeddings", "vector-database"}
         if repo_topics & ai_infra_keywords or any(k in description for k in ["llm", "language model", "embeddings"]):
@@ -692,6 +783,84 @@ class GitHubCollector(BaseCollector):
 
         # Default
         return "Other"
+
+    async def compute_delta(
+        self,
+        current_repos: List[Dict[str, Any]],
+        asset_store: "SourceAssetStore",
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """
+        Compute delta between current repos and previous snapshot.
+
+        Enables idempotent daily runs by detecting:
+        - New repos (not in previous snapshot)
+        - Changed repos (significant star increase)
+        - Unchanged repos (minor or no changes)
+
+        Args:
+            current_repos: List of current repo data dicts from API.
+            asset_store: SourceAssetStore instance for snapshot storage.
+
+        Returns:
+            Dict with keys:
+            - "new": List of new repo dicts
+            - "changed": List of repo dicts with significant changes
+            - "unchanged": List of repo dicts with minor/no changes
+        """
+        from storage.source_asset_store import SourceAsset
+
+        delta: Dict[str, List[Dict[str, Any]]] = {
+            "new": [],
+            "changed": [],
+            "unchanged": [],
+        }
+
+        for repo in current_repos:
+            full_name = repo.get("full_name", "")
+            current_stars = repo.get("stargazers_count", 0)
+
+            # Get previous snapshot
+            previous = await asset_store.get_latest_snapshot(
+                source_type="github_repo",
+                external_id=full_name,
+            )
+
+            change_detected = False
+            if previous is None:
+                # New repo - not in previous snapshot
+                delta["new"].append(repo)
+                change_detected = True
+            else:
+                # Existing repo - check for significant change
+                previous_stars = previous.get("stargazers_count", 0)
+
+                if previous_stars > 0:
+                    change_rate = (current_stars - previous_stars) / previous_stars
+                else:
+                    change_rate = 1.0 if current_stars > 0 else 0.0
+
+                if change_rate >= self.star_change_threshold:
+                    delta["changed"].append(repo)
+                    change_detected = True
+                else:
+                    delta["unchanged"].append(repo)
+
+            # Save current snapshot
+            await asset_store.save_asset(SourceAsset(
+                source_type="github_repo",
+                external_id=full_name,
+                raw_payload=repo,
+                fetched_at=datetime.now(timezone.utc),
+                change_detected=change_detected,
+            ))
+
+        logger.info(
+            f"Delta computed: {len(delta['new'])} new, "
+            f"{len(delta['changed'])} changed, "
+            f"{len(delta['unchanged'])} unchanged"
+        )
+
+        return delta
 
 
 # =============================================================================
