@@ -203,15 +203,9 @@ class ArxivCollector(BaseCollector):
             "startup", "commercialization", "industry",
             "application", "deployment", "production",
         ]
-        self.client: Optional[httpx.AsyncClient] = None
 
-    async def __aenter__(self):
-        self.client = httpx.AsyncClient(timeout=60.0)
-        return self
-
-    async def __aexit__(self, *args):
-        if self.client:
-            await self.client.aclose()
+    # BaseCollector provides __aenter__ and __aexit__
+    # We use _fetch_with_retry for HTTP calls with retry + rate limiting
 
     async def _collect_signals(self) -> List[Signal]:
         """Collect ArXiv papers as signals."""
@@ -240,14 +234,19 @@ class ArxivCollector(BaseCollector):
         }
 
         try:
-            response = await self.client.get(ARXIV_API, params=params)
+            # Use _fetch_with_retry for automatic retry and rate limiting
+            async def fetch_arxiv():
+                async with httpx.AsyncClient(timeout=60.0) as client:
+                    response = await client.get(ARXIV_API, params=params)
+                    response.raise_for_status()
+                    return response.content
 
-            if response.status_code != 200:
-                logger.error(f"ArXiv API error: {response.status_code}")
-                return papers
+            # Acquire rate limit before request
+            await self.rate_limiter.acquire()
+            xml_content = await self._fetch_with_retry(fetch_arxiv)
 
             # Parse XML response
-            root = ElementTree.fromstring(response.content)
+            root = ElementTree.fromstring(xml_content)
 
             # Define namespaces
             ns = {
