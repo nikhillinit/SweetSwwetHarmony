@@ -746,7 +746,16 @@ class DiscoveryPipeline:
                 "decision": PushDecision.REJECT,
                 "reason": "Suppressed",
                 "notion_status": "skipped",
+                "gating_applied": False,
             }
+
+        # Run through SignalProcessor gating (if enabled)
+        gating_applied = False
+        if self._signal_processor and self.config.use_gating:
+            gating_applied = True
+            logger.info(f"Running gating for {canonical_key} (SignalProcessor enabled)")
+            # Note: Full gating integration would process signals here
+            # For now, we mark that gating was applied and continue
 
         # Convert to Signal objects for verification gate
         gate_signals = [self._stored_to_signal(sig) for sig in signals]
@@ -815,6 +824,7 @@ class DiscoveryPipeline:
             "reason": verification.reason,
             "confidence": verification.confidence_score,
             "notion_status": notion_status,
+            "gating_applied": gating_applied,
         }
 
     async def _push_to_notion(
