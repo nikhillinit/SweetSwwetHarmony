@@ -6,7 +6,7 @@ Tests both unit functionality and integration with RDAP servers.
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -25,8 +25,7 @@ from collectors.domain_whois import (
 def test_domain_registration_age():
     """Test age calculation"""
     # Create a registration from 45 days ago
-    forty_five_days_ago = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-    forty_five_days_ago = forty_five_days_ago.replace(day=forty_five_days_ago.day - 45)
+    forty_five_days_ago = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=45)
 
     reg = DomainRegistration(
         domain="test.ai",
@@ -41,8 +40,7 @@ def test_domain_registration_age():
 def test_recently_registered():
     """Test recently registered detection"""
     # Fresh registration (15 days old)
-    recent = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-    recent = recent.replace(day=recent.day - 15)
+    recent = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=15)
 
     reg_recent = DomainRegistration(
         domain="fresh.ai",
@@ -52,8 +50,7 @@ def test_recently_registered():
     assert reg_recent.is_recently_registered
 
     # Old registration (60 days old)
-    old = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
-    old = old.replace(day=old.day - 60)
+    old = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=60)
 
     reg_old = DomainRegistration(
         domain="old.com",
@@ -122,7 +119,7 @@ def test_active_status_detection():
 def test_signal_score_calculation():
     """Test signal scoring"""
     # Very fresh tech domain with premium registrar
-    recent = datetime.now(timezone.utc).replace(day=datetime.now(timezone.utc).day - 5)
+    recent = datetime.now(timezone.utc) - timedelta(days=5)
 
     high_score_reg = DomainRegistration(
         domain="startup.ai",
@@ -135,7 +132,7 @@ def test_signal_score_calculation():
     assert score >= 0.8, f"Expected high score, got {score}"
 
     # Old .com domain with unknown registrar
-    old = datetime.now(timezone.utc).replace(day=datetime.now(timezone.utc).day - 365)
+    old = datetime.now(timezone.utc) - timedelta(days=365)
 
     low_score_reg = DomainRegistration(
         domain="oldsite.com",
@@ -158,7 +155,7 @@ def test_signal_score_calculation():
 
 def test_signal_conversion():
     """Test conversion to Signal object"""
-    recent = datetime.now(timezone.utc).replace(day=datetime.now(timezone.utc).day - 10)
+    recent = datetime.now(timezone.utc) - timedelta(days=10)
 
     reg = DomainRegistration(
         domain="test.ai",

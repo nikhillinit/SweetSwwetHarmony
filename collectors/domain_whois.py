@@ -42,12 +42,6 @@ from typing import Any, Dict, List, Optional, Set
 from urllib.parse import urlparse
 
 import httpx
-from tenacity import (
-    retry,
-    stop_after_attempt,
-    wait_exponential,
-    retry_if_exception_type,
-)
 
 # Add parent directory to path for imports
 import sys
@@ -433,11 +427,6 @@ class DomainWhoisCollector(BaseCollector):
 
         return registrations
 
-    @retry(
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=1, min=2, max=10),
-        retry=retry_if_exception_type((httpx.HTTPError, httpx.TimeoutException)),
-    )
     async def _fetch_domain_rdap(self, domain: str) -> Optional[DomainRegistration]:
         """
         Fetch RDAP data for a single domain.
