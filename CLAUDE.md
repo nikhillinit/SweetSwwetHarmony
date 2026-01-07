@@ -69,6 +69,8 @@ Automated deal sourcing system for Press On Ventures (early-stage VC).
 | `hacker_news.py` | HN mentions/Show HN | 0.5-0.7 | None |
 | `arxiv.py` | ArXiv research papers | 0.3-0.5 | None |
 | `uspto.py` | USPTO patent filings | 0.4-0.6 | None |
+| `linkedin.py` | LinkedIn company/jobs | 0.5-0.8 | PROXYCURL_API_KEY |
+| `crunchbase.py` | Crunchbase funding data | 0.6-0.9 | CRUNCHBASE_API_KEY |
 
 ## Architecture Rules
 
@@ -104,6 +106,10 @@ python run_pipeline.py sync
 
 # View pipeline stats
 python run_pipeline.py stats
+
+# Health check (DB, APIs, anomaly detection)
+python run_pipeline.py health
+python run_pipeline.py health --json  # Machine-readable output
 
 # Run canonical key tests
 python utils/canonical_keys.py
@@ -145,25 +151,47 @@ Write failing tests first, then minimal code to pass them.
 
 ---
 
-## Current Sprint: Production Hardening 🚧 IN PROGRESS
+## Previous Sprint: Production Hardening ✅ COMPLETE
 
-**Phase 1: Quick Wins**
+**Phase 1: Quick Wins** ✅
 - [x] Suppression cache warmup on pipeline init
-- [ ] Health check CLI command
-- [ ] Wire up SignalHealthMonitor
+- [x] Health check CLI command (comprehensive: DB, APIs, anomaly detection)
+- [x] Wire up SignalHealthMonitor (integrated in health command)
 
-**Phase 2: Collector Hardening**
+**Phase 2: Collector Hardening** ✅
 - [x] Centralized retry strategy module (18 tests)
 - [x] Per-API rate limiter (16 tests)
-- [ ] Add retry to 6 collectors
+- [x] Add retry to all 10 collectors
 
-**Phase 3: BaseCollector Refactor**
-- [ ] Migrate job_postings.py
-- [ ] Migrate github_activity.py
+**Phase 3: BaseCollector Refactor** ✅
+- [x] Migrate job_postings.py
+- [x] Migrate github_activity.py
 
-**Phase 4: Test Coverage**
-- [ ] Tests for github.py, product_hunt.py, arxiv.py, uspto.py
-- [ ] Consumer module tests
+**Phase 4: Test Coverage** ✅ (445 tests passing)
+- [x] Tests for github.py, product_hunt.py, arxiv.py, uspto.py
+- [x] Consumer module tests (6 test files, 80+ tests)
+
+---
+
+## Current Sprint: Operational Excellence 🚧 IN PROGRESS
+
+**Phase 1: Automated Monitoring** ✅
+- [x] Auto-trigger SignalHealthMonitor after pipeline runs (pipeline.py:645)
+- [x] Wire Slack alerts to health anomalies (pipeline.py:1049-1065)
+- [ ] Add pipeline run metrics/telemetry
+
+**Phase 2: Code Cleanup** ✅
+- [x] Remove deprecated v1 files (notion_connector.py, verification_gate.py)
+- [x] Complete process_pending_with_gating() in SignalProcessor (4 tests)
+
+**Phase 3: Feature Enablement** (requires architecture planning)
+- [ ] Wire EntityResolver into processing flow (initialized but not called)
+- [ ] Wire SourceAssetStore into collection flow (initialized but not called)
+- Note: Components exist but integration points need design work
+
+**Phase 4: New Collectors** ✅
+- [x] Add LinkedIn collector (22 tests, uses Proxycurl API)
+- [x] Add Crunchbase collector (26 tests, uses Crunchbase API)
 
 ---
 
@@ -189,8 +217,6 @@ Write failing tests first, then minimal code to pass them.
 
 ## Don't Do
 
-- Don't use `notion_connector.py` (v1) - has wrong status strings
-- Don't use `verification_gate.py` (v1) - routes to non-existent statuses
 - Don't give Claude write DB credentials - read-only only
 - Don't add Puppeteer/browser MCP - security risk
 - Don't skip schema preflight - catches drift early

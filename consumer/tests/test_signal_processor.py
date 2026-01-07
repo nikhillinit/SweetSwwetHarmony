@@ -203,3 +203,95 @@ class TestSignalProcessor:
         assert stats.triggered == 1
         assert stats.llm_calls == 1
         assert stats.not_triggered == 1
+
+    @pytest.mark.asyncio
+    async def test_process_pending_with_gating_fetches_from_store(self):
+        """process_pending_with_gating should fetch signals from store."""
+        config = ProcessorConfig()
+        processor = SignalProcessor(config)
+
+        # Create mock store
+        mock_store = AsyncMock()
+        mock_store.get_pending_signals = AsyncMock(return_value=[])
+
+        stats = await processor.process_pending_with_gating(mock_store)
+
+        mock_store.get_pending_signals.assert_called_once_with(
+            limit=None, signal_type=None
+        )
+        assert stats.total == 0
+
+    @pytest.mark.asyncio
+    async def test_process_pending_with_gating_passes_filters(self):
+        """process_pending_with_gating should pass limit and signal_type to store."""
+        config = ProcessorConfig()
+        processor = SignalProcessor(config)
+
+        mock_store = AsyncMock()
+        mock_store.get_pending_signals = AsyncMock(return_value=[])
+
+        await processor.process_pending_with_gating(
+            mock_store, limit=50, signal_type="github_spike"
+        )
+
+        mock_store.get_pending_signals.assert_called_once_with(
+            limit=50, signal_type="github_spike"
+        )
+
+    @pytest.mark.asyncio
+    async def test_process_pending_with_gating_converts_stored_signals(self):
+        """process_pending_with_gating should convert StoredSignal to dict format."""
+        config = ProcessorConfig()
+        processor = SignalProcessor(config)
+
+        # Create mock StoredSignal objects
+        mock_signal = MagicMock()
+        mock_signal.id = 123
+        mock_signal.signal_type = "github_spike"
+        mock_signal.source_api = "github"
+        mock_signal.canonical_key = "domain:example.com"
+        mock_signal.company_name = "Example Corp"
+        mock_signal.confidence = 0.75
+        mock_signal.raw_data = {"description": "Test app"}
+        mock_signal.detected_at = datetime(2025, 1, 1)
+
+        mock_store = AsyncMock()
+        mock_store.get_pending_signals = AsyncMock(return_value=[mock_signal])
+
+        # Process and verify batch gets called with converted signal
+        with patch.object(processor, "process_batch") as mock_batch:
+            mock_batch.return_value = ProcessingStats(total=1, skipped=1)
+
+            stats = await processor.process_pending_with_gating(mock_store)
+
+            mock_batch.assert_called_once()
+            signal_dicts = mock_batch.call_args[0][0]
+            assert len(signal_dicts) == 1
+            assert signal_dicts[0]["id"] == "123"
+            assert signal_dicts[0]["signal_type"] == "github_spike"
+            assert signal_dicts[0]["canonical_key"] == "domain:example.com"
+
+    @pytest.mark.asyncio
+    async def test_process_pending_with_gating_returns_stats(self):
+        """process_pending_with_gating should return ProcessingStats."""
+        config = ProcessorConfig()
+        processor = SignalProcessor(config)
+
+        mock_signal = MagicMock()
+        mock_signal.id = 1
+        mock_signal.signal_type = "github_spike"
+        mock_signal.source_api = "github"
+        mock_signal.canonical_key = "domain:test.com"
+        mock_signal.company_name = "Test"
+        mock_signal.confidence = 0.8
+        mock_signal.raw_data = {}
+        mock_signal.detected_at = datetime.utcnow()
+
+        mock_store = AsyncMock()
+        mock_store.get_pending_signals = AsyncMock(return_value=[mock_signal])
+
+        stats = await processor.process_pending_with_gating(mock_store)
+
+        assert isinstance(stats, ProcessingStats)
+        assert stats.total == 1
+        assert stats.skipped == 1  # No previous snapshot
