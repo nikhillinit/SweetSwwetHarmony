@@ -42,6 +42,7 @@ from typing import Any, Dict, List, Optional, Set
 
 # Storage
 from storage.signal_store import SignalStore, StoredSignal
+from storage.source_asset_store import SourceAssetStore
 
 # Verification
 from verification.verification_gate_v2 import (
@@ -246,6 +247,7 @@ class DiscoveryPipeline:
         self._store: Optional[SignalStore] = None
         self._notion: Optional[NotionConnector] = None
         self._gate: Optional[VerificationGate] = None
+        self._asset_store: Optional[SourceAssetStore] = None
 
         # State
         self._initialized = False
@@ -274,6 +276,12 @@ class DiscoveryPipeline:
         # Initialize verification gate
         self._gate = VerificationGate(strict_mode=self.config.strict_mode)
 
+        # Initialize SourceAssetStore (if enabled)
+        if self.config.use_asset_store:
+            self._asset_store = SourceAssetStore(db_path=self.config.asset_store_path)
+            await self._asset_store.initialize()
+            logger.info("SourceAssetStore initialized")
+
         # Warmup suppression cache (non-fatal if it fails)
         if self.config.warmup_suppression_cache:
             try:
@@ -288,6 +296,9 @@ class DiscoveryPipeline:
         """Clean up resources"""
         if self._store:
             await self._store.close()
+        if self._asset_store:
+            await self._asset_store.close()
+            self._asset_store = None
         self._initialized = False
 
     async def _warmup_suppression_cache(self) -> None:
