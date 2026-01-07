@@ -87,6 +87,7 @@ class PipelineConfig:
 
     # Storage
     db_path: str = "signals.db"
+    asset_store_path: str = "assets.db"  # SourceAssetStore path
 
     # Notion
     notion_api_key: Optional[str] = None
@@ -106,11 +107,17 @@ class PipelineConfig:
     # Warmup
     warmup_suppression_cache: bool = True  # Auto-sync suppression cache on init
 
+    # Feature flags (v2 components)
+    use_gating: bool = False         # Enable TriggerGate + LLMClassifierV2
+    use_entities: bool = False       # Enable EntityResolver
+    use_asset_store: bool = False    # Save to SourceAssetStore
+
     @classmethod
     def from_env(cls) -> PipelineConfig:
         """Load configuration from environment variables"""
         return cls(
             db_path=os.getenv("DISCOVERY_DB_PATH", "signals.db"),
+            asset_store_path=os.getenv("ASSET_STORE_PATH", "assets.db"),
             notion_api_key=os.getenv("NOTION_API_KEY"),
             notion_database_id=os.getenv("NOTION_DATABASE_ID"),
             github_token=os.getenv("GITHUB_TOKEN"),
@@ -119,6 +126,9 @@ class PipelineConfig:
             batch_size=int(os.getenv("BATCH_SIZE", "50")),
             strict_mode=os.getenv("STRICT_MODE", "false").lower() == "true",
             warmup_suppression_cache=os.getenv("WARMUP_SUPPRESSION_CACHE", "true").lower() == "true",
+            use_gating=os.getenv("USE_GATING", "false").lower() == "true",
+            use_entities=os.getenv("USE_ENTITIES", "false").lower() == "true",
+            use_asset_store=os.getenv("USE_ASSET_STORE", "false").lower() == "true",
         )
 
 
