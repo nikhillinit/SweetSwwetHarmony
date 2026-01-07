@@ -392,10 +392,15 @@ async def cmd_stats(args):
 
 async def cmd_health(args):
     """Run health checks on all components"""
-    print("=" * 70)
-    print("DISCOVERY ENGINE - HEALTH CHECK")
-    print("=" * 70)
-    print()
+    output_json = getattr(args, "output_json", False)
+    verbose = getattr(args, "verbose", False)
+    lookback_days = getattr(args, "lookback_days", 30)
+
+    if not output_json:
+        print("=" * 70)
+        print("DISCOVERY ENGINE - HEALTH CHECK")
+        print("=" * 70)
+        print()
 
     config = PipelineConfig.from_env()
 
@@ -406,62 +411,133 @@ async def cmd_health(args):
 
     all_healthy = True
     checks = []
+    health_report_dict = None
+    suppression_stats = {}
 
     try:
         # 1. Database connectivity check
-        print("Checking database connectivity...")
+        if not output_json:
+            print("Checking database connectivity...")
         try:
             await pipeline.initialize()
 
-            if pipeline.signal_store and pipeline.signal_store._conn:
-                print("  Database: HEALTHY")
+            if pipeline._store and pipeline._store._db:
+                if not output_json:
+                    print("  Database: HEALTHY")
                 checks.append(("Database", True, None))
             else:
-                print("  Database: FAILED (no connection)")
+                if not output_json:
+                    print("  Database: FAILED (no connection)")
                 checks.append(("Database", False, "No database connection"))
                 all_healthy = False
         except Exception as e:
-            print(f"  Database: FAILED ({e})")
+            if not output_json:
+                print(f"  Database: FAILED ({e})")
             checks.append(("Database", False, str(e)))
             all_healthy = False
 
-        # 2. Notion API connectivity check
-        print("Checking Notion API connectivity...")
+        # 2. Configuration validation check
+        if not output_json:
+            print("Checking configuration...")
+        try:
+            config_issues = []
+            if not config.notion_api_key:
+                config_issues.append("NOTION_API_KEY not set")
+            if not config.notion_database_id:
+                config_issues.append("NOTION_DATABASE_ID not set")
+
+            if config_issues:
+                if not output_json:
+                    print(f"  Configuration: WARNING ({', '.join(config_issues)})")
+                checks.append(("Configuration", True, ", ".join(config_issues)))
+            else:
+                if not output_json:
+                    print("  Configuration: HEALTHY")
+                checks.append(("Configuration", True, None))
+        except Exception as e:
+            if not output_json:
+                print(f"  Configuration: FAILED ({e})")
+            checks.append(("Configuration", False, str(e)))
+
+        # 3. Notion API connectivity check
+        if not output_json:
+            print("Checking Notion API connectivity...")
         try:
             if hasattr(pipeline, 'notion_connector') and pipeline.notion_connector:
                 # Try to test connection if method exists
                 if hasattr(pipeline.notion_connector, 'test_connection'):
                     notion_ok = await pipeline.notion_connector.test_connection()
                     if notion_ok:
-                        print("  Notion API: HEALTHY")
+                        if not output_json:
+                            print("  Notion API: HEALTHY")
                         checks.append(("Notion API", True, None))
                     else:
-                        print("  Notion API: DEGRADED (connection test failed)")
+                        if not output_json:
+                            print("  Notion API: DEGRADED (connection test failed)")
                         checks.append(("Notion API", False, "Connection test failed"))
                         all_healthy = False
                 else:
-                    print("  Notion API: UNKNOWN (no test method)")
+                    if not output_json:
+                        print("  Notion API: UNKNOWN (no test method)")
                     checks.append(("Notion API", True, "No test method available"))
             else:
-                print("  Notion API: SKIPPED (not configured)")
+                if not output_json:
+                    print("  Notion API: SKIPPED (not configured)")
                 checks.append(("Notion API", True, "Not configured"))
         except Exception as e:
-            print(f"  Notion API: FAILED ({e})")
+            if not output_json:
+                print(f"  Notion API: FAILED ({e})")
             checks.append(("Notion API", False, str(e)))
             all_healthy = False
 
-        # 3. Signal health check
-        print("Checking signal health...")
+        # 4. Suppression cache stats
+        if not output_json:
+            print("Checking suppression cache...")
         try:
-            if pipeline.signal_store and pipeline.signal_store._conn:
-                monitor = SignalHealthMonitor(pipeline.signal_store)
-                report = await monitor.generate_report(lookback_days=30)
+            if pipeline._store and pipeline._store._db:
+                stats = await pipeline.get_stats()
+                storage = stats.get("storage", {})
+                cache_entries = storage.get("active_suppression_entries", 0)
+                suppression_stats = {
+                    "active_entries": cache_entries,
+                    "status": "HEALTHY" if cache_entries > 0 else "WARNING",
+                }
 
-                print(f"  Signal Health: {report.overall_status}")
+                if cache_entries > 0:
+                    if not output_json:
+                        print(f"  Suppression Cache: HEALTHY ({cache_entries} entries)")
+                    checks.append(("Suppression Cache", True, f"{cache_entries} entries"))
+                else:
+                    if not output_json:
+                        print("  Suppression Cache: WARNING (empty - run 'sync' command)")
+                    checks.append(("Suppression Cache", True, "Empty - run 'sync' to populate"))
+            else:
+                if not output_json:
+                    print("  Suppression Cache: SKIPPED (no database)")
+                checks.append(("Suppression Cache", True, "Database unavailable"))
+        except Exception as e:
+            if not output_json:
+                print(f"  Suppression Cache: FAILED ({e})")
+            checks.append(("Suppression Cache", False, str(e)))
 
-                # Print the full health report
-                print()
-                print(report)
+        # 5. Signal health check
+        if not output_json:
+            print(f"Checking signal health (last {lookback_days} days)...")
+        try:
+            if pipeline._store and pipeline._store._db:
+                monitor = SignalHealthMonitor(pipeline._store)
+                report = await monitor.generate_report(lookback_days=lookback_days)
+
+                if not output_json:
+                    print(f"  Signal Health: {report.overall_status}")
+
+                # Store for JSON output
+                health_report_dict = report.to_dict()
+
+                # Print the full health report if verbose
+                if verbose and not output_json:
+                    print()
+                    print(report)
 
                 # Track health status
                 if report.overall_status == "HEALTHY":
@@ -473,39 +549,63 @@ async def cmd_health(args):
                     checks.append(("Signal Health", False, "System critical"))
                     all_healthy = False
             else:
-                print("  Signal Health: SKIPPED (no database)")
+                if not output_json:
+                    print("  Signal Health: SKIPPED (no database)")
                 checks.append(("Signal Health", True, "Database unavailable"))
         except Exception as e:
-            print(f"  Signal Health: FAILED ({e})")
+            if not output_json:
+                print(f"  Signal Health: FAILED ({e})")
             checks.append(("Signal Health", False, str(e)))
             all_healthy = False
 
-        # Print summary
-        print()
-        print("=" * 70)
-        print("HEALTH CHECK SUMMARY")
-        print("=" * 70)
-        print()
-
-        for check_name, check_ok, check_msg in checks:
-            status_symbol = "PASS" if check_ok else "FAIL"
-            print(f"  [{status_symbol}] {check_name}")
-            if check_msg:
-                print(f"       {check_msg}")
-
-        print()
-        if all_healthy:
-            print("Overall Status: HEALTHY")
-            print()
-            return 0
+        # Output as JSON or human-readable
+        if output_json:
+            result = {
+                "overall_status": "HEALTHY" if all_healthy else "UNHEALTHY",
+                "checks": [
+                    {"name": name, "passed": ok, "message": msg}
+                    for name, ok, msg in checks
+                ],
+                "signal_health": health_report_dict,
+                "suppression_cache": suppression_stats,
+                "config": {
+                    "db_path": config.db_path,
+                    "use_gating": config.use_gating,
+                    "use_entities": config.use_entities,
+                    "use_asset_store": config.use_asset_store,
+                    "lookback_days": lookback_days,
+                },
+            }
+            print(json.dumps(result, indent=2, default=str))
         else:
-            print("Overall Status: UNHEALTHY")
+            # Print summary
             print()
-            return 1
+            print("=" * 70)
+            print("HEALTH CHECK SUMMARY")
+            print("=" * 70)
+            print()
+
+            for check_name, check_ok, check_msg in checks:
+                status_symbol = "PASS" if check_ok else "FAIL"
+                print(f"  [{status_symbol}] {check_name}")
+                if check_msg:
+                    print(f"       {check_msg}")
+
+            print()
+            if all_healthy:
+                print("Overall Status: HEALTHY")
+            else:
+                print("Overall Status: UNHEALTHY")
+            print()
+
+        return 0 if all_healthy else 1
 
     except Exception as e:
-        print()
-        print(f"Health check failed with error: {e}")
+        if output_json:
+            print(json.dumps({"error": str(e), "overall_status": "ERROR"}, indent=2))
+        else:
+            print()
+            print(f"Health check failed with error: {e}")
         logging.exception("Health check error")
         return 1
     finally:
@@ -784,6 +884,23 @@ Environment variables:
         "--db-path",
         type=str,
         help="Path to SQLite database",
+    )
+    health_parser.add_argument(
+        "--lookback-days",
+        type=int,
+        default=30,
+        help="Days to analyze for signal health (default: 30)",
+    )
+    health_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="output_json",
+        help="Output results as JSON",
+    )
+    health_parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="Show detailed signal health report",
     )
 
     return parser
