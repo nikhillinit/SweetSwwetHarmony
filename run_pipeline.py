@@ -8,6 +8,7 @@ Commands:
   process   - Process pending signals
   sync      - Sync suppression cache from Notion
   stats     - Show pipeline statistics
+  health    - Run health checks on all components
 
 Examples:
   # Run full pipeline with specific collectors (dry run)
@@ -24,6 +25,9 @@ Examples:
 
   # Show statistics
   python run_pipeline.py stats
+
+  # Run health check
+  python run_pipeline.py health
 """
 
 import argparse
@@ -43,6 +47,7 @@ from workflows.pipeline import (
     PipelineMode,
     PipelineStats,
 )
+from utils.signal_health import SignalHealthMonitor
 
 
 # =============================================================================
@@ -370,6 +375,128 @@ async def cmd_stats(args):
         await pipeline.close()
 
 
+async def cmd_health(args):
+    """Run health checks on all components"""
+    print("=" * 70)
+    print("DISCOVERY ENGINE - HEALTH CHECK")
+    print("=" * 70)
+    print()
+
+    config = PipelineConfig.from_env()
+
+    if args.db_path:
+        config.db_path = args.db_path
+
+    pipeline = DiscoveryPipeline(config)
+
+    all_healthy = True
+    checks = []
+
+    try:
+        # 1. Database connectivity check
+        print("Checking database connectivity...")
+        try:
+            await pipeline.initialize()
+
+            if pipeline.signal_store and pipeline.signal_store._conn:
+                print("  Database: HEALTHY")
+                checks.append(("Database", True, None))
+            else:
+                print("  Database: FAILED (no connection)")
+                checks.append(("Database", False, "No database connection"))
+                all_healthy = False
+        except Exception as e:
+            print(f"  Database: FAILED ({e})")
+            checks.append(("Database", False, str(e)))
+            all_healthy = False
+
+        # 2. Notion API connectivity check
+        print("Checking Notion API connectivity...")
+        try:
+            if hasattr(pipeline, 'notion_connector') and pipeline.notion_connector:
+                # Try to test connection if method exists
+                if hasattr(pipeline.notion_connector, 'test_connection'):
+                    notion_ok = await pipeline.notion_connector.test_connection()
+                    if notion_ok:
+                        print("  Notion API: HEALTHY")
+                        checks.append(("Notion API", True, None))
+                    else:
+                        print("  Notion API: DEGRADED (connection test failed)")
+                        checks.append(("Notion API", False, "Connection test failed"))
+                        all_healthy = False
+                else:
+                    print("  Notion API: UNKNOWN (no test method)")
+                    checks.append(("Notion API", True, "No test method available"))
+            else:
+                print("  Notion API: SKIPPED (not configured)")
+                checks.append(("Notion API", True, "Not configured"))
+        except Exception as e:
+            print(f"  Notion API: FAILED ({e})")
+            checks.append(("Notion API", False, str(e)))
+            all_healthy = False
+
+        # 3. Signal health check
+        print("Checking signal health...")
+        try:
+            if pipeline.signal_store and pipeline.signal_store._conn:
+                monitor = SignalHealthMonitor(pipeline.signal_store)
+                report = await monitor.generate_report(lookback_days=30)
+
+                print(f"  Signal Health: {report.overall_status}")
+
+                # Print the full health report
+                print()
+                print(report)
+
+                # Track health status
+                if report.overall_status == "HEALTHY":
+                    checks.append(("Signal Health", True, None))
+                elif report.overall_status == "DEGRADED":
+                    checks.append(("Signal Health", False, "System degraded"))
+                    all_healthy = False
+                else:  # CRITICAL
+                    checks.append(("Signal Health", False, "System critical"))
+                    all_healthy = False
+            else:
+                print("  Signal Health: SKIPPED (no database)")
+                checks.append(("Signal Health", True, "Database unavailable"))
+        except Exception as e:
+            print(f"  Signal Health: FAILED ({e})")
+            checks.append(("Signal Health", False, str(e)))
+            all_healthy = False
+
+        # Print summary
+        print()
+        print("=" * 70)
+        print("HEALTH CHECK SUMMARY")
+        print("=" * 70)
+        print()
+
+        for check_name, check_ok, check_msg in checks:
+            status_symbol = "PASS" if check_ok else "FAIL"
+            print(f"  [{status_symbol}] {check_name}")
+            if check_msg:
+                print(f"       {check_msg}")
+
+        print()
+        if all_healthy:
+            print("Overall Status: HEALTHY")
+            print()
+            return 0
+        else:
+            print("Overall Status: UNHEALTHY")
+            print()
+            return 1
+
+    except Exception as e:
+        print()
+        print(f"Health check failed with error: {e}")
+        logging.exception("Health check error")
+        return 1
+    finally:
+        await pipeline.close()
+
+
 # =============================================================================
 # HELPERS
 # =============================================================================
@@ -457,6 +584,9 @@ Examples:
 
   # Show statistics
   python run_pipeline.py stats
+
+  # Run health check
+  python run_pipeline.py health
 
 Environment variables:
   DISCOVERY_DB_PATH          - Path to SQLite database (default: signals.db)
@@ -599,6 +729,17 @@ Environment variables:
         help="Path to SQLite database",
     )
 
+    # Health command
+    health_parser = subparsers.add_parser(
+        "health",
+        help="Run health checks on all components",
+    )
+    health_parser.add_argument(
+        "--db-path",
+        type=str,
+        help="Path to SQLite database",
+    )
+
     return parser
 
 
@@ -622,6 +763,7 @@ async def main():
 
     # Dispatch to command handler
     try:
+        exit_code = 0
         if args.command == "full":
             await cmd_full(args)
         elif args.command == "collect":
@@ -632,10 +774,16 @@ async def main():
             await cmd_sync(args)
         elif args.command == "stats":
             await cmd_stats(args)
+        elif args.command == "health":
+            exit_code = await cmd_health(args)
         else:
             print(f"Unknown command: {args.command}")
             parser.print_help()
             sys.exit(1)
+
+        # Exit with the returned code (health command may return non-zero)
+        if exit_code != 0:
+            sys.exit(exit_code)
 
     except KeyboardInterrupt:
         print("\n\nInterrupted by user")
