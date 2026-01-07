@@ -131,7 +131,9 @@ class TestGitHubActivityCollector:
     async def test_collector_initialization(self):
         """Collector initializes without error"""
         async with GitHubActivityCollector() as collector:
-            assert collector.client is not None
+            # After BaseCollector migration, we no longer use a persistent client
+            # _http_get() creates clients per request
+            assert collector is not None
 
     @pytest.mark.asyncio
     async def test_check_user_returns_signals(self):

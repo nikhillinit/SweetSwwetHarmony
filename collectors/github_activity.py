@@ -206,26 +206,9 @@ class GitHubActivityCollector(BaseCollector):
         self.org_names = org_names or []
         self.github_token = github_token or os.environ.get("GITHUB_TOKEN")
         self.lookback_days = lookback_days
-        self.client: Optional[httpx.AsyncClient] = None
 
-    async def __aenter__(self):
-        headers = {
-            "Accept": "application/vnd.github.v3+json",
-            "X-GitHub-Api-Version": "2022-11-28",
-        }
-        if self.github_token:
-            headers["Authorization"] = f"token {self.github_token}"
-
-        self.client = httpx.AsyncClient(
-            base_url=GITHUB_API_BASE,
-            headers=headers,
-            timeout=30.0
-        )
-        return self
-
-    async def __aexit__(self, *args):
-        if self.client:
-            await self.client.aclose()
+    # BaseCollector provides __aenter__ and __aexit__ by default
+    # We don't need custom async context manager since _http_get() handles HTTP clients
 
     async def check_user(self, username: str) -> List[GitHubActivitySignal]:
         """
@@ -241,54 +224,62 @@ class GitHubActivityCollector(BaseCollector):
         cutoff = datetime.now(timezone.utc) - timedelta(days=self.lookback_days)
 
         try:
-            # Get user's repos
-            response = await self.client.get(
-                f"/users/{username}/repos",
+            # Get user's repos using BaseCollector's _http_get (includes retry + rate limiting)
+            url = f"{GITHUB_API_BASE}/users/{username}/repos"
+            headers = {
+                "Accept": "application/vnd.github.v3+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            }
+            if self.github_token:
+                headers["Authorization"] = f"token {self.github_token}"
+
+            repos = await self._http_get(
+                url=url,
+                headers=headers,
                 params={"sort": "created", "per_page": 30}
             )
 
-            if response.status_code == 200:
-                for repo in response.json():
-                    # Skip forks
-                    if repo.get("fork"):
-                        continue
+            for repo in repos:
+                # Skip forks
+                if repo.get("fork"):
+                    continue
 
-                    # Parse creation date
-                    created_str = repo.get("created_at", "")
-                    if not created_str:
-                        continue
+                # Parse creation date
+                created_str = repo.get("created_at", "")
+                if not created_str:
+                    continue
 
-                    try:
-                        created = datetime.fromisoformat(
-                            created_str.replace("Z", "+00:00")
-                        )
-                    except (ValueError, TypeError):
-                        continue
+                try:
+                    created = datetime.fromisoformat(
+                        created_str.replace("Z", "+00:00")
+                    )
+                except (ValueError, TypeError):
+                    continue
 
-                    # Only include recent repos
-                    if created >= cutoff:
-                        signals.append(GitHubActivitySignal(
-                            username=username,
-                            signal_type="new_repo",
-                            repo_name=repo.get("name"),
-                            repo_url=repo.get("html_url"),
-                            created_at=created,
-                            website_url=repo.get("homepage"),
-                            description=repo.get("description"),
-                            language=repo.get("language"),
-                            stars=repo.get("stargazers_count", 0),
-                            forks=repo.get("forks_count", 0),
-                            raw_data=repo,
-                        ))
+                # Only include recent repos
+                if created >= cutoff:
+                    signals.append(GitHubActivitySignal(
+                        username=username,
+                        signal_type="new_repo",
+                        repo_name=repo.get("name"),
+                        repo_url=repo.get("html_url"),
+                        created_at=created,
+                        website_url=repo.get("homepage"),
+                        description=repo.get("description"),
+                        language=repo.get("language"),
+                        stars=repo.get("stargazers_count", 0),
+                        forks=repo.get("forks_count", 0),
+                        raw_data=repo,
+                    ))
 
-            elif response.status_code == 404:
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
                 logger.debug(f"User not found: {username}")
             else:
                 logger.warning(
                     f"Error fetching repos for {username}: "
-                    f"{response.status_code}"
+                    f"HTTP {e.response.status_code}"
                 )
-
         except Exception as e:
             logger.error(f"Error checking user {username}: {e}")
 
@@ -308,55 +299,63 @@ class GitHubActivityCollector(BaseCollector):
         cutoff = datetime.now(timezone.utc) - timedelta(days=self.lookback_days)
 
         try:
-            # Get org's repos
-            response = await self.client.get(
-                f"/orgs/{org_name}/repos",
+            # Get org's repos using BaseCollector's _http_get (includes retry + rate limiting)
+            url = f"{GITHUB_API_BASE}/orgs/{org_name}/repos"
+            headers = {
+                "Accept": "application/vnd.github.v3+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+            }
+            if self.github_token:
+                headers["Authorization"] = f"token {self.github_token}"
+
+            repos = await self._http_get(
+                url=url,
+                headers=headers,
                 params={"sort": "created", "per_page": 30}
             )
 
-            if response.status_code == 200:
-                for repo in response.json():
-                    # Skip forks
-                    if repo.get("fork"):
-                        continue
+            for repo in repos:
+                # Skip forks
+                if repo.get("fork"):
+                    continue
 
-                    # Parse creation date
-                    created_str = repo.get("created_at", "")
-                    if not created_str:
-                        continue
+                # Parse creation date
+                created_str = repo.get("created_at", "")
+                if not created_str:
+                    continue
 
-                    try:
-                        created = datetime.fromisoformat(
-                            created_str.replace("Z", "+00:00")
-                        )
-                    except (ValueError, TypeError):
-                        continue
+                try:
+                    created = datetime.fromisoformat(
+                        created_str.replace("Z", "+00:00")
+                    )
+                except (ValueError, TypeError):
+                    continue
 
-                    # Only include recent repos
-                    if created >= cutoff:
-                        owner = repo.get("owner", {})
-                        signals.append(GitHubActivitySignal(
-                            username=owner.get("login", org_name),
-                            signal_type="new_repo",
-                            repo_name=repo.get("name"),
-                            repo_url=repo.get("html_url"),
-                            created_at=created,
-                            website_url=repo.get("homepage"),
-                            description=repo.get("description"),
-                            language=repo.get("language"),
-                            stars=repo.get("stargazers_count", 0),
-                            forks=repo.get("forks_count", 0),
-                            raw_data=repo,
-                        ))
+                # Only include recent repos
+                if created >= cutoff:
+                    owner = repo.get("owner", {})
+                    signals.append(GitHubActivitySignal(
+                        username=owner.get("login", org_name),
+                        signal_type="new_repo",
+                        repo_name=repo.get("name"),
+                        repo_url=repo.get("html_url"),
+                        created_at=created,
+                        website_url=repo.get("homepage"),
+                        description=repo.get("description"),
+                        language=repo.get("language"),
+                        stars=repo.get("stargazers_count", 0),
+                        forks=repo.get("forks_count", 0),
+                        raw_data=repo,
+                    ))
 
-            elif response.status_code == 404:
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
                 logger.debug(f"Organization not found: {org_name}")
             else:
                 logger.warning(
                     f"Error fetching repos for org {org_name}: "
-                    f"{response.status_code}"
+                    f"HTTP {e.response.status_code}"
                 )
-
         except Exception as e:
             logger.error(f"Error checking org {org_name}: {e}")
 
@@ -378,10 +377,9 @@ class GitHubActivityCollector(BaseCollector):
             try:
                 user_signals = await self.check_user(username)
                 signals.extend([s.to_signal() for s in user_signals])
-                await asyncio.sleep(0.1)  # Rate limit courtesy
+                # Rate limiting is handled by BaseCollector._http_get()
             except Exception as e:
-                error_msg = f"User {username}: {e}"
-                self._errors.append(error_msg)
+                # BaseCollector tracks errors, but we log for debugging
                 logger.error(f"Error checking user {username}: {e}")
 
         # Check orgs
@@ -389,10 +387,9 @@ class GitHubActivityCollector(BaseCollector):
             try:
                 org_signals = await self.check_org(org)
                 signals.extend([s.to_signal() for s in org_signals])
-                await asyncio.sleep(0.1)
+                # Rate limiting is handled by BaseCollector._http_get()
             except Exception as e:
-                error_msg = f"Org {org}: {e}"
-                self._errors.append(error_msg)
+                # BaseCollector tracks errors, but we log for debugging
                 logger.error(f"Error checking org {org}: {e}")
 
         return signals
