@@ -7,6 +7,8 @@ Provides common functionality for all collectors:
 - Deduplication checking
 - Error handling for batch operations
 - Accurate signal counting (new vs suppressed)
+- Retry logic with exponential backoff
+- Per-API rate limiting
 
 All collectors should inherit from BaseCollector and implement:
 - _collect_signals(): Fetch raw signals from source
@@ -18,13 +20,19 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional, TypeVar
 
+import httpx
+
+from collectors.retry_strategy import RetryConfig, with_retry
 from discovery_engine.mcp_server import CollectorResult, CollectorStatus
 from storage.signal_store import SignalStore
+from utils.rate_limiter import AsyncRateLimiter, get_rate_limiter
 from verification.verification_gate_v2 import Signal
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
 
 
 class BaseCollector(ABC):
@@ -52,14 +60,27 @@ class BaseCollector(ABC):
         self,
         store: Optional[SignalStore] = None,
         collector_name: str = "unknown",
+        retry_config: Optional[RetryConfig] = None,
+        api_name: Optional[str] = None,
     ):
         """
         Args:
             store: Optional SignalStore instance for persistence
             collector_name: Name of collector (for logging and results)
+            retry_config: Configuration for retry behavior (default: RetryConfig())
+            api_name: API name for rate limiting (e.g., "github", "sec_edgar")
         """
         self.store = store
         self.collector_name = collector_name
+        self.retry_config = retry_config or RetryConfig()
+        self.api_name = api_name
+
+        # Set up rate limiter based on api_name
+        if api_name:
+            self._rate_limiter = get_rate_limiter(api_name)
+        else:
+            # Unlimited rate limiter for unknown APIs
+            self._rate_limiter = AsyncRateLimiter(rate=None, period=1)
 
         # Track what we've seen in this run
         self._processed_canonical_keys: set[str] = set()
@@ -68,6 +89,7 @@ class BaseCollector(ABC):
         self._signals_found = 0
         self._signals_new = 0
         self._signals_suppressed = 0
+        self._retry_count = 0
         self._errors: List[str] = []
 
     async def __aenter__(self):
@@ -329,6 +351,85 @@ class BaseCollector(ABC):
 
         # Fall back to signal ID
         return signal.id
+
+    @property
+    def rate_limiter(self) -> AsyncRateLimiter:
+        """Get the rate limiter for this collector's API."""
+        return self._rate_limiter
+
+    async def _fetch_with_retry(self, func: Callable[[], T]) -> T:
+        """
+        Execute an async function with retry and rate limiting.
+
+        This helper combines:
+        1. Rate limit acquisition (waits if needed)
+        2. Retry with exponential backoff on transient errors
+
+        Args:
+            func: Async function to execute (no arguments)
+
+        Returns:
+            Result of func() on success
+
+        Raises:
+            The last exception if all retries exhausted
+        """
+        async def rate_limited_func() -> T:
+            await self._rate_limiter.acquire()
+            return await func()
+
+        # Track retries
+        original_retry_count = self._retry_count
+
+        async def tracking_func() -> T:
+            try:
+                return await rate_limited_func()
+            except Exception:
+                self._retry_count += 1
+                raise
+
+        try:
+            return await with_retry(tracking_func, self.retry_config)
+        except Exception:
+            # Don't count the final failure as a retry
+            self._retry_count = max(0, self._retry_count - 1)
+            raise
+
+    async def _http_get(
+        self,
+        url: str,
+        headers: Optional[Dict[str, str]] = None,
+        params: Optional[Dict[str, Any]] = None,
+        timeout: float = 30.0,
+    ) -> Any:
+        """
+        Make an HTTP GET request with retry and rate limiting.
+
+        Convenience method that combines:
+        - Rate limit acquisition
+        - Retry on transient HTTP errors
+        - JSON response parsing
+
+        Args:
+            url: URL to fetch
+            headers: Optional request headers
+            params: Optional query parameters
+            timeout: Request timeout in seconds
+
+        Returns:
+            Parsed JSON response
+
+        Raises:
+            httpx.HTTPStatusError: On non-retryable HTTP errors
+            Exception: On exhausted retries
+        """
+        async def do_request() -> Any:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.get(url, headers=headers, params=params)
+                response.raise_for_status()
+                return response.json()
+
+        return await self._fetch_with_retry(do_request)
 
 
 # =============================================================================
