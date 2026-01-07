@@ -37,20 +37,16 @@ from typing import Any, Dict, List, Optional, Set
 from urllib.parse import urlencode
 
 import httpx
-from tenacity import (
-    retry,
-    stop_after_attempt,
-    wait_exponential,
-    retry_if_exception_type,
-)
 
 # Add parent directory to path for imports
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from collectors.base import BaseCollector
+from collectors.retry_strategy import with_retry, RetryConfig
 from discovery_engine.mcp_server import CollectorResult, CollectorStatus
 from storage.signal_store import SignalStore
+from utils.rate_limiter import get_rate_limiter
 from verification.verification_gate_v2 import Signal, VerificationStatus
 from utils.canonical_keys import (
     build_canonical_key,
@@ -677,7 +673,7 @@ class CompaniesHouseCollector(BaseCollector):
         params: Optional[Dict[str, Any]] = None
     ) -> httpx.Response:
         """
-        Make authenticated request to Companies House API.
+        Make authenticated request to Companies House API with retry logic.
 
         Args:
             method: HTTP method (GET, POST, etc.)
@@ -693,14 +689,20 @@ class CompaniesHouseCollector(BaseCollector):
         else:
             url = f"{COMPANIES_HOUSE_BASE_URL}/{path}"
 
-        # Make request
-        response = await self._client.request(
-            method=method,
-            url=url,
-            params=params,
-        )
+        # Use rate limiter before making request
+        await self.rate_limiter.acquire()
 
-        return response
+        # Wrap HTTP request with retry logic
+        async def make_http_request():
+            response = await self._client.request(
+                method=method,
+                url=url,
+                params=params,
+            )
+            response.raise_for_status()
+            return response
+
+        return await with_retry(make_http_request, self.retry_config)
 
 
 # =============================================================================

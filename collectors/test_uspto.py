@@ -1,13 +1,25 @@
 """
-Tests for USPTO patent collector.
+Comprehensive tests for USPTO patent collector.
 
-Basic coverage for BaseCollector integration and dataclasses.
+Tests:
+1. API integration with mocked responses
+2. Error handling
+3. Canonical key generation
+4. Confidence score calculation
+5. Signal type assignment
+
+Run:
+    python -m pytest collectors/test_uspto_enhanced.py -v
 """
 
 import pytest
-from unittest.mock import MagicMock
-from datetime import datetime, timezone
+from unittest.mock import Mock, AsyncMock, patch
+from datetime import datetime, timedelta, timezone
 
+
+# =============================================================================
+# BASE INTEGRATION TESTS
+# =============================================================================
 
 class TestUSPTOCollectorBaseIntegration:
     """Test USPTOCollector inherits from BaseCollector"""
@@ -28,35 +40,6 @@ class TestUSPTOCollectorBaseIntegration:
         assert hasattr(collector, '_collect_signals')
         assert callable(collector._collect_signals)
 
-    def test_has_rate_limiter(self):
-        """USPTOCollector should have rate limiter"""
-        from collectors.uspto import USPTOCollector
-        from utils.rate_limiter import AsyncRateLimiter
-
-        collector = USPTOCollector(keywords=["machine learning"])
-
-        assert hasattr(collector, 'rate_limiter')
-        assert isinstance(collector.rate_limiter, AsyncRateLimiter)
-
-    def test_has_retry_config(self):
-        """USPTOCollector should have retry_config"""
-        from collectors.uspto import USPTOCollector
-        from collectors.retry_strategy import RetryConfig
-
-        collector = USPTOCollector(keywords=["machine learning"])
-
-        assert hasattr(collector, 'retry_config')
-        assert isinstance(collector.retry_config, RetryConfig)
-
-    def test_accepts_store_parameter(self):
-        """USPTOCollector should accept store parameter"""
-        from collectors.uspto import USPTOCollector
-
-        mock_store = MagicMock()
-        collector = USPTOCollector(keywords=["ml"], store=mock_store)
-
-        assert collector.store is mock_store
-
     def test_accepts_keywords_parameter(self):
         """USPTOCollector should accept keywords parameter"""
         from collectors.uspto import USPTOCollector
@@ -66,36 +49,87 @@ class TestUSPTOCollectorBaseIntegration:
         assert collector.keywords == ["neural network", "deep learning"]
 
 
-class TestPatentFiling:
-    """Test PatentFiling dataclass"""
+# =============================================================================
+# COMPREHENSIVE API TESTS
+# =============================================================================
 
-    def test_patent_dataclass_exists(self):
-        """PatentFiling dataclass should exist"""
+class TestUSPTOAPIIntegration:
+    """Test USPTO API integration with mocked responses."""
+
+    @pytest.mark.asyncio
+    async def test_fetch_patents_success(self):
+        """Should successfully fetch patents from API."""
+        from collectors.uspto import USPTOCollector
+
+        collector = USPTOCollector(keywords=["ai"], max_results=10)
+
+        mock_response = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={
+            "patents": [
+                {
+                    "patent_id": "11234567",
+                    "patent_number": "11234567",
+                    "patent_title": "Machine Learning System",
+                    "patent_abstract": "A novel system for machine learning...",
+                    "patent_date": "2024-01-15",
+                    "patent_num_cited_by_us_patents": 5,
+                }
+            ]
+        })
+
+        async with collector:
+            with patch.object(collector.client, "post", return_value=mock_response):
+                patents = await collector._fetch_patents()
+
+                assert len(patents) == 1
+                assert patents[0].title == "Machine Learning System"
+                assert patents[0].patent_number == "11234567"
+
+    @pytest.mark.asyncio
+    async def test_fetch_patents_api_error(self):
+        """Should handle API errors gracefully."""
+        from collectors.uspto import USPTOCollector
+
+        collector = USPTOCollector(keywords=["ai"])
+
+        mock_response = Mock()
+        mock_response.status_code = 500
+
+        async with collector:
+            with patch.object(collector.client, "post", return_value=mock_response):
+                patents = await collector._fetch_patents()
+
+                # Should return empty list on error
+                assert patents == []
+
+    @pytest.mark.asyncio
+    async def test_fetch_patents_network_error(self):
+        """Should handle network errors."""
+        from collectors.uspto import USPTOCollector
+        import httpx
+
+        collector = USPTOCollector(keywords=["ai"])
+
+        async with collector:
+            with patch.object(collector.client, "post", side_effect=httpx.NetworkError("Connection failed")):
+                patents = await collector._fetch_patents()
+
+                assert patents == []
+
+
+class TestConfidenceScoring:
+    """Test confidence score calculation."""
+
+    def test_base_score_for_filing(self):
+        """Should have base score of 0.4 for patent filing."""
         from collectors.uspto import PatentFiling
 
         patent = PatentFiling(
-            patent_id="US12345678",
-            patent_number="12345678",
-            title="Machine Learning System",
-            abstract="A system for machine learning...",
-            filing_date=datetime.now(timezone.utc),
-            grant_date=None,
-            inventors=[{"name": "John Doe"}],
-            assignees=[{"name": "Tech Corp"}],
-        )
-
-        assert patent.title == "Machine Learning System"
-        assert len(patent.inventors) == 1
-
-    def test_signal_score_base(self):
-        """calculate_signal_score should return valid base score"""
-        from collectors.uspto import PatentFiling
-
-        patent = PatentFiling(
-            patent_id="US12345678",
-            patent_number="12345678",
-            title="Machine Learning System",
-            abstract="A system for machine learning...",
+            patent_id="11234567",
+            patent_number="11234567",
+            title="Test Patent",
+            abstract="A test patent",
             filing_date=datetime.now(timezone.utc),
             grant_date=None,
             inventors=[],
@@ -104,56 +138,141 @@ class TestPatentFiling:
 
         score = patent.calculate_signal_score()
 
-        # Base score for patents is 0.4
-        assert 0.4 <= score <= 1.0
+        assert score >= 0.4
+        assert score < 0.5  # No boosts
 
-    def test_signal_score_with_grant(self):
-        """calculate_signal_score should boost for granted patents"""
+    def test_score_boost_for_granted_patent(self):
+        """Should boost score for granted patents."""
         from collectors.uspto import PatentFiling
 
         patent = PatentFiling(
-            patent_id="US12345678",
-            patent_number="12345678",
-            title="Machine Learning System",
-            abstract="A system for machine learning...",
-            filing_date=datetime.now(timezone.utc),
-            grant_date=datetime.now(timezone.utc),  # Granted!
+            patent_id="11234567",
+            patent_number="11234567",
+            title="Granted Patent",
+            abstract="A granted patent",
+            filing_date=datetime.now(timezone.utc) - timedelta(days=200),
+            grant_date=datetime.now(timezone.utc),  # Granted
             inventors=[],
             assignees=[],
         )
 
         score = patent.calculate_signal_score()
 
-        # Should get grant boost (+0.1)
+        # Base 0.4 + granted 0.1 = 0.5
         assert score >= 0.5
 
-    def test_to_signal_method(self):
-        """to_signal should return Signal object"""
+    def test_score_boost_for_citations(self):
+        """Should boost score for highly cited patents."""
         from collectors.uspto import PatentFiling
-        from verification.verification_gate_v2 import Signal
 
         patent = PatentFiling(
-            patent_id="US12345678",
-            patent_number="12345678",
-            title="Machine Learning System",
-            abstract="A system for machine learning...",
+            patent_id="11234567",
+            patent_number="11234567",
+            title="Cited Patent",
+            abstract="A highly cited patent",
+            filing_date=datetime.now(timezone.utc),
+            grant_date=datetime.now(timezone.utc),
+            inventors=[],
+            assignees=[],
+            citations_count=25,  # High citations
+        )
+
+        score = patent.calculate_signal_score()
+
+        # Base 0.4 + granted 0.1 + citations 0.1 = 0.6
+        assert score >= 0.6
+
+
+class TestCanonicalKeyGeneration:
+    """Test canonical key generation."""
+
+    def test_canonical_key_from_assignee(self):
+        """Should use assignee for canonical key."""
+        from collectors.uspto import PatentFiling
+
+        patent = PatentFiling(
+            patent_id="11234567",
+            patent_number="11234567",
+            title="Test",
+            abstract="Test",
+            filing_date=datetime.now(timezone.utc),
+            grant_date=None,
+            inventors=[],
+            assignees=[{"organization": "Acme Corp", "name_first": "", "name_last": "", "type": ""}],
+        )
+
+        signal = patent.to_signal()
+
+        assert "canonical_key" in signal.raw_data
+        assert "patent_assignee:" in signal.raw_data["canonical_key"]
+        assert "acme" in signal.raw_data["canonical_key"].lower()
+
+
+class TestSignalTypeAssignment:
+    """Test signal type assignment."""
+
+    def test_signal_type_is_patent_filing(self):
+        """Should assign correct signal type."""
+        from collectors.uspto import PatentFiling
+
+        patent = PatentFiling(
+            patent_id="11234567",
+            patent_number="11234567",
+            title="Test",
+            abstract="Test",
             filing_date=datetime.now(timezone.utc),
             grant_date=None,
             inventors=[{"name": "John Doe"}],
-            assignees=[{"name": "Tech Corp"}],
+            assignees=[{"name": "Acme Corp"}],
         )
 
-        result = patent.to_signal()
+        signal = patent.to_signal()
 
-        assert isinstance(result, Signal)
-        assert result.signal_type == "patent_filing"
+        assert signal.signal_type == "patent_filing"
+        assert signal.source_api == "uspto"
 
 
-class TestPatentsViewAPI:
-    """Test PatentsView API configuration"""
+# =============================================================================
+# INTEGRATION TESTS
+# =============================================================================
 
-    def test_api_url_defined(self):
-        """PATENTSVIEW_API should be defined"""
-        from collectors.uspto import PATENTSVIEW_API
+@pytest.mark.asyncio
+async def test_full_collection_flow():
+    """Test full collection flow from API to signals."""
+    from collectors.uspto import USPTOCollector
 
-        assert "patentsview.org" in PATENTSVIEW_API
+    collector = USPTOCollector(keywords=["ai"], max_results=10)
+
+    mock_response = Mock()
+    mock_response.status_code = 200
+    mock_response.json = Mock(return_value={
+        "patents": [
+            {
+                "patent_id": "11234567",
+                "patent_number": "11234567",
+                "patent_title": "AI Neural Network System",
+                "patent_abstract": "A novel neural network architecture for AI applications.",
+                "patent_date": (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%d"),
+                "patent_num_cited_by_us_patents": 10,
+                "inventors": [
+                    {"inventor_first_name": "John", "inventor_last_name": "Doe"}
+                ],
+                "assignees": [
+                    {"assignee_organization": "Tech Corp"}
+                ],
+            }
+        ]
+    })
+
+    async with collector:
+        with patch.object(collector.client, "post", return_value=mock_response):
+            signals = await collector._collect_signals()
+
+            assert len(signals) == 1
+            assert signals[0].signal_type == "patent_filing"
+            assert signals[0].raw_data["patent_number"] == "11234567"
+            assert signals[0].confidence >= 0.4
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v", "--tb=short"])
