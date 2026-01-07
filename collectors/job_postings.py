@@ -14,11 +14,8 @@ Hiring signals are among the strongest indicators of:
 3. The company is growing
 
 Usage:
-    collector = JobPostingsCollector()
-    result = await collector.run(
-        domains=["anthropic.com", "stripe.com"],
-        dry_run=True
-    )
+    collector = JobPostingsCollector(domains=["anthropic.com", "stripe.com"])
+    result = await collector.run(dry_run=True)
 """
 
 from __future__ import annotations
@@ -37,6 +34,9 @@ import httpx
 # Add parent directory to path for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from collectors.base import BaseCollector
+from collectors.retry_strategy import RetryConfig
+from storage.signal_store import SignalStore
 from verification.verification_gate_v2 import Signal, VerificationStatus
 
 logger = logging.getLogger(__name__)
@@ -133,7 +133,7 @@ class JobPostingSignal:
 # COLLECTOR
 # =============================================================================
 
-class JobPostingsCollector:
+class JobPostingsCollector(BaseCollector):
     """
     Check if companies are hiring via ATS APIs.
 
@@ -144,18 +144,31 @@ class JobPostingsCollector:
     Both APIs are free, public, and don't require authentication.
 
     Usage:
-        collector = JobPostingsCollector()
-        result = await collector.run(
-            domains=["anthropic.com", "stripe.com"],
-            dry_run=True
-        )
+        collector = JobPostingsCollector(domains=["anthropic.com", "stripe.com"])
+        result = await collector.run(dry_run=True)
     """
 
-    def __init__(self, timeout: float = 30.0):
+    def __init__(
+        self,
+        domains: List[str],
+        store: Optional[SignalStore] = None,
+        retry_config: Optional[RetryConfig] = None,
+        timeout: float = 30.0,
+    ):
         """
         Args:
+            domains: List of company domains to check for hiring
+            store: Optional SignalStore for persistence
+            retry_config: Configuration for retry behavior
             timeout: HTTP request timeout in seconds
         """
+        super().__init__(
+            store=store,
+            collector_name="job_postings",
+            retry_config=retry_config,
+            api_name="job_postings",  # Unlimited rate (public APIs)
+        )
+        self.domains = domains
         self.timeout = timeout
         self.client: Optional[httpx.AsyncClient] = None
 
@@ -387,64 +400,49 @@ class JobPostingsCollector:
             logger.debug(f"Lever check failed for {company_id}: {e}")
             return None
 
-    async def run(
-        self,
-        domains: List[str],
-        dry_run: bool = True
-    ) -> Dict[str, Any]:
+    async def _collect_signals(self) -> List[Signal]:
         """
-        Check multiple domains for hiring signals.
+        Collect hiring signals from configured domains.
 
-        Args:
-            domains: List of company domains to check
-            dry_run: If True, don't persist signals
+        Implements BaseCollector._collect_signals() abstract method.
 
         Returns:
-            CollectorResult-compatible dict
+            List of Signal objects for companies with active job postings
         """
-        signals: List[JobPostingSignal] = []
-        errors: List[str] = []
+        signals: List[Signal] = []
 
-        async with self:
-            for domain in domains:
-                try:
-                    # Normalize domain
-                    clean_domain = domain.lower().strip()
-                    if clean_domain.startswith("http"):
-                        from urllib.parse import urlparse
-                        clean_domain = urlparse(clean_domain).netloc
+        for domain in self.domains:
+            try:
+                # Normalize domain
+                clean_domain = domain.lower().strip()
+                if clean_domain.startswith("http"):
+                    from urllib.parse import urlparse
+                    clean_domain = urlparse(clean_domain).netloc
 
-                    clean_domain = clean_domain.replace("www.", "")
+                clean_domain = clean_domain.replace("www.", "")
 
-                    if not clean_domain:
-                        continue
+                if not clean_domain:
+                    continue
 
-                    signal = await self.check_domain(clean_domain)
-                    if signal:
-                        signals.append(signal)
-                        logger.info(
-                            f"Found {signal.total_positions} jobs at "
-                            f"{clean_domain} via {signal.ats_platform}"
-                        )
+                # Use retry logic from BaseCollector
+                posting_signal = await self.check_domain(clean_domain)
 
-                    # Rate limit courtesy
-                    await asyncio.sleep(0.2)
+                if posting_signal:
+                    signals.append(posting_signal.to_signal())
+                    logger.info(
+                        f"Found {posting_signal.total_positions} jobs at "
+                        f"{clean_domain} via {posting_signal.ats_platform}"
+                    )
 
-                except Exception as e:
-                    error_msg = f"{domain}: {e}"
-                    errors.append(error_msg)
-                    logger.warning(f"Error checking {domain}: {e}")
+                # Rate limit courtesy between domains
+                await asyncio.sleep(0.2)
 
-        # Convert to Signal objects
-        converted_signals = [s.to_signal() for s in signals]
+            except Exception as e:
+                error_msg = f"{domain}: {e}"
+                self._errors.append(error_msg)
+                logger.warning(f"Error checking {domain}: {e}")
 
-        return {
-            "status": "SUCCESS" if not errors else "PARTIAL",
-            "signals_found": len(signals),
-            "signals": converted_signals,
-            "errors": errors or None,
-            "dry_run": dry_run,
-        }
+        return signals
 
 
 # =============================================================================
@@ -474,29 +472,19 @@ async def main():
 
     print(f"Checking domains: {domains}")
 
-    collector = JobPostingsCollector()
-    result = await collector.run(domains=domains, dry_run=True)
+    collector = JobPostingsCollector(domains=domains)
+    result = await collector.run(dry_run=True)
 
     print("\n" + "=" * 60)
     print("JOB POSTINGS COLLECTOR RESULTS")
     print("=" * 60)
-    print(f"Status: {result['status']}")
-    print(f"Signals found: {result['signals_found']}")
-    if result.get('errors'):
-        print(f"Errors: {result['errors']}")
+    print(f"Status: {result.status.value}")
+    print(f"Signals found: {result.signals_found}")
+    if result.error_message:
+        print(f"Errors: {result.error_message}")
 
-    if result['signals']:
-        print("\nHiring Signals:")
-        for sig in result['signals']:
-            raw = sig.raw_data
-            print(f"  - {raw.get('company_domain')}: "
-                  f"{raw.get('total_positions')} positions "
-                  f"({raw.get('engineering_positions')} engineering) "
-                  f"via {raw.get('ats_platform')}")
-            titles = raw.get('sample_titles', [])[:3]
-            for title in titles:
-                print(f"      • {title}")
-
+    print(f"Signals new: {result.signals_new}")
+    print(f"Signals suppressed: {result.signals_suppressed}")
     print("=" * 60)
 
 
