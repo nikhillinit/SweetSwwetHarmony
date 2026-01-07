@@ -117,12 +117,14 @@ async def cmd_full(args):
     if args.batch_size:
         config.batch_size = args.batch_size
 
-    # Feature flags
-    if args.use_gating:
+    # Feature flags - explicit enable/disable
+    if hasattr(args, "no_gating") and args.no_gating:
+        config.use_gating = False
+    elif hasattr(args, "use_gating") and args.use_gating:
         config.use_gating = True
-    if args.use_entities:
+    if hasattr(args, "use_entities") and args.use_entities:
         config.use_entities = True
-    if args.use_asset_store:
+    if hasattr(args, "use_asset_store") and args.use_asset_store:
         config.use_asset_store = True
 
     pipeline = DiscoveryPipeline(config)
@@ -180,6 +182,12 @@ async def cmd_collect(args):
         config.db_path = args.db_path
     if args.parallel is not None:
         config.parallel_collectors = args.parallel
+
+    # Feature flags
+    if hasattr(args, "no_gating") and args.no_gating:
+        config.use_gating = False
+    if hasattr(args, "use_asset_store") and args.use_asset_store:
+        config.use_asset_store = True
 
     pipeline = DiscoveryPipeline(config)
 
@@ -245,6 +253,12 @@ async def cmd_process(args):
     if args.batch_size:
         config.batch_size = args.batch_size
 
+    # Feature flags
+    if hasattr(args, "no_gating") and args.no_gating:
+        config.use_gating = False
+    if hasattr(args, "use_entities") and args.use_entities:
+        config.use_entities = True
+
     pipeline = DiscoveryPipeline(config)
 
     try:
@@ -253,6 +267,7 @@ async def cmd_process(args):
         print(f"\nDatabase: {config.db_path}")
         print(f"Batch size: {config.batch_size}")
         print(f"Dry run: {args.dry_run}")
+        print(f"Use gating: {config.use_gating}")
         print()
 
         # Process pending signals
@@ -597,6 +612,9 @@ Environment variables:
   PARALLEL_COLLECTORS        - Run collectors in parallel (default: true)
   BATCH_SIZE                 - Processing batch size (default: 50)
   STRICT_MODE                - Require 2+ sources for auto-push (default: false)
+  USE_GATING                 - Enable consumer filtering (default: true)
+  USE_ENTITIES               - Enable entity resolution (default: false)
+  USE_ASSET_STORE            - Enable asset store (default: false)
         """,
     )
 
@@ -643,15 +661,21 @@ Environment variables:
         type=str,
         help="Save results to JSON file",
     )
+    # Feature flags - gating is ON by default, use --no-gating to disable
+    full_parser.add_argument(
+        "--no-gating",
+        action="store_true",
+        help="Disable two-stage gating (TriggerGate + LLMClassifierV2)",
+    )
     full_parser.add_argument(
         "--use-gating",
         action="store_true",
-        help="Enable two-stage gating (TriggerGate + LLMClassifierV2)",
+        help="Explicitly enable two-stage gating (enabled by default)",
     )
     full_parser.add_argument(
         "--use-entities",
         action="store_true",
-        help="Enable entity resolution (asset → lead mapping)",
+        help="Enable entity resolution (asset to lead mapping)",
     )
     full_parser.add_argument(
         "--use-asset-store",
@@ -685,6 +709,17 @@ Environment variables:
         type=lambda x: x.lower() in ("true", "1", "yes"),
         help="Run collectors in parallel (true/false)",
     )
+    # Feature flags for collect
+    collect_parser.add_argument(
+        "--no-gating",
+        action="store_true",
+        help="Disable two-stage gating",
+    )
+    collect_parser.add_argument(
+        "--use-asset-store",
+        action="store_true",
+        help="Save raw snapshots to SourceAssetStore",
+    )
 
     # Process command
     process_parser = subparsers.add_parser(
@@ -705,6 +740,17 @@ Environment variables:
         "--batch-size",
         type=int,
         help="Processing batch size",
+    )
+    # Feature flags for process
+    process_parser.add_argument(
+        "--no-gating",
+        action="store_true",
+        help="Disable two-stage gating",
+    )
+    process_parser.add_argument(
+        "--use-entities",
+        action="store_true",
+        help="Enable entity resolution",
     )
 
     # Sync command
