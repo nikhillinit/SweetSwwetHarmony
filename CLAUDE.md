@@ -138,13 +138,13 @@ Write failing tests first, then minimal code to pass them.
 ## Current Sprint: Production Hardening 🚧 IN PROGRESS
 
 **Phase 1: Quick Wins**
-- [ ] Suppression cache warmup on pipeline init
+- [x] Suppression cache warmup on pipeline init
 - [ ] Health check CLI command
 - [ ] Wire up SignalHealthMonitor
 
 **Phase 2: Collector Hardening**
-- [ ] Centralized retry strategy module
-- [ ] Per-API rate limiter
+- [x] Centralized retry strategy module (18 tests)
+- [x] Per-API rate limiter (16 tests)
 - [ ] Add retry to 6 collectors
 
 **Phase 3: BaseCollector Refactor**
