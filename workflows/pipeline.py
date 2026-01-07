@@ -114,7 +114,7 @@ class PipelineConfig:
     warmup_suppression_cache: bool = True  # Auto-sync suppression cache on init
 
     # Feature flags (v2 components)
-    use_gating: bool = False         # Enable TriggerGate + LLMClassifierV2
+    use_gating: bool = True          # Enable TriggerGate + LLMClassifierV2 (consumer filtering)
     use_entities: bool = False       # Enable EntityResolver
     use_asset_store: bool = False    # Save to SourceAssetStore
 
@@ -132,7 +132,7 @@ class PipelineConfig:
             batch_size=int(os.getenv("BATCH_SIZE", "50")),
             strict_mode=os.getenv("STRICT_MODE", "false").lower() == "true",
             warmup_suppression_cache=os.getenv("WARMUP_SUPPRESSION_CACHE", "true").lower() == "true",
-            use_gating=os.getenv("USE_GATING", "false").lower() == "true",
+            use_gating=os.getenv("USE_GATING", "true").lower() == "true",
             use_entities=os.getenv("USE_ENTITIES", "false").lower() == "true",
             use_asset_store=os.getenv("USE_ASSET_STORE", "false").lower() == "true",
         )
