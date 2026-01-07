@@ -201,15 +201,9 @@ class USPTOCollector(BaseCollector):
         ]
         self.lookback_days = lookback_days
         self.max_results = max_results
-        self.client: Optional[httpx.AsyncClient] = None
 
-    async def __aenter__(self):
-        self.client = httpx.AsyncClient(timeout=60.0)
-        return self
-
-    async def __aexit__(self, *args):
-        if self.client:
-            await self.client.aclose()
+    # BaseCollector provides __aenter__ and __aexit__
+    # We use _fetch_with_retry for HTTP calls with retry + rate limiting
 
     async def _collect_signals(self) -> List[Signal]:
         """Collect USPTO patents as signals."""
@@ -275,22 +269,24 @@ class USPTOCollector(BaseCollector):
         }
 
         try:
-            response = await self.client.post(
-                PATENTSVIEW_API,
-                json={
-                    "q": query,
-                    "f": fields,
-                    "o": options,
-                },
-                headers={"Content-Type": "application/json"},
-            )
+            # Use _fetch_with_retry for automatic retry and rate limiting
+            async def fetch_patents():
+                async with httpx.AsyncClient(timeout=60.0) as client:
+                    response = await client.post(
+                        PATENTSVIEW_API,
+                        json={
+                            "q": query,
+                            "f": fields,
+                            "o": options,
+                        },
+                        headers={"Content-Type": "application/json"},
+                    )
+                    response.raise_for_status()
+                    return response.json()
 
-            if response.status_code != 200:
-                logger.error(f"USPTO API error: {response.status_code}")
-                logger.debug(f"Response: {response.text}")
-                return patents
-
-            data = response.json()
+            # Acquire rate limit before request
+            await self.rate_limiter.acquire()
+            data = await self._fetch_with_retry(fetch_patents)
             patent_data = data.get("patents", [])
 
             if not patent_data:
