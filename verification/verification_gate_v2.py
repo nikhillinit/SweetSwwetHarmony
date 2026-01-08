@@ -18,6 +18,11 @@ Additional fixes:
 - Anti-inflation: max one contribution per signal_type
 - Hard kill for company_dissolved (not just "conflicting")
 - Convergence boost based on distinct signal types (not raw count)
+
+Harmonic-level enhancements:
+- Founder score integration (serial founders, FAANG experience)
+- Signal velocity tracking (momentum detection)
+- Enhanced confidence scoring
 """
 
 from dataclasses import dataclass, field
@@ -156,13 +161,23 @@ class ConfidenceBreakdown:
     signal_details: List[Dict[str, Any]]
     calculation_method: str = "glass_ai_v2"
     calculated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    
+
+    # Harmonic-level enhancements
+    founder_score: float = 0.0  # Aggregate founder score (0-1)
+    founder_boost: float = 0.0  # Boost applied from founder score
+    velocity_boost: float = 0.0  # Boost from signal velocity/momentum
+    momentum_score: float = 0.0  # Raw momentum score (0-1)
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "overall": round(self.overall, 3),
             "base_score": round(self.base_score, 3),
             "multi_source_boost": self.multi_source_boost,
             "convergence_boost": round(self.convergence_boost, 2),
+            "founder_score": round(self.founder_score, 3),
+            "founder_boost": round(self.founder_boost, 3),
+            "velocity_boost": round(self.velocity_boost, 3),
+            "momentum_score": round(self.momentum_score, 3),
             "signals_contributing": self.signals_contributing,
             "sources_checked": self.sources_checked,
             "sources": self.sources,
@@ -179,36 +194,66 @@ class ConfidenceBreakdown:
 class VerificationGate:
     """
     Decides whether a prospect should be pushed to Notion and with what status.
-    
+
     CORRECTED routing:
     - AUTO_PUSH → "Source" (your Notion's entry-point status)
     - NEEDS_REVIEW → "Tracking" (your Notion's watch-list status)
+
+    Harmonic-level enhancements:
+    - Founder score integration for team quality signals
+    - Velocity tracking for momentum detection
     """
-    
+
     # Thresholds
     HIGH_CONFIDENCE_THRESHOLD = 0.7
     MEDIUM_CONFIDENCE_THRESHOLD = 0.4
     MIN_SOURCES_FOR_AUTO_PUSH = 2
-    
+
+    # Founder score thresholds
+    FOUNDER_HIGH_SCORE = 0.7  # Serial founder, FAANG, etc.
+    FOUNDER_MEDIUM_SCORE = 0.4  # Some experience
+
+    # Boost weights
+    FOUNDER_BOOST_WEIGHT = 0.15  # Max boost from founder score
+    VELOCITY_BOOST_WEIGHT = 0.20  # Max boost from velocity
+
     def __init__(
         self,
         strict_mode: bool = False,
         auto_push_status: str = "Source",
-        needs_review_status: str = "Tracking"
+        needs_review_status: str = "Tracking",
+        use_founder_scoring: bool = True,
+        use_velocity_scoring: bool = True,
     ):
         """
         Args:
             strict_mode: If True, require 2+ sources for any push.
             auto_push_status: Notion status for high-confidence deals.
             needs_review_status: Notion status for medium-confidence deals.
+            use_founder_scoring: Enable founder score integration.
+            use_velocity_scoring: Enable velocity/momentum scoring.
         """
         self.strict_mode = strict_mode
         self.auto_push_status = auto_push_status
         self.needs_review_status = needs_review_status
+        self.use_founder_scoring = use_founder_scoring
+        self.use_velocity_scoring = use_velocity_scoring
     
-    def evaluate(self, signals: List[Signal]) -> VerificationResult:
+    def evaluate(
+        self,
+        signals: List[Signal],
+        founder_score: float = 0.0,
+        velocity_boost: float = 0.0,
+        momentum_score: float = 0.0,
+    ) -> VerificationResult:
         """
         Main entry point: evaluate signals and decide on push action.
+
+        Args:
+            signals: List of Signal objects to evaluate.
+            founder_score: Aggregate founder score (0-1) from FounderStore.
+            velocity_boost: Confidence boost from signal velocity (0-0.35).
+            momentum_score: Raw momentum score (0-1) for tracking.
         """
         if not signals:
             return VerificationResult(
@@ -239,11 +284,16 @@ class VerificationGate:
             )
         
         # Calculate confidence with full breakdown
-        breakdown = self._calculate_confidence(signals)
-        
+        breakdown = self._calculate_confidence(
+            signals,
+            founder_score=founder_score,
+            velocity_boost=velocity_boost,
+            momentum_score=momentum_score,
+        )
+
         # Determine verification status
         verification_status = self._assess_verification_status(signals)
-        
+
         # Make push decision
         decision, reason, suggested_status = self._make_decision(
             breakdown, verification_status, signals
@@ -273,12 +323,22 @@ class VerificationGate:
             verification_details=verification_details
         )
     
-    def _calculate_confidence(self, signals: List[Signal]) -> ConfidenceBreakdown:
+    def _calculate_confidence(
+        self,
+        signals: List[Signal],
+        founder_score: float = 0.0,
+        velocity_boost: float = 0.0,
+        momentum_score: float = 0.0,
+    ) -> ConfidenceBreakdown:
         """
         Calculate confidence score with anti-inflation protection.
-        
+
         Key fix: Only count the BEST signal per signal_type to prevent
         gaming the score with repeated signals of the same type.
+
+        Harmonic enhancements:
+        - Founder score boost (up to 0.15)
+        - Velocity boost (up to 0.20)
         """
         # Group signals by source
         by_source = defaultdict(list)
@@ -349,15 +409,53 @@ class VerificationGate:
             convergence_boost = 1.2
         else:
             convergence_boost = 1.0
-        
-        # Final score
-        final_score = min(base_score * multi_source_boost * convergence_boost, 1.0)
-        
+
+        # Calculate intermediate score
+        intermediate_score = base_score * multi_source_boost * convergence_boost
+
+        # Founder score boost (Harmonic enhancement)
+        founder_boost = 0.0
+        if self.use_founder_scoring and founder_score > 0:
+            # Scale founder score to boost: max 0.15 for perfect founder
+            founder_boost = min(founder_score * self.FOUNDER_BOOST_WEIGHT, self.FOUNDER_BOOST_WEIGHT)
+
+            # Add founder signal detail
+            signal_details.append({
+                "type": "founder_score",
+                "source": "founder_store",
+                "founder_score": round(founder_score, 3),
+                "contribution": round(founder_boost, 4),
+                "effect": "boost"
+            })
+
+        # Velocity boost (Harmonic enhancement)
+        velocity_boost_applied = 0.0
+        if self.use_velocity_scoring and velocity_boost > 0:
+            # Velocity boost is already pre-calculated (0-0.35 range)
+            # Scale it to our weight limit
+            velocity_boost_applied = min(velocity_boost, self.VELOCITY_BOOST_WEIGHT)
+
+            # Add velocity signal detail
+            signal_details.append({
+                "type": "velocity_momentum",
+                "source": "signal_velocity",
+                "momentum_score": round(momentum_score, 3),
+                "contribution": round(velocity_boost_applied, 4),
+                "effect": "boost"
+            })
+
+        # Final score with all boosts
+        final_score = min(intermediate_score + founder_boost + velocity_boost_applied, 1.0)
+
         return ConfidenceBreakdown(
             overall=final_score,
             base_score=base_score,
             multi_source_boost=multi_source_boost,
             convergence_boost=convergence_boost,
+            founder_score=founder_score,
+            founder_boost=founder_boost,
+            velocity_boost=velocity_boost_applied,
+            momentum_score=momentum_score,
             signals_contributing=distinct_types,
             sources_checked=sources_checked,
             sources=list(by_source.keys()),

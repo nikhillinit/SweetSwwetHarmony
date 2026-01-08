@@ -43,8 +43,12 @@ from typing import Any, Dict, List, Optional, Set
 # Storage
 from storage.signal_store import SignalStore, StoredSignal
 from storage.source_asset_store import SourceAssetStore, SourceAsset
+from storage.founder_store import FounderStore
 from consumer.signal_processor import SignalProcessor, ProcessorConfig
 from consumer.entity_resolver import EntityResolver, ResolverConfig
+
+# Velocity tracking (Harmonic enhancement)
+from utils.signal_velocity import SignalVelocityTracker, VelocityConfig
 
 # Verification
 from verification.verification_gate_v2 import (
@@ -121,6 +125,10 @@ class PipelineConfig:
     use_entities: bool = False       # Enable EntityResolver
     use_asset_store: bool = False    # Save to SourceAssetStore
 
+    # Harmonic-level enhancements
+    use_founder_scoring: bool = True  # Enable founder intelligence scoring
+    use_velocity_tracking: bool = True  # Enable signal velocity/momentum tracking
+
     @classmethod
     def from_env(cls) -> PipelineConfig:
         """Load configuration from environment variables"""
@@ -138,6 +146,8 @@ class PipelineConfig:
             use_gating=os.getenv("USE_GATING", "true").lower() == "true",
             use_entities=os.getenv("USE_ENTITIES", "false").lower() == "true",
             use_asset_store=os.getenv("USE_ASSET_STORE", "false").lower() == "true",
+            use_founder_scoring=os.getenv("USE_FOUNDER_SCORING", "true").lower() == "true",
+            use_velocity_tracking=os.getenv("USE_VELOCITY_TRACKING", "true").lower() == "true",
         )
 
 
@@ -267,6 +277,10 @@ class DiscoveryPipeline:
         self._health_monitor: Optional[SignalHealthMonitor] = None
         self._notifier: Optional[SlackNotifier] = None
 
+        # Harmonic enhancements
+        self._founder_store: Optional[FounderStore] = None
+        self._velocity_tracker: Optional[SignalVelocityTracker] = None
+
         # State
         self._initialized = False
 
@@ -312,6 +326,18 @@ class DiscoveryPipeline:
             self._entity_resolver = EntityResolver(resolver_config)
             logger.info("EntityResolver initialized (asset-to-lead resolution enabled)")
 
+        # Initialize FounderStore (if founder scoring enabled)
+        if self.config.use_founder_scoring:
+            self._founder_store = FounderStore(db_path=self.config.db_path)
+            await self._founder_store.initialize()
+            logger.info("FounderStore initialized (founder intelligence enabled)")
+
+        # Initialize SignalVelocityTracker (if velocity tracking enabled)
+        if self.config.use_velocity_tracking:
+            velocity_config = VelocityConfig()
+            self._velocity_tracker = SignalVelocityTracker(self._store, velocity_config)
+            logger.info("SignalVelocityTracker initialized (momentum detection enabled)")
+
         # Initialize SignalHealthMonitor (non-fatal if it fails)
         try:
             self._health_monitor = SignalHealthMonitor(self._store)
@@ -348,9 +374,13 @@ class DiscoveryPipeline:
         if self._asset_store:
             await self._asset_store.close()
             self._asset_store = None
+        if self._founder_store:
+            await self._founder_store.close()
+            self._founder_store = None
         if self._notifier:
             await self._notifier.close()
             self._notifier = None
+        self._velocity_tracker = None
         self._initialized = False
 
     async def _warmup_suppression_cache(self) -> None:
@@ -941,6 +971,34 @@ class DiscoveryPipeline:
                 logger.warning(f"Entity resolution failed (non-fatal): {e}")
                 entity_resolution = {"error": str(e)}
 
+        # Get founder score (Harmonic enhancement)
+        founder_score = 0.0
+        if self._founder_store and self.config.use_founder_scoring:
+            try:
+                founder_score = await self._founder_store.get_aggregate_founder_score(canonical_key)
+                if founder_score > 0:
+                    logger.info(f"Founder score for {canonical_key}: {founder_score:.2f}")
+            except Exception as e:
+                logger.warning(f"Founder scoring failed (non-fatal): {e}")
+
+        # Get velocity metrics (Harmonic enhancement)
+        velocity_boost = 0.0
+        momentum_score = 0.0
+        if self._velocity_tracker and self.config.use_velocity_tracking:
+            try:
+                velocity = await self._velocity_tracker.get_velocity(canonical_key)
+                velocity_boost = velocity.confidence_boost
+                momentum_score = velocity.momentum_score
+                if velocity_boost > 0:
+                    logger.info(
+                        f"Velocity for {canonical_key}: boost={velocity_boost:.2f}, "
+                        f"momentum={momentum_score:.2f}, "
+                        f"signals_48h={velocity.signals_48h}, "
+                        f"types={len(velocity.unique_signal_types)}"
+                    )
+            except Exception as e:
+                logger.warning(f"Velocity tracking failed (non-fatal): {e}")
+
         # Run through SignalProcessor gating (if enabled)
         gating_applied = False
         gating_triggered = False
@@ -1002,8 +1060,13 @@ class DiscoveryPipeline:
         # Convert to Signal objects for verification gate
         gate_signals = [self._stored_to_signal(sig) for sig in signals]
 
-        # Run through verification gate
-        verification = self._gate.evaluate(gate_signals)
+        # Run through verification gate (with Harmonic enhancements)
+        verification = self._gate.evaluate(
+            gate_signals,
+            founder_score=founder_score,
+            velocity_boost=velocity_boost,
+            momentum_score=momentum_score,
+        )
 
         logger.info(
             f"Verification for {canonical_key}: "
@@ -1098,6 +1161,10 @@ class DiscoveryPipeline:
             "gating_actionable": gating_actionable,
             "gating_error": gating_error,
             "entity_resolution": entity_resolution,
+            # Harmonic enhancements
+            "founder_score": founder_score,
+            "velocity_boost": velocity_boost,
+            "momentum_score": momentum_score,
         }
 
     async def _push_to_notion(
