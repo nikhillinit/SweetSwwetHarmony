@@ -42,7 +42,7 @@ from typing import Any, Dict, List, Optional, Set
 
 # Storage
 from storage.signal_store import SignalStore, StoredSignal
-from storage.source_asset_store import SourceAssetStore
+from storage.source_asset_store import SourceAssetStore, SourceAsset
 from consumer.signal_processor import SignalProcessor, ProcessorConfig
 from consumer.entity_resolver import EntityResolver, ResolverConfig
 
@@ -149,6 +149,7 @@ class PipelineStats:
     collectors_run: int = 0
     collectors_succeeded: int = 0
     collectors_failed: int = 0
+    collectors_skipped: int = 0  # Skipped due to missing config
     signals_collected: int = 0
 
     # Storage stats
@@ -195,6 +196,7 @@ class PipelineStats:
                 "run": self.collectors_run,
                 "succeeded": self.collectors_succeeded,
                 "failed": self.collectors_failed,
+                "skipped": self.collectors_skipped,
                 "signals_collected": self.signals_collected,
             },
             "storage": {
@@ -426,6 +428,9 @@ class DiscoveryPipeline:
             stats.collectors_failed = sum(
                 1 for r in collector_results if r.status == CollectorStatus.ERROR
             )
+            stats.collectors_skipped = sum(
+                1 for r in collector_results if r.status == CollectorStatus.SKIPPED
+            )
             stats.signals_collected = sum(r.signals_found for r in collector_results)
 
             # Stage 2: Process pending signals
@@ -472,6 +477,14 @@ class DiscoveryPipeline:
 
         finally:
             stats.complete()
+
+            # Save metrics to database (non-fatal)
+            if self._store:
+                try:
+                    run_id = await self._store.save_pipeline_run(stats)
+                    logger.info(f"Pipeline metrics saved (run_id: {run_id})")
+                except Exception as e:
+                    logger.warning(f"Failed to save pipeline metrics (non-fatal): {e}")
 
         return stats
 
@@ -670,6 +683,79 @@ class DiscoveryPipeline:
             elif collector_name == "domain_whois":
                 from collectors.domain_whois import DomainWhoisCollector
                 collector = DomainWhoisCollector()
+            elif collector_name == "product_hunt":
+                from collectors.product_hunt import ProductHuntCollector
+                collector = ProductHuntCollector(
+                    api_key=os.getenv("PH_API_KEY")
+                )
+            elif collector_name == "hacker_news":
+                from collectors.hacker_news import HackerNewsCollector
+                collector = HackerNewsCollector()
+            elif collector_name == "arxiv":
+                from collectors.arxiv import ArxivCollector
+                collector = ArxivCollector()
+            elif collector_name == "job_postings":
+                from collectors.job_postings import JobPostingsCollector
+                # Job postings requires domains to scan - use configured or default
+                job_domains = os.getenv("JOB_POSTING_DOMAINS", "").split(",")
+                job_domains = [d.strip() for d in job_domains if d.strip()]
+                if not job_domains:
+                    return CollectorResult(
+                        collector=collector_name,
+                        status=CollectorStatus.SKIPPED,
+                        error_message="No JOB_POSTING_DOMAINS configured",
+                        dry_run=dry_run,
+                    )
+                collector = JobPostingsCollector(domains=job_domains)
+            elif collector_name == "github_activity":
+                from collectors.github_activity import GitHubActivityCollector
+                # GitHub activity requires usernames or org names
+                gh_usernames = os.getenv("GITHUB_ACTIVITY_USERNAMES", "").split(",")
+                gh_usernames = [u.strip() for u in gh_usernames if u.strip()]
+                gh_orgs = os.getenv("GITHUB_ACTIVITY_ORGS", "").split(",")
+                gh_orgs = [o.strip() for o in gh_orgs if o.strip()]
+                if not gh_usernames and not gh_orgs:
+                    return CollectorResult(
+                        collector=collector_name,
+                        status=CollectorStatus.SKIPPED,
+                        error_message="No GITHUB_ACTIVITY_USERNAMES or GITHUB_ACTIVITY_ORGS configured",
+                        dry_run=dry_run,
+                    )
+                collector = GitHubActivityCollector(
+                    usernames=gh_usernames if gh_usernames else None,
+                    org_names=gh_orgs if gh_orgs else None,
+                )
+            elif collector_name == "linkedin":
+                from collectors.linkedin import LinkedInCollector
+                linkedin_key = os.getenv("PROXYCURL_API_KEY")
+                if not linkedin_key:
+                    return CollectorResult(
+                        collector=collector_name,
+                        status=CollectorStatus.SKIPPED,
+                        error_message="No PROXYCURL_API_KEY configured",
+                        dry_run=dry_run,
+                    )
+                # LinkedIn requires company URLs to scan
+                linkedin_urls = os.getenv("LINKEDIN_COMPANY_URLS", "").split(",")
+                linkedin_urls = [u.strip() for u in linkedin_urls if u.strip()]
+                collector = LinkedInCollector(
+                    api_key=linkedin_key,
+                    company_urls=linkedin_urls if linkedin_urls else None,
+                )
+            elif collector_name == "crunchbase":
+                from collectors.crunchbase import CrunchbaseCollector
+                cb_key = os.getenv("CRUNCHBASE_API_KEY")
+                if not cb_key:
+                    return CollectorResult(
+                        collector=collector_name,
+                        status=CollectorStatus.SKIPPED,
+                        error_message="No CRUNCHBASE_API_KEY configured",
+                        dry_run=dry_run,
+                    )
+                collector = CrunchbaseCollector(api_key=cb_key)
+            elif collector_name == "uspto":
+                from collectors.uspto import USPTOCollector
+                collector = USPTOCollector()
             else:
                 return CollectorResult(
                     collector=collector_name,
@@ -685,6 +771,14 @@ class DiscoveryPipeline:
                 f"Collector {collector_name} completed: "
                 f"{result.signals_found} signals found"
             )
+
+            # Save to SourceAssetStore for change detection (if enabled)
+            if self._asset_store and self.config.use_asset_store and result.signals_found > 0:
+                try:
+                    assets_saved = await self._save_collector_assets(collector_name, result)
+                    logger.info(f"Saved {assets_saved} assets to SourceAssetStore")
+                except Exception as e:
+                    logger.warning(f"SourceAssetStore save failed (non-fatal): {e}")
 
             return result
 
@@ -811,13 +905,99 @@ class DiscoveryPipeline:
                 "gating_applied": False,
             }
 
+        # Run through EntityResolver (if enabled)
+        entity_resolution = None
+        if self._entity_resolver and self.config.use_entities:
+            try:
+                # Convert first signal to asset for resolution
+                primary_asset = self._signal_to_asset(signals[0])
+                best_candidate = await self._entity_resolver.get_best_candidate(
+                    primary_asset, min_confidence=0.5
+                )
+
+                if best_candidate:
+                    entity_resolution = {
+                        "resolved_key": best_candidate.lead_canonical_key,
+                        "method": best_candidate.method.value,
+                        "confidence": best_candidate.confidence,
+                        "reason": best_candidate.reason,
+                    }
+                    logger.info(
+                        f"Entity resolution for {canonical_key}: "
+                        f"resolved to {best_candidate.lead_canonical_key} "
+                        f"(method: {best_candidate.method.value}, confidence: {best_candidate.confidence:.2f})"
+                    )
+
+                    # If resolved key differs and has higher confidence, log it
+                    if best_candidate.lead_canonical_key != canonical_key:
+                        logger.info(
+                            f"Entity resolution suggests alternative key: "
+                            f"{best_candidate.lead_canonical_key} (original: {canonical_key})"
+                        )
+                else:
+                    logger.debug(f"Entity resolution: no high-confidence candidate for {canonical_key}")
+
+            except Exception as e:
+                logger.warning(f"Entity resolution failed (non-fatal): {e}")
+                entity_resolution = {"error": str(e)}
+
         # Run through SignalProcessor gating (if enabled)
         gating_applied = False
+        gating_triggered = False
+        gating_actionable = False
+        gating_results = []
+        gating_error = None
+
         if self._signal_processor and self.config.use_gating:
             gating_applied = True
             logger.info(f"Running gating for {canonical_key} (SignalProcessor enabled)")
-            # Note: Full gating integration would process signals here
-            # For now, we mark that gating was applied and continue
+
+            try:
+                # Process each signal through SignalProcessor
+                for signal in signals:
+                    # Convert StoredSignal to dict format expected by SignalProcessor
+                    signal_dict = {
+                        "id": str(signal.id),
+                        "signal_type": signal.signal_type,
+                        "source_api": signal.source_api,
+                        "canonical_key": signal.canonical_key,
+                        "company_name": signal.company_name,
+                        "confidence": signal.confidence,
+                        "raw_data": signal.raw_data,
+                        "detected_at": signal.detected_at,
+                    }
+
+                    # Run through two-stage gating
+                    processing_result = await self._signal_processor.process_signal(signal_dict)
+                    gating_results.append(processing_result)
+
+                    # Track if any signal was triggered
+                    if processing_result.triggered:
+                        gating_triggered = True
+
+                        # Check if actionable (pivot or expansion)
+                        if processing_result.is_actionable:
+                            gating_actionable = True
+                            logger.info(
+                                f"Signal {signal.id} is actionable: "
+                                f"{processing_result.classification.label.value} "
+                                f"(confidence: {processing_result.classification.confidence:.2f})"
+                            )
+
+                # Log summary
+                triggered_count = sum(1 for r in gating_results if r.triggered)
+                actionable_count = sum(1 for r in gating_results if r.is_actionable)
+
+                logger.info(
+                    f"Gating complete for {canonical_key}: "
+                    f"{triggered_count}/{len(gating_results)} triggered, "
+                    f"{actionable_count} actionable"
+                )
+
+            except Exception as e:
+                logger.warning(f"SignalProcessor gating failed (non-fatal): {e}")
+                gating_error = str(e)
+                # Continue with normal flow - gating is optional
 
         # Convert to Signal objects for verification gate
         gate_signals = [self._stored_to_signal(sig) for sig in signals]
@@ -914,6 +1094,10 @@ class DiscoveryPipeline:
             "confidence": verification.confidence_score,
             "notion_status": notion_status,
             "gating_applied": gating_applied,
+            "gating_triggered": gating_triggered,
+            "gating_actionable": gating_actionable,
+            "gating_error": gating_error,
+            "entity_resolution": entity_resolution,
         }
 
     async def _push_to_notion(
@@ -977,6 +1161,62 @@ class DiscoveryPipeline:
             verified_by_sources=[stored.source_api],
             verification_status=VerificationStatus.SINGLE_SOURCE,
         )
+
+    def _signal_to_asset(self, stored: StoredSignal) -> SourceAsset:
+        """Convert StoredSignal to SourceAsset for entity resolution"""
+        return SourceAsset(
+            source_type=stored.source_api,
+            external_id=stored.canonical_key,
+            raw_payload=stored.raw_data,
+            fetched_at=stored.detected_at,
+        )
+
+    async def _save_collector_assets(
+        self,
+        collector_name: str,
+        result: CollectorResult,
+    ) -> int:
+        """
+        Save collector results to SourceAssetStore for change detection.
+
+        Gets pending signals from the collector and saves them as SourceAssets.
+        This enables:
+        - Change detection via snapshot comparison
+        - Historical analysis
+        - Entity resolution from stored assets
+
+        Returns the number of assets saved.
+        """
+        if not self._asset_store:
+            return 0
+
+        # Get pending signals and filter by collector source
+        pending = await self._store.get_pending_signals(limit=result.signals_found * 2)
+        signals = [s for s in pending if s.source_api == collector_name]
+
+        assets_saved = 0
+        for signal in signals[:result.signals_found]:
+            # Convert to SourceAsset
+            asset = self._signal_to_asset(signal)
+
+            # Check for previous snapshot and detect changes
+            previous = await self._asset_store.get_previous_snapshot(
+                source_type=asset.source_type,
+                external_id=asset.external_id,
+            )
+
+            if previous:
+                # Simple change detection: compare raw payloads
+                import json
+                prev_json = json.dumps(previous.raw_payload, sort_keys=True)
+                curr_json = json.dumps(asset.raw_payload, sort_keys=True)
+                asset.change_detected = prev_json != curr_json
+
+            # Save asset
+            await self._asset_store.save_asset(asset)
+            assets_saved += 1
+
+        return assets_saved
 
     def _infer_stage(self, signals: List[StoredSignal]) -> InvestmentStage:
         """Infer investment stage from signals"""

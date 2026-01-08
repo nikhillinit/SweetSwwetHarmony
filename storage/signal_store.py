@@ -43,13 +43,17 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import uuid
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional, AsyncIterator
+from typing import Any, Dict, List, Optional, AsyncIterator, TYPE_CHECKING
 
 import aiosqlite
+
+if TYPE_CHECKING:
+    from workflows.pipeline import PipelineStats
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +62,7 @@ logger = logging.getLogger(__name__)
 # SCHEMA VERSION
 # =============================================================================
 
-CURRENT_SCHEMA_VERSION = 1
+CURRENT_SCHEMA_VERSION = 2
 
 # SQL for creating tables (migrations applied in order)
 MIGRATIONS = {
@@ -125,6 +129,48 @@ MIGRATIONS = {
         applied_at TEXT NOT NULL,
         description TEXT
     );
+    """,
+    2: """
+    -- Pipeline runs: track pipeline execution metrics
+    CREATE TABLE IF NOT EXISTS pipeline_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id TEXT NOT NULL UNIQUE,
+        started_at TEXT NOT NULL,  -- ISO 8601
+        completed_at TEXT,  -- ISO 8601
+        duration_seconds REAL,
+
+        -- Collector stats
+        collectors_run INTEGER NOT NULL DEFAULT 0,
+        collectors_succeeded INTEGER NOT NULL DEFAULT 0,
+        collectors_failed INTEGER NOT NULL DEFAULT 0,
+        signals_collected INTEGER NOT NULL DEFAULT 0,
+
+        -- Storage stats
+        signals_stored INTEGER NOT NULL DEFAULT 0,
+        signals_deduplicated INTEGER NOT NULL DEFAULT 0,
+
+        -- Verification stats
+        signals_processed INTEGER NOT NULL DEFAULT 0,
+        signals_auto_push INTEGER NOT NULL DEFAULT 0,
+        signals_needs_review INTEGER NOT NULL DEFAULT 0,
+        signals_held INTEGER NOT NULL DEFAULT 0,
+        signals_rejected INTEGER NOT NULL DEFAULT 0,
+
+        -- Notion stats
+        prospects_created INTEGER NOT NULL DEFAULT 0,
+        prospects_updated INTEGER NOT NULL DEFAULT 0,
+        prospects_skipped INTEGER NOT NULL DEFAULT 0,
+
+        -- Errors and health
+        errors TEXT,  -- JSON array
+        health_report TEXT,  -- JSON object
+
+        created_at TEXT NOT NULL  -- ISO 8601
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_pipeline_runs_run_id ON pipeline_runs(run_id);
+    CREATE INDEX IF NOT EXISTS idx_pipeline_runs_started_at ON pipeline_runs(started_at);
+    CREATE INDEX IF NOT EXISTS idx_pipeline_runs_created_at ON pipeline_runs(created_at);
     """
 }
 
@@ -726,6 +772,169 @@ class SignalStore:
             "processing_status": processing_stats,
             "active_suppression_entries": active_cache_entries,
             "database_path": str(self.db_path),
+        }
+
+    # =========================================================================
+    # PIPELINE METRICS
+    # =========================================================================
+
+    async def save_pipeline_run(self, stats: PipelineStats) -> str:
+        """
+        Save pipeline run metrics to database.
+
+        Args:
+            stats: PipelineStats object from a pipeline run
+
+        Returns:
+            run_id: UUID string for this pipeline run
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        run_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc).isoformat()
+
+        # Serialize errors list to JSON
+        errors_json = json.dumps(stats.errors) if stats.errors else None
+
+        # Serialize health_report to JSON if present
+        health_json = None
+        if stats.health_report:
+            health_json = json.dumps(stats.health_report.to_dict())
+
+        async with self.transaction() as conn:
+            await conn.execute(
+                """
+                INSERT INTO pipeline_runs (
+                    run_id, started_at, completed_at, duration_seconds,
+                    collectors_run, collectors_succeeded, collectors_failed, signals_collected,
+                    signals_stored, signals_deduplicated,
+                    signals_processed, signals_auto_push, signals_needs_review,
+                    signals_held, signals_rejected,
+                    prospects_created, prospects_updated, prospects_skipped,
+                    errors, health_report, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    stats.started_at.isoformat(),
+                    stats.completed_at.isoformat() if stats.completed_at else None,
+                    stats.duration_seconds,
+                    stats.collectors_run,
+                    stats.collectors_succeeded,
+                    stats.collectors_failed,
+                    stats.signals_collected,
+                    stats.signals_stored,
+                    stats.signals_deduplicated,
+                    stats.signals_processed,
+                    stats.signals_auto_push,
+                    stats.signals_needs_review,
+                    stats.signals_held,
+                    stats.signals_rejected,
+                    stats.prospects_created,
+                    stats.prospects_updated,
+                    stats.prospects_skipped,
+                    errors_json,
+                    health_json,
+                    now,
+                )
+            )
+
+        logger.info(f"Saved pipeline run {run_id} (duration: {stats.duration_seconds}s)")
+        return run_id
+
+    async def get_pipeline_runs(self, limit: int = 10) -> List[Dict[str, Any]]:
+        """
+        Get recent pipeline runs in reverse chronological order.
+
+        Args:
+            limit: Maximum number of runs to return (default 10)
+
+        Returns:
+            List of pipeline run dictionaries
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        cursor = await self._db.execute(
+            """
+            SELECT
+                run_id, started_at, completed_at, duration_seconds,
+                collectors_run, collectors_succeeded, collectors_failed, signals_collected,
+                signals_stored, signals_deduplicated,
+                signals_processed, signals_auto_push, signals_needs_review,
+                signals_held, signals_rejected,
+                prospects_created, prospects_updated, prospects_skipped,
+                errors, health_report
+            FROM pipeline_runs
+            ORDER BY started_at DESC
+            LIMIT ?
+            """,
+            (limit,)
+        )
+
+        rows = await cursor.fetchall()
+        return [self._row_to_pipeline_run(row) for row in rows]
+
+    async def get_pipeline_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get a specific pipeline run by ID.
+
+        Args:
+            run_id: UUID of the pipeline run
+
+        Returns:
+            Pipeline run dictionary or None if not found
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        cursor = await self._db.execute(
+            """
+            SELECT
+                run_id, started_at, completed_at, duration_seconds,
+                collectors_run, collectors_succeeded, collectors_failed, signals_collected,
+                signals_stored, signals_deduplicated,
+                signals_processed, signals_auto_push, signals_needs_review,
+                signals_held, signals_rejected,
+                prospects_created, prospects_updated, prospects_skipped,
+                errors, health_report
+            FROM pipeline_runs
+            WHERE run_id = ?
+            """,
+            (run_id,)
+        )
+
+        row = await cursor.fetchone()
+        if not row:
+            return None
+
+        return self._row_to_pipeline_run(row)
+
+    def _row_to_pipeline_run(self, row: tuple) -> Dict[str, Any]:
+        """Convert database row to pipeline run dictionary."""
+        return {
+            "run_id": row[0],
+            "started_at": row[1],
+            "completed_at": row[2],
+            "duration_seconds": row[3],
+            "collectors_run": row[4],
+            "collectors_succeeded": row[5],
+            "collectors_failed": row[6],
+            "signals_collected": row[7],
+            "signals_stored": row[8],
+            "signals_deduplicated": row[9],
+            "signals_processed": row[10],
+            "signals_auto_push": row[11],
+            "signals_needs_review": row[12],
+            "signals_held": row[13],
+            "signals_rejected": row[14],
+            "prospects_created": row[15],
+            "prospects_updated": row[16],
+            "prospects_skipped": row[17],
+            "errors": json.loads(row[18]) if row[18] else [],
+            "health_report": json.loads(row[19]) if row[19] else None,
         }
 
 
