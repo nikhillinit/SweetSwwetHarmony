@@ -85,6 +85,7 @@ class CollectorStatus(str, Enum):
     DRY_RUN = "dry_run"
     ERROR = "error"
     NOT_FOUND = "not_found"
+    SKIPPED = "skipped"  # Collector skipped due to missing configuration
 
 
 @dataclass
