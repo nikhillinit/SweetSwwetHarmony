@@ -190,6 +190,116 @@ class LinkedInCompany:
 
 
 @dataclass
+class LinkedInPerson:
+    """A LinkedIn person profile (for founder enrichment)."""
+    linkedin_url: str
+    full_name: str
+    first_name: str = ""
+    last_name: str = ""
+    headline: str = ""
+    summary: str = ""
+    location: str = ""
+    email: Optional[str] = None
+    github_username: Optional[str] = None
+    twitter_handle: Optional[str] = None
+
+    # Work experience
+    experiences: List[Dict[str, Any]] = field(default_factory=list)
+    education: List[Dict[str, Any]] = field(default_factory=list)
+
+    # Flags for scoring
+    is_founder: bool = False
+    is_serial_founder: bool = False
+    is_technical: bool = False
+    has_faang_experience: bool = False
+    has_startup_experience: bool = False
+    previous_exits: int = 0
+    years_experience: int = 0
+
+    def __post_init__(self):
+        """Analyze experiences to set flags."""
+        self._analyze_background()
+
+    def _analyze_background(self) -> None:
+        """Analyze work history to set scoring flags."""
+        founder_roles = 0
+        total_years = 0
+
+        # FAANG/top-tier companies
+        faang_companies = {
+            "meta", "facebook", "google", "alphabet", "amazon", "apple", "netflix",
+            "microsoft", "uber", "airbnb", "stripe", "square", "block", "coinbase",
+            "palantir", "snowflake", "databricks", "openai", "anthropic", "nvidia",
+            "salesforce", "adobe", "twitter", "linkedin", "doordash", "shopify",
+        }
+
+        technical_titles = {
+            "engineer", "developer", "programmer", "architect", "cto",
+            "tech lead", "data scientist", "ml engineer", "software",
+        }
+
+        for exp in self.experiences:
+            company = (exp.get("company") or "").lower()
+            title = (exp.get("title") or "").lower()
+
+            # Check FAANG
+            if any(f in company for f in faang_companies):
+                self.has_faang_experience = True
+
+            # Check founder role
+            if "founder" in title or "co-founder" in title:
+                founder_roles += 1
+                self.is_founder = True
+                self.has_startup_experience = True
+
+            # Check technical
+            if any(t in title for t in technical_titles):
+                self.is_technical = True
+
+            # Calculate years
+            start = exp.get("starts_at")
+            end = exp.get("ends_at")
+            if start:
+                start_year = start.get("year", datetime.now().year)
+                end_year = (end or {}).get("year", datetime.now().year)
+                total_years += max(end_year - start_year, 1)
+
+        self.years_experience = total_years
+        self.is_serial_founder = founder_roles >= 2
+
+    def calculate_founder_score(self) -> float:
+        """
+        Calculate founder quality score (0-1).
+
+        Factors:
+        - Serial founder: +0.25 per exit (max 0.5)
+        - FAANG experience: +0.15
+        - Technical background: +0.1
+        - Years experience: +0.02/year (max 0.2)
+        """
+        score = 0.0
+
+        # Serial founder bonus
+        if self.is_serial_founder:
+            score += 0.25
+        if self.previous_exits > 0:
+            score += min(0.25 * self.previous_exits, 0.5)
+
+        # FAANG experience
+        if self.has_faang_experience:
+            score += 0.15
+
+        # Technical background
+        if self.is_technical:
+            score += 0.1
+
+        # Years of experience
+        score += min(0.02 * self.years_experience, 0.2)
+
+        return min(score, 1.0)
+
+
+@dataclass
 class LinkedInJobPosting:
     """A LinkedIn job posting signal."""
     job_url: str
@@ -251,6 +361,7 @@ class LinkedInCollector(BaseCollector):
     1. Look up companies by domain or LinkedIn URL
     2. Find recent job postings for tracked companies
     3. Enrich existing signals with LinkedIn data
+    4. Fetch founder profiles for team intelligence (Harmonic enhancement)
 
     Requires PROXYCURL_API_KEY environment variable.
     """
@@ -262,6 +373,7 @@ class LinkedInCollector(BaseCollector):
         retry_config: Optional[RetryConfig] = None,
         company_urls: Optional[List[str]] = None,
         company_domains: Optional[List[str]] = None,
+        founder_urls: Optional[List[str]] = None,
     ):
         """
         Initialize LinkedIn collector.
@@ -272,6 +384,7 @@ class LinkedInCollector(BaseCollector):
             retry_config: Retry configuration
             company_urls: List of LinkedIn company URLs to look up
             company_domains: List of company domains to find on LinkedIn
+            founder_urls: List of founder LinkedIn profile URLs to enrich
         """
         super().__init__(
             store=store,
@@ -283,6 +396,7 @@ class LinkedInCollector(BaseCollector):
         self.api_key = api_key or os.getenv("PROXYCURL_API_KEY")
         self.company_urls = company_urls or []
         self.company_domains = company_domains or []
+        self.founder_urls = founder_urls or []
 
         # Rate limit: Proxycurl allows ~10 req/sec on paid plans
         self._rate_limiter = AsyncRateLimiter(rate=5, period=1)
@@ -430,6 +544,133 @@ class LinkedInCollector(BaseCollector):
             locations=data.get("locations", []) or [],
             follower_count=data.get("follower_count", 0),
         )
+
+    # =========================================================================
+    # FOUNDER ENRICHMENT (Harmonic Enhancement)
+    # =========================================================================
+
+    async def fetch_founder(self, linkedin_url: str) -> Optional[LinkedInPerson]:
+        """
+        Fetch a founder profile from Proxycurl.
+
+        Args:
+            linkedin_url: LinkedIn profile URL (e.g., https://linkedin.com/in/johndoe)
+
+        Returns:
+            LinkedInPerson or None if not found
+        """
+        if not self._client:
+            raise RuntimeError("Client not initialized. Use async context manager.")
+
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        params = {
+            "url": linkedin_url,
+            "fallback_to_cache": "on-error",
+            "use_cache": "if-present",
+            "skills": "include",
+            "inferred_salary": "include",
+            "personal_email": "include",
+            "personal_contact_number": "include",
+            "twitter_profile_id": "include",
+            "facebook_profile_id": "include",
+            "github_profile_id": "include",
+            "extra": "include",
+        }
+
+        async def do_request():
+            await self._rate_limiter.acquire()
+            response = await self._client.get(
+                PERSON_LOOKUP,
+                headers=headers,
+                params=params,
+            )
+            response.raise_for_status()
+            return response.json()
+
+        try:
+            data = await with_retry(do_request, self.retry_config)
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 404:
+                logger.warning(f"Person not found: {linkedin_url}")
+                return None
+            raise
+
+        return self._parse_person(data, linkedin_url)
+
+    def _parse_person(self, data: Dict[str, Any], linkedin_url: str) -> LinkedInPerson:
+        """Parse Proxycurl person response into LinkedInPerson."""
+        # Extract experiences
+        experiences = []
+        for exp in data.get("experiences", []) or []:
+            experiences.append({
+                "company": exp.get("company"),
+                "company_linkedin_url": exp.get("company_linkedin_profile_url"),
+                "title": exp.get("title"),
+                "description": exp.get("description"),
+                "location": exp.get("location"),
+                "starts_at": exp.get("starts_at"),
+                "ends_at": exp.get("ends_at"),
+            })
+
+        # Extract education
+        education = []
+        for edu in data.get("education", []) or []:
+            education.append({
+                "school": edu.get("school"),
+                "degree": edu.get("degree_name"),
+                "field": edu.get("field_of_study"),
+                "starts_at": edu.get("starts_at"),
+                "ends_at": edu.get("ends_at"),
+            })
+
+        return LinkedInPerson(
+            linkedin_url=linkedin_url,
+            full_name=data.get("full_name", "Unknown"),
+            first_name=data.get("first_name", ""),
+            last_name=data.get("last_name", ""),
+            headline=data.get("headline", ""),
+            summary=data.get("summary", ""),
+            location=data.get("city") or data.get("state") or data.get("country") or "",
+            email=data.get("personal_emails", [None])[0] if data.get("personal_emails") else None,
+            github_username=data.get("github_profile_id"),
+            twitter_handle=data.get("twitter_profile_id"),
+            experiences=experiences,
+            education=education,
+        )
+
+    async def enrich_founders(
+        self,
+        founder_urls: Optional[List[str]] = None,
+    ) -> List[LinkedInPerson]:
+        """
+        Fetch and enrich multiple founder profiles.
+
+        Args:
+            founder_urls: List of LinkedIn profile URLs. Uses self.founder_urls if not provided.
+
+        Returns:
+            List of LinkedInPerson profiles with scoring data.
+        """
+        urls = founder_urls or self.founder_urls
+
+        if not urls:
+            logger.info("No founder URLs to enrich")
+            return []
+
+        founders = []
+        for url in urls:
+            try:
+                person = await self.fetch_founder(url)
+                if person:
+                    founders.append(person)
+                    logger.info(
+                        f"Enriched founder: {person.full_name} "
+                        f"(score: {person.calculate_founder_score():.2f})"
+                    )
+            except Exception as e:
+                logger.error(f"Error fetching founder {url}: {e}")
+
+        return founders
 
 
 # =============================================================================
