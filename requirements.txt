@@ -34,3 +34,7 @@ python-dateutil
 python-dotenv
 streamlit
 tenacity
+fastapi
+python-jose
+sqlalchemy
+uvicorn
