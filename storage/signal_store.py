@@ -249,14 +249,16 @@ class SignalStore:
         Initialize database connection and apply migrations.
         Should be called once at startup.
         """
+        from storage.sqlite_pragmas import apply_sqlite_pragmas
+        
         # Create parent directories if needed
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Connect to database
         self._db = await aiosqlite.connect(str(self.db_path))
 
-        # Enable foreign keys
-        await self._db.execute("PRAGMA foreign_keys = ON")
+        # Apply SQLite pragmas (WAL, busy_timeout, foreign_keys)
+        await apply_sqlite_pragmas(self._db)
 
         # Apply migrations
         await self._apply_migrations()
