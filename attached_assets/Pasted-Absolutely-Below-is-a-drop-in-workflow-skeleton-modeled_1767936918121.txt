@@ -1,0 +1,687 @@
+Absolutely. Below is a **drop-in workflow skeleton** modeled after your existing `workflows/suppression_sync.py` pattern (async job, schema preflight, OR-status query, dry-run, scheduled mode) , but writing founders into your existing `FounderStore` tables (which already enforce `founder_key` uniqueness and store `linkedin_url`) .
+
+---
+
+## 1) `workflows/founder_sync.py` (new file)
+
+```python
+"""
+Founder Sync Job for Discovery Engine
+
+Syncs founder identity data from Notion CRM into local FounderStore (SQLite),
+so the web app can render founder cards without calling Notion live.
+
+What it does:
+1) Fetches Notion pages across pipeline statuses via a single OR query
+2) Extracts Company canonical_key (or builds from Website / Company Name)
+3) Extracts Founder name + Founder LinkedIn URL(s)
+4) Normalizes LinkedIn URLs and upserts FounderProfile rows into FounderStore
+5) Detects and reports conflicts (same founder_key linked to multiple companies)
+
+Usage:
+    # One-time sync
+    python -m workflows.founder_sync --db-path signals.db
+
+    # Dry run
+    python -m workflows.founder_sync --dry-run
+
+    # Run every 15 minutes
+    python -m workflows.founder_sync --interval 900
+"""
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+import logging
+import os
+import re
+import sys
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlparse, urlunparse
+
+# Add parent directory to path for imports (mirrors suppression_sync.py)
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import httpx
+from dotenv import load_dotenv
+
+from connectors.notion_connector_v2 import NotionConnector
+from storage.founder_store import FounderStore, FounderProfile
+from utils.canonical_keys import normalize_domain, is_strong_key
+
+logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# STATS
+# =============================================================================
+
+@dataclass
+class FounderSyncStats:
+    started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    completed_at: Optional[datetime] = None
+
+    notion_pages_fetched: int = 0
+    notion_errors: int = 0
+
+    companies_processed: int = 0
+    companies_with_canonical_key: int = 0
+    companies_without_canonical_key: int = 0
+    companies_with_strong_key: int = 0
+    companies_with_weak_key: int = 0
+
+    founders_found: int = 0
+    founders_synced: int = 0
+    founders_skipped_no_linkedin: int = 0
+    founders_skipped_invalid_linkedin: int = 0
+    founders_conflicts: int = 0
+
+    errors: List[str] = field(default_factory=list)
+
+    @property
+    def duration_seconds(self) -> float:
+        if not self.completed_at:
+            return 0.0
+        return (self.completed_at - self.started_at).total_seconds()
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "started_at": self.started_at.isoformat(),
+            "completed_at": self.completed_at.isoformat() if self.completed_at else None,
+            "duration_seconds": self.duration_seconds,
+            "notion_pages_fetched": self.notion_pages_fetched,
+            "notion_errors": self.notion_errors,
+            "companies_processed": self.companies_processed,
+            "companies_with_canonical_key": self.companies_with_canonical_key,
+            "companies_without_canonical_key": self.companies_without_canonical_key,
+            "companies_with_strong_key": self.companies_with_strong_key,
+            "companies_with_weak_key": self.companies_with_weak_key,
+            "founders_found": self.founders_found,
+            "founders_synced": self.founders_synced,
+            "founders_skipped_no_linkedin": self.founders_skipped_no_linkedin,
+            "founders_skipped_invalid_linkedin": self.founders_skipped_invalid_linkedin,
+            "founders_conflicts": self.founders_conflicts,
+            "errors_count": len(self.errors),
+            "errors": self.errors[:10],
+        }
+
+    def log_summary(self) -> None:
+        logger.info("=" * 80)
+        logger.info("FOUNDER SYNC SUMMARY")
+        logger.info("=" * 80)
+        logger.info(f"Started:   {self.started_at.isoformat()}")
+        if self.completed_at:
+            logger.info(f"Completed: {self.completed_at.isoformat()}")
+            logger.info(f"Duration:  {self.duration_seconds:.2f}s")
+        logger.info("")
+        logger.info("Notion:")
+        logger.info(f"  Pages fetched: {self.notion_pages_fetched}")
+        if self.notion_errors:
+            logger.warning(f"  Errors: {self.notion_errors}")
+        logger.info("")
+        logger.info("Companies:")
+        logger.info(f"  Processed: {self.companies_processed}")
+        logger.info(f"  With canonical key: {self.companies_with_canonical_key}")
+        logger.info(f"  Without canonical key: {self.companies_without_canonical_key}")
+        logger.info(f"  Strong keys: {self.companies_with_strong_key}")
+        logger.info(f"  Weak keys: {self.companies_with_weak_key}")
+        logger.info("")
+        logger.info("Founders:")
+        logger.info(f"  Found: {self.founders_found}")
+        logger.info(f"  Synced: {self.founders_synced}")
+        logger.info(f"  Skipped (no LinkedIn): {self.founders_skipped_no_linkedin}")
+        logger.info(f"  Skipped (invalid LinkedIn): {self.founders_skipped_invalid_linkedin}")
+        logger.info(f"  Conflicts: {self.founders_conflicts}")
+        if self.errors:
+            logger.warning("")
+            logger.warning(f"Errors encountered: {len(self.errors)}")
+            for i, err in enumerate(self.errors[:5], 1):
+                logger.warning(f"  {i}. {err}")
+            if len(self.errors) > 5:
+                logger.warning(f"  ... and {len(self.errors) - 5} more")
+        logger.info("=" * 80)
+
+
+# =============================================================================
+# HELPERS
+# =============================================================================
+
+STATUS_VALUES = [
+    "Source",
+    "Initial Meeting / Call",
+    "Dilligence",   # NOTE: spelling matches NotionConnector/Notion DB
+    "Tracking",
+    "Committed",
+    "Funded",
+    "Passed",
+    "Lost",
+]
+
+
+def _extract_text(prop: Dict[str, Any]) -> Optional[str]:
+    """Extract text from Notion rich_text property."""
+    rt = prop.get("rich_text", [])
+    if rt:
+        return (rt[0].get("text", {}) or {}).get("content", "")
+    return None
+
+
+def _extract_title(prop: Dict[str, Any]) -> str:
+    """Extract text from Notion title property."""
+    title = prop.get("title", [])
+    if title:
+        return (title[0].get("text", {}) or {}).get("content", "")
+    return ""
+
+
+def _extract_select(prop: Dict[str, Any]) -> Optional[str]:
+    sel = prop.get("select")
+    return sel.get("name") if sel else None
+
+
+def _extract_plain(prop: Dict[str, Any]) -> str:
+    """
+    Best-effort extraction for "Founder" field when type varies:
+    - rich_text
+    - title
+    - plain string-ish fallback
+    """
+    if not prop:
+        return ""
+    if prop.get("rich_text"):
+        return _extract_text(prop) or ""
+    if prop.get("title"):
+        return _extract_title(prop) or ""
+    # Sometimes Notion exports weird shapes; keep it safe:
+    return ""
+
+
+_LINKEDIN_IN_RE = re.compile(r"(https?://)?(www\.)?linkedin\.com/in/([A-Za-z0-9\-_%]+)", re.IGNORECASE)
+
+
+def _extract_linkedin_urls(prop: Dict[str, Any]) -> List[str]:
+    """
+    Handles both:
+    - URL property: {"type":"url","url":"..."}
+    - rich_text/title with pasted links or text containing linkedin.com/in/...
+    """
+    if not prop:
+        return []
+
+    urls: List[str] = []
+
+    # URL property
+    direct = prop.get("url")
+    if isinstance(direct, str) and direct.strip():
+        urls.append(direct.strip())
+
+    # rich_text with hrefs / text
+    rt = prop.get("rich_text", [])
+    for chunk in rt:
+        href = chunk.get("href")
+        if isinstance(href, str) and href.strip():
+            urls.append(href.strip())
+
+        text = (chunk.get("plain_text") or "").strip()
+        if text:
+            for m in _LINKEDIN_IN_RE.finditer(text):
+                urls.append(m.group(0))
+
+    # title text
+    title = prop.get("title", [])
+    for chunk in title:
+        text = (chunk.get("plain_text") or "").strip()
+        if text:
+            for m in _LINKEDIN_IN_RE.finditer(text):
+                urls.append(m.group(0))
+
+    # de-dupe while preserving order
+    seen = set()
+    out: List[str] = []
+    for u in urls:
+        if u not in seen:
+            seen.add(u)
+            out.append(u)
+    return out
+
+
+def _normalize_linkedin_person_url(url: str) -> Optional[Tuple[str, str]]:
+    """
+    Returns (founder_key, canonical_profile_url) for LinkedIn *person* URLs.
+    - founder_key: linkedin:<slug>
+    - canonical_profile_url: https://www.linkedin.com/in/<slug>
+    """
+    if not url or not isinstance(url, str):
+        return None
+
+    url = url.strip()
+    if not url:
+        return None
+
+    # Ensure scheme so urlparse behaves
+    if url.startswith("www."):
+        url = "https://" + url
+    if not url.startswith("http://") and not url.startswith("https://"):
+        # Allow raw linkedin.com/in/... pasted
+        if "linkedin.com/" in url:
+            url = "https://" + url
+        else:
+            return None
+
+    parsed = urlparse(url)
+
+    # Normalize host
+    host = (parsed.netloc or "").lower()
+    host = host.replace("www.", "")
+    if host != "linkedin.com":
+        return None
+
+    # Strip query/fragment
+    clean = parsed._replace(query="", fragment="")
+    path = clean.path.rstrip("/")
+
+    # Must be /in/<slug> (person profiles)
+    parts = [p for p in path.split("/") if p]
+    if len(parts) < 2:
+        return None
+    if parts[0].lower() != "in":
+        return None
+
+    slug = parts[1]
+    slug = slug.strip()
+    if not slug:
+        return None
+
+    founder_key = f"linkedin:{slug}"
+    canonical_profile_url = f"https://www.linkedin.com/in/{slug}"
+    return founder_key, canonical_profile_url
+
+
+def _fallback_name_from_slug(founder_key: str) -> str:
+    # founder_key is like linkedin:john-doe
+    slug = founder_key.split(":", 1)[-1]
+    name = slug.replace("-", " ").replace("_", " ").strip()
+    return name.title() if name else "Unknown Founder"
+
+
+def _build_company_canonical_key(
+    notion: NotionConnector,
+    props: Dict[str, Any],
+) -> Tuple[Optional[str], str, str]:
+    """
+    Returns (canonical_key, company_name, website)
+    - canonical_key prefers Notion "Canonical Key" rich_text
+    - else builds domain:<normalized_domain> from Website
+    - else builds name_loc:<slug(company_name)>
+    """
+    company_name = _extract_title(props.get(notion.PROP_COMPANY_NAME, {}))
+    website = (props.get(notion.PROP_WEBSITE, {}) or {}).get("url", "") or ""
+    canonical_key = _extract_text(props.get(notion.PROP_CANONICAL_KEY, {}))
+
+    if not canonical_key and website:
+        domain = normalize_domain(website)
+        if domain:
+            canonical_key = f"domain:{domain}"
+
+    if not canonical_key and company_name:
+        from utils.canonical_keys import _slug  # used similarly in suppression_sync
+        s = _slug(company_name)
+        if s:
+            canonical_key = f"name_loc:{s}"
+
+    return canonical_key, company_name, website
+
+
+async def _schema_preflight(notion: NotionConnector, strict: bool = True) -> None:
+    """
+    Fail-fast if Notion schema is missing critical fields or has wrong types.
+    NotionConnector.validate_schema() checks core required fields; we add
+    explicit checks for Founder fields because they're not part of the base validation.
+    """
+    result = await notion.validate_schema(force_refresh=True)
+    if not result.valid:
+        msg = f"Notion schema validation failed:\n{result}"
+        if strict:
+            raise ValueError(msg)
+        logger.warning(msg)
+
+    async with httpx.AsyncClient() as client:
+        # Use connector's cached schema fetcher
+        schema = await notion._get_database_schema(client, force_refresh=True)  # noqa: SLF001
+    props = schema.get("properties", {})
+
+    # Founder LinkedIn must exist; prefer URL type, but allow non-url if not strict
+    if notion.PROP_FOUNDER_LINKEDIN not in props:
+        msg = f"Notion DB missing property: {notion.PROP_FOUNDER_LINKEDIN!r}"
+        if strict:
+            raise ValueError(msg)
+        logger.warning(msg)
+        return
+
+    actual_type = (props.get(notion.PROP_FOUNDER_LINKEDIN) or {}).get("type")
+    if actual_type != "url":
+        msg = (
+            f"Notion property {notion.PROP_FOUNDER_LINKEDIN!r} is type={actual_type!r}, "
+            f"expected 'url'."
+        )
+        if strict:
+            raise ValueError(msg)
+        logger.warning(msg)
+
+    # Founder name field is useful but not strictly required
+    if notion.PROP_FOUNDER not in props:
+        logger.warning(f"Notion DB missing property: {notion.PROP_FOUNDER!r} (will fallback to slug names)")
+
+
+# =============================================================================
+# JOB
+# =============================================================================
+
+class FounderSync:
+    """
+    Sync founders from Notion to local FounderStore.
+
+    Conflict policy:
+    - Default: do NOT relink a founder_key to a different canonical_key (skip + report conflict).
+      This avoids "last write wins" overwriting in FounderStore where founder_key is UNIQUE.
+    """
+
+    def __init__(
+        self,
+        notion_connector: NotionConnector,
+        founder_store: FounderStore,
+        allow_relink: bool = False,
+        strict_schema: bool = True,
+        statuses: Optional[List[str]] = None,
+    ):
+        self.notion = notion_connector
+        self.store = founder_store
+        self.allow_relink = allow_relink
+        self.strict_schema = strict_schema
+        self.statuses = statuses or STATUS_VALUES
+        self.stats = FounderSyncStats()
+
+        # Track conflicts within this run
+        self._seen_founder_to_company: Dict[str, str] = {}
+
+    async def sync(self, dry_run: bool = False) -> FounderSyncStats:
+        logger.info(
+            "Starting founder sync "
+            f"(dry_run={dry_run}, allow_relink={self.allow_relink}, strict_schema={self.strict_schema})"
+        )
+        self.stats = FounderSyncStats()
+
+        try:
+            await _schema_preflight(self.notion, strict=self.strict_schema)
+
+            pages = await self._fetch_notion_pages()
+            self.stats.notion_pages_fetched = len(pages)
+
+            await self._process_pages(pages, dry_run=dry_run)
+
+            self.stats.completed_at = datetime.now(timezone.utc)
+        except Exception as e:
+            logger.exception("Fatal error during founder sync")
+            self.stats.errors.append(f"Fatal error: {e}")
+            self.stats.completed_at = datetime.now(timezone.utc)
+            raise
+        finally:
+            self.stats.log_summary()
+
+        return self.stats
+
+    async def _fetch_notion_pages(self) -> List[Dict[str, Any]]:
+        logger.info("Fetching pages from Notion...")
+        try:
+            async with httpx.AsyncClient() as client:
+                pages = await self.notion._query_by_statuses(client, self.statuses)  # noqa: SLF001
+            logger.info(f"Fetched {len(pages)} pages from Notion")
+            return pages
+        except Exception as e:
+            self.stats.notion_errors += 1
+            raise e
+
+    async def _process_pages(self, pages: List[Dict[str, Any]], dry_run: bool) -> None:
+        logger.info(f"Processing {len(pages)} pages...")
+        for page in pages:
+            page_id = page.get("id", "unknown")
+            try:
+                await self._process_page(page, dry_run=dry_run)
+            except Exception as e:
+                logger.warning(f"Error processing page {page_id}: {e}")
+                self.stats.errors.append(f"Page {page_id}: {e}")
+
+    async def _process_page(self, page: Dict[str, Any], dry_run: bool) -> None:
+        props = page.get("properties", {}) or {}
+        page_id = page.get("id", "")
+
+        canonical_key, company_name, website = _build_company_canonical_key(self.notion, props)
+        self.stats.companies_processed += 1
+
+        if not canonical_key:
+            self.stats.companies_without_canonical_key += 1
+            return
+
+        self.stats.companies_with_canonical_key += 1
+        if is_strong_key(canonical_key):
+            self.stats.companies_with_strong_key += 1
+        else:
+            self.stats.companies_with_weak_key += 1
+
+        founder_name_raw = _extract_plain(props.get(self.notion.PROP_FOUNDER, {}))
+        li_prop = props.get(self.notion.PROP_FOUNDER_LINKEDIN, {}) or {}
+        linkedin_urls = _extract_linkedin_urls(li_prop)
+
+        if not linkedin_urls:
+            self.stats.founders_skipped_no_linkedin += 1
+            return
+
+        # In case people pasted multiple links into a non-url property, support many
+        for li_url in linkedin_urls:
+            normalized = _normalize_linkedin_person_url(li_url)
+            if not normalized:
+                self.stats.founders_skipped_invalid_linkedin += 1
+                continue
+
+            founder_key, canonical_profile_url = normalized
+            self.stats.founders_found += 1
+
+            # Conflict detection: same founder_key appears on multiple companies
+            if founder_key in self._seen_founder_to_company:
+                prev_ck = self._seen_founder_to_company[founder_key]
+                if prev_ck != canonical_key:
+                    self.stats.founders_conflicts += 1
+                    if not self.allow_relink:
+                        logger.info(
+                            f"Conflict (skipping): {founder_key} already linked to {prev_ck}, "
+                            f"encountered {canonical_key} (page {page_id})"
+                        )
+                        continue
+            else:
+                # Also check existing DB linkage to avoid overwriting historical truth
+                existing = await self.store.get_founder(founder_key)
+                if existing and existing.canonical_key != canonical_key:
+                    self.stats.founders_conflicts += 1
+                    if not self.allow_relink:
+                        logger.info(
+                            f"Conflict (skipping): {founder_key} already in DB linked to {existing.canonical_key}, "
+                            f"encountered {canonical_key} (page {page_id})"
+                        )
+                        continue
+
+            # Update in-memory map (if we pass conflict gate)
+            self._seen_founder_to_company[founder_key] = canonical_key
+
+            name = founder_name_raw.strip() if founder_name_raw.strip() else _fallback_name_from_slug(founder_key)
+
+            profile = FounderProfile(
+                name=name,
+                founder_key=founder_key,
+                canonical_key=canonical_key,
+                source_api="notion",
+                linkedin_url=canonical_profile_url,
+                raw_data={
+                    "synced_from": "notion_founder_sync",
+                    "notion_page_id": page_id,
+                    "company_name": company_name,
+                    "company_website": website,
+                    "notion_founder_field": founder_name_raw,
+                    "notion_founder_linkedin_raw": li_url,
+                },
+            )
+
+            if dry_run:
+                # Just count it
+                self.stats.founders_synced += 1
+                continue
+
+            await self.store.save_founder(profile)
+            self.stats.founders_synced += 1
+
+
+# =============================================================================
+# SCHEDULED RUNNER
+# =============================================================================
+
+async def run_scheduled_sync(
+    interval_seconds: int,
+    notion_connector: NotionConnector,
+    founder_store: FounderStore,
+    allow_relink: bool = False,
+    strict_schema: bool = True,
+) -> None:
+    logger.info(
+        f"Starting scheduled founder sync (interval: {interval_seconds}s, "
+        f"allow_relink={allow_relink}, strict_schema={strict_schema})"
+    )
+    while True:
+        try:
+            sync = FounderSync(
+                notion_connector=notion_connector,
+                founder_store=founder_store,
+                allow_relink=allow_relink,
+                strict_schema=strict_schema,
+            )
+            await sync.sync(dry_run=False)
+        except Exception as e:
+            logger.exception(f"Error in scheduled founder sync: {e}")
+
+        logger.info(f"Next sync in {interval_seconds} seconds...")
+        await asyncio.sleep(interval_seconds)
+
+
+# =============================================================================
+# CLI
+# =============================================================================
+
+async def main() -> None:
+    parser = argparse.ArgumentParser(description="Sync founders from Notion CRM into local FounderStore")
+    parser.add_argument("--db-path", type=str, default="signals.db", help="Path to SQLite DB (default: signals.db)")
+    parser.add_argument("--interval", type=int, help="Run on interval (seconds). If not set, runs once and exits.")
+    parser.add_argument("--dry-run", action="store_true", help="Fetch and process but don't write to DB")
+    parser.add_argument("--allow-relink", action="store_true", help="Allow founder_key to move across companies (unsafe)")
+    parser.add_argument("--no-strict-schema", action="store_true", help="Do not fail if Founder LinkedIn is not a URL prop")
+    parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
+    args = parser.parse_args()
+
+    log_level = logging.DEBUG if args.verbose else logging.INFO
+    logging.basicConfig(level=log_level, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+
+    load_dotenv()
+
+    notion_api_key = os.environ.get("NOTION_API_KEY")
+    notion_database_id = os.environ.get("NOTION_DATABASE_ID")
+    if not notion_api_key or not notion_database_id:
+        logger.error("Missing required environment variables: NOTION_API_KEY, NOTION_DATABASE_ID")
+        sys.exit(1)
+
+    logger.info("Initializing connectors...")
+    notion = NotionConnector(api_key=notion_api_key, database_id=notion_database_id)
+    store = FounderStore(db_path=args.db_path)
+    await store.initialize()
+
+    try:
+        if args.interval:
+            await run_scheduled_sync(
+                interval_seconds=args.interval,
+                notion_connector=notion,
+                founder_store=store,
+                allow_relink=args.allow_relink,
+                strict_schema=(not args.no_strict_schema),
+            )
+        else:
+            sync = FounderSync(
+                notion_connector=notion,
+                founder_store=store,
+                allow_relink=args.allow_relink,
+                strict_schema=(not args.no_strict_schema),
+            )
+            stats = await sync.sync(dry_run=args.dry_run)
+            if stats.errors:
+                sys.exit(1)
+            sys.exit(0)
+    finally:
+        await store.close()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
+
+---
+
+## 2) Update `workflows/__init__.py` (optional but consistent with your pattern)
+
+Your `workflows/__init__.py` uses lazy exports for `SuppressionSync` . Add FounderSync similarly:
+
+```python
+# In __all__ add:
+"FounderSync",
+"FounderSyncStats",
+"run_scheduled_founder_sync",
+
+# In __getattr__ add:
+elif name == "FounderSync":
+    from workflows.founder_sync import FounderSync
+    return FounderSync
+elif name == "FounderSyncStats":
+    from workflows.founder_sync import FounderSyncStats
+    return FounderSyncStats
+elif name == "run_scheduled_founder_sync":
+    from workflows.founder_sync import run_scheduled_sync as run_scheduled_founder_sync
+    return run_scheduled_founder_sync
+```
+
+---
+
+## 3) How to run it with your Notion DB
+
+Set env vars (your DB id is the `NOTION_DATABASE_ID`):
+
+```bash
+export NOTION_DATABASE_ID=2e071fcdd2d880608c54df9679358bcb
+export NOTION_API_KEY=secret_xxx
+```
+
+Dry run first:
+
+```bash
+python -m workflows.founder_sync --db-path signals.db --dry-run --verbose
+```
+
+Then live:
+
+```bash
+python -m workflows.founder_sync --db-path signals.db
+```
+
+---
+
+### Why this skeleton is “safe by default”
+
+Because `FounderStore` enforces `founder_key` UNIQUE , blindly syncing can cause “last write wins” relinking. This job **skips conflicts** unless you explicitly pass `--allow-relink`.
+
+If you want, next step is a tiny refinement: store a separate `founder_company_links` table so one founder can be linked to multiple companies (that’s the “correct” model for network intelligence), without fighting the current uniqueness constraint.
