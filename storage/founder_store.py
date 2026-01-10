@@ -19,8 +19,8 @@ Usage:
     # Save a founder profile
     founder_id = await store.save_founder(FounderProfile(...))
 
-    # Get founder score
-    score = await store.get_founder_score("domain:acme.ai")
+    # Get aggregate founder score for a company
+    score = await store.get_aggregate_founder_score("domain:acme.ai")
 """
 
 from __future__ import annotations
@@ -375,6 +375,13 @@ class FounderProfile:
 
     def _analyze_experiences(self) -> None:
         """Analyze experiences to set scoring flags."""
+        self.has_faang_experience = False
+        self.is_technical = False
+        self.has_domain_expertise = False
+        self.has_startup_experience = False
+        self.is_serial_founder = False
+        self.years_experience = 0
+        
         founder_count = 0
         total_years = 0.0
 
@@ -445,10 +452,12 @@ class FounderStore:
 
     async def initialize(self) -> None:
         """Initialize database connection and apply migrations."""
+        from storage.sqlite_pragmas import apply_sqlite_pragmas
+        
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
         self._db = await aiosqlite.connect(str(self.db_path))
-        await self._db.execute("PRAGMA foreign_keys = ON")
+        await apply_sqlite_pragmas(self._db)
 
         await self._apply_migrations()
 
@@ -772,7 +781,7 @@ class FounderStore:
             """
             SELECT * FROM founder_experiences
             WHERE founder_id = ?
-            ORDER BY start_date DESC NULLS LAST
+            ORDER BY (start_date IS NULL), start_date DESC
             """,
             (founder_id,)
         )
@@ -868,16 +877,16 @@ class FounderStore:
 
         now = datetime.now(timezone.utc).isoformat()
 
-        await self._db.execute(
-            """
-            INSERT INTO founder_signals (founder_id, signal_id, relationship, created_at)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(founder_id, signal_id) DO UPDATE SET
-                relationship = excluded.relationship
-            """,
-            (founder_id, signal_id, relationship.value, now)
-        )
-        await self._db.commit()
+        async with self.transaction() as conn:
+            await conn.execute(
+                """
+                INSERT INTO founder_signals (founder_id, signal_id, relationship, created_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(founder_id, signal_id) DO UPDATE SET
+                    relationship = excluded.relationship
+                """,
+                (founder_id, signal_id, relationship.value, now)
+            )
 
     async def get_founders_for_signal(
         self,
