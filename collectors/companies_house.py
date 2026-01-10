@@ -401,8 +401,23 @@ class CompaniesHouseCollector(BaseCollector):
         companies = [c for c in companies if c.is_active]
         logger.info(f"Filtered to {len(companies)} active companies")
 
-        # Convert to signals
-        signals = [c.to_signal() for c in companies]
+        # Convert to signals and detect changes
+        signals = []
+        for company in companies:
+            # Save raw data and detect changes
+            if self.asset_store:
+                is_new, changes = await self._save_asset_with_change_detection(
+                    source_type=self.SOURCE_TYPE,
+                    external_id=company.company_number,
+                    raw_data=company.to_dict() if hasattr(company, 'to_dict') else vars(company),
+                )
+
+                # Skip unchanged companies
+                if not is_new and not changes:
+                    logger.debug(f"Skipping unchanged company: {company.company_number}")
+                    continue
+
+            signals.append(company.to_signal())
 
         return signals
 

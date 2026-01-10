@@ -165,39 +165,90 @@ class ValidationResult:
     timestamp: datetime = field(default_factory=datetime.utcnow)
 
     def __str__(self) -> str:
-        """Human-readable validation report"""
+        """Human-readable validation report with emoji severity codes and Notion UI instructions"""
         if self.valid:
-            return "Schema validation PASSED - all required properties and options present"
+            return "✅ Schema validation PASSED - all required properties and options present"
 
-        lines = ["Schema validation FAILED:"]
+        lines = ["❌ Schema validation FAILED - Action required:\n"]
 
+        # CRITICAL ISSUES: Missing required properties
         if self.missing_properties:
-            lines.append(f"\nMissing REQUIRED properties:")
+            lines.append("🔴 CRITICAL: Missing required properties\n")
             for prop in self.missing_properties:
-                lines.append(f"  - {prop}")
+                lines.append(f"  Property: {prop}")
+                lines.append(f"  Type: Text")
+                lines.append(f"  Fix: Notion Database → ⚙️ Settings → Properties → + Add property")
+                lines.append(f"       → Select 'Text' → Name: '{prop}' → Create\n")
 
-        if self.missing_optional_properties:
-            lines.append(f"\nMissing optional properties (recommended):")
-            for prop in self.missing_optional_properties:
-                lines.append(f"  - {prop}")
-
+        # CRITICAL ISSUES: Wrong property types
         if self.wrong_property_types:
-            lines.append(f"\nWrong property types:")
+            lines.append("🔴 CRITICAL: Wrong property types (data loss risk)\n")
             for prop, expected in self.wrong_property_types.items():
-                lines.append(f"  - {prop}: expected {expected}")
+                lines.append(f"  Property: {prop}")
+                lines.append(f"  Expected: {expected}")
+                lines.append(f"  ⚠️  WARNING: Changing property type will LOSE existing data!")
+                lines.append(f"  Fix: Manual - Delete '{prop}' property, then add it back with correct type\n")
 
-        if self.missing_status_options:
-            lines.append(f"\nMissing Status select options:")
-            for opt in self.missing_status_options:
-                lines.append(f"  - {opt}")
+        # IMPORTANT ISSUES: Missing select options
+        if self.missing_status_options or self.missing_stage_options:
+            if self.missing_status_options:
+                lines.append("🟠 IMPORTANT: Missing Status select options\n")
+                for opt in self.missing_status_options:
+                    lines.append(f"  Option: {opt}")
+                    lines.append(f"  Fix: Notion → Status property → Edit → + Add option → '{opt}'\n")
 
-        if self.missing_stage_options:
-            lines.append(f"\nMissing Investment Stage select options:")
-            for opt in self.missing_stage_options:
-                lines.append(f"  - {opt}")
+            if self.missing_stage_options:
+                lines.append("🟠 IMPORTANT: Missing Investment Stage select options\n")
+                for opt in self.missing_stage_options:
+                    lines.append(f"  Option: {opt}")
+                    lines.append(f"  Fix: Notion → Investment Stage property → Edit → + Add option → '{opt}'\n")
 
-        lines.append("\nFix these issues in Notion database settings, then retry.")
-        return "\n".join(lines)
+        # OPTIONAL: Missing optional properties
+        if self.missing_optional_properties:
+            lines.append("🟡 OPTIONAL: Missing recommended properties (nice to have)\n")
+            for prop in self.missing_optional_properties:
+                lines.append(f"  Property: {prop}")
+                lines.append(f"  Type: Text")
+                lines.append(f"  Fix: Same as required properties above\n")
+
+        lines.append("\n🔗 CLI: Re-run validation with: python run_pipeline.py schema validate")
+        return "".join(lines)
+
+
+@dataclass
+class RepairOperation:
+    """Single repair operation to fix a schema issue"""
+    operation_type: str  # "create_property", "add_select_option"
+    property_name: str
+    property_type: str
+    value: Optional[str] = None  # For select options
+
+
+@dataclass
+class RepairPlan:
+    """Plan of repair operations to fix schema validation issues"""
+    operations: List[RepairOperation] = field(default_factory=list)
+    cannot_auto_fix: List[str] = field(default_factory=list)  # Issues that require manual deletion
+
+    def __str__(self) -> str:
+        """Human-readable repair plan"""
+        lines = ["Schema Repair Plan:\n"]
+
+        if self.operations:
+            lines.append(f"Operations to execute ({len(self.operations)}):\n")
+            for i, op in enumerate(self.operations, 1):
+                lines.append(f"  {i}. {op.operation_type}")
+                lines.append(f"     Property: {op.property_name}")
+                if op.value:
+                    lines.append(f"     Value: {op.value}")
+                lines.append("")
+
+        if self.cannot_auto_fix:
+            lines.append(f"\n⚠️  Cannot auto-fix ({len(self.cannot_auto_fix)} issues - manual deletion required):\n")
+            for issue in self.cannot_auto_fix:
+                lines.append(f"  - {issue}")
+
+        return "".join(lines)
 
 
 # =============================================================================
@@ -391,7 +442,81 @@ class NotionConnector:
                 "page_id": result["id"],
                 "reason": "New deal created"
             }
-    
+
+    async def upsert_with_retry(
+        self,
+        prospect: ProspectPayload,
+        max_retries: int = 3,
+        initial_delay: float = 1.0,
+    ) -> Dict[str, Any]:
+        """
+        Upsert a prospect with automatic retry on transient errors.
+
+        Args:
+            prospect: ProspectPayload to upsert.
+            max_retries: Maximum number of retry attempts.
+            initial_delay: Initial delay in seconds before retry.
+
+        Returns:
+            Result of upsert_prospect with status, page_id, and reason.
+
+        Raises:
+            Exception: If all retries exhausted or permanent error.
+        """
+        import asyncio
+        import logging
+
+        logger = logging.getLogger(__name__)
+        last_error = None
+        delay = initial_delay
+
+        for attempt in range(max_retries):
+            try:
+                result = await self.upsert_prospect(prospect)
+                if attempt > 0:
+                    logger.info(
+                        f"Upsert succeeded after {attempt} retries for {prospect.company_name}"
+                    )
+                return result
+            except (TimeoutError, ConnectionError, Exception) as e:
+                last_error = e
+                # Check if error is transient (retryable)
+                is_transient = isinstance(e, (TimeoutError, ConnectionError))
+                if not is_transient:
+                    error_str = str(e).lower()
+                    is_transient = any(
+                        term in error_str
+                        for term in [
+                            "timeout",
+                            "temporarily unavailable",
+                            "connection",
+                            "network",
+                            "503",
+                            "429",  # Rate limit
+                        ]
+                    )
+
+                # Don't retry permanent errors
+                if not is_transient and attempt == 0:
+                    logger.error(
+                        f"Permanent error upserting {prospect.company_name}: {e}"
+                    )
+                    raise
+
+                if attempt < max_retries - 1:
+                    logger.warning(
+                        f"Upsert failed for {prospect.company_name} (attempt {attempt + 1}/{max_retries}): {e}. "
+                        f"Retrying in {delay}s..."
+                    )
+                    await asyncio.sleep(delay)
+                    delay *= 2  # Exponential backoff
+
+        # All retries exhausted
+        logger.error(
+            f"Upsert failed after {max_retries} retries for {prospect.company_name}"
+        )
+        raise last_error or Exception("Upsert failed after max retries")
+
     async def get_suppression_list(self, force_refresh: bool = False) -> Dict[str, SuppressionEntry]:
         """
         Get deals to suppress from Discovery results.
@@ -576,7 +701,319 @@ class NotionConnector:
                 logger.warning(f"Optional properties missing: {missing_optional_properties}")
 
         return result
-    
+
+    async def repair_schema(
+        self,
+        auto_repair: bool = True,
+        dry_run: bool = False,
+        repair_properties: Optional[List[str]] = None
+    ) -> RepairPlan:
+        """
+        Repair schema by creating missing properties and adding select options.
+
+        Args:
+            auto_repair: Whether to actually execute repairs
+            dry_run: If True, return plan without executing
+            repair_properties: If provided, only repair these properties (selective repair)
+
+        Returns:
+            RepairPlan with operations executed or planned
+
+        Raises:
+            ValueError: If wrong property types detected (cannot auto-fix)
+        """
+        # Validate current schema
+        validation_result = await self.validate_schema(force_refresh=True)
+
+        plan = RepairPlan()
+
+        # Check for wrong types (cannot auto-fix)
+        if validation_result.wrong_property_types:
+            for prop_name, expected_type in validation_result.wrong_property_types.items():
+                error_msg = (
+                    f"Cannot auto-fix property '{prop_name}': Wrong type detected. "
+                    f"Expected '{expected_type}'. "
+                    f"Manual fix required: Delete '{prop_name}' property and recreate with correct type."
+                )
+                plan.cannot_auto_fix.append(error_msg)
+
+        if plan.cannot_auto_fix:
+            raise ValueError(f"Schema has unfixable issues:\n" + "\n".join(plan.cannot_auto_fix))
+
+        # Plan property creation
+        if validation_result.missing_properties:
+            for prop_name in validation_result.missing_properties:
+                if repair_properties and prop_name not in repair_properties:
+                    continue  # Skip if not in selective repair list
+
+                prop_type = self._get_property_type_for(prop_name, required=True)
+                plan.operations.append(RepairOperation(
+                    operation_type="create_property",
+                    property_name=prop_name,
+                    property_type=prop_type
+                ))
+
+        # Plan optional property creation
+        if validation_result.missing_optional_properties:
+            for prop_name in validation_result.missing_optional_properties:
+                if repair_properties and prop_name not in repair_properties:
+                    continue
+
+                prop_type = self._get_property_type_for(prop_name, required=False)
+                plan.operations.append(RepairOperation(
+                    operation_type="create_property",
+                    property_name=prop_name,
+                    property_type=prop_type
+                ))
+
+        # Plan select option additions
+        if validation_result.missing_status_options:
+            for option in validation_result.missing_status_options:
+                plan.operations.append(RepairOperation(
+                    operation_type="add_select_option",
+                    property_name="Status",
+                    property_type="select",
+                    value=option
+                ))
+
+        if validation_result.missing_stage_options:
+            for option in validation_result.missing_stage_options:
+                plan.operations.append(RepairOperation(
+                    operation_type="add_select_option",
+                    property_name="Investment Stage",
+                    property_type="select",
+                    value=option
+                ))
+
+        # Execute repair if not dry-run
+        if auto_repair and not dry_run and plan.operations:
+            for operation in plan.operations:
+                await self._execute_repair_operation(operation)
+
+            # Invalidate schema cache after repairs
+            self._schema_cache = None
+            self._schema_expires = None
+
+            logger.info(f"Schema repair completed: {len(plan.operations)} operations executed")
+
+        return plan
+
+    async def _execute_repair_operation(self, operation: RepairOperation) -> None:
+        """Execute a single repair operation"""
+        try:
+            if operation.operation_type == "create_property":
+                await self._create_database_property(operation.property_name, operation.property_type)
+            elif operation.operation_type == "add_select_option":
+                await self._add_select_option(operation.property_name, operation.value)
+            else:
+                raise ValueError(f"Unknown operation type: {operation.operation_type}")
+
+            logger.info(f"Repair operation completed: {operation.operation_type} for {operation.property_name}")
+
+        except Exception as e:
+            logger.error(f"Repair operation failed: {operation.operation_type} for {operation.property_name}: {e}")
+            raise
+
+    async def _create_database_property(self, property_name: str, property_type: str) -> None:
+        """Create a new property in the Notion database"""
+        # Build property configuration based on type
+        property_config = self._build_property_config(property_type)
+
+        # PATCH request to update database schema
+        payload = {
+            "properties": {
+                property_name: property_config
+            }
+        }
+
+        await self.transport.patch(
+            f"/databases/{self.database_id}",
+            payload
+        )
+
+        logger.info(f"Created property '{property_name}' with type '{property_type}'")
+
+    async def _add_select_option(self, property_name: str, option_value: str) -> None:
+        """Add a select option to an existing select property (idempotent)"""
+        # Get current schema to check if option already exists
+        schema = await self._get_database_schema(force_refresh=True)
+        properties = schema.get("properties", {})
+
+        if property_name not in properties:
+            raise ValueError(f"Property '{property_name}' does not exist")
+
+        prop_config = properties[property_name]
+        if prop_config.get("type") != "select":
+            raise ValueError(f"Property '{property_name}' is not a select property")
+
+        # Check if option already exists (idempotent)
+        existing_options = prop_config.get("select", {}).get("options", [])
+        for existing_opt in existing_options:
+            if existing_opt.get("name") == option_value:
+                logger.info(f"Option '{option_value}' already exists in '{property_name}'")
+                return
+
+        # Add new option
+        existing_options.append({"name": option_value})
+
+        payload = {
+            "properties": {
+                property_name: {
+                    "select": {
+                        "options": existing_options
+                    }
+                }
+            }
+        }
+
+        await self.transport.patch(
+            f"/databases/{self.database_id}",
+            payload
+        )
+
+        logger.info(f"Added option '{option_value}' to '{property_name}'")
+
+    def _build_property_config(self, property_type: str) -> Dict[str, Any]:
+        """Build Notion API property configuration based on type"""
+        config_map = {
+            "text": {"type": "rich_text"},
+            "number": {"type": "number"},
+            "select": {"type": "select", "select": {"options": []}},
+            "multi_select": {"type": "multi_select", "multi_select": {"options": []}}
+        }
+
+        if property_type not in config_map:
+            raise ValueError(f"Unknown property type: {property_type}")
+
+        return config_map[property_type]
+
+    def _get_property_type_for(self, property_name: str, required: bool = True) -> str:
+        """Map property name to expected Notion property type"""
+        # Mapping of property names to their types
+        type_map = {
+            # Text properties
+            "Discovery ID": "text",
+            "Canonical Key": "text",
+            "Why Now": "text",
+
+            # Number properties
+            "Confidence Score": "number",
+
+            # Multi-select
+            "Signal Types": "multi_select",
+
+            # Select
+            "Status": "select",
+            "Investment Stage": "select",
+        }
+
+        return type_map.get(property_name, "text")  # Default to text
+
+    async def generate_schema_docs(
+        self,
+        include_validation: bool = True,
+        include_examples: bool = True
+    ) -> str:
+        """
+        Generate markdown documentation of Notion database schema.
+
+        Args:
+            include_validation: Include validation status in docs
+            include_examples: Include example property values
+
+        Returns:
+            Markdown-formatted schema documentation
+        """
+        schema = await self._get_database_schema(force_refresh=True)
+        validation_result = None
+
+        if include_validation:
+            validation_result = await self.validate_schema(force_refresh=True)
+
+        lines = []
+
+        # Header
+        lines.append("# Notion Database Schema Documentation\n")
+        lines.append(f"**Database ID:** `{self.database_id}`\n")
+        lines.append(f"**Generated:** {datetime.utcnow().isoformat()}\n\n")
+
+        # Validation Status
+        if validation_result:
+            status_emoji = "✅" if validation_result.valid else "❌"
+            lines.append(f"## Validation Status\n")
+            lines.append(f"{status_emoji} **Status:** {'Valid' if validation_result.valid else 'Invalid'}\n")
+
+            if not validation_result.valid:
+                if validation_result.missing_properties:
+                    lines.append(f"\n### Missing Required Properties:\n")
+                    for prop in validation_result.missing_properties:
+                        lines.append(f"- {prop}\n")
+
+                if validation_result.missing_optional_properties:
+                    lines.append(f"\n### Missing Optional Properties:\n")
+                    for prop in validation_result.missing_optional_properties:
+                        lines.append(f"- {prop}\n")
+
+            lines.append("\n")
+
+        # Properties Table
+        lines.append("## Properties\n\n")
+        lines.append("| Name | Type | Required | Notes |\n")
+        lines.append("|------|------|----------|-------|\n")
+
+        properties = schema.get("properties", {})
+        for prop_name, prop_config in sorted(properties.items()):
+            prop_type = prop_config.get("type", "unknown")
+
+            # Check if required
+            is_required = prop_name in ["Name", "Status"]  # Add more required props as needed
+            required_str = "✓" if is_required else ""
+
+            # Build notes
+            notes = []
+            if prop_type == "select" and "select" in prop_config:
+                options = prop_config["select"].get("options", [])
+                option_names = [opt.get("name") for opt in options]
+                if option_names and include_examples:
+                    notes.append(f"Options: {', '.join(option_names[:3])}")
+
+            notes_str = " | ".join(notes) if notes else ""
+            lines.append(f"| {prop_name} | {prop_type} | {required_str} | {notes_str} |\n")
+
+        lines.append("\n")
+
+        # Select Options Examples
+        if include_examples:
+            lines.append("## Select Options\n\n")
+
+            # Status options
+            if "Status" in properties:
+                status_config = properties["Status"]
+                if status_config.get("type") == "select":
+                    options = status_config.get("select", {}).get("options", [])
+                    if options:
+                        lines.append("### Status\n")
+                        for opt in options:
+                            lines.append(f"- {opt.get('name')}\n")
+                        lines.append("\n")
+
+            # Investment Stage options
+            if "Investment Stage" in properties:
+                stage_config = properties["Investment Stage"]
+                if stage_config.get("type") == "select":
+                    options = stage_config.get("select", {}).get("options", [])
+                    if options:
+                        lines.append("### Investment Stage\n")
+                        for opt in options:
+                            lines.append(f"- {opt.get('name')}\n")
+                        lines.append("\n")
+
+        # Footer
+        lines.append("---\n\n")
+        lines.append("_Generated by Discovery Engine Schema Documentation Tool_\n")
+
+        return "".join(lines)
+
     # =========================================================================
     # SCHEMA VALIDATION (PRIVATE)
     # =========================================================================

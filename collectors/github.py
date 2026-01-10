@@ -275,6 +275,21 @@ class GitHubCollector(BaseCollector):
         enriched_repos: List[RepoMetrics] = []
         for repo_data in repos[:self.max_repos]:
             try:
+                repo_name = repo_data.get('full_name')
+
+                # Save raw data and detect changes
+                if self.asset_store:
+                    is_new, changes = await self._save_asset_with_change_detection(
+                        source_type=self.SOURCE_TYPE,
+                        external_id=repo_name,
+                        raw_data=repo_data,
+                    )
+
+                    # Skip unchanged repos (already processed)
+                    if not is_new and not changes:
+                        logger.debug(f"Skipping unchanged repository: {repo_name}")
+                        continue
+
                 metrics = await self._enrich_repo_metrics(repo_data)
                 if metrics.is_relevant:
                     enriched_repos.append(metrics)

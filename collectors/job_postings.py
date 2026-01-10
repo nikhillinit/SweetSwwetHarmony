@@ -442,6 +442,19 @@ class JobPostingsCollector(BaseCollector):
                 posting_signal = await self.check_domain(clean_domain)
 
                 if posting_signal:
+                    # Save raw data and detect changes
+                    if self.asset_store:
+                        is_new, changes = await self._save_asset_with_change_detection(
+                            source_type=self.SOURCE_TYPE,
+                            external_id=f"{clean_domain}_{posting_signal.ats_platform}",
+                            raw_data=posting_signal.to_dict() if hasattr(posting_signal, 'to_dict') else vars(posting_signal),
+                        )
+
+                        # Skip unchanged job postings
+                        if not is_new and not changes:
+                            logger.debug(f"Skipping unchanged job posting for: {clean_domain}")
+                            continue
+
                     signals.append(posting_signal.to_signal())
                     logger.info(
                         f"Found {posting_signal.total_positions} jobs at "

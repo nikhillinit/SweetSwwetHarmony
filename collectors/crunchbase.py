@@ -307,6 +307,19 @@ class CrunchbaseCollector(BaseCollector):
         try:
             companies = await self._search_recently_funded()
             for company in companies:
+                # Save raw data and detect changes
+                if self.asset_store:
+                    is_new, changes = await self._save_asset_with_change_detection(
+                        source_type=self.SOURCE_TYPE,
+                        external_id=company.id or company.permalink,
+                        raw_data=company.to_dict() if hasattr(company, 'to_dict') else vars(company),
+                    )
+
+                    # Skip unchanged companies
+                    if not is_new and not changes:
+                        logger.debug(f"Skipping unchanged Crunchbase company: {company.id}")
+                        continue
+
                 signals.append(company.to_signal())
 
             logger.info(f"Collected {len(signals)} Crunchbase signals")

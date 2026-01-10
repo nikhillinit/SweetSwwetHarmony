@@ -48,6 +48,7 @@ from workflows.pipeline import (
     PipelineStats,
 )
 from utils.signal_health import SignalHealthMonitor
+from connectors.notion_connector_v2 import NotionConnector
 
 try:
     import httpx
@@ -1080,12 +1081,128 @@ Environment variables:
         help="Show detailed signal health report",
     )
 
+    # Schema command with subcommands
+    schema_parser = subparsers.add_parser(
+        "schema",
+        help="Notion schema management (validate, repair, docs)",
+    )
+    schema_subparsers = schema_parser.add_subparsers(dest="schema_command", help="Schema operation")
+
+    # schema validate subcommand
+    validate_parser = schema_subparsers.add_parser(
+        "validate",
+        help="Validate Notion database schema",
+    )
+    validate_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="output_json",
+        help="Output results as JSON",
+    )
+
+    # schema repair subcommand
+    repair_parser = schema_subparsers.add_parser(
+        "repair",
+        help="Repair Notion database schema (create missing properties/options)",
+    )
+    repair_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        dest="dry_run",
+        help="Show repair plan without executing",
+    )
+    repair_parser.add_argument(
+        "--properties",
+        type=str,
+        help="Comma-separated property names to repair (selective repair)",
+    )
+
+    # schema docs subcommand
+    docs_parser = schema_subparsers.add_parser(
+        "docs",
+        help="Generate schema documentation",
+    )
+    docs_parser.add_argument(
+        "--output",
+        type=str,
+        help="Output file path (default: stdout)",
+    )
+
     return parser
 
 
 # =============================================================================
 # MAIN
 # =============================================================================
+
+async def cmd_schema_validate(args):
+    """Validate Notion database schema"""
+    connector = NotionConnector(
+        api_key=os.environ["NOTION_API_KEY"],
+        database_id=os.environ["NOTION_DATABASE_ID"],
+    )
+
+    result = await connector.validate_schema(force_refresh=True)
+
+    if getattr(args, "output_json", False):
+        # JSON output
+        output = {
+            "valid": result.valid,
+            "missing_properties": result.missing_properties,
+            "missing_optional_properties": result.missing_optional_properties,
+            "wrong_property_types": result.wrong_property_types,
+            "missing_status_options": result.missing_status_options,
+            "missing_stage_options": result.missing_stage_options,
+        }
+        print(json.dumps(output, indent=2))
+    else:
+        # Text output with emoji codes and instructions
+        print(result)
+
+
+async def cmd_schema_repair(args):
+    """Repair Notion database schema (create missing properties/options)"""
+    connector = NotionConnector(
+        api_key=os.environ["NOTION_API_KEY"],
+        database_id=os.environ["NOTION_DATABASE_ID"],
+    )
+
+    # Parse selective repair list if provided
+    repair_properties = None
+    if getattr(args, "properties", None):
+        repair_properties = [p.strip() for p in args.properties.split(",")]
+
+    # Execute repair
+    plan = await connector.repair_schema(
+        auto_repair=True,
+        dry_run=getattr(args, "dry_run", False),
+        repair_properties=repair_properties
+    )
+
+    print(plan)
+
+
+async def cmd_schema_docs(args):
+    """Generate schema documentation"""
+    connector = NotionConnector(
+        api_key=os.environ["NOTION_API_KEY"],
+        database_id=os.environ["NOTION_DATABASE_ID"],
+    )
+
+    docs = await connector.generate_schema_docs(
+        include_validation=True,
+        include_examples=True
+    )
+
+    if getattr(args, "output", None):
+        # Save to file
+        with open(args.output, "w") as f:
+            f.write(docs)
+        print(f"Schema documentation saved to: {args.output}")
+    else:
+        # Output to stdout
+        print(docs)
+
 
 async def main():
     """Main entry point"""
@@ -1116,6 +1233,21 @@ async def main():
             await cmd_stats(args)
         elif args.command == "health":
             exit_code = await cmd_health(args)
+        elif args.command == "schema":
+            # Handle schema subcommands
+            if hasattr(args, "schema_command"):
+                if args.schema_command == "validate":
+                    await cmd_schema_validate(args)
+                elif args.schema_command == "repair":
+                    await cmd_schema_repair(args)
+                elif args.schema_command == "docs":
+                    await cmd_schema_docs(args)
+                else:
+                    print(f"Unknown schema command: {args.schema_command}")
+                    sys.exit(1)
+            else:
+                print("Schema command requires a subcommand (validate, repair, docs)")
+                sys.exit(1)
         else:
             print(f"Unknown command: {args.command}")
             parser.print_help()

@@ -197,7 +197,25 @@ class ProductHuntCollector(BaseCollector):
             return []
 
         launches = await self._fetch_launches()
-        return [launch.to_signal() for launch in launches]
+
+        signals = []
+        for launch in launches:
+            # Save raw data and detect changes
+            if self.asset_store:
+                is_new, changes = await self._save_asset_with_change_detection(
+                    source_type=self.SOURCE_TYPE,
+                    external_id=launch.id,
+                    raw_data=launch.to_dict(),
+                )
+
+                # Skip unchanged launches
+                if not is_new and not changes:
+                    logger.debug(f"Skipping unchanged Product Hunt launch: {launch.id}")
+                    continue
+
+            signals.append(launch.to_signal())
+
+        return signals
 
     async def _fetch_launches(self) -> List[ProductHuntLaunch]:
         """Fetch recent launches from Product Hunt API."""

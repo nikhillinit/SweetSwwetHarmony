@@ -434,6 +434,19 @@ class LinkedInCollector(BaseCollector):
             try:
                 company = await self._fetch_company(url)
                 if company:
+                    # Save raw data and detect changes
+                    if self.asset_store:
+                        is_new, changes = await self._save_asset_with_change_detection(
+                            source_type=self.SOURCE_TYPE,
+                            external_id=company.id or url,
+                            raw_data=company.to_dict() if hasattr(company, 'to_dict') else vars(company),
+                        )
+
+                        # Skip unchanged companies
+                        if not is_new and not changes:
+                            logger.debug(f"Skipping unchanged LinkedIn company: {url}")
+                            continue
+
                     signals.append(company.to_signal())
             except Exception as e:
                 logger.error(f"Error fetching company {url}: {e}")
@@ -443,6 +456,19 @@ class LinkedInCollector(BaseCollector):
             try:
                 company = await self._resolve_company_by_domain(domain)
                 if company:
+                    # Save raw data and detect changes
+                    if self.asset_store:
+                        is_new, changes = await self._save_asset_with_change_detection(
+                            source_type=self.SOURCE_TYPE,
+                            external_id=company.id or domain,
+                            raw_data=company.to_dict() if hasattr(company, 'to_dict') else vars(company),
+                        )
+
+                        # Skip unchanged companies
+                        if not is_new and not changes:
+                            logger.debug(f"Skipping unchanged LinkedIn company for domain: {domain}")
+                            continue
+
                     signals.append(company.to_signal())
             except Exception as e:
                 logger.error(f"Error resolving domain {domain}: {e}")
