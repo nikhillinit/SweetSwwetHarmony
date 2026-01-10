@@ -44,6 +44,7 @@ from typing import Any, Dict, List, Optional, Set
 from storage.signal_store import SignalStore, StoredSignal
 from storage.source_asset_store import SourceAssetStore, SourceAsset
 from storage.founder_store import FounderStore
+from storage.entity_resolution import EntityResolutionStore, AssetToLead
 from consumer.signal_processor import SignalProcessor, ProcessorConfig
 from consumer.entity_resolver import EntityResolver, ResolverConfig
 
@@ -282,6 +283,7 @@ class DiscoveryPipeline:
         self._asset_store: Optional[SourceAssetStore] = None
         self._signal_processor: Optional[SignalProcessor] = None
         self._entity_resolver: Optional[EntityResolver] = None
+        self._entity_resolution_store: Optional[EntityResolutionStore] = None
         self._health_monitor: Optional[SignalHealthMonitor] = None
         self._notifier: Optional[SlackNotifier] = None
 
@@ -345,7 +347,12 @@ class DiscoveryPipeline:
         if self.config.use_entities:
             resolver_config = ResolverConfig()
             self._entity_resolver = EntityResolver(resolver_config)
-            logger.info("EntityResolver initialized (asset-to-lead resolution enabled)")
+
+            # Initialize EntityResolutionStore
+            self._entity_resolution_store = EntityResolutionStore(db_path=self.config.db_path)
+            await self._entity_resolution_store.initialize()
+
+            logger.info("EntityResolver + EntityResolutionStore initialized")
 
         # Initialize FounderStore (if founder scoring enabled)
         if self.config.use_founder_scoring:
@@ -395,6 +402,9 @@ class DiscoveryPipeline:
         if self._asset_store:
             await self._asset_store.close()
             self._asset_store = None
+        if self._entity_resolution_store:
+            await self._entity_resolution_store.close()
+            self._entity_resolution_store = None
         if self._founder_store:
             await self._founder_store.close()
             self._founder_store = None
@@ -741,32 +751,43 @@ class DiscoveryPipeline:
         try:
             logger.info(f"Running collector: {collector_name}")
 
+            # Common parameters for all collectors
+            common_args = {
+                "store": self._store,
+                "asset_store": self._asset_store if self.config.use_asset_store else None,
+            }
+
             # Import collector dynamically based on name
             if collector_name == "github":
                 from collectors.github import GitHubCollector
-                collector = GitHubCollector(github_token=self.config.github_token)
+                collector = GitHubCollector(
+                    **common_args,
+                    github_token=self.config.github_token
+                )
             elif collector_name == "sec_edgar":
                 from collectors.sec_edgar import SECEdgarCollector
-                collector = SECEdgarCollector()
+                collector = SECEdgarCollector(**common_args)
             elif collector_name == "companies_house":
                 from collectors.companies_house import CompaniesHouseCollector
                 collector = CompaniesHouseCollector(
+                    **common_args,
                     api_key=self.config.companies_house_api_key
                 )
             elif collector_name == "domain_whois":
                 from collectors.domain_whois import DomainWhoisCollector
-                collector = DomainWhoisCollector()
+                collector = DomainWhoisCollector(**common_args)
             elif collector_name == "product_hunt":
                 from collectors.product_hunt import ProductHuntCollector
                 collector = ProductHuntCollector(
+                    **common_args,
                     api_key=os.getenv("PH_API_KEY")
                 )
             elif collector_name == "hacker_news":
                 from collectors.hacker_news import HackerNewsCollector
-                collector = HackerNewsCollector()
+                collector = HackerNewsCollector(**common_args)
             elif collector_name == "arxiv":
                 from collectors.arxiv import ArxivCollector
-                collector = ArxivCollector()
+                collector = ArxivCollector(**common_args)
             elif collector_name == "job_postings":
                 from collectors.job_postings import JobPostingsCollector
                 # Job postings requires domains to scan - use configured or default
@@ -779,7 +800,7 @@ class DiscoveryPipeline:
                         error_message="No JOB_POSTING_DOMAINS configured",
                         dry_run=dry_run,
                     )
-                collector = JobPostingsCollector(domains=job_domains)
+                collector = JobPostingsCollector(**common_args, domains=job_domains)
             elif collector_name == "github_activity":
                 from collectors.github_activity import GitHubActivityCollector
                 # GitHub activity requires usernames or org names
@@ -795,6 +816,7 @@ class DiscoveryPipeline:
                         dry_run=dry_run,
                     )
                 collector = GitHubActivityCollector(
+                    **common_args,
                     usernames=gh_usernames if gh_usernames else None,
                     org_names=gh_orgs if gh_orgs else None,
                 )
@@ -812,6 +834,7 @@ class DiscoveryPipeline:
                 linkedin_urls = os.getenv("LINKEDIN_COMPANY_URLS", "").split(",")
                 linkedin_urls = [u.strip() for u in linkedin_urls if u.strip()]
                 collector = LinkedInCollector(
+                    **common_args,
                     api_key=linkedin_key,
                     company_urls=linkedin_urls if linkedin_urls else None,
                 )
@@ -825,10 +848,10 @@ class DiscoveryPipeline:
                         error_message="No CRUNCHBASE_API_KEY configured",
                         dry_run=dry_run,
                     )
-                collector = CrunchbaseCollector(api_key=cb_key)
+                collector = CrunchbaseCollector(**common_args, api_key=cb_key)
             elif collector_name == "uspto":
                 from collectors.uspto import USPTOCollector
-                collector = USPTOCollector()
+                collector = USPTOCollector(**common_args)
             else:
                 return CollectorResult(
                     collector=collector_name,
@@ -844,14 +867,6 @@ class DiscoveryPipeline:
                 f"Collector {collector_name} completed: "
                 f"{result.signals_found} signals found"
             )
-
-            # Save to SourceAssetStore for change detection (if enabled)
-            if self._asset_store and self.config.use_asset_store and result.signals_found > 0:
-                try:
-                    assets_saved = await self._save_collector_assets(collector_name, result)
-                    logger.info(f"Saved {assets_saved} assets to SourceAssetStore")
-                except Exception as e:
-                    logger.warning(f"SourceAssetStore save failed (non-fatal): {e}")
 
             return result
 
@@ -896,6 +911,11 @@ class DiscoveryPipeline:
             by_key.setdefault(signal.canonical_key, []).append(signal)
 
         logger.info(f"Grouped into {len(by_key)} unique companies")
+
+        # Re-group by entity resolution (consolidate multi-asset companies)
+        if self.config.use_entities:
+            by_key = await self._regroup_signals_by_entity(by_key)
+            logger.info(f"After entity regrouping: {len(by_key)} unique entities")
 
         # Process each company
         for canonical_key, company_signals in by_key.items():
@@ -1030,6 +1050,23 @@ class DiscoveryPipeline:
                         f"resolved to {best_candidate.lead_canonical_key} "
                         f"(method: {best_candidate.method.value}, confidence: {best_candidate.confidence:.2f})"
                     )
+
+                    # Create asset-to-lead link in EntityResolutionStore
+                    if self._entity_resolution_store:
+                        try:
+                            link = AssetToLead(
+                                asset_id=primary_asset.id or 0,
+                                asset_source_type=primary_asset.source_type,
+                                asset_external_id=primary_asset.external_id,
+                                lead_canonical_key=best_candidate.lead_canonical_key,
+                                confidence=best_candidate.confidence,
+                                resolved_by=best_candidate.method,
+                                metadata={"original_key": canonical_key, "reason": best_candidate.reason},
+                            )
+                            await self._entity_resolution_store.create_link(link)
+                            logger.debug(f"Created asset-to-lead link: {primary_asset.external_id} → {best_candidate.lead_canonical_key}")
+                        except Exception as e:
+                            logger.warning(f"Failed to create asset-to-lead link (non-fatal): {e}")
 
                     # If resolved key differs and has higher confidence, log it
                     if best_candidate.lead_canonical_key != canonical_key:
@@ -1414,52 +1451,52 @@ class DiscoveryPipeline:
             fetched_at=stored.detected_at,
         )
 
-    async def _save_collector_assets(
-        self,
-        collector_name: str,
-        result: CollectorResult,
-    ) -> int:
+    async def _regroup_signals_by_entity(
+        self, signals_by_key: Dict[str, List[StoredSignal]]
+    ) -> Dict[str, List[StoredSignal]]:
         """
-        Save collector results to SourceAssetStore for change detection.
+        Re-group signals using EntityResolutionStore links.
 
-        Gets pending signals from the collector and saves them as SourceAssets.
-        This enables:
-        - Change detection via snapshot comparison
-        - Historical analysis
-        - Entity resolution from stored assets
+        Multi-asset companies (e.g., GitHub repo + Product Hunt + domain) should
+        consolidate to a single lead. This method checks if assets have been
+        resolved to the same canonical key and re-groups them accordingly.
 
-        Returns the number of assets saved.
+        Args:
+            signals_by_key: Dictionary mapping canonical_key → list of signals
+
+        Returns:
+            Re-grouped dictionary with resolved canonical keys
         """
-        if not self._asset_store:
-            return 0
+        if not self._entity_resolution_store:
+            return signals_by_key
 
-        # Get pending signals and filter by collector source
-        pending = await self._store.get_pending_signals(limit=result.signals_found * 2)
-        signals = [s for s in pending if s.source_api == collector_name]
+        regrouped: Dict[str, List[StoredSignal]] = {}
 
-        assets_saved = 0
-        for signal in signals[:result.signals_found]:
-            # Convert to SourceAsset
-            asset = self._signal_to_asset(signal)
+        for canonical_key, signals in signals_by_key.items():
+            if not signals:
+                continue
 
-            # Check for previous snapshot and detect changes
-            previous = await self._asset_store.get_previous_snapshot(
-                source_type=asset.source_type,
-                external_id=asset.external_id,
+            asset = self._signal_to_asset(signals[0])
+
+            # Check if asset has existing link in EntityResolutionStore
+            resolved_key = await self._entity_resolution_store.get_lead_for_asset(
+                asset.source_type, asset.external_id, min_confidence=0.5
             )
 
-            if previous:
-                # Simple change detection: compare raw payloads
-                import json
-                prev_json = json.dumps(previous.raw_payload, sort_keys=True)
-                curr_json = json.dumps(asset.raw_payload, sort_keys=True)
-                asset.change_detected = prev_json != curr_json
+            # Use resolved key if available, otherwise use original key
+            final_key = resolved_key or canonical_key
 
-            # Save asset
-            await self._asset_store.save_asset(asset)
-            assets_saved += 1
+            if final_key not in regrouped:
+                regrouped[final_key] = []
+            regrouped[final_key].extend(signals)
 
-        return assets_saved
+            if resolved_key and resolved_key != canonical_key:
+                logger.info(
+                    f"Signal regrouping: {canonical_key} → {resolved_key} "
+                    f"(consolidated {len(signals)} signals)"
+                )
+
+        return regrouped
 
     def _infer_stage(self, signals: List[StoredSignal]) -> InvestmentStage:
         """Infer investment stage from signals"""

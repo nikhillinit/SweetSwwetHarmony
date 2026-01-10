@@ -62,6 +62,7 @@ class BaseCollector(ABC):
         collector_name: str = "unknown",
         retry_config: Optional[RetryConfig] = None,
         api_name: Optional[str] = None,
+        asset_store: Optional["SourceAssetStore"] = None,
     ):
         """
         Args:
@@ -69,11 +70,13 @@ class BaseCollector(ABC):
             collector_name: Name of collector (for logging and results)
             retry_config: Configuration for retry behavior (default: RetryConfig())
             api_name: API name for rate limiting (e.g., "github", "sec_edgar")
+            asset_store: Optional SourceAssetStore for change detection
         """
         self.store = store
         self.collector_name = collector_name
         self.retry_config = retry_config or RetryConfig()
         self.api_name = api_name
+        self.asset_store = asset_store
 
         # Set up rate limiter based on api_name
         if api_name:
@@ -356,6 +359,60 @@ class BaseCollector(ABC):
     def rate_limiter(self) -> AsyncRateLimiter:
         """Get the rate limiter for this collector's API."""
         return self._rate_limiter
+
+    async def _save_asset_with_change_detection(
+        self, source_type: str, external_id: str, raw_data: Dict[str, Any]
+    ) -> tuple[bool, list]:
+        """
+        Save asset and detect changes.
+
+        Saves the raw API response to SourceAssetStore and compares with
+        the latest snapshot to detect changes. Enables idempotent runs.
+
+        Args:
+            source_type: Type of source (e.g., "github_repo", "product_hunt")
+            external_id: External identifier from the source
+            raw_data: Raw API response data as dict
+
+        Returns:
+            (is_new, changes): is_new=True if first snapshot, changes=[] if no changes
+        """
+        if not self.asset_store:
+            return (True, [])
+
+        import json
+        from datetime import datetime
+        from storage.source_asset_store import SourceAsset
+
+        # Get latest snapshot for change detection
+        latest = await self.asset_store.get_latest_snapshot(
+            source_type=source_type,
+            external_id=external_id,
+        )
+
+        # Detect changes by comparing JSON representations
+        is_new = latest is None
+        changes = []
+
+        if not is_new:
+            # Compare latest and current data
+            latest_json = json.dumps(latest, sort_keys=True)
+            curr_json = json.dumps(raw_data, sort_keys=True)
+            if latest_json != curr_json:
+                # Record that changes were detected
+                changes = [{"field": "data", "old": latest, "new": raw_data}]
+
+        # Create and save the asset
+        asset = SourceAsset(
+            source_type=source_type,
+            external_id=external_id,
+            raw_payload=raw_data,
+            fetched_at=datetime.utcnow(),
+            change_detected=len(changes) > 0,
+        )
+        await self.asset_store.save_asset(asset)
+
+        return (is_new, changes)
 
     async def _fetch_with_retry(self, func: Callable[[], T]) -> T:
         """
