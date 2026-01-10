@@ -360,6 +360,39 @@ class BaseCollector(ABC):
         """Get the rate limiter for this collector's API."""
         return self._rate_limiter
 
+    async def _save_asset_with_change_detection(
+        self, source_type: str, external_id: str, raw_data: Dict[str, Any]
+    ) -> tuple[bool, list]:
+        """
+        Save asset and detect changes.
+
+        Saves the raw API response to SourceAssetStore and compares with
+        the previous snapshot to detect changes. Enables idempotent runs.
+
+        Args:
+            source_type: Type of source (e.g., "github_repo", "product_hunt")
+            external_id: External identifier from the source
+            raw_data: Raw API response data as dict
+
+        Returns:
+            (is_new, changes): is_new=True if first snapshot, changes=list of detected changes
+        """
+        if not self.asset_store:
+            return (True, [])
+
+        result = await self.asset_store.save_snapshot(
+            source_type=source_type,
+            external_id=external_id,
+            data=raw_data,
+            detect_changes=True,
+        )
+
+        # save_snapshot returns int (asset_id) if new, List[Change] if existing
+        is_new = isinstance(result, int)
+        changes = result if isinstance(result, list) else []
+
+        return (is_new, changes)
+
     async def _fetch_with_retry(self, func: Callable[[], T]) -> T:
         """
         Execute an async function with retry and rate limiting.
