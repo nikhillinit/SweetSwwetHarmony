@@ -907,6 +907,11 @@ class DiscoveryPipeline:
 
         logger.info(f"Grouped into {len(by_key)} unique companies")
 
+        # Re-group by entity resolution (consolidate multi-asset companies)
+        if self.config.use_entities:
+            by_key = await self._regroup_signals_by_entity(by_key)
+            logger.info(f"After entity regrouping: {len(by_key)} unique entities")
+
         # Process each company
         for canonical_key, company_signals in by_key.items():
             try:
@@ -1440,6 +1445,53 @@ class DiscoveryPipeline:
             raw_payload=stored.raw_data,
             fetched_at=stored.detected_at,
         )
+
+    async def _regroup_signals_by_entity(
+        self, signals_by_key: Dict[str, List[StoredSignal]]
+    ) -> Dict[str, List[StoredSignal]]:
+        """
+        Re-group signals using EntityResolutionStore links.
+
+        Multi-asset companies (e.g., GitHub repo + Product Hunt + domain) should
+        consolidate to a single lead. This method checks if assets have been
+        resolved to the same canonical key and re-groups them accordingly.
+
+        Args:
+            signals_by_key: Dictionary mapping canonical_key → list of signals
+
+        Returns:
+            Re-grouped dictionary with resolved canonical keys
+        """
+        if not self._entity_resolution_store:
+            return signals_by_key
+
+        regrouped: Dict[str, List[StoredSignal]] = {}
+
+        for canonical_key, signals in signals_by_key.items():
+            if not signals:
+                continue
+
+            asset = self._signal_to_asset(signals[0])
+
+            # Check if asset has existing link in EntityResolutionStore
+            resolved_key = await self._entity_resolution_store.get_lead_for_asset(
+                asset.source_type, asset.external_id, min_confidence=0.5
+            )
+
+            # Use resolved key if available, otherwise use original key
+            final_key = resolved_key or canonical_key
+
+            if final_key not in regrouped:
+                regrouped[final_key] = []
+            regrouped[final_key].extend(signals)
+
+            if resolved_key and resolved_key != canonical_key:
+                logger.info(
+                    f"Signal regrouping: {canonical_key} → {resolved_key} "
+                    f"(consolidated {len(signals)} signals)"
+                )
+
+        return regrouped
 
     async def _save_collector_assets(
         self,
