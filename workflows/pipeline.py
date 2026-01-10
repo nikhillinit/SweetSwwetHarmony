@@ -751,32 +751,43 @@ class DiscoveryPipeline:
         try:
             logger.info(f"Running collector: {collector_name}")
 
+            # Common parameters for all collectors
+            common_args = {
+                "store": self._store,
+                "asset_store": self._asset_store if self.config.use_asset_store else None,
+            }
+
             # Import collector dynamically based on name
             if collector_name == "github":
                 from collectors.github import GitHubCollector
-                collector = GitHubCollector(github_token=self.config.github_token)
+                collector = GitHubCollector(
+                    **common_args,
+                    github_token=self.config.github_token
+                )
             elif collector_name == "sec_edgar":
                 from collectors.sec_edgar import SECEdgarCollector
-                collector = SECEdgarCollector()
+                collector = SECEdgarCollector(**common_args)
             elif collector_name == "companies_house":
                 from collectors.companies_house import CompaniesHouseCollector
                 collector = CompaniesHouseCollector(
+                    **common_args,
                     api_key=self.config.companies_house_api_key
                 )
             elif collector_name == "domain_whois":
                 from collectors.domain_whois import DomainWhoisCollector
-                collector = DomainWhoisCollector()
+                collector = DomainWhoisCollector(**common_args)
             elif collector_name == "product_hunt":
                 from collectors.product_hunt import ProductHuntCollector
                 collector = ProductHuntCollector(
+                    **common_args,
                     api_key=os.getenv("PH_API_KEY")
                 )
             elif collector_name == "hacker_news":
                 from collectors.hacker_news import HackerNewsCollector
-                collector = HackerNewsCollector()
+                collector = HackerNewsCollector(**common_args)
             elif collector_name == "arxiv":
                 from collectors.arxiv import ArxivCollector
-                collector = ArxivCollector()
+                collector = ArxivCollector(**common_args)
             elif collector_name == "job_postings":
                 from collectors.job_postings import JobPostingsCollector
                 # Job postings requires domains to scan - use configured or default
@@ -789,7 +800,7 @@ class DiscoveryPipeline:
                         error_message="No JOB_POSTING_DOMAINS configured",
                         dry_run=dry_run,
                     )
-                collector = JobPostingsCollector(domains=job_domains)
+                collector = JobPostingsCollector(**common_args, domains=job_domains)
             elif collector_name == "github_activity":
                 from collectors.github_activity import GitHubActivityCollector
                 # GitHub activity requires usernames or org names
@@ -805,6 +816,7 @@ class DiscoveryPipeline:
                         dry_run=dry_run,
                     )
                 collector = GitHubActivityCollector(
+                    **common_args,
                     usernames=gh_usernames if gh_usernames else None,
                     org_names=gh_orgs if gh_orgs else None,
                 )
@@ -822,6 +834,7 @@ class DiscoveryPipeline:
                 linkedin_urls = os.getenv("LINKEDIN_COMPANY_URLS", "").split(",")
                 linkedin_urls = [u.strip() for u in linkedin_urls if u.strip()]
                 collector = LinkedInCollector(
+                    **common_args,
                     api_key=linkedin_key,
                     company_urls=linkedin_urls if linkedin_urls else None,
                 )
@@ -835,10 +848,10 @@ class DiscoveryPipeline:
                         error_message="No CRUNCHBASE_API_KEY configured",
                         dry_run=dry_run,
                     )
-                collector = CrunchbaseCollector(api_key=cb_key)
+                collector = CrunchbaseCollector(**common_args, api_key=cb_key)
             elif collector_name == "uspto":
                 from collectors.uspto import USPTOCollector
-                collector = USPTOCollector()
+                collector = USPTOCollector(**common_args)
             else:
                 return CollectorResult(
                     collector=collector_name,
