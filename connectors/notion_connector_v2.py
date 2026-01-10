@@ -391,7 +391,81 @@ class NotionConnector:
                 "page_id": result["id"],
                 "reason": "New deal created"
             }
-    
+
+    async def upsert_with_retry(
+        self,
+        prospect: ProspectPayload,
+        max_retries: int = 3,
+        initial_delay: float = 1.0,
+    ) -> Dict[str, Any]:
+        """
+        Upsert a prospect with automatic retry on transient errors.
+
+        Args:
+            prospect: ProspectPayload to upsert.
+            max_retries: Maximum number of retry attempts.
+            initial_delay: Initial delay in seconds before retry.
+
+        Returns:
+            Result of upsert_prospect with status, page_id, and reason.
+
+        Raises:
+            Exception: If all retries exhausted or permanent error.
+        """
+        import asyncio
+        import logging
+
+        logger = logging.getLogger(__name__)
+        last_error = None
+        delay = initial_delay
+
+        for attempt in range(max_retries):
+            try:
+                result = await self.upsert_prospect(prospect)
+                if attempt > 0:
+                    logger.info(
+                        f"Upsert succeeded after {attempt} retries for {prospect.company_name}"
+                    )
+                return result
+            except (TimeoutError, ConnectionError, Exception) as e:
+                last_error = e
+                # Check if error is transient (retryable)
+                is_transient = isinstance(e, (TimeoutError, ConnectionError))
+                if not is_transient:
+                    error_str = str(e).lower()
+                    is_transient = any(
+                        term in error_str
+                        for term in [
+                            "timeout",
+                            "temporarily unavailable",
+                            "connection",
+                            "network",
+                            "503",
+                            "429",  # Rate limit
+                        ]
+                    )
+
+                # Don't retry permanent errors
+                if not is_transient and attempt == 0:
+                    logger.error(
+                        f"Permanent error upserting {prospect.company_name}: {e}"
+                    )
+                    raise
+
+                if attempt < max_retries - 1:
+                    logger.warning(
+                        f"Upsert failed for {prospect.company_name} (attempt {attempt + 1}/{max_retries}): {e}. "
+                        f"Retrying in {delay}s..."
+                    )
+                    await asyncio.sleep(delay)
+                    delay *= 2  # Exponential backoff
+
+        # All retries exhausted
+        logger.error(
+            f"Upsert failed after {max_retries} retries for {prospect.company_name}"
+        )
+        raise last_error or Exception("Upsert failed after max retries")
+
     async def get_suppression_list(self, force_refresh: bool = False) -> Dict[str, SuppressionEntry]:
         """
         Get deals to suppress from Discovery results.
