@@ -325,8 +325,23 @@ class SECEdgarCollector(BaseCollector):
             filings = [f for f in filings if f.is_target_sector]
             logger.info(f"Filtered to {len(filings)} filings in target sectors")
 
-        # Convert to signals
-        signals = [f.to_signal() for f in filings]
+        # Convert to signals and detect changes
+        signals = []
+        for filing in filings:
+            # Save raw data and detect changes
+            if self.asset_store:
+                is_new, changes = await self._save_asset_with_change_detection(
+                    source_type=self.SOURCE_TYPE,
+                    external_id=filing.accession_number,
+                    raw_data=filing.to_dict() if hasattr(filing, 'to_dict') else vars(filing),
+                )
+
+                # Skip unchanged filings
+                if not is_new and not changes:
+                    logger.debug(f"Skipping unchanged SEC filing: {filing.accession_number}")
+                    continue
+
+            signals.append(filing.to_signal())
 
         return signals
 
