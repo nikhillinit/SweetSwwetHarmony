@@ -208,7 +208,25 @@ class USPTOCollector(BaseCollector):
     async def _collect_signals(self) -> List[Signal]:
         """Collect USPTO patents as signals."""
         patents = await self._fetch_patents()
-        return [patent.to_signal() for patent in patents]
+
+        signals = []
+        for patent in patents:
+            # Save raw data and detect changes
+            if self.asset_store:
+                is_new, changes = await self._save_asset_with_change_detection(
+                    source_type=self.SOURCE_TYPE,
+                    external_id=patent.patent_number,
+                    raw_data=patent.to_dict() if hasattr(patent, 'to_dict') else vars(patent),
+                )
+
+                # Skip unchanged patents
+                if not is_new and not changes:
+                    logger.debug(f"Skipping unchanged patent: {patent.patent_number}")
+                    continue
+
+            signals.append(patent.to_signal())
+
+        return signals
 
     async def _fetch_patents(self) -> List[PatentFiling]:
         """Fetch recent patents from PatentsView API."""

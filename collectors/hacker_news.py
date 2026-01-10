@@ -261,7 +261,25 @@ class HackerNewsCollector(BaseCollector):
     async def _collect_signals(self) -> List[Signal]:
         """Collect Hacker News posts as signals."""
         posts = await self._fetch_posts()
-        return [post.to_signal() for post in posts]
+
+        signals = []
+        for post in posts:
+            # Save raw data and detect changes
+            if self.asset_store:
+                is_new, changes = await self._save_asset_with_change_detection(
+                    source_type=self.SOURCE_TYPE,
+                    external_id=str(post.story_id),
+                    raw_data=post.to_dict() if hasattr(post, 'to_dict') else vars(post),
+                )
+
+                # Skip unchanged posts
+                if not is_new and not changes:
+                    logger.debug(f"Skipping unchanged HN post: {post.story_id}")
+                    continue
+
+            signals.append(post.to_signal())
+
+        return signals
 
     async def _fetch_posts(self) -> List[HackerNewsPost]:
         """

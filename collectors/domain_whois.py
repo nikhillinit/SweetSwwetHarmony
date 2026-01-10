@@ -376,8 +376,23 @@ class DomainWhoisCollector(BaseCollector):
             recent_registrations = [r for r in recent_registrations if r.is_tech_tld]
             logger.info(f"Filtered to {len(recent_registrations)} tech TLD domains")
 
-        # Convert to signals
-        signals = [r.to_signal() for r in recent_registrations]
+        # Convert to signals and detect changes
+        signals = []
+        for registration in recent_registrations:
+            # Save raw data and detect changes
+            if self.asset_store:
+                is_new, changes = await self._save_asset_with_change_detection(
+                    source_type=self.SOURCE_TYPE,
+                    external_id=registration.domain,
+                    raw_data=registration.to_dict() if hasattr(registration, 'to_dict') else vars(registration),
+                )
+
+                # Skip unchanged registrations
+                if not is_new and not changes:
+                    logger.debug(f"Skipping unchanged domain: {registration.domain}")
+                    continue
+
+            signals.append(registration.to_signal())
 
         # Filter out low-confidence signals
         high_confidence_signals = [s for s in signals if s.confidence >= 0.3]
