@@ -62,6 +62,7 @@ class BaseCollector(ABC):
         collector_name: str = "unknown",
         retry_config: Optional[RetryConfig] = None,
         api_name: Optional[str] = None,
+        asset_store: Optional["SourceAssetStore"] = None,
     ):
         """
         Args:
@@ -69,11 +70,13 @@ class BaseCollector(ABC):
             collector_name: Name of collector (for logging and results)
             retry_config: Configuration for retry behavior (default: RetryConfig())
             api_name: API name for rate limiting (e.g., "github", "sec_edgar")
+            asset_store: Optional SourceAssetStore for change detection
         """
         self.store = store
         self.collector_name = collector_name
         self.retry_config = retry_config or RetryConfig()
         self.api_name = api_name
+        self.asset_store = asset_store
 
         # Set up rate limiter based on api_name
         if api_name:
