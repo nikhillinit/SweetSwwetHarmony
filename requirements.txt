@@ -24,17 +24,3 @@ python-dateutil>=2.8.0
 # Testing
 pytest>=7.4.0
 pytest-asyncio>=0.21.0
-aiosqlite
-httpx
-mcp
-pydantic
-pytest
-pytest-asyncio
-python-dateutil
-python-dotenv
-streamlit
-tenacity
-fastapi
-python-jose
-sqlalchemy
-uvicorn
