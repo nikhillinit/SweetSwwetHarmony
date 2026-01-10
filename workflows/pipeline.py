@@ -1041,6 +1041,23 @@ class DiscoveryPipeline:
                         f"(method: {best_candidate.method.value}, confidence: {best_candidate.confidence:.2f})"
                     )
 
+                    # Create asset-to-lead link in EntityResolutionStore
+                    if self._entity_resolution_store:
+                        try:
+                            link = AssetToLead(
+                                asset_id=primary_asset.id or 0,
+                                asset_source_type=primary_asset.source_type,
+                                asset_external_id=primary_asset.external_id,
+                                lead_canonical_key=best_candidate.lead_canonical_key,
+                                confidence=best_candidate.confidence,
+                                resolved_by=best_candidate.method,
+                                metadata={"original_key": canonical_key, "reason": best_candidate.reason},
+                            )
+                            await self._entity_resolution_store.create_link(link)
+                            logger.debug(f"Created asset-to-lead link: {primary_asset.external_id} → {best_candidate.lead_canonical_key}")
+                        except Exception as e:
+                            logger.warning(f"Failed to create asset-to-lead link (non-fatal): {e}")
+
                     # If resolved key differs and has higher confidence, log it
                     if best_candidate.lead_canonical_key != canonical_key:
                         logger.info(
