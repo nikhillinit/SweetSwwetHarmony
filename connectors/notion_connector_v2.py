@@ -165,39 +165,54 @@ class ValidationResult:
     timestamp: datetime = field(default_factory=datetime.utcnow)
 
     def __str__(self) -> str:
-        """Human-readable validation report"""
+        """Human-readable validation report with emoji severity codes and Notion UI instructions"""
         if self.valid:
-            return "Schema validation PASSED - all required properties and options present"
+            return "✅ Schema validation PASSED - all required properties and options present"
 
-        lines = ["Schema validation FAILED:"]
+        lines = ["❌ Schema validation FAILED - Action required:\n"]
 
+        # CRITICAL ISSUES: Missing required properties
         if self.missing_properties:
-            lines.append(f"\nMissing REQUIRED properties:")
+            lines.append("🔴 CRITICAL: Missing required properties\n")
             for prop in self.missing_properties:
-                lines.append(f"  - {prop}")
+                lines.append(f"  Property: {prop}")
+                lines.append(f"  Type: Text")
+                lines.append(f"  Fix: Notion Database → ⚙️ Settings → Properties → + Add property")
+                lines.append(f"       → Select 'Text' → Name: '{prop}' → Create\n")
 
-        if self.missing_optional_properties:
-            lines.append(f"\nMissing optional properties (recommended):")
-            for prop in self.missing_optional_properties:
-                lines.append(f"  - {prop}")
-
+        # CRITICAL ISSUES: Wrong property types
         if self.wrong_property_types:
-            lines.append(f"\nWrong property types:")
+            lines.append("🔴 CRITICAL: Wrong property types (data loss risk)\n")
             for prop, expected in self.wrong_property_types.items():
-                lines.append(f"  - {prop}: expected {expected}")
+                lines.append(f"  Property: {prop}")
+                lines.append(f"  Expected: {expected}")
+                lines.append(f"  ⚠️  WARNING: Changing property type will LOSE existing data!")
+                lines.append(f"  Fix: Manual - Delete '{prop}' property, then add it back with correct type\n")
 
-        if self.missing_status_options:
-            lines.append(f"\nMissing Status select options:")
-            for opt in self.missing_status_options:
-                lines.append(f"  - {opt}")
+        # IMPORTANT ISSUES: Missing select options
+        if self.missing_status_options or self.missing_stage_options:
+            if self.missing_status_options:
+                lines.append("🟠 IMPORTANT: Missing Status select options\n")
+                for opt in self.missing_status_options:
+                    lines.append(f"  Option: {opt}")
+                    lines.append(f"  Fix: Notion → Status property → Edit → + Add option → '{opt}'\n")
 
-        if self.missing_stage_options:
-            lines.append(f"\nMissing Investment Stage select options:")
-            for opt in self.missing_stage_options:
-                lines.append(f"  - {opt}")
+            if self.missing_stage_options:
+                lines.append("🟠 IMPORTANT: Missing Investment Stage select options\n")
+                for opt in self.missing_stage_options:
+                    lines.append(f"  Option: {opt}")
+                    lines.append(f"  Fix: Notion → Investment Stage property → Edit → + Add option → '{opt}'\n")
 
-        lines.append("\nFix these issues in Notion database settings, then retry.")
-        return "\n".join(lines)
+        # OPTIONAL: Missing optional properties
+        if self.missing_optional_properties:
+            lines.append("🟡 OPTIONAL: Missing recommended properties (nice to have)\n")
+            for prop in self.missing_optional_properties:
+                lines.append(f"  Property: {prop}")
+                lines.append(f"  Type: Text")
+                lines.append(f"  Fix: Same as required properties above\n")
+
+        lines.append("\n🔗 CLI: Re-run validation with: python run_pipeline.py schema validate")
+        return "".join(lines)
 
 
 # =============================================================================
