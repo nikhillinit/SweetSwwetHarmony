@@ -868,14 +868,6 @@ class DiscoveryPipeline:
                 f"{result.signals_found} signals found"
             )
 
-            # Save to SourceAssetStore for change detection (if enabled)
-            if self._asset_store and self.config.use_asset_store and result.signals_found > 0:
-                try:
-                    assets_saved = await self._save_collector_assets(collector_name, result)
-                    logger.info(f"Saved {assets_saved} assets to SourceAssetStore")
-                except Exception as e:
-                    logger.warning(f"SourceAssetStore save failed (non-fatal): {e}")
-
             return result
 
         except Exception as e:
@@ -1505,53 +1497,6 @@ class DiscoveryPipeline:
                 )
 
         return regrouped
-
-    async def _save_collector_assets(
-        self,
-        collector_name: str,
-        result: CollectorResult,
-    ) -> int:
-        """
-        Save collector results to SourceAssetStore for change detection.
-
-        Gets pending signals from the collector and saves them as SourceAssets.
-        This enables:
-        - Change detection via snapshot comparison
-        - Historical analysis
-        - Entity resolution from stored assets
-
-        Returns the number of assets saved.
-        """
-        if not self._asset_store:
-            return 0
-
-        # Get pending signals and filter by collector source
-        pending = await self._store.get_pending_signals(limit=result.signals_found * 2)
-        signals = [s for s in pending if s.source_api == collector_name]
-
-        assets_saved = 0
-        for signal in signals[:result.signals_found]:
-            # Convert to SourceAsset
-            asset = self._signal_to_asset(signal)
-
-            # Check for previous snapshot and detect changes
-            previous = await self._asset_store.get_previous_snapshot(
-                source_type=asset.source_type,
-                external_id=asset.external_id,
-            )
-
-            if previous:
-                # Simple change detection: compare raw payloads
-                import json
-                prev_json = json.dumps(previous.raw_payload, sort_keys=True)
-                curr_json = json.dumps(asset.raw_payload, sort_keys=True)
-                asset.change_detected = prev_json != curr_json
-
-            # Save asset
-            await self._asset_store.save_asset(asset)
-            assets_saved += 1
-
-        return assets_saved
 
     def _infer_stage(self, signals: List[StoredSignal]) -> InvestmentStage:
         """Infer investment stage from signals"""
