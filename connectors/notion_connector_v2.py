@@ -215,6 +215,42 @@ class ValidationResult:
         return "".join(lines)
 
 
+@dataclass
+class RepairOperation:
+    """Single repair operation to fix a schema issue"""
+    operation_type: str  # "create_property", "add_select_option"
+    property_name: str
+    property_type: str
+    value: Optional[str] = None  # For select options
+
+
+@dataclass
+class RepairPlan:
+    """Plan of repair operations to fix schema validation issues"""
+    operations: List[RepairOperation] = field(default_factory=list)
+    cannot_auto_fix: List[str] = field(default_factory=list)  # Issues that require manual deletion
+
+    def __str__(self) -> str:
+        """Human-readable repair plan"""
+        lines = ["Schema Repair Plan:\n"]
+
+        if self.operations:
+            lines.append(f"Operations to execute ({len(self.operations)}):\n")
+            for i, op in enumerate(self.operations, 1):
+                lines.append(f"  {i}. {op.operation_type}")
+                lines.append(f"     Property: {op.property_name}")
+                if op.value:
+                    lines.append(f"     Value: {op.value}")
+                lines.append("")
+
+        if self.cannot_auto_fix:
+            lines.append(f"\n⚠️  Cannot auto-fix ({len(self.cannot_auto_fix)} issues - manual deletion required):\n")
+            for issue in self.cannot_auto_fix:
+                lines.append(f"  - {issue}")
+
+        return "".join(lines)
+
+
 # =============================================================================
 # NOTION CONNECTOR
 # =============================================================================
@@ -665,7 +701,214 @@ class NotionConnector:
                 logger.warning(f"Optional properties missing: {missing_optional_properties}")
 
         return result
-    
+
+    async def repair_schema(
+        self,
+        auto_repair: bool = True,
+        dry_run: bool = False,
+        repair_properties: Optional[List[str]] = None
+    ) -> RepairPlan:
+        """
+        Repair schema by creating missing properties and adding select options.
+
+        Args:
+            auto_repair: Whether to actually execute repairs
+            dry_run: If True, return plan without executing
+            repair_properties: If provided, only repair these properties (selective repair)
+
+        Returns:
+            RepairPlan with operations executed or planned
+
+        Raises:
+            ValueError: If wrong property types detected (cannot auto-fix)
+        """
+        # Validate current schema
+        validation_result = await self.validate_schema(force_refresh=True)
+
+        plan = RepairPlan()
+
+        # Check for wrong types (cannot auto-fix)
+        if validation_result.wrong_property_types:
+            for prop_name, expected_type in validation_result.wrong_property_types.items():
+                error_msg = (
+                    f"Cannot auto-fix property '{prop_name}': Wrong type detected. "
+                    f"Expected '{expected_type}'. "
+                    f"Manual fix required: Delete '{prop_name}' property and recreate with correct type."
+                )
+                plan.cannot_auto_fix.append(error_msg)
+
+        if plan.cannot_auto_fix:
+            raise ValueError(f"Schema has unfixable issues:\n" + "\n".join(plan.cannot_auto_fix))
+
+        # Plan property creation
+        if validation_result.missing_properties:
+            for prop_name in validation_result.missing_properties:
+                if repair_properties and prop_name not in repair_properties:
+                    continue  # Skip if not in selective repair list
+
+                prop_type = self._get_property_type_for(prop_name, required=True)
+                plan.operations.append(RepairOperation(
+                    operation_type="create_property",
+                    property_name=prop_name,
+                    property_type=prop_type
+                ))
+
+        # Plan optional property creation
+        if validation_result.missing_optional_properties:
+            for prop_name in validation_result.missing_optional_properties:
+                if repair_properties and prop_name not in repair_properties:
+                    continue
+
+                prop_type = self._get_property_type_for(prop_name, required=False)
+                plan.operations.append(RepairOperation(
+                    operation_type="create_property",
+                    property_name=prop_name,
+                    property_type=prop_type
+                ))
+
+        # Plan select option additions
+        if validation_result.missing_status_options:
+            for option in validation_result.missing_status_options:
+                plan.operations.append(RepairOperation(
+                    operation_type="add_select_option",
+                    property_name="Status",
+                    property_type="select",
+                    value=option
+                ))
+
+        if validation_result.missing_stage_options:
+            for option in validation_result.missing_stage_options:
+                plan.operations.append(RepairOperation(
+                    operation_type="add_select_option",
+                    property_name="Investment Stage",
+                    property_type="select",
+                    value=option
+                ))
+
+        # Execute repair if not dry-run
+        if auto_repair and not dry_run and plan.operations:
+            for operation in plan.operations:
+                await self._execute_repair_operation(operation)
+
+            # Invalidate schema cache after repairs
+            self._schema_cache = None
+            self._schema_expires = None
+
+            logger.info(f"Schema repair completed: {len(plan.operations)} operations executed")
+
+        return plan
+
+    async def _execute_repair_operation(self, operation: RepairOperation) -> None:
+        """Execute a single repair operation"""
+        try:
+            if operation.operation_type == "create_property":
+                await self._create_database_property(operation.property_name, operation.property_type)
+            elif operation.operation_type == "add_select_option":
+                await self._add_select_option(operation.property_name, operation.value)
+            else:
+                raise ValueError(f"Unknown operation type: {operation.operation_type}")
+
+            logger.info(f"Repair operation completed: {operation.operation_type} for {operation.property_name}")
+
+        except Exception as e:
+            logger.error(f"Repair operation failed: {operation.operation_type} for {operation.property_name}: {e}")
+            raise
+
+    async def _create_database_property(self, property_name: str, property_type: str) -> None:
+        """Create a new property in the Notion database"""
+        # Build property configuration based on type
+        property_config = self._build_property_config(property_type)
+
+        # PATCH request to update database schema
+        payload = {
+            "properties": {
+                property_name: property_config
+            }
+        }
+
+        await self.transport.patch(
+            f"/databases/{self.database_id}",
+            payload
+        )
+
+        logger.info(f"Created property '{property_name}' with type '{property_type}'")
+
+    async def _add_select_option(self, property_name: str, option_value: str) -> None:
+        """Add a select option to an existing select property (idempotent)"""
+        # Get current schema to check if option already exists
+        schema = await self._get_database_schema(force_refresh=True)
+        properties = schema.get("properties", {})
+
+        if property_name not in properties:
+            raise ValueError(f"Property '{property_name}' does not exist")
+
+        prop_config = properties[property_name]
+        if prop_config.get("type") != "select":
+            raise ValueError(f"Property '{property_name}' is not a select property")
+
+        # Check if option already exists (idempotent)
+        existing_options = prop_config.get("select", {}).get("options", [])
+        for existing_opt in existing_options:
+            if existing_opt.get("name") == option_value:
+                logger.info(f"Option '{option_value}' already exists in '{property_name}'")
+                return
+
+        # Add new option
+        existing_options.append({"name": option_value})
+
+        payload = {
+            "properties": {
+                property_name: {
+                    "select": {
+                        "options": existing_options
+                    }
+                }
+            }
+        }
+
+        await self.transport.patch(
+            f"/databases/{self.database_id}",
+            payload
+        )
+
+        logger.info(f"Added option '{option_value}' to '{property_name}'")
+
+    def _build_property_config(self, property_type: str) -> Dict[str, Any]:
+        """Build Notion API property configuration based on type"""
+        config_map = {
+            "text": {"type": "rich_text"},
+            "number": {"type": "number"},
+            "select": {"type": "select", "select": {"options": []}},
+            "multi_select": {"type": "multi_select", "multi_select": {"options": []}}
+        }
+
+        if property_type not in config_map:
+            raise ValueError(f"Unknown property type: {property_type}")
+
+        return config_map[property_type]
+
+    def _get_property_type_for(self, property_name: str, required: bool = True) -> str:
+        """Map property name to expected Notion property type"""
+        # Mapping of property names to their types
+        type_map = {
+            # Text properties
+            "Discovery ID": "text",
+            "Canonical Key": "text",
+            "Why Now": "text",
+
+            # Number properties
+            "Confidence Score": "number",
+
+            # Multi-select
+            "Signal Types": "multi_select",
+
+            # Select
+            "Status": "select",
+            "Investment Stage": "select",
+        }
+
+        return type_map.get(property_name, "text")  # Default to text
+
     # =========================================================================
     # SCHEMA VALIDATION (PRIVATE)
     # =========================================================================
