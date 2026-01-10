@@ -367,7 +367,7 @@ class BaseCollector(ABC):
         Save asset and detect changes.
 
         Saves the raw API response to SourceAssetStore and compares with
-        the previous snapshot to detect changes. Enables idempotent runs.
+        the latest snapshot to detect changes. Enables idempotent runs.
 
         Args:
             source_type: Type of source (e.g., "github_repo", "product_hunt")
@@ -375,21 +375,42 @@ class BaseCollector(ABC):
             raw_data: Raw API response data as dict
 
         Returns:
-            (is_new, changes): is_new=True if first snapshot, changes=list of detected changes
+            (is_new, changes): is_new=True if first snapshot, changes=[] if no changes
         """
         if not self.asset_store:
             return (True, [])
 
-        result = await self.asset_store.save_snapshot(
+        import json
+        from datetime import datetime
+        from storage.source_asset_store import SourceAsset
+
+        # Get latest snapshot for change detection
+        latest = await self.asset_store.get_latest_snapshot(
             source_type=source_type,
             external_id=external_id,
-            data=raw_data,
-            detect_changes=True,
         )
 
-        # save_snapshot returns int (asset_id) if new, List[Change] if existing
-        is_new = isinstance(result, int)
-        changes = result if isinstance(result, list) else []
+        # Detect changes by comparing JSON representations
+        is_new = latest is None
+        changes = []
+
+        if not is_new:
+            # Compare latest and current data
+            latest_json = json.dumps(latest, sort_keys=True)
+            curr_json = json.dumps(raw_data, sort_keys=True)
+            if latest_json != curr_json:
+                # Record that changes were detected
+                changes = [{"field": "data", "old": latest, "new": raw_data}]
+
+        # Create and save the asset
+        asset = SourceAsset(
+            source_type=source_type,
+            external_id=external_id,
+            raw_payload=raw_data,
+            fetched_at=datetime.utcnow(),
+            change_detected=len(changes) > 0,
+        )
+        await self.asset_store.save_asset(asset)
 
         return (is_new, changes)
 
