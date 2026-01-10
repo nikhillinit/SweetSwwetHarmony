@@ -44,6 +44,7 @@ from typing import Any, Dict, List, Optional, Set
 from storage.signal_store import SignalStore, StoredSignal
 from storage.source_asset_store import SourceAssetStore, SourceAsset
 from storage.founder_store import FounderStore
+from storage.entity_resolution import EntityResolutionStore, AssetToLead
 from consumer.signal_processor import SignalProcessor, ProcessorConfig
 from consumer.entity_resolver import EntityResolver, ResolverConfig
 
@@ -282,6 +283,7 @@ class DiscoveryPipeline:
         self._asset_store: Optional[SourceAssetStore] = None
         self._signal_processor: Optional[SignalProcessor] = None
         self._entity_resolver: Optional[EntityResolver] = None
+        self._entity_resolution_store: Optional[EntityResolutionStore] = None
         self._health_monitor: Optional[SignalHealthMonitor] = None
         self._notifier: Optional[SlackNotifier] = None
 
@@ -345,7 +347,12 @@ class DiscoveryPipeline:
         if self.config.use_entities:
             resolver_config = ResolverConfig()
             self._entity_resolver = EntityResolver(resolver_config)
-            logger.info("EntityResolver initialized (asset-to-lead resolution enabled)")
+
+            # Initialize EntityResolutionStore
+            self._entity_resolution_store = EntityResolutionStore(db_path=self.config.db_path)
+            await self._entity_resolution_store.initialize()
+
+            logger.info("EntityResolver + EntityResolutionStore initialized")
 
         # Initialize FounderStore (if founder scoring enabled)
         if self.config.use_founder_scoring:
@@ -395,6 +402,9 @@ class DiscoveryPipeline:
         if self._asset_store:
             await self._asset_store.close()
             self._asset_store = None
+        if self._entity_resolution_store:
+            await self._entity_resolution_store.close()
+            self._entity_resolution_store = None
         if self._founder_store:
             await self._founder_store.close()
             self._founder_store = None
