@@ -1,0 +1,83 @@
+I reviewed commit `43d59756…` and it’s a meaningful step toward “product-grade” scoring, but there are a few **high-impact correctness + integration gaps** that will bite you once you try to rely on these signals in the web app.
+
+## What’s solid
+
+* **Feature flags + wiring**: Pipeline config exposes `USE_FOUNDER_SCORING` / `USE_VELOCITY_TRACKING`  and initializes `FounderStore` + `SignalVelocityTracker` when enabled .
+* **VerificationGate integration**: ConfidenceBreakdown now includes founder + velocity fields  and the gate evaluates with those inputs .
+* **Good test surface area**: The new tests assert the boosts appear in breakdowns and are capped , and the velocity tracker behaves across burst/convergence/acceleration scenarios .
+
+## Critical issues to fix (I’d address these first)
+
+### 1) Founder scoring is “wired” but not truly “fed”
+
+Your pipeline computes founder score only from what’s already in `FounderStore` . But this commit does **not** add a Notion → FounderStore sync (so founder_score will often be 0 in real usage).
+
+Yes, LinkedIn collector can fetch person profiles, but it currently just returns `LinkedInPerson` objects and logs—no persistence into `FounderStore` .
+
+**Recommendation**
+
+* Add a `workflows/founder_sync.py` (Notion API → FounderStore) and optionally run it at startup similar to suppression warmup.
+* Or persist Proxycurl founder enrichments into `FounderStore` (but still: Notion is your canonical source of founder LI URLs).
+
+### 2) Founder schema forces “one founder → one company”
+
+In `founders`, you store a single `canonical_key` per founder, while `founder_key` is `UNIQUE` . If the same founder LI appears on multiple deals, you’ll overwrite or lose relationships.
+
+**Recommendation**
+
+* Normalize identity in `founders` (no `canonical_key` there), and add a join table `founder_company_links(founder_id, canonical_key, relationship, created_at)`.
+* If you don’t want to refactor yet: your sync job must **skip conflicts** by default (don’t relink founders).
+
+### 3) You’re doing extra DB work per company for velocity
+
+In `_process_company`, you already have the company’s signals list, but you call `get_velocity(canonical_key)` , and `SignalVelocityTracker.get_velocity` immediately re-queries the DB (`get_signals_for_company`) .
+
+**Recommendation**
+
+* Add `SignalVelocityTracker.compute_velocity(signals: List[StoredSignal]) -> VelocityMetrics` and call it with the already-loaded signals.
+* This will matter once you scale to thousands of companies.
+
+### 4) SQLite correctness / portability issues in FounderStore
+
+* The file-level “Usage” doc references a method that doesn’t exist: `get_founder_score`  (actual method is `get_aggregate_founder_score`).
+* Query uses `ORDER BY start_date DESC NULLS LAST`  which is not reliably portable across SQLite builds. Safer: `ORDER BY (start_date IS NULL), start_date DESC`.
+* No WAL / busy_timeout pragmas. You open multiple SQLite connections (SignalStore + FounderStore), so you’ll eventually hit “database is locked” in real runs.
+
+**Recommendation**
+
+* In `FounderStore.initialize()`, set:
+
+  * `PRAGMA journal_mode=WAL`
+  * `PRAGMA busy_timeout=5000`
+  * (optional) `PRAGMA synchronous=NORMAL`
+
+### 5) VelocityConfig defines boost weights, but boosts are hard-coded elsewhere
+
+`VelocityConfig` includes boost fields , but `VelocityMetrics.confidence_boost` uses literal numbers (0.1/0.15/0.1/0.05)  and ignores config. That’s confusing and makes config partially fake.
+
+**Recommendation**
+
+* Either remove boost fields from config, or compute boost using config values (pass config into metrics calculation or compute boost in the tracker).
+
+### 6) PII risk in Proxycurl founder lookup params
+
+Your person lookup asks Proxycurl to include personal emails + contact numbers . Even if you don’t store it, you’re requesting it—which is a policy and trust risk.
+
+**Recommendation**
+
+* Default those fields OFF behind an env flag (e.g., `PROXYCURL_INCLUDE_PERSONAL_CONTACT=false`), and avoid persisting them in `raw_data`.
+
+## Medium issues / polish (still worth doing)
+
+* Founder scoring flags can “stick” because `_analyze_experiences` only ever sets flags true and never resets them . If you reuse a `FounderProfile` object across updates, scores can drift. Reset booleans at the start of `_analyze_experiences`.
+* LinkedInPerson scoring logic duplicates FounderProfile scoring (two scoring systems). You’ll eventually get inconsistent founder_score vs what the collector logs. Prefer: parse Proxycurl person → `FounderProfile + FounderExperience[]` and use a single scoring function.
+
+## What I’d do next (smallest set of follow-ups that makes this “real”)
+
+1. Implement `workflows/founder_sync.py` (Notion DB → FounderStore), skip conflicts by default (or add join table).
+2. Make velocity compute from the `signals` list already in `_process_company`.
+3. Add WAL + busy_timeout pragmas to FounderStore.
+4. Remove PII fields from Proxycurl requests by default.
+5. Clean up the FounderStore docstring + the `NULLS LAST` ordering.
+
+If you want, paste the file(s) you changed for Notion integration (or point me to the sync job you’re using), and I’ll tell you exactly where to hook “Founder LinkedIn URLs from Notion” into `FounderStore` so `founder_score` becomes non-zero in production.

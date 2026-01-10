@@ -1,0 +1,72 @@
+This is a strong refinement—clear admissions, sharper rationale, and a concrete execution order. A few places you can make it tighter and less ambiguous.
+
+## What’s already good
+
+* You corrected the index point cleanly (no defensiveness).
+* You separated durability by data type (derived vs user-entered) instead of debating SQLite “religion.”
+* The join-table triggers are a big improvement over “indefinitely.”
+* The execution plan is short, sequential, and practical.
+
+## Where it can be improved
+
+### 1) Tighten the join-table triggers (make them measurable)
+
+Your triggers are directionally right but currently fuzzy:
+
+* “Same founder appears on 3+ companies” — good, but define whether that’s **within Notion**, **within FounderStore**, or **within a single sync run**.
+* “Conflict count exceeds 10% of sync runs” — this is the least precise. 10% of runs could be 1 conflict/run or 500 conflicts/run depending on scale.
+
+Better triggers:
+
+* **Conflict rate per run**: `founder_conflicts / founders_attempted > 2–5%` for 3 consecutive runs
+* **Absolute threshold**: `founder_conflicts >= 25` in a single run (or whatever fits your volume)
+* **Product requirement**: “We want to show founder history / cross-company relationships” (explicit UI/analysis use case)
+
+### 2) “Apply pragmas to all DB connections” — scope it to SQLite only
+
+You wrote “FounderStore, SignalStore, and future app.db.” That’s fine if app.db is SQLite, but app.db might be Postgres later. Make it:
+
+> “Apply pragmas to all **SQLite** connections (FounderStore + SignalStore; app.db if SQLite).”
+
+### 3) Add one missing item: make pragmas hard to forget
+
+If each store sets its own pragmas, drift happens. Consider a tiny shared helper:
+
+* `storage/sqlite_pragmas.py` with `apply_sqlite_pragmas(conn, wal=True, busy_timeout_ms=5000, synchronous=None)`
+* Call it from every store’s `initialize()`
+
+This is a tiny change that prevents the “SignalStore forgot busy_timeout” regression.
+
+### 4) Small style refinement: collapse into “final position” prose
+
+Right now it reads like a set of notes. If this is meant to be the final response, you can compress it into a more executive “agreement + deltas + plan” format.
+
+---
+
+## Suggested refined version (pasteable)
+
+Index already exists — confirmed; no action needed.
+
+`synchronous=NORMAL` is appropriate for FounderStore — it’s derived and rebuildable from Notion. Reserve `FULL` for user-entered data (e.g., app.db if SQLite), or make synchronous configurable per DB role.
+
+Flag reset — do it as preventative hardening; low-risk and avoids future state-leak bugs.
+
+Join-table refactor — defer until a measurable trigger or explicit product need:
+
+* conflict rate per run exceeds **~3% of founders attempted** for **3 runs**, or
+* absolute conflicts exceed **25+ in a run**, or
+* you need cross-company founder relationship views (network/history UI).
+
+SQLite locking — apply WAL + busy_timeout across **all SQLite connections** (FounderStore + SignalStore; app.db only if SQLite) to avoid persistent “database is locked” risk.
+
+Refined execution plan:
+
+1. Apply SQLite pragmas (WAL + busy_timeout) to all SQLite DB connections
+2. Replace `NULLS LAST` ordering with portable SQLite ordering
+3. Wrap `link_founder_to_signal()` writes in the transaction context
+4. Fix docstring text to match actual API
+5. Add flag reset in `_analyze_experiences()` as preventative hardening
+
+---
+
+If you want one more upgrade: add a single sentence “DoD” for the whole plan, e.g. “Founder sync + pipeline can run concurrently for N minutes without lock errors, and founder_score becomes non-zero for at least one known company.” That makes the plan outcome-verifiable.
