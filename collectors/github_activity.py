@@ -376,7 +376,21 @@ class GitHubActivityCollector(BaseCollector):
         for username in self.usernames:
             try:
                 user_signals = await self.check_user(username)
-                signals.extend([s.to_signal() for s in user_signals])
+                for signal_obj in user_signals:
+                    # Save raw data and detect changes
+                    if self.asset_store:
+                        is_new, changes = await self._save_asset_with_change_detection(
+                            source_type=self.SOURCE_TYPE,
+                            external_id=username,
+                            raw_data=signal_obj.to_dict() if hasattr(signal_obj, 'to_dict') else vars(signal_obj),
+                        )
+
+                        # Skip unchanged users
+                        if not is_new and not changes:
+                            logger.debug(f"Skipping unchanged GitHub user: {username}")
+                            continue
+
+                    signals.append(signal_obj.to_signal())
                 # Rate limiting is handled by BaseCollector._http_get()
             except Exception as e:
                 # BaseCollector tracks errors, but we log for debugging
@@ -386,7 +400,21 @@ class GitHubActivityCollector(BaseCollector):
         for org in self.org_names:
             try:
                 org_signals = await self.check_org(org)
-                signals.extend([s.to_signal() for s in org_signals])
+                for signal_obj in org_signals:
+                    # Save raw data and detect changes
+                    if self.asset_store:
+                        is_new, changes = await self._save_asset_with_change_detection(
+                            source_type=self.SOURCE_TYPE,
+                            external_id=org,
+                            raw_data=signal_obj.to_dict() if hasattr(signal_obj, 'to_dict') else vars(signal_obj),
+                        )
+
+                        # Skip unchanged orgs
+                        if not is_new and not changes:
+                            logger.debug(f"Skipping unchanged GitHub org: {org}")
+                            continue
+
+                    signals.append(signal_obj.to_signal())
                 # Rate limiting is handled by BaseCollector._http_get()
             except Exception as e:
                 # BaseCollector tracks errors, but we log for debugging

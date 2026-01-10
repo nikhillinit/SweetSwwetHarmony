@@ -210,7 +210,25 @@ class ArxivCollector(BaseCollector):
     async def _collect_signals(self) -> List[Signal]:
         """Collect ArXiv papers as signals."""
         papers = await self._fetch_papers()
-        return [paper.to_signal() for paper in papers]
+
+        signals = []
+        for paper in papers:
+            # Save raw data and detect changes
+            if self.asset_store:
+                is_new, changes = await self._save_asset_with_change_detection(
+                    source_type=self.SOURCE_TYPE,
+                    external_id=paper.arxiv_id,
+                    raw_data=paper.to_dict() if hasattr(paper, 'to_dict') else vars(paper),
+                )
+
+                # Skip unchanged papers
+                if not is_new and not changes:
+                    logger.debug(f"Skipping unchanged ArXiv paper: {paper.arxiv_id}")
+                    continue
+
+            signals.append(paper.to_signal())
+
+        return signals
 
     async def _fetch_papers(self) -> List[ArxivPaper]:
         """Fetch recent papers from ArXiv API."""
