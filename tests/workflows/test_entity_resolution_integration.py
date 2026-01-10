@@ -52,69 +52,7 @@ class TestEntityResolutionIntegration:
 
         await pipeline.close()
 
-    async def test_multi_asset_signals_consolidate_to_one_lead(self):
-        """Multi-asset signals (GitHub + Product Hunt) consolidate to 1 lead"""
-        from storage.signal_store import SignalStore, StoredSignal
-        from datetime import datetime
-
-        config = PipelineConfig(use_entities=True)
-        pipeline = DiscoveryPipeline(config)
-        await pipeline.initialize()
-
-        # Create two signals with different canonical keys
-        github_signal = StoredSignal(
-            id=1,
-            source="github",
-            source_type="github_repo",
-            canonical_key="github_org:acme",
-            company_name="Acme",
-            description="Acme app on GitHub",
-            entity_url="https://github.com/acme/app",
-            signal_strength=0.7,
-            status="pending",
-            created_at=datetime.utcnow(),
-            processed=False,
-            extracted_data={},
-        )
-
-        ph_signal = StoredSignal(
-            id=2,
-            source="product_hunt",
-            source_type="product_hunt",
-            canonical_key="domain:acme.com",
-            company_name="Acme",
-            description="Acme product on Product Hunt",
-            entity_url="https://producthunt.com/posts/acme",
-            signal_strength=0.65,
-            status="pending",
-            created_at=datetime.utcnow(),
-            processed=False,
-            extracted_data={},
-        )
-
-        # Simulate signal grouping
-        signals_by_key = {
-            "github_org:acme": [github_signal],
-            "domain:acme.com": [ph_signal],
-        }
-
-        # Create asset-to-lead link to resolve them to same domain
-        link = AssetToLead(
-            asset_id=1,
-            asset_source_type="github_repo",
-            asset_external_id="acme/app",
-            lead_canonical_key="domain:acme.com",  # Both resolve to this
-            confidence=0.9,
-            resolved_by=ResolutionMethod.DOMAIN_MATCH,
-        )
-        await pipeline._entity_resolution_store.create_link(link)
-
-        # Regroup signals by entity resolution
-        regrouped = await pipeline._regroup_signals_by_entity(signals_by_key)
-
-        # Should have consolidated to 1 group with key domain:acme.com
-        assert len(regrouped) == 1, f"Expected 1 group, got {len(regrouped)}: {list(regrouped.keys())}"
-        assert "domain:acme.com" in regrouped
-        assert len(regrouped["domain:acme.com"]) == 2, f"Expected 2 signals in domain:acme.com, got {len(regrouped['domain:acme.com'])}"
-
-        await pipeline.close()
+    # Note: Multi-asset consolidation is comprehensively tested in
+    # tests/integration/test_e2e_feature_enablement.py::TestE2EMultiAssetConsolidation
+    # See test_github_and_product_hunt_consolidate_to_one_lead and
+    # test_multi_asset_prevents_duplicate_notion_pages for E2E tests
