@@ -62,7 +62,7 @@ logger = logging.getLogger(__name__)
 # SCHEMA VERSION
 # =============================================================================
 
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 3
 
 # SQL for creating tables (migrations applied in order)
 MIGRATIONS = {
@@ -92,7 +92,7 @@ MIGRATIONS = {
     CREATE TABLE IF NOT EXISTS signal_processing (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         signal_id INTEGER NOT NULL,
-        status TEXT NOT NULL,  -- 'pending', 'pushed', 'rejected'
+        status TEXT NOT NULL,  -- 'pending', 'queued', 'pushed', 'rejected'
         notion_page_id TEXT,
         processed_at TEXT,  -- ISO 8601
         error_message TEXT,
@@ -172,6 +172,25 @@ MIGRATIONS = {
     CREATE INDEX IF NOT EXISTS idx_pipeline_runs_started_at ON pipeline_runs(started_at);
     CREATE INDEX IF NOT EXISTS idx_pipeline_runs_created_at ON pipeline_runs(created_at);
     """
+    ,
+    3: """
+    -- Notion outbox: durable queue for Notion writes
+    CREATE TABLE IF NOT EXISTS notion_outbox (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        idempotency_key TEXT NOT NULL UNIQUE,
+        payload_json TEXT NOT NULL,
+        status TEXT NOT NULL,  -- 'pending', 'sent', 'failed'
+        attempts INTEGER NOT NULL DEFAULT 0,
+        next_attempt_at TEXT,
+        last_error TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_outbox_status ON notion_outbox(status);
+    CREATE INDEX IF NOT EXISTS idx_outbox_next_attempt ON notion_outbox(next_attempt_at);
+    CREATE INDEX IF NOT EXISTS idx_outbox_created_at ON notion_outbox(created_at);
+    """
 }
 
 
@@ -249,16 +268,14 @@ class SignalStore:
         Initialize database connection and apply migrations.
         Should be called once at startup.
         """
-        from storage.sqlite_pragmas import apply_sqlite_pragmas
-        
         # Create parent directories if needed
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
         # Connect to database
         self._db = await aiosqlite.connect(str(self.db_path))
 
-        # Apply SQLite pragmas (WAL, busy_timeout, foreign_keys)
-        await apply_sqlite_pragmas(self._db)
+        # Enable foreign keys
+        await self._db.execute("PRAGMA foreign_keys = ON")
 
         # Apply migrations
         await self._apply_migrations()
@@ -585,6 +602,39 @@ class SignalStore:
 
         logger.info(f"Marked signal {signal_id} as rejected: {reason}")
 
+    async def mark_queued(
+        self,
+        signal_id: int,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Mark a signal as queued for Notion write."""
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        now = datetime.now(timezone.utc).isoformat()
+
+        async with self.transaction() as conn:
+            await conn.execute(
+                """
+                UPDATE signal_processing
+                SET status = 'queued',
+                    notion_page_id = NULL,
+                    processed_at = ?,
+                    error_message = NULL,
+                    metadata = ?,
+                    updated_at = ?
+                WHERE signal_id = ?
+                """,
+                (
+                    now,
+                    json.dumps(metadata) if metadata else None,
+                    now,
+                    signal_id,
+                )
+            )
+
+        logger.info(f"Marked signal {signal_id} as queued for Notion")
+
     async def get_processing_stats(self) -> Dict[str, int]:
         """Get counts by processing status."""
         if not self._db:
@@ -600,6 +650,137 @@ class SignalStore:
 
         rows = await cursor.fetchall()
         return {status: count for status, count in rows}
+
+    # =========================================================================
+    # NOTION OUTBOX
+    # =========================================================================
+
+    async def enqueue_notion_write(
+        self,
+        idempotency_key: str,
+        payload: Dict[str, Any],
+    ) -> int:
+        """
+        Queue a Notion write in the outbox table.
+        Returns the outbox ID.
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        now = datetime.now(timezone.utc).isoformat()
+
+        async with self.transaction() as conn:
+            await conn.execute(
+                """
+                INSERT INTO notion_outbox (
+                    idempotency_key, payload_json, status,
+                    attempts, created_at, updated_at
+                )
+                VALUES (?, ?, 'pending', 0, ?, ?)
+                """,
+                (
+                    idempotency_key,
+                    json.dumps(payload),
+                    now,
+                    now,
+                )
+            )
+
+            cursor = await conn.execute(
+                "SELECT id FROM notion_outbox WHERE idempotency_key = ?",
+                (idempotency_key,)
+            )
+            row = await cursor.fetchone()
+            outbox_id = row[0]
+
+        logger.info(f"Enqueued Notion write: {outbox_id} ({idempotency_key})")
+        return outbox_id
+
+    async def get_pending_outbox(
+        self,
+        limit: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """Get pending outbox entries (status='pending')."""
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        cursor = await self._db.execute(
+            """
+            SELECT id, idempotency_key, payload_json, status, attempts,
+                   next_attempt_at, last_error, created_at, updated_at
+            FROM notion_outbox
+            WHERE status = 'pending'
+            ORDER BY created_at ASC
+            LIMIT ?
+            """,
+            (limit,)
+        )
+
+        rows = await cursor.fetchall()
+        return [
+            {
+                "id": row[0],
+                "idempotency_key": row[1],
+                "payload": json.loads(row[2]),
+                "status": row[3],
+                "attempts": row[4],
+                "next_attempt_at": row[5],
+                "last_error": row[6],
+                "created_at": row[7],
+                "updated_at": row[8],
+            }
+            for row in rows
+        ]
+
+    async def mark_outbox_sent(
+        self,
+        outbox_id: int,
+    ) -> None:
+        """Mark an outbox entry as sent."""
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        now = datetime.now(timezone.utc).isoformat()
+
+        async with self.transaction() as conn:
+            await conn.execute(
+                """
+                UPDATE notion_outbox
+                SET status = 'sent',
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (now, outbox_id)
+            )
+
+        logger.info(f"Marked outbox {outbox_id} as sent")
+
+    async def mark_outbox_failed(
+        self,
+        outbox_id: int,
+        error: str,
+        next_attempt_at: Optional[str] = None,
+    ) -> None:
+        """Mark an outbox entry as failed with error details."""
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        now = datetime.now(timezone.utc).isoformat()
+
+        async with self.transaction() as conn:
+            await conn.execute(
+                """
+                UPDATE notion_outbox
+                SET status = 'failed',
+                    last_error = ?,
+                    next_attempt_at = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (error, next_attempt_at, now, outbox_id)
+            )
+
+        logger.info(f"Marked outbox {outbox_id} as failed: {error}")
 
     # =========================================================================
     # SUPPRESSION CACHE

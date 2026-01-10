@@ -1,8 +1,8 @@
-"""
+﻿"""
 Pipeline Orchestrator for Discovery Engine
 
 Ties together the entire discovery pipeline:
-  collect() → store() → dedupe() → verify() → push()
+  collect() ΓåÆ store() ΓåÆ dedupe() ΓåÆ verify() ΓåÆ push()
 
 Coordinates:
 - Collector execution (parallel or sequential)
@@ -66,12 +66,15 @@ from connectors.notion_connector_v2 import (
     InvestmentStage,
     DealStatus,
 )
+from connectors.notion_transport import NotionTransport
 
 # Collectors (import dynamically to avoid circular imports)
 from discovery_engine.mcp_server import CollectorResult, CollectorStatus
 
 # Suppression sync (for cache warmup)
 from workflows.suppression_sync import SuppressionSync
+from workflows.notion_outbox_worker import NotionOutboxWorker
+from services.watchlist_loader import WatchlistLoader
 
 # Health monitoring
 from utils.signal_health import SignalHealthMonitor
@@ -105,6 +108,7 @@ class PipelineConfig:
     # Notion
     notion_api_key: Optional[str] = None
     notion_database_id: Optional[str] = None
+    watchlist_database_id: Optional[str] = None
 
     # Collectors
     github_token: Optional[str] = None
@@ -137,6 +141,7 @@ class PipelineConfig:
             asset_store_path=os.getenv("ASSET_STORE_PATH", "assets.db"),
             notion_api_key=os.getenv("NOTION_API_KEY"),
             notion_database_id=os.getenv("NOTION_DATABASE_ID"),
+            watchlist_database_id=os.getenv("NOTION_WATCHLIST_DATABASE_ID"),
             github_token=os.getenv("GITHUB_TOKEN"),
             companies_house_api_key=os.getenv("COMPANIES_HOUSE_API_KEY"),
             parallel_collectors=os.getenv("PARALLEL_COLLECTORS", "true").lower() == "true",
@@ -270,6 +275,9 @@ class DiscoveryPipeline:
         # Components (initialized lazily)
         self._store: Optional[SignalStore] = None
         self._notion: Optional[NotionConnector] = None
+        self._notion_transport: Optional[NotionTransport] = None
+        self._notion_outbox_worker: Optional[NotionOutboxWorker] = None
+        self._watchlist_loader: Optional[WatchlistLoader] = None
         self._gate: Optional[VerificationGate] = None
         self._asset_store: Optional[SourceAssetStore] = None
         self._signal_processor: Optional[SignalProcessor] = None
@@ -297,10 +305,23 @@ class DiscoveryPipeline:
 
         # Initialize Notion connector (if credentials provided)
         if self.config.notion_api_key and self.config.notion_database_id:
+            self._notion_transport = NotionTransport(api_key=self.config.notion_api_key)
+            await self._notion_transport.start()
+
             self._notion = NotionConnector(
                 api_key=self.config.notion_api_key,
                 database_id=self.config.notion_database_id,
+                transport=self._notion_transport,
             )
+            self._notion_outbox_worker = NotionOutboxWorker(
+                signal_store=self._store,
+                notion_connector=self._notion,
+            )
+            if self.config.watchlist_database_id:
+                self._watchlist_loader = WatchlistLoader(
+                    database_id=self.config.watchlist_database_id,
+                    transport=self._notion_transport,
+                )
             logger.info("Notion connector initialized")
         else:
             logger.warning("Notion credentials not provided - push operations will be disabled")
@@ -377,6 +398,12 @@ class DiscoveryPipeline:
         if self._founder_store:
             await self._founder_store.close()
             self._founder_store = None
+        if self._notion_transport:
+            await self._notion_transport.shutdown()
+            self._notion_transport = None
+        self._notion_outbox_worker = None
+        self._notion = None
+        self._watchlist_loader = None
         if self._notifier:
             await self._notifier.close()
             self._notifier = None
@@ -431,11 +458,11 @@ class DiscoveryPipeline:
         2. Store signals in SQLite
         3. Check suppression cache
         4. Run through verification gate
-        5. Push to Notion (if not dry_run)
+        5. Queue Notion writes and drain outbox (if not dry_run)
 
         Args:
             collectors: List of collector names to run (None = all available)
-            dry_run: If True, don't actually push to Notion
+            dry_run: If True, don't actually queue or push to Notion
 
         Returns:
             PipelineStats with detailed metrics
@@ -473,6 +500,13 @@ class DiscoveryPipeline:
             stats.prospects_created = process_stats["prospects_created"]
             stats.prospects_updated = process_stats["prospects_updated"]
             stats.prospects_skipped = process_stats["prospects_skipped"]
+
+            if not dry_run:
+                outbox_stats = await self._drain_notion_outbox(limit=self.config.batch_size)
+                if outbox_stats["processed"] > 0:
+                    stats.prospects_created = outbox_stats["created"]
+                    stats.prospects_updated = outbox_stats["updated"]
+                    stats.prospects_skipped = outbox_stats["skipped"]
 
             # Generate final health report
             if self._health_monitor:
@@ -547,10 +581,10 @@ class DiscoveryPipeline:
         1. Load pending signals from SQLite
         2. Check suppression cache
         3. Run through verification gate
-        4. Push to Notion (if not dry_run)
+        4. Queue Notion writes and drain outbox (if not dry_run)
 
         Args:
-            dry_run: If True, don't actually push to Notion
+            dry_run: If True, don't actually queue or push to Notion
 
         Returns:
             Dictionary with processing statistics
@@ -559,7 +593,16 @@ class DiscoveryPipeline:
 
         logger.info(f"Processing pending signals (dry_run={dry_run})")
 
-        return await self._process_signals_stage(dry_run)
+        process_stats = await self._process_signals_stage(dry_run)
+
+        if not dry_run:
+            outbox_stats = await self._drain_notion_outbox(limit=self.config.batch_size)
+            if outbox_stats["processed"] > 0:
+                process_stats["prospects_created"] = outbox_stats["created"]
+                process_stats["prospects_updated"] = outbox_stats["updated"]
+                process_stats["prospects_skipped"] = outbox_stats["skipped"]
+
+        return process_stats
 
     async def sync_suppression(self) -> int:
         """
@@ -823,7 +866,7 @@ class DiscoveryPipeline:
 
     async def _process_signals_stage(self, dry_run: bool) -> Dict[str, int]:
         """
-        Process pending signals through verification and Notion push.
+        Process pending signals through verification and Notion queueing.
 
         Returns dict with processing statistics.
         """
@@ -889,6 +932,36 @@ class DiscoveryPipeline:
 
         return stats
 
+    async def _drain_notion_outbox(self, limit: Optional[int] = None) -> Dict[str, int]:
+        """Drain queued Notion writes from the outbox."""
+        if not self._notion_outbox_worker:
+            logger.info("Notion outbox worker not available, skipping drain")
+            return {
+                "processed": 0,
+                "sent": 0,
+                "failed": 0,
+                "created": 0,
+                "updated": 0,
+                "skipped": 0,
+            }
+
+        try:
+            stats = await self._notion_outbox_worker.drain(
+                limit=limit or self.config.batch_size
+            )
+            logger.info(f"Notion outbox drain complete: {stats}")
+            return stats
+        except Exception as e:
+            logger.warning(f"Notion outbox drain failed (non-fatal): {e}")
+            return {
+                "processed": 0,
+                "sent": 0,
+                "failed": 0,
+                "created": 0,
+                "updated": 0,
+                "skipped": 0,
+            }
+
     async def _process_company(
         self,
         signals: List[StoredSignal],
@@ -901,7 +974,7 @@ class DiscoveryPipeline:
         1. Convert to Signal objects
         2. Check suppression
         3. Run through verification gate
-        4. Push to Notion if appropriate
+        4. Queue Notion write if appropriate
         5. Update signal status
 
         Returns dict with decision and Notion status.
@@ -1078,19 +1151,21 @@ class DiscoveryPipeline:
 
         if verification.decision in (PushDecision.AUTO_PUSH, PushDecision.NEEDS_REVIEW):
             if self._notion and not dry_run:
-                # Push to Notion
+                # Queue for Notion
                 notion_result = await self._push_to_notion(signals, verification)
                 notion_status = notion_result["status"]
 
-                # Mark signals as pushed
+                # Mark signals as queued
                 for sig in signals:
-                    await self._store.mark_pushed(
+                    await self._store.mark_queued(
                         sig.id,
-                        notion_page_id=notion_result["page_id"],
                         metadata={
                             "decision": verification.decision.value,
                             "confidence": verification.confidence_score,
                             "status": verification.suggested_status,
+                            "verification_status": verification.verification_status.value,
+                            "outbox_id": notion_result["outbox_id"],
+                            "idempotency_key": notion_result["idempotency_key"],
                         },
                     )
 
@@ -1106,15 +1181,11 @@ class DiscoveryPipeline:
                         sources_count = len(set(s.source_api for s in signals))
                         why_now = self._build_why_now(signals)
 
-                        # Build Notion URL
-                        notion_url = f"https://notion.so/{notion_result['page_id'].replace('-', '')}"
-
                         await self._notifier.notify_high_confidence_signal(
                             company_name=company_name,
                             confidence=verification.confidence_score,
                             signal_types=signal_types,
                             sources_count=sources_count,
-                            notion_url=notion_url,
                             canonical_key=canonical_key,
                             why_now=why_now,
                         )
@@ -1173,18 +1244,28 @@ class DiscoveryPipeline:
         verification: VerificationResult,
     ) -> Dict[str, Any]:
         """
-        Push a company to Notion CRM.
+        Queue a company for Notion push via the outbox.
 
-        Returns dict with status and page_id.
+        Returns dict with status and outbox metadata.
         """
         if not self._notion:
             raise RuntimeError("Notion connector not initialized")
+        if not self._store:
+            raise RuntimeError("SignalStore not initialized")
 
         # Build prospect payload from signals
         primary_signal = signals[0]
 
         # Extract company info
         company_name = primary_signal.company_name or "Unknown Company"
+        why_now = self._build_why_now(signals)
+        sector_candidate = self._extract_sector_candidate(signals)
+        watchlists_matched = await self._match_watchlists(
+            signals,
+            verification.confidence_score,
+            company_name,
+            why_now,
+        )
 
         # Determine stage from signals
         stage = self._infer_stage(signals)
@@ -1198,23 +1279,118 @@ class DiscoveryPipeline:
             status=verification.suggested_status,
             confidence_score=verification.confidence_score,
             signal_types=[sig.signal_type for sig in signals],
-            why_now=self._build_why_now(signals),
+            why_now=why_now,
             canonical_key_candidates=[primary_signal.canonical_key],
+            proposed_sector=sector_candidate,
+            watchlists_matched=watchlists_matched,
         )
 
-        # Push to Notion
-        result = await self._notion.upsert_prospect(payload)
+        outbox_payload = {
+            "prospect": self._serialize_prospect_payload(payload),
+            "signal_ids": [s.id for s in signals],
+            "metadata": {
+                "confidence": verification.confidence_score,
+                "status": verification.suggested_status,
+                "decision": verification.decision.value,
+                "verification_status": verification.verification_status.value,
+            },
+        }
+
+        idempotency_key = payload.idempotency_key()
+        outbox_id = await self._store.enqueue_notion_write(
+            idempotency_key=idempotency_key,
+            payload=outbox_payload,
+        )
 
         logger.info(
-            f"Pushed {company_name} to Notion: {result['status']} "
-            f"(page_id: {result['page_id']})"
+            f"Queued {company_name} for Notion push "
+            f"(outbox_id: {outbox_id})"
         )
 
-        return result
+        return {
+            "status": "queued",
+            "outbox_id": outbox_id,
+            "idempotency_key": idempotency_key,
+        }
+
+    def _serialize_prospect_payload(self, payload: ProspectPayload) -> Dict[str, Any]:
+        """Serialize ProspectPayload for storage in the outbox."""
+        return {
+            "discovery_id": payload.discovery_id,
+            "company_name": payload.company_name,
+            "canonical_key": payload.canonical_key,
+            "stage": payload.stage.value,
+            "status": payload.status,
+            "website": payload.website,
+            "canonical_key_candidates": payload.canonical_key_candidates,
+            "confidence_score": payload.confidence_score,
+            "signal_types": payload.signal_types,
+            "why_now": payload.why_now,
+            "short_description": payload.short_description,
+            "sector": payload.sector,
+            "proposed_sector": payload.proposed_sector,
+            "taxonomy_status": payload.taxonomy_status,
+            "founder_name": payload.founder_name,
+            "founder_linkedin": payload.founder_linkedin,
+            "location": payload.location,
+            "target_raise": payload.target_raise,
+            "external_refs": payload.external_refs,
+            "watchlists_matched": payload.watchlists_matched,
+        }
 
     # =========================================================================
     # HELPERS
     # =========================================================================
+
+    async def _match_watchlists(
+        self,
+        signals: List[StoredSignal],
+        confidence_score: float,
+        company_name: str,
+        why_now: str,
+    ) -> List[str]:
+        """Match watchlists based on keywords and confidence score."""
+        if not self._watchlist_loader:
+            return []
+
+        watchlists = await self._watchlist_loader.get_watchlists()
+        if not watchlists:
+            return []
+
+        text = self._build_watchlist_text(signals, company_name, why_now)
+        matched = []
+        for watchlist in watchlists:
+            if watchlist.matches(text, confidence_score):
+                matched.append(watchlist.name)
+        return matched
+
+    def _build_watchlist_text(
+        self,
+        signals: List[StoredSignal],
+        company_name: str,
+        why_now: str,
+    ) -> str:
+        parts: List[str] = [company_name, why_now]
+        for signal in signals:
+            if signal.company_name:
+                parts.append(signal.company_name)
+            parts.append(signal.signal_type)
+            raw_data = signal.raw_data or {}
+            for key in ("description", "summary", "category", "sector", "industry", "title"):
+                value = raw_data.get(key)
+                if isinstance(value, str) and value:
+                    parts.append(value)
+        return " ".join(parts).lower()
+
+    def _extract_sector_candidate(self, signals: List[StoredSignal]) -> Optional[str]:
+        """Extract a sector/category hint from signal payloads."""
+        for signal in signals:
+            raw_data = signal.raw_data or {}
+            for key in ("sector", "category", "industry", "vertical"):
+                value = raw_data.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+        return None
 
     def _stored_to_signal(self, stored: StoredSignal) -> Signal:
         """Convert StoredSignal to Signal for verification gate"""

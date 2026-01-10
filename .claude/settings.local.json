@@ -15,7 +15,9 @@
       "Bash(git add:*)",
       "Bash(git config:*)",
       "Bash(git commit -m \"$(cat <<''EOF''\nfeat: Complete Discovery Engine Phase 3 - Full Pipeline Integration\n\nMajor features added:\n- Pipeline orchestrator (workflows/pipeline.py) with CLI (run_pipeline.py)\n- NotionPusher batch processor with confidence-based routing\n- SuppressionSync for Notion → SQLite cache synchronization\n- BaseCollector class with storage integration\n- 4 signal collectors: SEC EDGAR, GitHub, Companies House, Domain WHOIS\n- SQLite signal storage layer with 3 tables\n- MCP server with 5 prompts and 3 tools\n- 7 Claude agents and 7 skills\n\nPipeline stages: collect() → store() → dedupe() → verify() → push()\n\nRouting logic:\n- HIGH confidence (0.7+) + multi-source → Status: \"Source\"\n- MEDIUM confidence (0.4-0.7) → Status: \"Tracking\"\n- LOW confidence (<0.4) → Hold for review\nEOF\n)\")",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(git merge:*)",
+      "Bash(git stash:*)"
     ]
   }
 }

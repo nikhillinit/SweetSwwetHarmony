@@ -17,13 +17,11 @@ Required Notion properties to add:
 - Why Now (Text) - 1-sentence summary
 """
 
-import httpx
 import hashlib
 from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any, Set
 from dataclasses import dataclass, field
 from enum import Enum
-from tenacity import retry, stop_after_attempt, wait_exponential
 import asyncio
 import logging
 
@@ -37,6 +35,7 @@ from utils.canonical_keys import (
     is_strong_key,
     CanonicalKeyResult,
 )
+from connectors.notion_transport import NotionTransport
 
 logger = logging.getLogger(__name__)
 
@@ -107,11 +106,16 @@ class ProspectPayload:
     
     # Optional enrichment
     short_description: str = ""
-    sector: Optional[Sector] = None
+    sector: Optional[str] = None
+    proposed_sector: Optional[str] = None
+    taxonomy_status: Optional[str] = None
     founder_name: str = ""
     founder_linkedin: str = ""
     location: str = ""
     target_raise: str = ""
+
+    # Watchlists
+    watchlists_matched: List[str] = field(default_factory=list)
     
     # External refs for canonical key generation
     external_refs: Dict[str, str] = field(default_factory=dict)
@@ -241,6 +245,8 @@ class NotionConnector:
     PROP_STATUS = "Status"
     PROP_SHORT_DESCRIPTION = "Short Description"
     PROP_SECTOR = "Sector"
+    PROP_PROPOSED_SECTOR = "Proposed Sector"
+    PROP_TAXONOMY_STATUS = "Taxonomy Status"
     PROP_FOUNDER = "Founder"
     PROP_FOUNDER_LINKEDIN = "Founder LinkedIn"
     PROP_LOCATION = "Location"
@@ -252,6 +258,7 @@ class NotionConnector:
     PROP_CONFIDENCE_SCORE = "Confidence Score"
     PROP_SIGNAL_TYPES = "Signal Types"
     PROP_WHY_NOW = "Why Now"
+    PROP_WATCHLISTS_MATCHED = "Watchlists Matched"
     
     # Expected select options (for preflight validation)
     EXPECTED_STATUSES: Set[str] = {
@@ -268,19 +275,15 @@ class NotionConnector:
         database_id: str,
         cache_ttl_seconds: int = 900,  # 15 minutes
         rate_limit_delay: float = 0.35,  # Stay under 3 req/sec
-        validate_schema_on_init: bool = False  # Set to True to fail fast on schema issues
+        validate_schema_on_init: bool = False,  # Set to True to fail fast on schema issues
+        transport: Optional[NotionTransport] = None,
     ):
         self.api_key = api_key
         self.database_id = database_id
-        self.base_url = "https://api.notion.com/v1"
-        self.headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Notion-Version": "2022-06-28",
-            "Content-Type": "application/json"
-        }
         self.cache_ttl = timedelta(seconds=cache_ttl_seconds)
-        self.rate_limit_delay = rate_limit_delay
+        self.rate_limit_delay = rate_limit_delay  # Deprecated: transport enforces limits
         self.validate_schema_on_init = validate_schema_on_init
+        self.transport = transport or NotionTransport(api_key=api_key)
 
         # Suppression cache
         self._suppression_cache: Dict[str, SuppressionEntry] = {}
@@ -290,9 +293,6 @@ class NotionConnector:
         self._schema_cache: Optional[Dict[str, Any]] = None
         self._schema_expires: Optional[datetime] = None
         self._schema_ttl = timedelta(hours=6)
-
-        # Rate limiting
-        self._last_request_time: Optional[datetime] = None
 
         # Validate schema on init if requested
         if validate_schema_on_init:
@@ -316,82 +316,81 @@ class NotionConnector:
         Returns:
             {"status": "created"|"updated"|"skipped", "page_id": str, "reason": str}
         """
-        async with httpx.AsyncClient() as client:
-            # Preflight: validate schema
-            await self._ensure_schema(client, strict=True)
-            
-            # 1. Build all keys to check (discovery ID + all canonical candidates + website)
-            suppression = await self.get_suppression_list()
-            keys_to_check: List[str] = []
-            
-            if prospect.discovery_id:
-                keys_to_check.append(f"discovery:{prospect.discovery_id}")
-            
-            # Add ALL canonical key candidates (from shared module)
-            for candidate in prospect.canonical_key_candidates:
-                keys_to_check.append(f"canonical:{candidate}")
-            
-            # Fallback: single canonical key if no candidates
-            if not prospect.canonical_key_candidates and prospect.canonical_key:
-                keys_to_check.append(f"canonical:{prospect.canonical_key}")
-            
-            if prospect.website:
-                keys_to_check.append(f"website:{normalize_domain(prospect.website)}")
-            
-            matched_entry: Optional[SuppressionEntry] = None
-            matched_key: Optional[str] = None
-            
-            for k in keys_to_check:
-                if k in suppression:
-                    matched_entry = suppression[k]
-                    matched_key = k
-                    break
-            
-            if matched_entry:
-                # Hard suppress = don't touch at all
-                if matched_entry.status in self.HARD_SUPPRESS_STATUSES:
-                    return {
-                        "status": "skipped",
-                        "page_id": matched_entry.notion_page_id,
-                        "reason": f"Hard suppressed ({matched_entry.status}) via {matched_key}"
-                    }
-                
-                # Soft suppress = update discovery fields only
-                await self._update_page(client, matched_entry.notion_page_id, prospect)
+        # Preflight: validate schema
+        await self._ensure_schema(strict=True)
+
+        # 1. Build all keys to check (discovery ID + all canonical candidates + website)
+        suppression = await self.get_suppression_list()
+        keys_to_check: List[str] = []
+
+        if prospect.discovery_id:
+            keys_to_check.append(f"discovery:{prospect.discovery_id}")
+
+        # Add ALL canonical key candidates (from shared module)
+        for candidate in prospect.canonical_key_candidates:
+            keys_to_check.append(f"canonical:{candidate}")
+
+        # Fallback: single canonical key if no candidates
+        if not prospect.canonical_key_candidates and prospect.canonical_key:
+            keys_to_check.append(f"canonical:{prospect.canonical_key}")
+
+        if prospect.website:
+            keys_to_check.append(f"website:{normalize_domain(prospect.website)}")
+
+        matched_entry: Optional[SuppressionEntry] = None
+        matched_key: Optional[str] = None
+
+        for k in keys_to_check:
+            if k in suppression:
+                matched_entry = suppression[k]
+                matched_key = k
+                break
+
+        if matched_entry:
+            # Hard suppress = don't touch at all
+            if matched_entry.status in self.HARD_SUPPRESS_STATUSES:
                 return {
-                    "status": "updated",
+                    "status": "skipped",
                     "page_id": matched_entry.notion_page_id,
-                    "reason": f"Updated in-pipeline deal ({matched_entry.status}) via {matched_key}"
+                    "reason": f"Hard suppressed ({matched_entry.status}) via {matched_key}"
                 }
-            
-            # 2. Check for existing deal by Discovery ID
-            existing = await self._find_by_discovery_id(client, prospect.discovery_id)
-            
-            # 3. Check by ALL Canonical Key candidates
-            if not existing:
-                for candidate in (prospect.canonical_key_candidates or [prospect.canonical_key] if prospect.canonical_key else []):
-                    existing = await self._find_by_canonical_key(client, candidate)
-                    if existing:
-                        break
-            
-            # 4. Fallback: check by Website
-            if not existing and prospect.website:
-                existing = await self._find_by_website(client, prospect.website)
-            
-            if existing:
-                result = await self._update_page(client, existing["id"], prospect)
-                return {
-                    "status": "updated",
-                    "page_id": existing["id"],
-                    "reason": "Matched existing deal"
-                }
-            else:
-                result = await self._create_page(client, prospect)
-                return {
-                    "status": "created",
-                    "page_id": result["id"],
-                    "reason": "New deal created"
-                }
+
+            # Soft suppress = update discovery fields only
+            await self._update_page(matched_entry.notion_page_id, prospect)
+            return {
+                "status": "updated",
+                "page_id": matched_entry.notion_page_id,
+                "reason": f"Updated in-pipeline deal ({matched_entry.status}) via {matched_key}"
+            }
+
+        # 2. Check for existing deal by Discovery ID
+        existing = await self._find_by_discovery_id(prospect.discovery_id)
+
+        # 3. Check by ALL Canonical Key candidates
+        if not existing:
+            for candidate in (prospect.canonical_key_candidates or [prospect.canonical_key] if prospect.canonical_key else []):
+                existing = await self._find_by_canonical_key(candidate)
+                if existing:
+                    break
+
+        # 4. Fallback: check by Website
+        if not existing and prospect.website:
+            existing = await self._find_by_website(prospect.website)
+
+        if existing:
+            result = await self._update_page(existing["id"], prospect)
+            return {
+                "status": "updated",
+                "page_id": existing["id"],
+                "reason": "Matched existing deal"
+            }
+        else:
+            result = await self._create_page(prospect)
+            return {
+                "status": "created",
+                "page_id": result["id"],
+                "reason": "New deal created"
+            }
     
     async def get_suppression_list(self, force_refresh: bool = False) -> Dict[str, SuppressionEntry]:
         """
@@ -410,36 +409,35 @@ class NotionConnector:
         logger.info("Refreshing suppression cache from Notion...")
         suppression: Dict[str, SuppressionEntry] = {}
         
-        async with httpx.AsyncClient() as client:
-            await self._ensure_schema(client, strict=False)
-            
-            # Single query with OR filter
-            pages = await self._query_by_statuses(client, self.SUPPRESS_STATUSES)
-            
-            for page in pages:
-                props = page.get("properties", {})
-                page_id = page["id"]
-                
-                status = self._extract_select(props.get(self.PROP_STATUS, {})) or ""
-                discovery_id = self._extract_text(props.get(self.PROP_DISCOVERY_ID, {}))
-                canonical_key = self._extract_text(props.get(self.PROP_CANONICAL_KEY, {}))
-                website = props.get(self.PROP_WEBSITE, {}).get("url", "") or ""
-                
-                entry = SuppressionEntry(
-                    discovery_id=discovery_id,
-                    canonical_key=canonical_key,
-                    website=website,
-                    status=status,
-                    notion_page_id=page_id
-                )
-                
-                # Add to cache by all available keys
-                if discovery_id:
-                    suppression[f"discovery:{discovery_id}"] = entry
-                if canonical_key:
-                    suppression[f"canonical:{self._normalize_canonical_key(canonical_key)}"] = entry
-                if website:
-                    suppression[f"website:{self._normalize_website(website)}"] = entry
+        await self._ensure_schema(strict=False)
+
+        # Single query with OR filter
+        pages = await self._query_by_statuses(self.SUPPRESS_STATUSES)
+
+        for page in pages:
+            props = page.get("properties", {})
+            page_id = page["id"]
+
+            status = self._extract_select(props.get(self.PROP_STATUS, {})) or ""
+            discovery_id = self._extract_text(props.get(self.PROP_DISCOVERY_ID, {}))
+            canonical_key = self._extract_text(props.get(self.PROP_CANONICAL_KEY, {}))
+            website = props.get(self.PROP_WEBSITE, {}).get("url", "") or ""
+
+            entry = SuppressionEntry(
+                discovery_id=discovery_id,
+                canonical_key=canonical_key,
+                website=website,
+                status=status,
+                notion_page_id=page_id
+            )
+
+            # Add to cache by all available keys
+            if discovery_id:
+                suppression[f"discovery:{discovery_id}"] = entry
+            if canonical_key:
+                suppression[f"canonical:{self._normalize_canonical_key(canonical_key)}"] = entry
+            if website:
+                suppression[f"website:{self._normalize_website(website)}"] = entry
         
         self._suppression_cache = suppression
         self._cache_expires = datetime.utcnow() + self.cache_ttl
@@ -454,20 +452,19 @@ class NotionConnector:
 
     async def get_portfolio_companies(self) -> List[Dict[str, str]]:
         """Get list of portfolio companies (Funded status)"""
-        async with httpx.AsyncClient() as client:
-            pages = await self._query_by_statuses(client, ["Funded"])
+        pages = await self._query_by_statuses(["Funded"])
 
-            portfolio = []
-            for page in pages:
-                props = page.get("properties", {})
-                portfolio.append({
-                    "page_id": page["id"],
-                    "company_name": self._extract_title(props.get(self.PROP_COMPANY_NAME, {})),
-                    "website": props.get(self.PROP_WEBSITE, {}).get("url", ""),
-                    "sector": self._extract_select(props.get(self.PROP_SECTOR, {}))
-                })
+        portfolio = []
+        for page in pages:
+            props = page.get("properties", {})
+            portfolio.append({
+                "page_id": page["id"],
+                "company_name": self._extract_title(props.get(self.PROP_COMPANY_NAME, {})),
+                "website": props.get(self.PROP_WEBSITE, {}).get("url", ""),
+                "sector": self._extract_select(props.get(self.PROP_SECTOR, {}))
+            })
 
-            return portfolio
+        return portfolio
 
     async def validate_schema(self, force_refresh: bool = False) -> ValidationResult:
         """
@@ -492,8 +489,7 @@ class NotionConnector:
             >>>     print(result)  # Human-readable report
             >>>     raise ValueError("Notion schema validation failed")
         """
-        async with httpx.AsyncClient() as client:
-            schema = await self._get_database_schema(client, force_refresh=force_refresh)
+        schema = await self._get_database_schema(force_refresh=force_refresh)
 
         props = schema.get("properties", {})
 
@@ -512,6 +508,10 @@ class NotionConnector:
             self.PROP_WEBSITE: "url",
             self.PROP_SIGNAL_TYPES: "multi_select",
             self.PROP_WHY_NOW: "rich_text",
+            self.PROP_SECTOR: "select",
+            self.PROP_PROPOSED_SECTOR: "rich_text",
+            self.PROP_TAXONOMY_STATUS: "select",
+            self.PROP_WATCHLISTS_MATCHED: "multi_select",
         }
 
         # Check for missing properties
@@ -589,7 +589,6 @@ class NotionConnector:
 
     async def _get_database_schema(
         self,
-        client: httpx.AsyncClient,
         force_refresh: bool = False
     ) -> Dict[str, Any]:
         """Fetch and cache Notion database schema"""
@@ -597,17 +596,13 @@ class NotionConnector:
                 and datetime.utcnow() < self._schema_expires):
             return self._schema_cache
 
-        await self._rate_limit()
-        resp = await client.get(
-            f"{self.base_url}/databases/{self.database_id}",
-            headers=self.headers
+        self._schema_cache = await self.transport.get(
+            f"/databases/{self.database_id}"
         )
-        resp.raise_for_status()
-        self._schema_cache = resp.json()
         self._schema_expires = datetime.utcnow() + self._schema_ttl
         return self._schema_cache
 
-    async def _ensure_schema(self, client: httpx.AsyncClient, strict: bool = True) -> None:
+    async def _ensure_schema(self, strict: bool = True) -> None:
         """
         Preflight validation: fail fast if required properties/options are missing.
 
@@ -625,95 +620,71 @@ class NotionConnector:
     # PRIVATE: NOTION API CALLS
     # =========================================================================
     
-    async def _rate_limit(self):
-        """Enforce rate limit (3 req/sec = 333ms between requests)"""
-        if self._last_request_time:
-            elapsed = (datetime.utcnow() - self._last_request_time).total_seconds()
-            if elapsed < self.rate_limit_delay:
-                await asyncio.sleep(self.rate_limit_delay - elapsed)
-        self._last_request_time = datetime.utcnow()
-    
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
     async def _find_by_discovery_id(
-        self, 
-        client: httpx.AsyncClient, 
+        self,
         discovery_id: str
     ) -> Optional[Dict]:
         """Query Notion for existing deal by Discovery ID"""
         if not discovery_id:
             return None
-            
-        await self._rate_limit()
-        
-        response = await client.post(
-            f"{self.base_url}/databases/{self.database_id}/query",
-            headers=self.headers,
+
+        response = await self.transport.post(
+            f"/databases/{self.database_id}/query",
             json={
                 "filter": {
                     "property": self.PROP_DISCOVERY_ID,
                     "rich_text": {"equals": discovery_id}
                 },
                 "page_size": 1
-            }
+            },
         )
-        response.raise_for_status()
-        results = response.json().get("results", [])
+        results = response.get("results", [])
         return results[0] if results else None
     
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
     async def _find_by_canonical_key(
         self,
-        client: httpx.AsyncClient,
         canonical_key: str
     ) -> Optional[Dict]:
         """Query Notion for existing deal by Canonical Key"""
         if not canonical_key:
             return None
-            
-        await self._rate_limit()
+
         ck = self._normalize_canonical_key(canonical_key)
-        
-        response = await client.post(
-            f"{self.base_url}/databases/{self.database_id}/query",
-            headers=self.headers,
+
+        response = await self.transport.post(
+            f"/databases/{self.database_id}/query",
             json={
                 "filter": {
                     "property": self.PROP_CANONICAL_KEY,
                     "rich_text": {"equals": ck}
                 },
                 "page_size": 1
-            }
+            },
         )
-        response.raise_for_status()
-        results = response.json().get("results", [])
+        results = response.get("results", [])
         return results[0] if results else None
     
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
     async def _find_by_website(
-        self, 
-        client: httpx.AsyncClient, 
+        self,
         website: str
     ) -> Optional[Dict]:
         """Query Notion for existing deal by Website URL"""
         if not website:
             return None
-            
-        await self._rate_limit()
+
         normalized = self._normalize_website(website)
-        
-        response = await client.post(
-            f"{self.base_url}/databases/{self.database_id}/query",
-            headers=self.headers,
+
+        response = await self.transport.post(
+            f"/databases/{self.database_id}/query",
             json={
                 "filter": {
                     "property": self.PROP_WEBSITE,
                     "url": {"contains": normalized}
                 },
                 "page_size": 5
-            }
+            },
         )
-        response.raise_for_status()
-        results = response.json().get("results", [])
+        results = response.get("results", [])
         
         # Find exact match (normalized)
         for result in results:
@@ -723,56 +694,42 @@ class NotionConnector:
         
         return None
     
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
     async def _create_page(
-        self, 
-        client: httpx.AsyncClient, 
+        self,
         prospect: ProspectPayload
     ) -> Dict:
         """Create new deal page in Notion"""
-        await self._rate_limit()
-        
         properties = self._build_create_properties(prospect)
-        
-        response = await client.post(
-            f"{self.base_url}/pages",
-            headers=self.headers,
+
+        response = await self.transport.post(
+            "/pages",
             json={
                 "parent": {"database_id": self.database_id},
                 "properties": properties
-            }
+            },
         )
-        response.raise_for_status()
-        
+
         logger.info(f"Created Notion page for: {prospect.company_name}")
-        return response.json()
+        return response
     
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
     async def _update_page(
-        self, 
-        client: httpx.AsyncClient, 
+        self,
         page_id: str,
         prospect: ProspectPayload
     ) -> Dict:
         """Update existing deal page - only Discovery-owned fields"""
-        await self._rate_limit()
-        
         properties = self._build_update_properties(prospect)
-        
-        response = await client.patch(
-            f"{self.base_url}/pages/{page_id}",
-            headers=self.headers,
-            json={"properties": properties}
+
+        response = await self.transport.patch(
+            f"/pages/{page_id}",
+            json={"properties": properties},
         )
-        response.raise_for_status()
-        
+
         logger.info(f"Updated Notion page {page_id} for: {prospect.company_name}")
-        return response.json()
+        return response
     
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(min=1, max=10))
     async def _query_by_statuses(
         self,
-        client: httpx.AsyncClient,
         statuses: List[str]
     ) -> List[Dict]:
         """
@@ -794,22 +751,17 @@ class NotionConnector:
         ]
         
         while has_more:
-            await self._rate_limit()
-            
             payload: Dict[str, Any] = {
                 "filter": {"or": status_filters},
                 "page_size": 100
             }
             if start_cursor:
                 payload["start_cursor"] = start_cursor
-            
-            response = await client.post(
-                f"{self.base_url}/databases/{self.database_id}/query",
-                headers=self.headers,
-                json=payload
+
+            data = await self.transport.post(
+                f"/databases/{self.database_id}/query",
+                json=payload,
             )
-            response.raise_for_status()
-            data = response.json()
             
             all_results.extend(data.get("results", []))
             has_more = data.get("has_more", False)
@@ -855,8 +807,7 @@ class NotionConnector:
                 "rich_text": [{"text": {"content": prospect.short_description[:2000]}}]
             }
         
-        if prospect.sector:
-            props[self.PROP_SECTOR] = {"select": {"name": prospect.sector.value}}
+        props.update(self._build_taxonomy_properties(prospect))
         
         if prospect.founder_name:
             props[self.PROP_FOUNDER] = {
@@ -879,6 +830,11 @@ class NotionConnector:
         if prospect.signal_types:
             props[self.PROP_SIGNAL_TYPES] = {
                 "multi_select": [{"name": s} for s in prospect.signal_types[:5]]
+            }
+
+        if prospect.watchlists_matched and self._property_exists(self.PROP_WATCHLISTS_MATCHED):
+            props[self.PROP_WATCHLISTS_MATCHED] = {
+                "multi_select": [{"name": name} for name in prospect.watchlists_matched]
             }
         
         if prospect.why_now:
@@ -914,8 +870,52 @@ class NotionConnector:
         
         # DO NOT update user-editable fields:
         # - Company Name, Website, Status, Investment Stage
-        # - Sector, Founder, Location, etc.
+        # - Founder, Location, etc.
+
+        props.update(self._build_taxonomy_properties(prospect))
+        if prospect.watchlists_matched and self._property_exists(self.PROP_WATCHLISTS_MATCHED):
+            props[self.PROP_WATCHLISTS_MATCHED] = {
+                "multi_select": [{"name": name} for name in prospect.watchlists_matched]
+            }
         
+        return props
+
+    def _build_taxonomy_properties(self, prospect: ProspectPayload) -> Dict:
+        """Build taxonomy triage properties for Sector/Proposed Sector."""
+        props: Dict[str, Any] = {}
+        sector_value = self._normalize_sector_value(prospect.sector)
+        proposed_value = (prospect.proposed_sector or "").strip()
+        taxonomy_status = (prospect.taxonomy_status or "").strip()
+
+        if not sector_value and not proposed_value:
+            return props
+
+        sector_options = self._get_select_options(self.PROP_SECTOR)
+        has_sector_prop = self._property_exists(self.PROP_SECTOR)
+        has_proposed_prop = self._property_exists(self.PROP_PROPOSED_SECTOR)
+        has_taxonomy_prop = self._property_exists(self.PROP_TAXONOMY_STATUS)
+
+        candidate = sector_value or proposed_value
+        if candidate:
+            if sector_options and candidate in sector_options:
+                if has_sector_prop:
+                    props[self.PROP_SECTOR] = {"select": {"name": candidate}}
+                if has_taxonomy_prop:
+                    props[self.PROP_TAXONOMY_STATUS] = {
+                        "select": {"name": taxonomy_status or "Classified"}
+                    }
+            else:
+                if has_sector_prop and sector_options and "Unclassified" in sector_options:
+                    props[self.PROP_SECTOR] = {"select": {"name": "Unclassified"}}
+                if has_proposed_prop:
+                    props[self.PROP_PROPOSED_SECTOR] = {
+                        "rich_text": [{"text": {"content": candidate}}]
+                    }
+                if has_taxonomy_prop:
+                    props[self.PROP_TAXONOMY_STATUS] = {
+                        "select": {"name": taxonomy_status or "Unclassified"}
+                    }
+
         return props
     
     # =========================================================================
@@ -937,6 +937,29 @@ class NotionConnector:
     def _normalize_canonical_key(key: str) -> str:
         """Normalize canonical key for matching"""
         return (key or "").strip().lower()
+
+    def _property_exists(self, prop_name: str) -> bool:
+        schema = self._schema_cache or {}
+        props = schema.get("properties", {})
+        return prop_name in props
+
+    def _get_select_options(self, prop_name: str) -> Set[str]:
+        schema = self._schema_cache or {}
+        props = schema.get("properties", {})
+        prop = props.get(prop_name, {})
+        if prop.get("type") != "select":
+            return set()
+        options = prop.get("select", {}).get("options") or []
+        return {opt.get("name") for opt in options if opt.get("name")}
+
+    @staticmethod
+    def _normalize_sector_value(sector: Optional[str]) -> Optional[str]:
+        if sector is None:
+            return None
+        if isinstance(sector, Sector):
+            return sector.value
+        text = str(sector).strip()
+        return text or None
     
     @staticmethod
     def _extract_text(prop: Dict) -> Optional[str]:
