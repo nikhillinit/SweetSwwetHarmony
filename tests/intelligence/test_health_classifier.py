@@ -83,3 +83,26 @@ class TestHealthClassification:
             company_name="Acme Health"
         )
         assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_result_has_spec_required_fields(self):
+        """HealthClassificationResult must have all spec-required fields."""
+        classifier = HealthClassifier()
+        result = await classifier.classify("Test content")
+        # Spec-required fields
+        assert hasattr(result, 'fit_score')
+        assert hasattr(result, 'category')
+        assert hasattr(result, 'sub_category')
+        assert hasattr(result, 'thesis_alignment')
+        assert hasattr(result, 'signals')
+        assert hasattr(result, 'confidence')
+        # Type checks
+        assert isinstance(result.fit_score, float)
+        assert isinstance(result.category, HealthCategory)
+        assert result.sub_category is None or isinstance(result.sub_category, str)
+        assert isinstance(result.thesis_alignment, str)
+        assert isinstance(result.signals, list)
+        assert isinstance(result.confidence, float)
+        # fit_score should be 0-1 scale
+        assert 0.0 <= result.fit_score <= 1.0
+        assert 0.0 <= result.confidence <= 1.0

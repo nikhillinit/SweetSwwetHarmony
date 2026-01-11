@@ -37,12 +37,15 @@ OUT OF SCOPE (mark as out_of_scope):
 ## Classification Output
 
 For each signal, provide:
-1. fit_score (0-10): How well does this match our consumer health thesis?
+1. fit_score (0-1): How well does this match our consumer health thesis? (0.0 = no fit, 1.0 = perfect fit)
 2. category: consumer_device, consumer_service, health_it, wellness, or out_of_scope
-3. reasoning: 2-3 sentences explaining your assessment
-4. investment_stage_fit: seed, series_a, later, or not_fit
-5. is_in_scope: true if consumer health, false if pharma/provider-only
-6. regulatory_stage: pre_regulatory, fda_pending, fda_cleared, fda_approved, or null
+3. sub_category: More specific categorization (e.g., "wearables", "telehealth", "mental_health")
+4. thesis_alignment: 2-3 sentences explaining your assessment
+5. signals: List of keywords/signals detected in the content
+6. confidence (0-1): How confident are you in this classification? (0.0 = uncertain, 1.0 = certain)
+7. is_in_scope: true if consumer health, false if pharma/provider-only
+8. investment_stage_fit: seed, series_a, later, or not_fit
+9. regulatory_stage: pre_regulatory, fda_pending, fda_cleared, fda_approved, or null
 
 Be skeptical of overly broad health claims. Focus on actual consumer health technology companies."""
 
@@ -69,14 +72,17 @@ class HealthClassifierConfig:
 @dataclass
 class HealthClassificationResult:
     """Result of health signal classification."""
-    fit_score: float  # 0-10 scale
+    # Required fields per spec
+    fit_score: float  # 0-1 scale (NOT 0-10)
     category: HealthCategory
-    reasoning: str
-    investment_stage_fit: str  # "seed", "series_a", "later", "not_fit"
-    confidence: float
-    is_in_scope: bool  # True if consumer health, False if pharma/provider-only
+    sub_category: Optional[str]  # More specific categorization within category
+    thesis_alignment: str  # 2-3 sentences explaining assessment
+    signals: List[str]  # Keywords/signals detected in the content
+    confidence: float  # 0-1 scale
+    # Optional extra fields
+    is_in_scope: bool = True  # True if consumer health, False if pharma/provider-only
+    investment_stage_fit: str = "not_fit"  # "seed", "series_a", "later", "not_fit"
     regulatory_stage: Optional[str] = None  # "pre_regulatory", "fda_cleared", etc.
-    keywords_detected: List[str] = field(default_factory=list)
 
 
 class HealthClassifier:
@@ -107,8 +113,10 @@ class HealthClassifier:
         return HealthClassificationResult(
             fit_score=0.0,
             category=HealthCategory.OUT_OF_SCOPE,
-            reasoning="Not yet classified",
-            investment_stage_fit="not_fit",
+            sub_category=None,
+            thesis_alignment="Not yet classified",
+            signals=[],
             confidence=0.0,
             is_in_scope=False,
+            investment_stage_fit="not_fit",
         )
