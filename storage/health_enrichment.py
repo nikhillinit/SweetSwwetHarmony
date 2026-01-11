@@ -285,7 +285,7 @@ class HealthEnrichmentStore:
                    conditions, start_date, completion_date, fetched_at
             FROM health_clinical_trials
             WHERE entity_id = ?
-            ORDER BY start_date DESC
+            ORDER BY start_date DESC NULLS LAST
             """,
             (entity_id,),
         )
@@ -373,7 +373,7 @@ class HealthEnrichmentStore:
                    clearance_type, decision, decision_date, fetched_at
             FROM health_fda_clearances
             WHERE entity_id = ?
-            ORDER BY decision_date DESC
+            ORDER BY decision_date DESC NULLS LAST
             """,
             (entity_id,),
         )
@@ -455,7 +455,7 @@ class HealthEnrichmentStore:
                    pub_date, citation_count, fetched_at
             FROM health_publications
             WHERE entity_id = ?
-            ORDER BY pub_date DESC
+            ORDER BY pub_date DESC NULLS LAST
             """,
             (entity_id,),
         )
