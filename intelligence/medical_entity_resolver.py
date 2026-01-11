@@ -8,6 +8,8 @@ Provides:
 
 Gracefully degrades when SciSpacy models are not available.
 """
+from __future__ import annotations
+
 import hashlib
 import re
 from dataclasses import dataclass, field
@@ -29,8 +31,8 @@ class ResolvedHealthEntity:
     entity_id: str  # Unique identifier for the entity
     company_name: str  # Original company name
     normalized_name: str  # Normalized company name
-    medical_concepts: List[str]  # UMLS CUIs found in content
-    medical_entities: List[MedicalEntity]  # Extracted medical entities
+    medical_concepts: List[str] = field(default_factory=list)  # UMLS CUIs found in content
+    medical_entities: List[MedicalEntity] = field(default_factory=list)  # Extracted medical entities
 
 
 class MedicalEntityResolver:
