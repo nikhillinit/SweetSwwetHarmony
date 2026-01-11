@@ -249,3 +249,75 @@ class TestPublicationStorage:
         assert retrieved.fetched_at == datetime(2025, 1, 10, 12, 0, 0)
 
         await store.close()
+
+
+class TestEdgeCases:
+    """Test edge cases for health enrichment storage."""
+
+    @pytest.mark.asyncio
+    async def test_get_trials_returns_empty_list_when_none_exist(self):
+        """Should return empty list for entity with no trials."""
+        store = HealthEnrichmentStore(":memory:")
+        await store.initialize()
+        trials = await store.get_trials_for_entity("nonexistent:entity")
+        assert trials == []
+
+    @pytest.mark.asyncio
+    async def test_save_trial_with_minimal_fields(self):
+        """Should save trial with only required fields."""
+        store = HealthEnrichmentStore(":memory:")
+        await store.initialize()
+        trial = ClinicalTrial(
+            entity_id="health:minimal",
+            nct_id="NCT99999999",
+            title="Minimal Trial"
+        )
+        trial_id = await store.save_clinical_trial(trial)
+        assert trial_id is not None
+
+    @pytest.mark.asyncio
+    async def test_save_trial_with_empty_conditions(self):
+        """Should handle empty conditions list."""
+        store = HealthEnrichmentStore(":memory:")
+        await store.initialize()
+        trial = ClinicalTrial(
+            entity_id="health:empty",
+            nct_id="NCT88888888",
+            title="Empty Conditions Trial",
+            conditions=[]
+        )
+        trial_id = await store.save_clinical_trial(trial)
+        trials = await store.get_trials_for_entity("health:empty")
+        assert len(trials) == 1
+        assert trials[0].conditions == []
+
+    @pytest.mark.asyncio
+    async def test_trials_with_null_dates_ordered_last(self):
+        """Trials with NULL start_date should appear after those with dates."""
+        store = HealthEnrichmentStore(":memory:")
+        await store.initialize()
+
+        # Trial without date
+        trial_no_date = ClinicalTrial(
+            entity_id="health:ordering",
+            nct_id="NCT11111111",
+            title="No Date Trial",
+            start_date=None
+        )
+
+        # Trial with date
+        trial_with_date = ClinicalTrial(
+            entity_id="health:ordering",
+            nct_id="NCT22222222",
+            title="Has Date Trial",
+            start_date=date(2024, 1, 1)
+        )
+
+        await store.save_clinical_trial(trial_no_date)
+        await store.save_clinical_trial(trial_with_date)
+
+        trials = await store.get_trials_for_entity("health:ordering")
+        assert len(trials) == 2
+        # Trial with date should come first
+        assert trials[0].start_date is not None
+        assert trials[1].start_date is None
