@@ -7,6 +7,11 @@ from intelligence.health_classifier import (
     HealthClassifierConfig,
     HEALTH_CLASSIFIER_SYSTEM_PROMPT,
 )
+from intelligence.medical_entity_resolver import (
+    MedicalEntity,
+    MedicalEntityResolver,
+    ResolvedHealthEntity,
+)
 
 __all__ = [
     "Domain",
@@ -17,4 +22,7 @@ __all__ = [
     "HealthClassifier",
     "HealthClassifierConfig",
     "HEALTH_CLASSIFIER_SYSTEM_PROMPT",
+    "MedicalEntity",
+    "MedicalEntityResolver",
+    "ResolvedHealthEntity",
 ]
