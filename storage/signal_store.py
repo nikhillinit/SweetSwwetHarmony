@@ -439,7 +439,7 @@ class SignalStore:
         Fuzzy search signals using FTS5.
 
         Args:
-            query: Search query (supports partial matches, phrases in quotes)
+            query: Search query (supports partial matches)
             limit: Maximum results to return
 
         Returns:
@@ -451,31 +451,49 @@ class SignalStore:
         if not query or not query.strip():
             return []
 
-        # Escape special FTS5 characters and prepare query
-        # Add * for prefix matching to enable fuzzy search
-        safe_query = query.strip().replace('"', '""')
-        fts_query = f'"{safe_query}"*'
+        query = query.strip()
 
-        cursor = await self._db.execute("""
-            SELECT
-                f.signal_id,
-                f.company_name,
-                f.vertical,
-                f.source_api,
-                s.confidence,
-                s.signal_type,
-                s.created_at,
-                bm25(signals_fts) as rank
-            FROM signals_fts f
-            JOIN signals s ON f.signal_id = CAST(s.id AS TEXT)
-            WHERE signals_fts MATCH ?
-            ORDER BY rank
-            LIMIT ?
-        """, (fts_query, limit))
+        # Limit query length
+        if len(query) > 500:
+            query = query[:500]
 
-        rows = await cursor.fetchall()
-        columns = ['signal_id', 'company_name', 'vertical', 'source_api', 'confidence', 'signal_type', 'created_at', 'rank']
-        return [dict(zip(columns, row)) for row in rows]
+        # Escape special FTS5 characters
+        # FTS5 special chars: " * - + ( ) : ^
+        safe_query = query.replace('"', ' ').replace('*', ' ').replace('-', ' ')
+        safe_query = safe_query.replace('+', ' ').replace('(', ' ').replace(')', ' ')
+        safe_query = safe_query.replace(':', ' ').replace('^', ' ')
+        safe_query = ' '.join(safe_query.split())  # Normalize whitespace
+
+        if not safe_query:
+            return []
+
+        # Add * for prefix matching
+        fts_query = f'{safe_query}*'
+
+        try:
+            cursor = await self._db.execute("""
+                SELECT
+                    f.signal_id,
+                    f.company_name,
+                    f.vertical,
+                    f.source_api,
+                    s.confidence,
+                    s.signal_type,
+                    s.created_at,
+                    bm25(signals_fts) as rank
+                FROM signals_fts f
+                JOIN signals s ON f.signal_id = CAST(s.id AS TEXT)
+                WHERE signals_fts MATCH ?
+                ORDER BY rank
+                LIMIT ?
+            """, (fts_query, limit))
+
+            rows = await cursor.fetchall()
+            columns = ['signal_id', 'company_name', 'vertical', 'source_api', 'confidence', 'signal_type', 'created_at', 'rank']
+            return [dict(zip(columns, row)) for row in rows]
+        except Exception as e:
+            logger.warning(f"FTS search failed for query '{query[:50]}': {e}")
+            return []
 
     # =========================================================================
     # SIGNAL OPERATIONS
