@@ -97,6 +97,44 @@ TRAVEL_KEYWORDS: Dict[str, float] = {
     "plug and play travel": 1.0,
 }
 
+SAAS_KEYWORDS: Dict[str, float] = {
+    # Core SaaS
+    "saas": 0.9,
+    "software as a service": 0.9,
+    "b2b software": 0.9,
+    "b2b saas": 1.0,
+    "enterprise software": 0.8,
+
+    # GTM patterns
+    "product-led growth": 0.8,
+    "plg": 0.7,
+    "freemium": 0.7,
+    "self-serve": 0.6,
+
+    # Vertical SaaS
+    "vertical saas": 0.9,
+    "industry-specific software": 0.8,
+
+    # Developer tools
+    "api platform": 0.8,
+    "developer tools": 0.8,
+    "devtools": 0.8,
+    "sdk": 0.6,
+    "integration platform": 0.7,
+
+    # Enterprise
+    "enterprise": 0.6,
+    "workflow automation": 0.7,
+    "business intelligence": 0.7,
+    "crm": 0.7,
+    "erp": 0.7,
+
+    # Industry signals
+    "g2crowd": 0.9,
+    "g2": 0.7,
+    "capterra": 0.9,
+}
+
 
 @dataclass
 class DomainResult:
@@ -114,7 +152,7 @@ class DomainRouter:
         """Initialize the domain router with keyword patterns."""
         self.health_keywords = HEALTH_KEYWORDS
         self.travel_keywords = TRAVEL_KEYWORDS
-        # Future: self.saas_keywords, self.consumer_keywords, etc.
+        self.saas_keywords = SAAS_KEYWORDS
 
     def _match_keywords(
         self, content: str, keywords: Dict[str, float]
@@ -155,6 +193,9 @@ class DomainRouter:
         # Check travel keywords
         travel_score, travel_matches = self._match_keywords(content, self.travel_keywords)
 
+        # Check SaaS keywords
+        saas_score, saas_matches = self._match_keywords(content, self.saas_keywords)
+
         # Source-based detection and boost for health
         source_lower = source.lower() if source else ""
         source_is_health = "health" in source_lower
@@ -169,10 +210,18 @@ class DomainRouter:
             travel_score = max(0.5, travel_score)  # Minimum 0.5 for travel sources
             travel_score = min(1.0, travel_score + 0.2)  # Boost existing score
 
+        # Source-based detection and boost for SaaS
+        saas_sources = ["g2crowd", "g2", "capterra", "saas"]
+        source_is_saas = any(ss in source_lower for ss in saas_sources)
+        if source_is_saas:
+            saas_score = max(0.5, saas_score)  # Minimum 0.5 for SaaS sources
+            saas_score = min(1.0, saas_score + 0.2)  # Boost existing score
+
         # Collect domain scores
         domain_scores = [
             (Domain.HEALTH, health_score, health_matches),
             (Domain.TRAVEL, travel_score, travel_matches),
+            (Domain.SAAS, saas_score, saas_matches),
         ]
 
         # Sort by score descending

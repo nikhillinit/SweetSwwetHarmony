@@ -106,11 +106,11 @@ class TestNonHealthContent:
         result = router.detect_domain("Check out this new software tool")
         assert result.primary_domain == Domain.UNKNOWN
 
-    def test_saas_content_returns_unknown_for_now(self):
-        """SaaS content returns unknown until SaaS keywords added."""
+    def test_saas_content_now_returns_saas(self):
+        """SaaS content now correctly routes to SaaS domain."""
         router = DomainRouter()
         result = router.detect_domain("Enterprise B2B SaaS platform")
-        assert result.primary_domain == Domain.UNKNOWN
+        assert result.primary_domain == Domain.SAAS
 
 
 class TestTravelDomainDetection:
@@ -187,3 +187,69 @@ class TestTravelDomainDetection:
         assert result.confidence >= 0.8
         # Travel should be in secondary domains
         assert Domain.TRAVEL in result.secondary_domains
+
+
+class TestSaaSDomainDetection:
+    """Tests for SaaS domain keyword detection."""
+
+    def test_detects_saas_keyword(self):
+        """SaaS keyword should trigger SaaS domain."""
+        router = DomainRouter()
+        result = router.detect_domain("Enterprise SaaS platform for logistics")
+        assert result.primary_domain == Domain.SAAS
+        assert result.confidence >= 0.7
+        assert "saas" in [k.lower() for k in result.matched_keywords]
+
+    def test_detects_b2b_software(self):
+        """B2B software keyword should trigger SaaS domain."""
+        router = DomainRouter()
+        result = router.detect_domain("B2B software for sales teams")
+        assert result.primary_domain == Domain.SAAS
+        assert result.confidence >= 0.7
+
+    def test_detects_vertical_saas(self):
+        """Vertical SaaS keyword should trigger SaaS domain with high confidence."""
+        router = DomainRouter()
+        result = router.detect_domain("Vertical SaaS for construction industry")
+        assert result.primary_domain == Domain.SAAS
+        assert result.confidence >= 0.8
+
+    def test_detects_api_platform(self):
+        """API platform keyword should trigger SaaS domain."""
+        router = DomainRouter()
+        result = router.detect_domain("Developer API platform with REST endpoints")
+        assert result.primary_domain == Domain.SAAS
+        assert "api platform" in [k.lower() for k in result.matched_keywords]
+
+    def test_detects_enterprise_software(self):
+        """Enterprise software keyword should trigger SaaS domain."""
+        router = DomainRouter()
+        result = router.detect_domain("Enterprise software automation tool")
+        assert result.primary_domain == Domain.SAAS
+
+    def test_source_boost_for_g2(self):
+        """G2Crowd source should boost SaaS domain confidence."""
+        router = DomainRouter()
+        result = router.detect_domain(
+            "New software platform",
+            source="g2crowd"
+        )
+        assert result.primary_domain == Domain.SAAS
+        assert result.confidence >= 0.5
+
+    def test_source_boost_for_capterra(self):
+        """Capterra source should boost SaaS domain confidence."""
+        router = DomainRouter()
+        result = router.detect_domain(
+            "Business tool for teams",
+            source="capterra"
+        )
+        assert result.primary_domain == Domain.SAAS
+        assert result.confidence >= 0.5
+
+    def test_multi_domain_saas_and_health(self):
+        """Content with both SaaS and health keywords should return highest scoring domain."""
+        router = DomainRouter()
+        result = router.detect_domain("Healthcare SaaS platform for clinics")
+        domains = [result.primary_domain] + result.secondary_domains
+        assert Domain.SAAS in domains or Domain.HEALTH in domains
