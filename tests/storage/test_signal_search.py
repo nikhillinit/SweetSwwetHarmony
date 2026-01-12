@@ -440,3 +440,107 @@ class TestFilteredSignalQuery:
 
         assert len(results) == 2
         await store.close()
+
+
+class TestFTSIndexMaintenance:
+    """Tests for FTS index maintenance methods."""
+
+    @pytest.mark.asyncio
+    async def test_get_fts_index_stats_shows_unindexed(self):
+        """Should show unindexed count correctly."""
+        store = SignalStore(db_path=":memory:")
+        await store.initialize()
+
+        # Add signals directly without indexing (bypassing save_signal which creates processing records)
+        for i in range(3):
+            await store._db.execute("""
+                INSERT INTO signals (company_name, signal_type, source_api, canonical_key, raw_data, confidence, detected_at, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            """, (f"Company{i}", "launch", "producthunt", f"domain:company{i}.com", "{}", 0.8))
+        await store._db.commit()
+
+        stats = await store.get_fts_index_stats()
+
+        assert stats["total_signals"] == 3
+        assert stats["indexed_signals"] == 0
+        assert stats["unindexed"] == 3
+        await store.close()
+
+    @pytest.mark.asyncio
+    async def test_rebuild_fts_index_indexes_all(self):
+        """Rebuild should index all signals."""
+        store = SignalStore(db_path=":memory:")
+        await store.initialize()
+
+        # Add signals directly without indexing
+        for i in range(3):
+            await store._db.execute("""
+                INSERT INTO signals (company_name, signal_type, source_api, canonical_key, raw_data, confidence, detected_at, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            """, (f"Company{i}", "launch", "producthunt", f"domain:company{i}.com", "{}", 0.8))
+        await store._db.commit()
+
+        count = await store.rebuild_fts_index()
+
+        assert count == 3
+
+        stats = await store.get_fts_index_stats()
+        assert stats["indexed_signals"] == 3
+        assert stats["unindexed"] == 0
+        await store.close()
+
+    @pytest.mark.asyncio
+    async def test_rebuild_clears_existing_index(self):
+        """Rebuild should clear existing index first."""
+        store = SignalStore(db_path=":memory:")
+        await store.initialize()
+
+        # Add signals directly without indexing
+        for i in range(3):
+            await store._db.execute("""
+                INSERT INTO signals (company_name, signal_type, source_api, canonical_key, raw_data, confidence, detected_at, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+            """, (f"Company{i}", "launch", "producthunt", f"domain:company{i}.com", "{}", 0.8))
+        await store._db.commit()
+
+        # Index one signal manually
+        cursor = await store._db.execute("SELECT id FROM signals LIMIT 1")
+        row = await cursor.fetchone()
+        signal_id = row[0]
+        await store.index_signal_for_search(signal_id)
+
+        # Verify partial index
+        stats = await store.get_fts_index_stats()
+        assert stats["indexed_signals"] == 1
+
+        # Rebuild
+        await store.rebuild_fts_index()
+
+        # Should have all indexed
+        stats = await store.get_fts_index_stats()
+        assert stats["indexed_signals"] == 3
+        await store.close()
+
+    @pytest.mark.asyncio
+    async def test_get_fts_index_stats_empty_db(self):
+        """Stats on empty database should show zeros."""
+        store = SignalStore(db_path=":memory:")
+        await store.initialize()
+
+        stats = await store.get_fts_index_stats()
+
+        assert stats["total_signals"] == 0
+        assert stats["indexed_signals"] == 0
+        assert stats["unindexed"] == 0
+        await store.close()
+
+    @pytest.mark.asyncio
+    async def test_rebuild_fts_index_empty_db(self):
+        """Rebuild on empty database should return 0."""
+        store = SignalStore(db_path=":memory:")
+        await store.initialize()
+
+        count = await store.rebuild_fts_index()
+
+        assert count == 0
+        await store.close()

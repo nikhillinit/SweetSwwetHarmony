@@ -155,6 +155,20 @@ def render_filter_sidebar(store: SignalStore):
         }
         st.rerun()
 
+    # Search index management
+    st.sidebar.markdown("---")
+    st.sidebar.markdown("**Search Index**")
+    stats = run_async(store.get_fts_index_stats())
+    st.sidebar.caption(f"Indexed: {stats['indexed_signals']} / {stats['total_signals']}")
+
+    if stats['unindexed'] > 0:
+        st.sidebar.warning(f"{stats['unindexed']} signals not indexed")
+        if st.sidebar.button("Rebuild index"):
+            with st.spinner("Rebuilding search index..."):
+                count = run_async(store.rebuild_fts_index())
+                st.sidebar.success(f"Indexed {count} signals")
+                st.rerun()
+
 
 def execute_search(store: SignalStore) -> List[Dict[str, Any]]:
     """Execute search with current filters."""

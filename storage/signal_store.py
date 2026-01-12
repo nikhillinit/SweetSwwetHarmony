@@ -539,6 +539,47 @@ class SignalStore:
         )
         await self._db.commit()
 
+    async def get_fts_index_stats(self) -> Dict[str, int]:
+        """Get FTS index statistics."""
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        # Count total signals
+        cursor = await self._db.execute("SELECT COUNT(*) FROM signals")
+        total_signals = (await cursor.fetchone())[0]
+
+        # Count indexed signals
+        cursor = await self._db.execute("SELECT COUNT(*) FROM signals_fts")
+        indexed_signals = (await cursor.fetchone())[0]
+
+        return {
+            "total_signals": total_signals,
+            "indexed_signals": indexed_signals,
+            "unindexed": total_signals - indexed_signals
+        }
+
+    async def rebuild_fts_index(self) -> int:
+        """Rebuild entire FTS index from signals table. Returns count indexed."""
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        # Clear existing index
+        await self._db.execute("DELETE FROM signals_fts")
+
+        # Get all signal IDs
+        cursor = await self._db.execute("SELECT id FROM signals")
+        signal_ids = [row[0] for row in await cursor.fetchall()]
+
+        await self._db.commit()
+
+        # Index each signal
+        count = 0
+        for signal_id in signal_ids:
+            await self.index_signal_for_search(signal_id)
+            count += 1
+
+        return count
+
     async def search_signals_fts(
         self,
         query: str,
