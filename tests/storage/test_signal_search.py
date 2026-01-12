@@ -144,3 +144,97 @@ class TestFTSIndexing:
 
         assert row[0] == 0
         await store.close()
+
+
+class TestFuzzySearch:
+    """Test FTS5 fuzzy search functionality."""
+
+    @pytest.mark.asyncio
+    async def test_partial_name_match(self):
+        """'tele' should match 'Telehealth Plus' and 'Teladoc Health'."""
+        store = SignalStore(db_path=":memory:")
+        await store.initialize()
+
+        # Add test signals
+        id1 = await store.save_signal(
+            company_name="Telehealth Plus",
+            signal_type="funding",
+            source_api="producthunt",
+            canonical_key="domain:telehealthplus.com",
+            raw_data={"description": "Virtual care"},
+            confidence=0.8
+        )
+        await store.index_signal_for_search(id1, vertical="health")
+
+        id2 = await store.save_signal(
+            company_name="Teladoc Health",
+            signal_type="funding",
+            source_api="sec_edgar",
+            canonical_key="domain:teladoc.com",
+            raw_data={"description": "Telemedicine"},
+            confidence=0.8
+        )
+        await store.index_signal_for_search(id2, vertical="health")
+
+        results = await store.search_signals_fts("tele")
+
+        assert len(results) == 2
+        names = [r["company_name"] for r in results]
+        assert "Telehealth Plus" in names
+        assert "Teladoc Health" in names
+        await store.close()
+
+    @pytest.mark.asyncio
+    async def test_description_match(self):
+        """'virtual care' should match signal with that description."""
+        store = SignalStore(db_path=":memory:")
+        await store.initialize()
+
+        id1 = await store.save_signal(
+            company_name="HealthCo",
+            signal_type="funding",
+            source_api="producthunt",
+            canonical_key="domain:healthco.com",
+            raw_data={"description": "Virtual care platform for remote patients"},
+            confidence=0.8
+        )
+        await store.index_signal_for_search(id1, vertical="health")
+
+        results = await store.search_signals_fts("virtual care")
+
+        assert len(results) >= 1
+        assert results[0]["company_name"] == "HealthCo"
+        await store.close()
+
+    @pytest.mark.asyncio
+    async def test_no_match_returns_empty(self):
+        """Non-matching query returns empty list."""
+        store = SignalStore(db_path=":memory:")
+        await store.initialize()
+
+        results = await store.search_signals_fts("xyznonexistent")
+
+        assert results == []
+        await store.close()
+
+    @pytest.mark.asyncio
+    async def test_results_include_rank(self):
+        """Results should include relevance rank."""
+        store = SignalStore(db_path=":memory:")
+        await store.initialize()
+
+        id1 = await store.save_signal(
+            company_name="Health App",
+            signal_type="funding",
+            source_api="producthunt",
+            canonical_key="domain:healthapp.com",
+            raw_data={"description": "Health tracking"},
+            confidence=0.8
+        )
+        await store.index_signal_for_search(id1, vertical="health")
+
+        results = await store.search_signals_fts("health")
+
+        assert len(results) > 0
+        assert "rank" in results[0]
+        await store.close()

@@ -430,6 +430,53 @@ class SignalStore:
         )
         await self._db.commit()
 
+    async def search_signals_fts(
+        self,
+        query: str,
+        limit: int = 50
+    ) -> List[Dict[str, Any]]:
+        """
+        Fuzzy search signals using FTS5.
+
+        Args:
+            query: Search query (supports partial matches, phrases in quotes)
+            limit: Maximum results to return
+
+        Returns:
+            List of matching signals with relevance rank
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        if not query or not query.strip():
+            return []
+
+        # Escape special FTS5 characters and prepare query
+        # Add * for prefix matching to enable fuzzy search
+        safe_query = query.strip().replace('"', '""')
+        fts_query = f'"{safe_query}"*'
+
+        cursor = await self._db.execute("""
+            SELECT
+                f.signal_id,
+                f.company_name,
+                f.vertical,
+                f.source_api,
+                s.confidence,
+                s.signal_type,
+                s.created_at,
+                bm25(signals_fts) as rank
+            FROM signals_fts f
+            JOIN signals s ON f.signal_id = CAST(s.id AS TEXT)
+            WHERE signals_fts MATCH ?
+            ORDER BY rank
+            LIMIT ?
+        """, (fts_query, limit))
+
+        rows = await cursor.fetchall()
+        columns = ['signal_id', 'company_name', 'vertical', 'source_api', 'confidence', 'signal_type', 'created_at', 'rank']
+        return [dict(zip(columns, row)) for row in rows]
+
     # =========================================================================
     # SIGNAL OPERATIONS
     # =========================================================================
