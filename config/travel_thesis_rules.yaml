@@ -1,0 +1,73 @@
+version: "1.0"
+vertical: travel
+description: "Travel & Hospitality thesis matching rules for Press On VC"
+
+scoring_weights:
+  distribution: 0.30
+  category: 0.25
+  traction: 0.25
+  founder: 0.20
+
+positive_signals:
+  distribution:
+    - "Expedia"
+    - "Booking.com"
+    - "Marriott"
+    - "Hilton"
+    - "Hyatt"
+    - "IHG"
+    - "Airbnb partner"
+    - "VRBO"
+    - "OTA"
+    - "travel agency"
+  category:
+    - "hotel tech"
+    - "booking platform"
+    - "property management"
+    - "guest experience"
+    - "revenue management"
+    - "channel manager"
+    - "vacation rental"
+    - "experiential travel"
+    - "tour operator"
+    - "concierge tech"
+  traction:
+    - "bookings"
+    - "GMV"
+    - "properties"
+    - "hotels"
+    - "partnerships"
+    - "revenue"
+    - "guests"
+    - "nights booked"
+  founder:
+    - "hospitality veteran"
+    - "hotel industry"
+    - "travel exec"
+    - "OTA founder"
+    - "Marriott alum"
+    - "Hilton alum"
+    - "Airbnb alum"
+    - "Expedia alum"
+
+negative_signals:
+  - "legacy GDS"
+  - "traditional travel agency"
+  - "no tech differentiation"
+  - "Series C"
+  - "Series D"
+  - "public company"
+  - "acquired"
+  - "non-tech"
+  - "brick and mortar only"
+
+stage_filters:
+  included:
+    - "pre-seed"
+    - "seed"
+    - "Series A"
+  excluded:
+    - "Series B"
+    - "Series C"
+    - "Series D"
+    - "IPO"
