@@ -1,0 +1,82 @@
+version: "1.0"
+vertical: consumer
+description: "Consumer thesis matching rules for Premium Consumer (DTC) and Consumer Platforms (Marketplaces)"
+
+# Covers both Premium Consumer (DTC) and Consumer Platforms (Marketplaces)
+sub_verticals:
+  - premium_consumer  # DTC brands, beverages, nutrition
+  - consumer_platforms  # Marketplaces, community commerce
+
+scoring_weights:
+  brand_positioning: 0.25
+  channel_strategy: 0.20
+  product_category: 0.20
+  platform_model: 0.20
+  stage: 0.15
+
+positive_signals:
+  brand_positioning:
+    - "premium"
+    - "luxury"
+    - "artisan"
+    - "craft"
+    - "boutique"
+    - "affluent"
+    - "millennial"
+    - "gen-z"
+    - "urban"
+  channel_strategy:
+    - "direct-to-consumer"
+    - "dtc"
+    - "d2c"
+    - "online-first"
+    - "ecommerce-native"
+    - "omnichannel"
+  product_category:
+    - "beverage"
+    - "food"
+    - "beauty"
+    - "skincare"
+    - "wellness"
+    - "nutrition"
+    - "apparel"
+    - "home"
+  platform_model:
+    - "two-sided"
+    - "marketplace"
+    - "platform"
+    - "network effects"
+    - "community"
+    - "social commerce"
+    - "creator economy"
+  traction:
+    - "revenue"
+    - "ARR"
+    - "GMV"
+    - "users"
+    - "customers"
+    - "repeat purchase"
+    - "retention"
+    - "LTV"
+
+negative_signals:
+  - "Series C"
+  - "Series D"
+  - "public company"
+  - "acquired"
+  - "legacy retail"
+  - "no differentiation"
+  - "commoditized"
+  - "wholesale only"
+  - "no tech"
+
+stage_filters:
+  included:
+    - "pre-seed"
+    - "seed"
+    - "Series A"
+  excluded:
+    - "Series B"
+    - "Series C"
+    - "Series D"
+    - "IPO"
