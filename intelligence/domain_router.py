@@ -135,6 +135,43 @@ SAAS_KEYWORDS: Dict[str, float] = {
     "capterra": 0.9,
 }
 
+CONSUMER_KEYWORDS: Dict[str, float] = {
+    # DTC/Brand
+    "dtc": 0.9,
+    "direct-to-consumer": 0.9,
+    "d2c": 0.9,
+    "cpg": 0.8,
+    "consumer packaged goods": 0.8,
+    "brand": 0.6,
+    "retail": 0.5,
+
+    # Premium positioning
+    "premium": 0.7,
+    "luxury": 0.7,
+    "affluent": 0.7,
+    "lifestyle brand": 0.8,
+
+    # Product categories
+    "beverage": 0.7,
+    "food & beverage": 0.7,
+    "nutrition": 0.6,
+    "beauty": 0.6,
+    "skincare": 0.6,
+    "wellness brand": 0.8,
+
+    # Marketplace/Platform
+    "marketplace": 0.9,
+    "two-sided marketplace": 1.0,
+    "platform": 0.5,
+    "community commerce": 0.9,
+    "social commerce": 0.9,
+
+    # Industry signals
+    "producthunt": 0.6,
+    "kickstarter": 0.7,
+    "indiegogo": 0.7,
+}
+
 
 @dataclass
 class DomainResult:
@@ -153,6 +190,7 @@ class DomainRouter:
         self.health_keywords = HEALTH_KEYWORDS
         self.travel_keywords = TRAVEL_KEYWORDS
         self.saas_keywords = SAAS_KEYWORDS
+        self.consumer_keywords = CONSUMER_KEYWORDS
 
     def _match_keywords(
         self, content: str, keywords: Dict[str, float]
@@ -196,6 +234,9 @@ class DomainRouter:
         # Check SaaS keywords
         saas_score, saas_matches = self._match_keywords(content, self.saas_keywords)
 
+        # Check consumer keywords
+        consumer_score, consumer_matches = self._match_keywords(content, self.consumer_keywords)
+
         # Source-based detection and boost for health
         source_lower = source.lower() if source else ""
         source_is_health = "health" in source_lower
@@ -217,11 +258,19 @@ class DomainRouter:
             saas_score = max(0.5, saas_score)  # Minimum 0.5 for SaaS sources
             saas_score = min(1.0, saas_score + 0.2)  # Boost existing score
 
+        # Source-based detection and boost for consumer
+        consumer_sources = ["consumer", "kickstarter", "indiegogo", "producthunt_consumer"]
+        source_is_consumer = any(cs in source_lower for cs in consumer_sources)
+        if source_is_consumer:
+            consumer_score = max(0.5, consumer_score)  # Minimum 0.5 for consumer sources
+            consumer_score = min(1.0, consumer_score + 0.2)  # Boost existing score
+
         # Collect domain scores
         domain_scores = [
             (Domain.HEALTH, health_score, health_matches),
             (Domain.TRAVEL, travel_score, travel_matches),
             (Domain.SAAS, saas_score, saas_matches),
+            (Domain.CONSUMER, consumer_score, consumer_matches),
         ]
 
         # Sort by score descending
