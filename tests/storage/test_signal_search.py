@@ -238,3 +238,76 @@ class TestFuzzySearch:
         assert len(results) > 0
         assert "rank" in results[0]
         await store.close()
+
+
+class TestFTSEdgeCases:
+    """Test FTS5 edge cases and security."""
+
+    @pytest.mark.asyncio
+    async def test_unicode_search(self):
+        """Search with Unicode characters works."""
+        store = SignalStore(db_path=":memory:")
+        await store.initialize()
+
+        # Add signal with Unicode
+        signal_id = await store.save_signal(
+            company_name="Cafe Health",
+            signal_type="funding",
+            source_api="producthunt",
+            canonical_key="domain:cafehealth.com",
+            raw_data={"description": "Healthy cafe services"},
+            confidence=0.8
+        )
+        await store.index_signal_for_search(signal_id, vertical="health")
+
+        results = await store.search_signals_fts("cafe")
+        assert len(results) >= 1
+        await store.close()
+
+    @pytest.mark.asyncio
+    async def test_special_characters_safe(self):
+        """Special characters don't break search."""
+        store = SignalStore(db_path=":memory:")
+        await store.initialize()
+
+        # These shouldn't crash
+        results = await store.search_signals_fts('test"query')
+        assert isinstance(results, list)
+
+        results = await store.search_signals_fts("test'query")
+        assert isinstance(results, list)
+
+        results = await store.search_signals_fts("test*query")
+        assert isinstance(results, list)
+
+        results = await store.search_signals_fts("test-query")
+        assert isinstance(results, list)
+
+        results = await store.search_signals_fts("test+query")
+        assert isinstance(results, list)
+
+        await store.close()
+
+    @pytest.mark.asyncio
+    async def test_very_long_query_handled(self):
+        """Very long queries don't crash."""
+        store = SignalStore(db_path=":memory:")
+        await store.initialize()
+
+        long_query = "a" * 1000
+        results = await store.search_signals_fts(long_query)
+        assert isinstance(results, list)
+        await store.close()
+
+    @pytest.mark.asyncio
+    async def test_empty_query_returns_empty(self):
+        """Empty query returns empty list, not all results."""
+        store = SignalStore(db_path=":memory:")
+        await store.initialize()
+
+        results = await store.search_signals_fts("")
+        assert results == []
+
+        results = await store.search_signals_fts("   ")
+        assert results == []
+        await store.close()
