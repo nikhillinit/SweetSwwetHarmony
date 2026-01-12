@@ -280,6 +280,9 @@ class SignalStore:
         # Apply migrations
         await self._apply_migrations()
 
+        # Create FTS5 virtual table for search
+        await self._create_fts_table()
+
         logger.info(f"SignalStore initialized: {self.db_path}")
 
     async def close(self) -> None:
@@ -356,6 +359,23 @@ class SignalStore:
                 )
 
             logger.info(f"Migration v{version} applied successfully")
+
+    async def _create_fts_table(self) -> None:
+        """Create FTS5 virtual table for fuzzy search."""
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        await self._db.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS signals_fts USING fts5(
+                signal_id UNINDEXED,
+                company_name,
+                searchable_text,
+                vertical,
+                source_api,
+                tokenize='porter unicode61'
+            )
+        """)
+        await self._db.commit()
 
     # =========================================================================
     # SIGNAL OPERATIONS
