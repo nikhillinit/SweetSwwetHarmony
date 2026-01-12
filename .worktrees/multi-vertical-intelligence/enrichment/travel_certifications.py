@@ -1,4 +1,3 @@
-# enrichment/travel_certifications.py
 """
 Travel Certifications Client for Travel Enrichment.
 
@@ -18,13 +17,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import re
+import time
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 from typing import List, Optional
 
-import httpx
+import httpx  # For future implementation
 
 logger = logging.getLogger(__name__)
 
@@ -72,10 +71,10 @@ class TravelCertificationsClient:
         """Wait to comply with rate limiting."""
         async with self._semaphore:
             if self._last_request_time is not None:
-                elapsed = asyncio.get_event_loop().time() - self._last_request_time
+                elapsed = time.time() - self._last_request_time
                 if elapsed < self._min_interval:
                     await asyncio.sleep(self._min_interval - elapsed)
-            self._last_request_time = asyncio.get_event_loop().time()
+            self._last_request_time = time.time()
 
     async def search_certifications(
         self,
