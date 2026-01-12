@@ -193,17 +193,15 @@ def execute_search(store: SignalStore) -> List[Dict[str, Any]]:
 
 
 def render_signal_card(signal: Dict[str, Any]):
-    """Render a single signal card."""
-    # Confidence color
+    """Render a single signal card with clickable company name."""
     conf = signal.get("confidence") or 0
     if conf >= 0.8:
-        conf_color = "#10B981"  # Green
+        conf_color = "#10B981"
     elif conf >= 0.5:
-        conf_color = "#F59E0B"  # Yellow
+        conf_color = "#F59E0B"
     else:
-        conf_color = "#EF4444"  # Red
+        conf_color = "#EF4444"
 
-    # Vertical badge color
     vertical_colors = {
         "health": "#3B82F6",
         "travel": "#8B5CF6",
@@ -218,22 +216,23 @@ def render_signal_card(signal: Dict[str, Any]):
     source = signal.get('source_api', '')
     sig_type = signal.get('signal_type', '')
     created = str(signal.get('created_at', ''))[:10]
+    signal_id = signal.get('signal_id', '')
 
     with st.container():
-        st.markdown(f"""
-        <div style="border: 1px solid #333; border-radius: 8px; padding: 16px; margin-bottom: 12px; background: #1a1a1a;">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                <span style="font-family: 'DM Serif Display', serif; font-size: 1.2em; color: #fff;">{company_name}</span>
-                <div>
-                    <span style="background: {vert_color}; color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.8em; margin-right: 8px;">{vert.upper()}</span>
-                    <span style="background: {conf_color}; color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.8em;">{conf:.0%}</span>
-                </div>
-            </div>
-            <div style="color: #888; font-size: 0.9em;">
-                {source} · {sig_type} · {created}
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+        col1, col2, col3 = st.columns([4, 1, 1])
+
+        with col1:
+            # Clickable company name
+            if st.button(company_name, key=f"company_{signal_id}", help="Click to see all signals"):
+                st.session_state.selected_company = company_name
+                st.rerun()
+            st.caption(f"{source} · {sig_type} · {created}")
+
+        with col2:
+            st.markdown(f'<span style="background: {vert_color}; color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.8em;">{vert.upper()}</span>', unsafe_allow_html=True)
+
+        with col3:
+            st.markdown(f'<span style="background: {conf_color}; color: white; padding: 2px 8px; border-radius: 4px; font-size: 0.8em;">{conf:.0%}</span>', unsafe_allow_html=True)
 
 
 def render_results(results: List[Dict[str, Any]]):
@@ -286,12 +285,72 @@ def _convert_to_csv(results: List[Dict[str, Any]]) -> str:
     return output.getvalue()
 
 
+def render_company_detail(company_name: str, store: SignalStore):
+    """Render detailed view of all signals for a company."""
+    st.subheader(f"All signals for: {company_name}")
+
+    signals = run_async(store.get_signals_for_company_by_name(company_name))
+
+    if not signals:
+        st.info("No signals found for this company.")
+        return
+
+    st.markdown(f"**{len(signals)} signals** from {len(set(s.get('source_api', '') for s in signals))} sources")
+    st.markdown("---")
+
+    # Timeline view
+    for signal in signals:
+        with st.container():
+            col1, col2 = st.columns([1, 4])
+            with col1:
+                created = str(signal.get("created_at", ""))[:10]
+                st.caption(created)
+            with col2:
+                sig_type = signal.get('signal_type', 'Unknown')
+                source = signal.get('source_api', 'Unknown')
+                conf = signal.get('confidence') or 0
+                vert = signal.get('vertical') or 'unknown'
+
+                st.markdown(f"**{sig_type}** from {source}")
+                st.caption(f"Confidence: {conf:.0%} | Vertical: {vert}")
+
+                with st.expander("View raw data"):
+                    raw_data = signal.get("raw_data")
+                    if raw_data:
+                        try:
+                            if isinstance(raw_data, str):
+                                data = json.loads(raw_data)
+                            else:
+                                data = raw_data
+                            st.json(data)
+                        except:
+                            st.text(str(raw_data))
+                    else:
+                        st.caption("No raw data available")
+
+            st.markdown("---")
+
+
 def render_mini_scout_page(store: SignalStore):
     """Main entry point for Mini-Scout page."""
+    init_session_state()
+
+    # Initialize selected_company if not exists
+    if "selected_company" not in st.session_state:
+        st.session_state.selected_company = None
+
+    # Check if viewing company detail
+    if st.session_state.selected_company:
+        if st.button("← Back to search"):
+            st.session_state.selected_company = None
+            st.rerun()
+        render_company_detail(st.session_state.selected_company, store)
+        return
+
+    # Normal search view
     st.title("Mini-Scout")
     st.caption("Search and explore signals")
 
-    init_session_state()
     render_filter_sidebar(store)
 
     search_clicked = render_search_bar()

@@ -844,6 +844,31 @@ class SignalStore:
         rows = await cursor.fetchall()
         return [self._row_to_signal(row) for row in rows]
 
+    async def get_signals_for_company_by_name(self, company_name: str) -> List[Dict[str, Any]]:
+        """Get all signals for a specific company by name."""
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        cursor = await self._db.execute("""
+            SELECT
+                s.id as signal_id,
+                s.company_name,
+                s.signal_type,
+                s.source_api,
+                s.confidence,
+                s.created_at,
+                s.raw_data,
+                f.vertical
+            FROM signals s
+            LEFT JOIN signals_fts f ON CAST(s.id AS TEXT) = f.signal_id
+            WHERE s.company_name = ?
+            ORDER BY s.created_at DESC
+        """, (company_name,))
+
+        rows = await cursor.fetchall()
+        columns = ['signal_id', 'company_name', 'signal_type', 'source_api', 'confidence', 'created_at', 'raw_data', 'vertical']
+        return [dict(zip(columns, row)) for row in rows]
+
     async def is_duplicate(self, canonical_key: str) -> bool:
         """
         Check if we already have signals for this canonical key.
