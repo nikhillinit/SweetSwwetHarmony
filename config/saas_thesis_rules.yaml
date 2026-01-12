@@ -1,0 +1,82 @@
+version: "1.0"
+vertical: saas
+description: "B2B SaaS thesis matching rules for Press On VC"
+
+scoring_weights:
+  gtm_motion: 0.25
+  vertical_focus: 0.20
+  target_market: 0.20
+  technical_moat: 0.15
+  stage_fit: 0.20
+
+positive_signals:
+  gtm_motion:
+    - "product-led"
+    - "product-led growth"
+    - "PLG"
+    - "freemium"
+    - "self-serve"
+    - "bottom-up"
+    - "viral coefficient"
+    - "land and expand"
+    - "free trial"
+    - "usage-based"
+  vertical_focus:
+    - "vertical SaaS"
+    - "industry-specific"
+    - "purpose-built"
+    - "construction tech"
+    - "legal tech"
+    - "healthcare SaaS"
+    - "real estate tech"
+    - "logistics tech"
+    - "fintech"
+    - "edtech"
+  target_market:
+    - "enterprise"
+    - "Fortune 500"
+    - "mid-market"
+    - "SMB"
+    - "small business"
+    - "startup-friendly"
+    - "global deployment"
+    - "multi-tenant"
+  technical_moat:
+    - "proprietary"
+    - "AI-powered"
+    - "machine learning"
+    - "patent"
+    - "API-first"
+    - "integrations"
+    - "ecosystem"
+    - "platform"
+    - "data moat"
+  stage_fit:
+    - "seed"
+    - "pre-seed"
+    - "Series A"
+    - "early-stage"
+    - "first institutional"
+
+negative_signals:
+  - "Series C"
+  - "Series D"
+  - "public company"
+  - "acquired"
+  - "legacy software"
+  - "on-premise only"
+  - "no cloud"
+  - "consulting heavy"
+  - "services business"
+
+stage_filters:
+  included:
+    - "pre-seed"
+    - "seed"
+    - "Series A"
+  excluded:
+    - "Series B"
+    - "Series C"
+    - "Series D"
+    - "IPO"
+    - "public"
