@@ -32,6 +32,7 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 
 from storage.signal_store import SignalStore
 from utils.signal_health import SignalHealthMonitor
+from dashboard.mini_scout import render_mini_scout_page
 
 # =============================================================================
 # CONFIG
@@ -736,11 +737,11 @@ def main():
 
         # View selector
         if has_notion and has_db:
-            view = st.radio("View", ["Pipeline", "Signals"], label_visibility="collapsed")
+            view = st.radio("View", ["Pipeline", "Signals", "Mini-Scout"], label_visibility="collapsed")
         elif has_notion:
-            view = "Pipeline"
+            view = st.radio("View", ["Pipeline", "Mini-Scout"], label_visibility="collapsed")
         else:
-            view = "Signals"
+            view = st.radio("View", ["Signals", "Mini-Scout"], label_visibility="collapsed")
 
         st.markdown("<br>", unsafe_allow_html=True)
 
@@ -787,7 +788,7 @@ def main():
     # ==========================================================================
     # SIGNALS VIEW
     # ==========================================================================
-    else:
+    elif view == "Signals":
         render_hero("Discovery Signals", "Automated signal detection from 10+ sources")
 
         if not has_db:
@@ -827,6 +828,13 @@ def main():
             "min_confidence": min_conf,
         }
         render_signals_view(signals, filters)
+
+    # ==========================================================================
+    # MINI-SCOUT VIEW
+    # ==========================================================================
+    elif view == "Mini-Scout":
+        store = get_store()
+        render_mini_scout_page(store)
 
     # Footer
     st.markdown("""
