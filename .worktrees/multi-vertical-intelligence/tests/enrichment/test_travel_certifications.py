@@ -63,7 +63,7 @@ class TestTravelCertificationsClient:
             mock_fetch.return_value = mock_certs
             results = await client.search_certifications("Test Hotel")
 
-            assert len(results) >= 0  # May or may not find matches
+            assert len(results) == 1  # Verify mock returns expected result
 
     @pytest.mark.asyncio
     async def test_search_handles_errors(self):
