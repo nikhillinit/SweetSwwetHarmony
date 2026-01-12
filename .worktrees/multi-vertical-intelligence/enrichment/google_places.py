@@ -86,3 +86,24 @@ class GooglePlacesClient:
         # Stub implementation
         logger.debug(f"Google Places get '{place_id}' (stub)")
         return None
+
+    async def search_places(
+        self,
+        query: str,
+        location: Optional[str] = None,
+        max_results: int = 5
+    ) -> List[GooglePlace]:
+        """
+        Search for places by query.
+
+        Args:
+            query: Search query (business name, address, etc.)
+            location: Optional location to narrow search
+            max_results: Maximum number of results to return
+
+        Returns:
+            List of GooglePlace objects
+        """
+        # Stub implementation - would search Google Places API and return multiple matches
+        logger.debug(f"Google Places search_places for '{query}' in '{location}' (stub)")
+        return []
