@@ -311,3 +311,132 @@ class TestFTSEdgeCases:
         results = await store.search_signals_fts("   ")
         assert results == []
         await store.close()
+
+
+class TestFilteredSignalQuery:
+    """Test signal filtering by various criteria."""
+
+    @pytest.mark.asyncio
+    async def test_filter_by_vertical(self):
+        """Filter signals by vertical."""
+        store = SignalStore(db_path=":memory:")
+        await store.initialize()
+
+        # Add test signals
+        id1 = await store.save_signal(
+            company_name="HealthCo",
+            signal_type="funding",
+            source_api="producthunt",
+            canonical_key="domain:healthco.com",
+            raw_data={},
+            confidence=0.9
+        )
+        await store.index_signal_for_search(id1, vertical="health")
+
+        id2 = await store.save_signal(
+            company_name="TravelApp",
+            signal_type="launch",
+            source_api="g2crowd",
+            canonical_key="domain:travelapp.com",
+            raw_data={},
+            confidence=0.7
+        )
+        await store.index_signal_for_search(id2, vertical="travel")
+
+        results = await store.get_filtered_signals(verticals=["health"])
+
+        assert len(results) == 1
+        assert results[0]["company_name"] == "HealthCo"
+        await store.close()
+
+    @pytest.mark.asyncio
+    async def test_filter_by_confidence_range(self):
+        """Filter signals by confidence threshold."""
+        store = SignalStore(db_path=":memory:")
+        await store.initialize()
+
+        id1 = await store.save_signal(company_name="HighConf", signal_type="funding", source_api="test", canonical_key="domain:highconf.com", raw_data={}, confidence=0.9)
+        await store.index_signal_for_search(id1, vertical="health")
+
+        id2 = await store.save_signal(company_name="LowConf", signal_type="funding", source_api="test", canonical_key="domain:lowconf.com", raw_data={}, confidence=0.3)
+        await store.index_signal_for_search(id2, vertical="health")
+
+        results = await store.get_filtered_signals(min_confidence=0.8)
+
+        assert len(results) == 1
+        assert results[0]["company_name"] == "HighConf"
+        await store.close()
+
+    @pytest.mark.asyncio
+    async def test_filter_by_sources(self):
+        """Filter signals by source."""
+        store = SignalStore(db_path=":memory:")
+        await store.initialize()
+
+        id1 = await store.save_signal(company_name="FromPH", signal_type="funding", source_api="producthunt", canonical_key="domain:fromph.com", raw_data={}, confidence=0.8)
+        await store.index_signal_for_search(id1, vertical="consumer")
+
+        id2 = await store.save_signal(company_name="FromG2", signal_type="funding", source_api="g2crowd", canonical_key="domain:fromg2.com", raw_data={}, confidence=0.8)
+        await store.index_signal_for_search(id2, vertical="saas")
+
+        results = await store.get_filtered_signals(sources=["producthunt"])
+
+        assert len(results) == 1
+        assert results[0]["company_name"] == "FromPH"
+        await store.close()
+
+    @pytest.mark.asyncio
+    async def test_filter_by_signal_type(self):
+        """Filter signals by signal type."""
+        store = SignalStore(db_path=":memory:")
+        await store.initialize()
+
+        id1 = await store.save_signal(company_name="FundedCo", signal_type="funding", source_api="test", canonical_key="domain:fundedco.com", raw_data={}, confidence=0.8)
+        await store.index_signal_for_search(id1, vertical="health")
+
+        id2 = await store.save_signal(company_name="LaunchedCo", signal_type="launch", source_api="test", canonical_key="domain:launchedco.com", raw_data={}, confidence=0.8)
+        await store.index_signal_for_search(id2, vertical="health")
+
+        results = await store.get_filtered_signals(signal_types=["funding"])
+
+        assert len(results) == 1
+        assert results[0]["company_name"] == "FundedCo"
+        await store.close()
+
+    @pytest.mark.asyncio
+    async def test_combined_filters(self):
+        """Multiple filters combined with AND."""
+        store = SignalStore(db_path=":memory:")
+        await store.initialize()
+
+        id1 = await store.save_signal(company_name="MatchAll", signal_type="funding", source_api="producthunt", canonical_key="domain:matchall.com", raw_data={}, confidence=0.9)
+        await store.index_signal_for_search(id1, vertical="health")
+
+        id2 = await store.save_signal(company_name="WrongVertical", signal_type="funding", source_api="producthunt", canonical_key="domain:wrongvertical.com", raw_data={}, confidence=0.9)
+        await store.index_signal_for_search(id2, vertical="travel")
+
+        id3 = await store.save_signal(company_name="LowConf", signal_type="funding", source_api="producthunt", canonical_key="domain:lowconf2.com", raw_data={}, confidence=0.5)
+        await store.index_signal_for_search(id3, vertical="health")
+
+        results = await store.get_filtered_signals(verticals=["health"], min_confidence=0.8)
+
+        assert len(results) == 1
+        assert results[0]["company_name"] == "MatchAll"
+        await store.close()
+
+    @pytest.mark.asyncio
+    async def test_empty_filters_returns_all(self):
+        """No filters returns all signals."""
+        store = SignalStore(db_path=":memory:")
+        await store.initialize()
+
+        id1 = await store.save_signal(company_name="One", signal_type="funding", source_api="test", canonical_key="domain:one.com", raw_data={}, confidence=0.8)
+        await store.index_signal_for_search(id1, vertical="health")
+
+        id2 = await store.save_signal(company_name="Two", signal_type="launch", source_api="test2", canonical_key="domain:two.com", raw_data={}, confidence=0.5)
+        await store.index_signal_for_search(id2, vertical="travel")
+
+        results = await store.get_filtered_signals()
+
+        assert len(results) == 2
+        await store.close()
