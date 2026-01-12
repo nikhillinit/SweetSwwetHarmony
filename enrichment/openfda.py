@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import date, datetime
 from typing import List, Optional
 
 import httpx
@@ -282,7 +282,7 @@ class OpenFDAClient:
 
         return class_mapping.get(device_class, device_class)
 
-    def _parse_date(self, date_str: Optional[str]) -> Optional:
+    def _parse_date(self, date_str: Optional[str]) -> Optional[date]:
         """
         Parse a date string from the API response.
 
