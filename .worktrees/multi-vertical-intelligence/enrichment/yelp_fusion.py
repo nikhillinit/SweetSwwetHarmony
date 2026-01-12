@@ -88,3 +88,24 @@ class YelpFusionClient:
         # Stub implementation
         logger.debug(f"Yelp get business '{yelp_id}' (stub)")
         return None
+
+    async def search_by_name(
+        self,
+        name: str,
+        location: Optional[str] = None,
+        max_results: int = 5
+    ) -> List[YelpBusiness]:
+        """
+        Search for businesses by name.
+
+        Args:
+            name: Business name to search for
+            location: Optional location to narrow search
+            max_results: Maximum number of results to return
+
+        Returns:
+            List of YelpBusiness objects
+        """
+        # Stub implementation - would search Yelp API and return multiple matches
+        logger.debug(f"Yelp search_by_name for '{name}' in '{location}' (stub)")
+        return []
