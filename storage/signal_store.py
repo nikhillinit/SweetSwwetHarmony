@@ -378,6 +378,59 @@ class SignalStore:
         await self._db.commit()
 
     # =========================================================================
+    # FTS INDEXING
+    # =========================================================================
+
+    def _build_searchable_text(self, raw_data: dict) -> str:
+        """Extract searchable text from raw_data JSON."""
+        searchable_parts = []
+
+        # Common fields to extract
+        for field in ['description', 'summary', 'tagline', 'tags', 'keywords', 'category']:
+            if field in raw_data:
+                value = raw_data[field]
+                if isinstance(value, list):
+                    searchable_parts.extend(str(v) for v in value)
+                else:
+                    searchable_parts.append(str(value))
+
+        return " ".join(searchable_parts)
+
+    async def index_signal_for_search(self, signal_id: int, vertical: str = "unknown") -> None:
+        """
+        Add or update a signal in the FTS index.
+
+        Args:
+            signal_id: The integer ID of the signal to index
+            vertical: The vertical category for the signal (e.g., "health", "fintech")
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        # Fetch signal data
+        cursor = await self._db.execute(
+            "SELECT company_name, raw_data, source_api FROM signals WHERE id = ?",
+            (signal_id,)
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return
+
+        company_name, raw_data_json, source_api = row
+        raw_data = json.loads(raw_data_json) if raw_data_json else {}
+        searchable_text = self._build_searchable_text(raw_data)
+
+        # Upsert into FTS (delete then insert)
+        # FTS5 doesn't support UPDATE, so we delete and re-insert
+        signal_id_str = str(signal_id)
+        await self._db.execute("DELETE FROM signals_fts WHERE signal_id = ?", (signal_id_str,))
+        await self._db.execute(
+            "INSERT INTO signals_fts (signal_id, company_name, searchable_text, vertical, source_api) VALUES (?, ?, ?, ?, ?)",
+            (signal_id_str, company_name, searchable_text, vertical, source_api)
+        )
+        await self._db.commit()
+
+    # =========================================================================
     # SIGNAL OPERATIONS
     # =========================================================================
 

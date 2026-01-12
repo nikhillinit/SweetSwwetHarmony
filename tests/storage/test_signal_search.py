@@ -22,3 +22,125 @@ class TestFTSSetup:
         assert row is not None
         assert row[0] == "signals_fts"
         await store.close()
+
+
+class TestFTSIndexing:
+    """Test FTS5 indexing operations."""
+
+    @pytest.mark.asyncio
+    async def test_index_signal_adds_to_fts(self):
+        """Indexing a signal should add it to FTS table."""
+        store = SignalStore(db_path=":memory:")
+        await store.initialize()
+
+        # Create a test signal first using save_signal (which returns int ID)
+        signal_id = await store.save_signal(
+            signal_type="funding",
+            source_api="producthunt",
+            canonical_key="domain:telehealthplus.com",
+            company_name="Telehealth Plus",
+            confidence=0.85,
+            raw_data={"description": "Virtual care platform for remote patients"},
+        )
+
+        # Index it (pass vertical since signals table doesn't have it)
+        await store.index_signal_for_search(signal_id, vertical="health")
+
+        # Verify in FTS
+        cursor = await store._db.execute(
+            "SELECT company_name FROM signals_fts WHERE signal_id = ?",
+            (str(signal_id),)
+        )
+        row = await cursor.fetchone()
+
+        assert row is not None
+        assert row[0] == "Telehealth Plus"
+        await store.close()
+
+    @pytest.mark.asyncio
+    async def test_index_signal_extracts_searchable_text(self):
+        """Indexing should extract searchable text from raw_data fields."""
+        store = SignalStore(db_path=":memory:")
+        await store.initialize()
+
+        signal_id = await store.save_signal(
+            signal_type="product_launch",
+            source_api="producthunt",
+            canonical_key="domain:aitools.io",
+            company_name="AI Tools Co",
+            confidence=0.90,
+            raw_data={
+                "description": "Revolutionary AI-powered analytics",
+                "tagline": "Smarter insights faster",
+                "tags": ["analytics", "machine-learning"],
+                "category": "Developer Tools",
+            },
+        )
+
+        await store.index_signal_for_search(signal_id, vertical="tech")
+
+        # Verify searchable_text contains extracted fields
+        cursor = await store._db.execute(
+            "SELECT searchable_text FROM signals_fts WHERE signal_id = ?",
+            (str(signal_id),)
+        )
+        row = await cursor.fetchone()
+
+        assert row is not None
+        searchable_text = row[0]
+        assert "Revolutionary AI-powered analytics" in searchable_text
+        assert "Smarter insights faster" in searchable_text
+        assert "analytics" in searchable_text
+        assert "machine-learning" in searchable_text
+        assert "Developer Tools" in searchable_text
+        await store.close()
+
+    @pytest.mark.asyncio
+    async def test_index_signal_upserts_on_reindex(self):
+        """Re-indexing a signal should update the FTS entry, not duplicate."""
+        store = SignalStore(db_path=":memory:")
+        await store.initialize()
+
+        signal_id = await store.save_signal(
+            signal_type="funding",
+            source_api="crunchbase",
+            canonical_key="domain:example.com",
+            company_name="Example Corp",
+            confidence=0.75,
+            raw_data={"description": "Original description"},
+        )
+
+        # Index once
+        await store.index_signal_for_search(signal_id, vertical="fintech")
+
+        # Index again (should update, not create duplicate)
+        await store.index_signal_for_search(signal_id, vertical="fintech")
+
+        # Should have exactly one entry
+        cursor = await store._db.execute(
+            "SELECT COUNT(*) FROM signals_fts WHERE signal_id = ?",
+            (str(signal_id),)
+        )
+        row = await cursor.fetchone()
+
+        assert row[0] == 1
+        await store.close()
+
+    @pytest.mark.asyncio
+    async def test_index_nonexistent_signal_does_nothing(self):
+        """Indexing a non-existent signal should silently do nothing."""
+        store = SignalStore(db_path=":memory:")
+        await store.initialize()
+
+        # Try to index a signal that doesn't exist
+        await store.index_signal_for_search(99999, vertical="unknown")
+
+        # Should not have added anything
+        cursor = await store._db.execute(
+            "SELECT COUNT(*) FROM signals_fts WHERE signal_id = ?",
+            ("99999",)
+        )
+        row = await cursor.fetchone()
+
+        assert row[0] == 0
+        await store.close()
