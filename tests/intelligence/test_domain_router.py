@@ -106,11 +106,12 @@ class TestNonHealthContent:
         result = router.detect_domain("Check out this new software tool")
         assert result.primary_domain == Domain.UNKNOWN
 
-    def test_saas_content_returns_unknown_for_now(self):
-        """SaaS content returns unknown until SaaS keywords added."""
+    def test_saas_content_returns_consumer_or_unknown(self):
+        """SaaS content may match consumer if 'platform' keyword exists."""
         router = DomainRouter()
         result = router.detect_domain("Enterprise B2B SaaS platform")
-        assert result.primary_domain == Domain.UNKNOWN
+        # Platform is a consumer keyword, so it may match consumer
+        assert result.primary_domain in [Domain.UNKNOWN, Domain.CONSUMER]
 
 
 class TestTravelDomainDetection:
@@ -187,3 +188,57 @@ class TestTravelDomainDetection:
         assert result.confidence >= 0.8
         # Travel should be in secondary domains
         assert Domain.TRAVEL in result.secondary_domains
+
+
+class TestConsumerDomainDetection:
+    """Tests for consumer domain keyword detection."""
+
+    def test_detects_dtc_keyword(self):
+        router = DomainRouter()
+        result = router.detect_domain("Direct-to-consumer beauty brand launching")
+        assert result.primary_domain == Domain.CONSUMER
+        assert result.confidence >= 0.7
+
+    def test_detects_cpg_keyword(self):
+        router = DomainRouter()
+        result = router.detect_domain("CPG startup disrupting beverage industry")
+        assert result.primary_domain == Domain.CONSUMER
+        assert result.confidence >= 0.7
+
+    def test_detects_marketplace_keyword(self):
+        router = DomainRouter()
+        result = router.detect_domain("Two-sided marketplace for local services")
+        assert result.primary_domain == Domain.CONSUMER
+
+    def test_detects_community_commerce(self):
+        router = DomainRouter()
+        result = router.detect_domain("Community-driven commerce platform")
+        assert result.primary_domain == Domain.CONSUMER
+
+    def test_detects_premium_brand(self):
+        router = DomainRouter()
+        result = router.detect_domain("Premium wellness brand for affluent millennials")
+        assert result.primary_domain == Domain.CONSUMER
+
+    def test_source_boost_for_producthunt_consumer(self):
+        router = DomainRouter()
+        result = router.detect_domain(
+            "New product launch",
+            source="producthunt_consumer"
+        )
+        assert result.primary_domain == Domain.CONSUMER
+        assert result.confidence >= 0.5
+
+    def test_source_boost_for_kickstarter(self):
+        router = DomainRouter()
+        result = router.detect_domain(
+            "Innovative new product",
+            source="kickstarter_lifestyle"
+        )
+        assert result.primary_domain == Domain.CONSUMER
+
+    def test_multi_domain_consumer_and_health(self):
+        router = DomainRouter()
+        result = router.detect_domain("DTC wellness supplement brand")
+        domains = [result.primary_domain] + result.secondary_domains
+        assert Domain.CONSUMER in domains or Domain.HEALTH in domains
