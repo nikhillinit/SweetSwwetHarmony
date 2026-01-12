@@ -39,7 +39,12 @@ from typing import List, Optional, Tuple
 from enrichment.clinical_trials import ClinicalTrialsClient
 from enrichment.openfda import OpenFDAClient
 from enrichment.pubmed import PubMedClient
-from storage.health_enrichment import HealthEnrichmentStore
+from storage.health_enrichment import (
+    ClinicalTrial,
+    FDAClearance,
+    HealthEnrichmentStore,
+    Publication,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -115,6 +120,8 @@ class HealthEnrichmentOrchestrator:
             entity_id: Unique identifier for the entity.
             company_name: Company name to search for.
             medical_concepts: Optional list of medical concepts for filtering.
+                TODO: Currently unused. Reserved for future filtering functionality
+                to narrow search results based on specific medical domains/concepts.
 
         Returns:
             EnrichmentResult with counts and success status.
@@ -206,7 +213,7 @@ class HealthEnrichmentOrchestrator:
         logger.info(f"Batch enrichment complete: {len(results)} entities processed")
         return results
 
-    async def _search_trials(self, company_name: str) -> list:
+    async def _search_trials(self, company_name: str) -> List[ClinicalTrial]:
         """
         Search ClinicalTrials.gov for clinical trials.
 
@@ -218,7 +225,7 @@ class HealthEnrichmentOrchestrator:
         """
         return await self.trials_client.search_by_sponsor(company_name, max_results=50)
 
-    async def _search_fda(self, company_name: str) -> list:
+    async def _search_fda(self, company_name: str) -> List[FDAClearance]:
         """
         Search OpenFDA for 510(k) clearances.
 
@@ -230,7 +237,7 @@ class HealthEnrichmentOrchestrator:
         """
         return await self.fda_client.search_510k_by_applicant(company_name, max_results=50)
 
-    async def _search_pubmed(self, company_name: str) -> list:
+    async def _search_pubmed(self, company_name: str) -> List[Publication]:
         """
         Search PubMed for publications.
 
@@ -242,7 +249,9 @@ class HealthEnrichmentOrchestrator:
         """
         return await self.pubmed_client.search_by_affiliation(company_name, max_results=50)
 
-    async def _store_trials(self, entity_id: str, trials: list) -> None:
+    async def _store_trials(
+        self, entity_id: str, trials: List[ClinicalTrial]
+    ) -> None:
         """
         Store clinical trials in the database.
 
@@ -254,7 +263,9 @@ class HealthEnrichmentOrchestrator:
             trial.entity_id = entity_id
             await self.store.save_clinical_trial(trial)
 
-    async def _store_clearances(self, entity_id: str, clearances: list) -> None:
+    async def _store_clearances(
+        self, entity_id: str, clearances: List[FDAClearance]
+    ) -> None:
         """
         Store FDA clearances in the database.
 
@@ -266,7 +277,9 @@ class HealthEnrichmentOrchestrator:
             clearance.entity_id = entity_id
             await self.store.save_fda_clearance(clearance)
 
-    async def _store_publications(self, entity_id: str, publications: list) -> None:
+    async def _store_publications(
+        self, entity_id: str, publications: List[Publication]
+    ) -> None:
         """
         Store publications in the database.
 
