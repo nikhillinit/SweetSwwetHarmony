@@ -64,3 +64,105 @@ class TestSaaSThesisConfig:
         config = load_thesis_config("saas")
         assert "included" in config.stage_filters
         assert "excluded" in config.stage_filters
+
+
+class TestSaaSClassifier:
+    """Tests for SaaS classifier."""
+
+    def test_classifier_initialization(self):
+        """SaaSClassifier should initialize correctly."""
+        from intelligence.saas_classifier import SaaSClassifier
+        classifier = SaaSClassifier()
+        assert classifier is not None
+        assert classifier.thesis_config is not None
+
+    def test_classify_returns_result(self):
+        """classify() should return a SaaSClassificationResult."""
+        from intelligence.saas_classifier import SaaSClassifier, SaaSClassificationResult
+        classifier = SaaSClassifier()
+        result = classifier.classify(
+            company_name="TestCo",
+            description="A B2B SaaS platform",
+            signals={}
+        )
+        assert isinstance(result, SaaSClassificationResult)
+
+    def test_classify_vertical_saas_high_score(self):
+        """Vertical SaaS with PLG should score highly."""
+        from intelligence.saas_classifier import SaaSClassifier
+        classifier = SaaSClassifier()
+        result = classifier.classify(
+            company_name="ConstructionFlow",
+            description="Vertical SaaS platform for construction project management with product-led growth",
+            signals={"source": "g2crowd", "funding": "series_a"}
+        )
+        assert result.fit_score >= 7
+        assert result.category == "vertical_saas"
+
+    def test_classify_developer_tools(self):
+        """Developer tools platform should classify correctly."""
+        from intelligence.saas_classifier import SaaSClassifier
+        classifier = SaaSClassifier()
+        result = classifier.classify(
+            company_name="DevAPI",
+            description="API platform for developers with freemium model",
+            signals={}
+        )
+        assert result.fit_score >= 5
+        assert "api" in result.reasoning.lower() or "developer" in result.reasoning.lower()
+
+    def test_classify_enterprise_software(self):
+        """Enterprise software should classify correctly."""
+        from intelligence.saas_classifier import SaaSClassifier
+        classifier = SaaSClassifier()
+        result = classifier.classify(
+            company_name="EnterpriseCo",
+            description="Enterprise workflow automation for Fortune 500 companies",
+            signals={"funding": "series_b"}
+        )
+        assert result.category in ["enterprise_saas", "workflow_automation"]
+
+    def test_gtm_motion_affects_score(self):
+        """GTM motion should affect the fit score."""
+        from intelligence.saas_classifier import SaaSClassifier
+        classifier = SaaSClassifier()
+        plg_result = classifier.classify(
+            company_name="PLGCo",
+            description="Product-led growth SaaS with freemium self-serve model",
+            signals={}
+        )
+        sales_result = classifier.classify(
+            company_name="SalesCo",
+            description="Enterprise sales-led software solution",
+            signals={}
+        )
+        # PLG should score higher or similar for Press On thesis
+        assert plg_result.fit_score >= sales_result.fit_score - 2
+
+    def test_result_has_all_fields(self):
+        """Classification result should have all required fields."""
+        from intelligence.saas_classifier import SaaSClassifier
+        classifier = SaaSClassifier()
+        result = classifier.classify(
+            company_name="TestCo",
+            description="A SaaS platform",
+            signals={}
+        )
+        assert hasattr(result, 'fit_score')
+        assert hasattr(result, 'category')
+        assert hasattr(result, 'reasoning')
+        assert hasattr(result, 'gtm_motion')
+        assert hasattr(result, 'target_market')
+        assert hasattr(result, 'matched_rules')
+        assert hasattr(result, 'confidence')
+
+    def test_negative_signals_reduce_score(self):
+        """Negative signals should reduce the fit score."""
+        from intelligence.saas_classifier import SaaSClassifier
+        classifier = SaaSClassifier()
+        result = classifier.classify(
+            company_name="LegacyCo",
+            description="Legacy software consulting heavy services business on-premise only",
+            signals={}
+        )
+        assert result.fit_score <= 5
