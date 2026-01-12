@@ -402,6 +402,91 @@ class SignalStore:
         await self._db.commit()
 
     # =========================================================================
+    # FILTER PRESET CRUD OPERATIONS
+    # =========================================================================
+
+    async def save_filter_preset(self, name: str, filters: Dict[str, Any]) -> str:
+        """Save a new filter preset."""
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        # Check for duplicate
+        cursor = await self._db.execute(
+            "SELECT preset_id FROM filter_presets WHERE name = ?", (name,)
+        )
+        if await cursor.fetchone():
+            raise ValueError(f"Preset '{name}' already exists")
+
+        preset_id = str(uuid.uuid4())
+        now = datetime.now(timezone.utc)
+
+        await self._db.execute("""
+            INSERT INTO filter_presets (preset_id, name, filters, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?)
+        """, (preset_id, name, json.dumps(filters), now, now))
+        await self._db.commit()
+
+        return preset_id
+
+    async def load_filter_preset(self, name: str) -> Optional[Dict[str, Any]]:
+        """Load a filter preset by name, updating last_used."""
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        cursor = await self._db.execute(
+            "SELECT * FROM filter_presets WHERE name = ?", (name,)
+        )
+        row = await cursor.fetchone()
+
+        if not row:
+            return None
+
+        # Update last_used
+        now = datetime.now(timezone.utc)
+        await self._db.execute(
+            "UPDATE filter_presets SET last_used = ? WHERE name = ?",
+            (now, name)
+        )
+        await self._db.commit()
+
+        # Parse result
+        columns = ['preset_id', 'name', 'filters', 'schema_version', 'created_at', 'updated_at', 'last_used']
+        result = dict(zip(columns, row))
+        result["filters"] = json.loads(result["filters"])
+        return result
+
+    async def list_filter_presets(self) -> List[Dict[str, Any]]:
+        """List all filter presets."""
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        cursor = await self._db.execute(
+            "SELECT preset_id, name, created_at, last_used FROM filter_presets ORDER BY name"
+        )
+        rows = await cursor.fetchall()
+        columns = ['preset_id', 'name', 'created_at', 'last_used']
+        return [dict(zip(columns, row)) for row in rows]
+
+    async def delete_filter_preset(self, name: str) -> None:
+        """Delete a filter preset by name."""
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        await self._db.execute("DELETE FROM filter_presets WHERE name = ?", (name,))
+        await self._db.commit()
+
+    async def update_filter_preset(self, name: str, filters: Dict[str, Any]) -> None:
+        """Update filters for an existing preset."""
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        now = datetime.now(timezone.utc)
+        await self._db.execute("""
+            UPDATE filter_presets SET filters = ?, updated_at = ? WHERE name = ?
+        """, (json.dumps(filters), now, name))
+        await self._db.commit()
+
+    # =========================================================================
     # FTS INDEXING
     # =========================================================================
 
