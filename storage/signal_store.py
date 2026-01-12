@@ -283,6 +283,9 @@ class SignalStore:
         # Create FTS5 virtual table for search
         await self._create_fts_table()
 
+        # Create filter presets table
+        await self._create_filter_presets_table()
+
         logger.info(f"SignalStore initialized: {self.db_path}")
 
     async def close(self) -> None:
@@ -375,6 +378,27 @@ class SignalStore:
                 tokenize='porter unicode61'
             )
         """)
+        await self._db.commit()
+
+    async def _create_filter_presets_table(self) -> None:
+        """Create filter presets table for saved searches."""
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        await self._db.execute("""
+            CREATE TABLE IF NOT EXISTS filter_presets (
+                preset_id TEXT PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                filters TEXT NOT NULL,
+                schema_version INTEGER DEFAULT 1,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP,
+                last_used TIMESTAMP
+            )
+        """)
+        await self._db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_presets_name ON filter_presets(name)"
+        )
         await self._db.commit()
 
     # =========================================================================
