@@ -12,6 +12,7 @@ from intelligence.medical_entity_resolver import (
     MedicalEntityResolver,
     ResolvedHealthEntity,
 )
+from intelligence.thesis_config import ThesisConfig, load_thesis_config
 
 __all__ = [
     "Domain",
@@ -25,4 +26,6 @@ __all__ = [
     "MedicalEntity",
     "MedicalEntityResolver",
     "ResolvedHealthEntity",
+    "ThesisConfig",
+    "load_thesis_config",
 ]
