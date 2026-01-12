@@ -604,6 +604,88 @@ class SignalStore:
             logger.warning(f"FTS search failed for query '{query[:50]}': {e}")
             return []
 
+    async def get_filtered_signals(
+        self,
+        verticals: Optional[List[str]] = None,
+        sources: Optional[List[str]] = None,
+        signal_types: Optional[List[str]] = None,
+        min_confidence: Optional[float] = None,
+        max_confidence: Optional[float] = None,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None,
+        limit: int = 100,
+        offset: int = 0
+    ) -> List[Dict[str, Any]]:
+        """
+        Get signals matching filter criteria.
+
+        All filters are ANDed together. Empty/None filters are ignored.
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        conditions = []
+        params = []
+
+        # Filter by vertical (from FTS table)
+        if verticals:
+            placeholders = ",".join("?" * len(verticals))
+            conditions.append(f"f.vertical IN ({placeholders})")
+            params.extend(verticals)
+
+        # Filter by source
+        if sources:
+            placeholders = ",".join("?" * len(sources))
+            conditions.append(f"s.source_api IN ({placeholders})")
+            params.extend(sources)
+
+        # Filter by signal type
+        if signal_types:
+            placeholders = ",".join("?" * len(signal_types))
+            conditions.append(f"s.signal_type IN ({placeholders})")
+            params.extend(signal_types)
+
+        # Filter by confidence
+        if min_confidence is not None:
+            conditions.append("s.confidence >= ?")
+            params.append(min_confidence)
+
+        if max_confidence is not None:
+            conditions.append("s.confidence <= ?")
+            params.append(max_confidence)
+
+        # Filter by date range
+        if start_date:
+            conditions.append("s.created_at >= ?")
+            params.append(start_date)
+
+        if end_date:
+            conditions.append("s.created_at <= ?")
+            params.append(end_date)
+
+        where_clause = " AND ".join(conditions) if conditions else "1=1"
+        params.extend([limit, offset])
+
+        cursor = await self._db.execute(f"""
+            SELECT
+                s.id as signal_id,
+                s.company_name,
+                s.signal_type,
+                s.source_api,
+                s.confidence,
+                s.created_at,
+                f.vertical
+            FROM signals s
+            JOIN signals_fts f ON CAST(s.id AS TEXT) = f.signal_id
+            WHERE {where_clause}
+            ORDER BY s.created_at DESC
+            LIMIT ? OFFSET ?
+        """, params)
+
+        rows = await cursor.fetchall()
+        columns = ['signal_id', 'company_name', 'signal_type', 'source_api', 'confidence', 'created_at', 'vertical']
+        return [dict(zip(columns, row)) for row in rows]
+
     # =========================================================================
     # SIGNAL OPERATIONS
     # =========================================================================
