@@ -111,3 +111,79 @@ class TestNonHealthContent:
         router = DomainRouter()
         result = router.detect_domain("Enterprise B2B SaaS platform")
         assert result.primary_domain == Domain.UNKNOWN
+
+
+class TestTravelDomainDetection:
+    """Test travel domain keyword detection."""
+
+    def test_detects_hotel_keyword(self):
+        """Hotel keyword should trigger travel domain."""
+        router = DomainRouter()
+        result = router.detect_domain("New hotel management software launches")
+        assert result.primary_domain == Domain.TRAVEL
+        assert result.confidence >= 0.7
+        assert "hotel" in [k.lower() for k in result.matched_keywords]
+
+    def test_detects_hospitality_keyword(self):
+        """Hospitality keyword should trigger travel domain."""
+        router = DomainRouter()
+        result = router.detect_domain("Leading hospitality technology platform")
+        assert result.primary_domain == Domain.TRAVEL
+        assert result.confidence >= 0.8
+        assert "hospitality" in [k.lower() for k in result.matched_keywords]
+
+    def test_detects_booking_platform(self):
+        """Booking keyword should trigger travel domain."""
+        router = DomainRouter()
+        result = router.detect_domain("Online booking platform for tours")
+        assert result.primary_domain == Domain.TRAVEL
+        assert result.confidence >= 0.5
+        assert "booking" in [k.lower() for k in result.matched_keywords]
+
+    def test_detects_property_management(self):
+        """Property management keyword should trigger travel domain."""
+        router = DomainRouter()
+        result = router.detect_domain("Property management system for vacation rentals")
+        assert result.primary_domain == Domain.TRAVEL
+        assert result.confidence >= 0.7
+        assert "property management" in [k.lower() for k in result.matched_keywords]
+
+    def test_detects_experiential_travel(self):
+        """Experiential travel keyword should trigger travel domain."""
+        router = DomainRouter()
+        result = router.detect_domain("Experiential travel platform connecting tourists with locals")
+        assert result.primary_domain == Domain.TRAVEL
+        assert result.confidence >= 0.8
+        assert "experiential travel" in [k.lower() for k in result.matched_keywords]
+
+    def test_source_boost_for_plugandplay_travel(self):
+        """Plug and Play Travel source should boost travel domain confidence."""
+        router = DomainRouter()
+        # Generic content without travel keywords
+        result = router.detect_domain(
+            "New product launch announcement",
+            source="plugandplay_travel"
+        )
+        assert result.primary_domain == Domain.TRAVEL
+        assert result.confidence >= 0.5  # Source boost applies
+
+    def test_source_boost_for_phocuswright(self):
+        """Phocuswright source should boost travel domain confidence."""
+        router = DomainRouter()
+        result = router.detect_domain(
+            "Industry report released today",
+            source="phocuswright"
+        )
+        assert result.primary_domain == Domain.TRAVEL
+        assert result.confidence >= 0.5  # Source boost applies
+
+    def test_multi_domain_health_and_travel(self):
+        """Content with both health and travel keywords should return highest scoring domain."""
+        router = DomainRouter()
+        # Content with both domains - health keywords (telehealth=0.9) and travel (hotel=0.8)
+        result = router.detect_domain("Telehealth services for hotel guests with wellness needs")
+        # Health should win because telehealth (0.9) > hotel (0.8)
+        assert result.primary_domain == Domain.HEALTH
+        assert result.confidence >= 0.8
+        # Travel should be in secondary domains
+        assert Domain.TRAVEL in result.secondary_domains

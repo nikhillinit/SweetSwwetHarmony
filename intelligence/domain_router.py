@@ -67,6 +67,36 @@ HEALTH_KEYWORDS: Dict[str, float] = {
     "chronic care": 0.8,
 }
 
+TRAVEL_KEYWORDS: Dict[str, float] = {
+    # Core travel
+    "hotel": 0.8,
+    "hospitality": 0.9,
+    "travel tech": 0.9,
+    "traveltech": 0.9,
+    "booking": 0.7,
+    "reservation": 0.7,
+    # Accommodations
+    "property management": 0.8,
+    "vacation rental": 0.8,
+    "short-term rental": 0.8,
+    "airbnb": 0.6,
+    "vrbo": 0.6,
+    # Experiences
+    "tour operator": 0.8,
+    "experiential travel": 0.9,
+    "destination": 0.6,
+    "concierge": 0.7,
+    # B2B hotel tech
+    "pms": 0.7,
+    "guest experience": 0.8,
+    "hotel operations": 0.8,
+    "revenue management": 0.7,
+    # Industry signals
+    "phocuswright": 0.9,
+    "skift": 0.9,
+    "plug and play travel": 1.0,
+}
+
 
 @dataclass
 class DomainResult:
@@ -83,7 +113,8 @@ class DomainRouter:
     def __init__(self):
         """Initialize the domain router with keyword patterns."""
         self.health_keywords = HEALTH_KEYWORDS
-        # Future: self.travel_keywords, self.saas_keywords, etc.
+        self.travel_keywords = TRAVEL_KEYWORDS
+        # Future: self.saas_keywords, self.consumer_keywords, etc.
 
     def _match_keywords(
         self, content: str, keywords: Dict[str, float]
@@ -121,24 +152,52 @@ class DomainRouter:
         # Check health keywords
         health_score, health_matches = self._match_keywords(content, self.health_keywords)
 
-        # Source-based detection and boost
-        source_is_health = source and "health" in source.lower()
+        # Check travel keywords
+        travel_score, travel_matches = self._match_keywords(content, self.travel_keywords)
+
+        # Source-based detection and boost for health
+        source_lower = source.lower() if source else ""
+        source_is_health = "health" in source_lower
         if source_is_health:
             health_score = max(0.5, health_score)  # Minimum 0.5 for health sources
             health_score = min(1.0, health_score + 0.2)  # Boost existing score
 
-        # Determine primary domain
-        if health_score >= 0.5:
-            return DomainResult(
-                primary_domain=Domain.HEALTH,
-                confidence=health_score,
-                secondary_domains=[],
-                matched_keywords=health_matches
-            )
+        # Source-based detection and boost for travel
+        travel_sources = ["travel", "phocuswright", "skift", "plugandplay"]
+        source_is_travel = any(ts in source_lower for ts in travel_sources)
+        if source_is_travel:
+            travel_score = max(0.5, travel_score)  # Minimum 0.5 for travel sources
+            travel_score = min(1.0, travel_score + 0.2)  # Boost existing score
+
+        # Collect domain scores
+        domain_scores = [
+            (Domain.HEALTH, health_score, health_matches),
+            (Domain.TRAVEL, travel_score, travel_matches),
+        ]
+
+        # Sort by score descending
+        domain_scores.sort(key=lambda x: x[1], reverse=True)
+
+        # Get primary domain (highest score >= 0.5)
+        primary_domain = Domain.UNKNOWN
+        primary_confidence = 0.0
+        primary_matches: List[str] = []
+        secondary_domains: List[Domain] = []
+
+        for domain, score, matches in domain_scores:
+            if score >= 0.5:
+                if primary_domain == Domain.UNKNOWN:
+                    # First domain with score >= 0.5 is primary
+                    primary_domain = domain
+                    primary_confidence = score
+                    primary_matches = matches
+                else:
+                    # Additional domains with score >= 0.5 are secondary
+                    secondary_domains.append(domain)
 
         return DomainResult(
-            primary_domain=Domain.UNKNOWN,
-            confidence=0.0,
-            secondary_domains=[],
-            matched_keywords=[]
+            primary_domain=primary_domain,
+            confidence=primary_confidence,
+            secondary_domains=secondary_domains,
+            matched_keywords=primary_matches
         )
