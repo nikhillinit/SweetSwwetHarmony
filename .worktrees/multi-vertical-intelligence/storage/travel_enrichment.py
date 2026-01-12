@@ -166,7 +166,7 @@ class TravelEnrichmentStore:
     async def save_yelp_review(self, business: YelpBusiness) -> int:
         """Save a Yelp business record."""
         if not self._db:
-            raise RuntimeError("Database not initialized")
+            raise RuntimeError("Database not initialized. Call initialize() first.")
 
         categories_json = json.dumps(business.categories)
 
@@ -190,12 +190,13 @@ class TravelEnrichmentStore:
             ),
         )
         await self._db.commit()
+        logger.debug(f"Saved Yelp review {business.yelp_id} for entity {business.entity_id}")
         return cursor.lastrowid
 
     async def get_yelp_reviews_for_entity(self, entity_id: str) -> List[YelpReview]:
         """Get all Yelp reviews for an entity."""
         if not self._db:
-            raise RuntimeError("Database not initialized")
+            raise RuntimeError("Database not initialized. Call initialize() first.")
 
         cursor = await self._db.execute(
             """
@@ -229,7 +230,7 @@ class TravelEnrichmentStore:
     async def save_google_place(self, place: GooglePlace) -> int:
         """Save a Google Place record."""
         if not self._db:
-            raise RuntimeError("Database not initialized")
+            raise RuntimeError("Database not initialized. Call initialize() first.")
 
         types_json = json.dumps(place.types)
 
@@ -253,12 +254,13 @@ class TravelEnrichmentStore:
             ),
         )
         await self._db.commit()
+        logger.debug(f"Saved Google place {place.place_id} for entity {place.entity_id}")
         return cursor.lastrowid
 
     async def get_google_places_for_entity(self, entity_id: str) -> List[GooglePlaceRecord]:
         """Get all Google Places for an entity."""
         if not self._db:
-            raise RuntimeError("Database not initialized")
+            raise RuntimeError("Database not initialized. Call initialize() first.")
 
         cursor = await self._db.execute(
             """
@@ -292,7 +294,7 @@ class TravelEnrichmentStore:
     async def save_certification(self, cert: TravelCertification) -> int:
         """Save a certification record."""
         if not self._db:
-            raise RuntimeError("Database not initialized")
+            raise RuntimeError("Database not initialized. Call initialize() first.")
 
         cursor = await self._db.execute(
             """
@@ -310,12 +312,13 @@ class TravelEnrichmentStore:
             ),
         )
         await self._db.commit()
+        logger.debug(f"Saved certification {cert.source.value} for entity {cert.entity_id}")
         return cursor.lastrowid
 
     async def get_certifications_for_entity(self, entity_id: str) -> List[TravelCertificationRecord]:
         """Get all certifications for an entity."""
         if not self._db:
-            raise RuntimeError("Database not initialized")
+            raise RuntimeError("Database not initialized. Call initialize() first.")
 
         cursor = await self._db.execute(
             """

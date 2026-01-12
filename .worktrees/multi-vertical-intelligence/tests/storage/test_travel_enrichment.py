@@ -1,4 +1,6 @@
 # tests/storage/test_travel_enrichment.py
+from __future__ import annotations
+
 import pytest
 from datetime import datetime
 
