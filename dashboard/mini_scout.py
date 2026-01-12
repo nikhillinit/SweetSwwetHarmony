@@ -2,6 +2,7 @@
 Mini-Scout: Signal search and exploration interface.
 
 Dark theme design inspired by Press On Ventures.
+Designed for non-technical users with plain language and helpful guidance.
 """
 import asyncio
 import streamlit as st
@@ -10,6 +11,30 @@ from typing import Dict, Any, List
 import json
 
 from storage.signal_store import SignalStore
+
+# User-friendly names for technical data sources
+SOURCE_FRIENDLY_NAMES = {
+    "producthunt": "Product Hunt",
+    "g2crowd": "G2 Crowd Reviews",
+    "linkedin": "LinkedIn",
+    "sec_edgar": "SEC Filings",
+    "crunchbase": "Crunchbase",
+    "github": "GitHub",
+    "companies_house": "UK Company Registry",
+    "hacker_news": "Hacker News",
+    "arxiv": "Research Papers",
+    "uspto": "Patent Filings",
+    "domain_whois": "Domain Registrations",
+}
+
+# User-friendly vertical names
+VERTICAL_FRIENDLY_NAMES = {
+    "health": "Consumer Health & Wellness",
+    "travel": "Travel & Hospitality",
+    "saas": "Software & Apps",
+    "consumer": "Consumer Products",
+    "unknown": "Other / Uncategorized",
+}
 
 
 def run_async(coro):
@@ -317,13 +342,13 @@ def init_session_state():
 
 
 def render_header():
-    """Render the main header."""
-    st.markdown('<h1 class="main-title">Signal Scout</h1>', unsafe_allow_html=True)
-    st.markdown('<p class="subtitle">Discover and explore investment signals</p>', unsafe_allow_html=True)
+    """Render the main header with user-friendly text."""
+    st.markdown('<h1 class="main-title">Company Search</h1>', unsafe_allow_html=True)
+    st.markdown('<p class="subtitle">Search and explore all discovered companies</p>', unsafe_allow_html=True)
 
 
 def render_stats_bar(store: SignalStore):
-    """Render summary statistics."""
+    """Render summary statistics with user-friendly labels."""
     stats = run_async(store.get_fts_index_stats())
     all_signals = run_async(store.get_filtered_signals(limit=1000))
 
@@ -333,13 +358,14 @@ def render_stats_bar(store: SignalStore):
         vertical_counts[v] = vertical_counts.get(v, 0) + 1
 
     cols = st.columns(6)
+    # User-friendly metric labels
     metrics = [
-        ("Total", stats['total_signals']),
-        ("Health", vertical_counts.get("health", 0)),
+        ("All Companies", stats['total_signals']),
+        ("Health & Wellness", vertical_counts.get("health", 0)),
         ("Travel", vertical_counts.get("travel", 0)),
-        ("SaaS", vertical_counts.get("saas", 0)),
+        ("Software", vertical_counts.get("saas", 0)),
         ("Consumer", vertical_counts.get("consumer", 0)),
-        ("Unknown", vertical_counts.get("unknown", 0)),
+        ("Other", vertical_counts.get("unknown", 0)),
     ]
 
     for col, (label, value) in zip(cols, metrics):
@@ -355,15 +381,16 @@ def render_stats_bar(store: SignalStore):
 
 
 def render_search_bar() -> bool:
-    """Render clean search input."""
+    """Render clean search input with helpful placeholder."""
     col1, col2 = st.columns([6, 1])
 
     with col1:
         query = st.text_input(
             "Search",
             value=st.session_state.mini_scout_filters["search_query"],
-            placeholder="Search companies, keywords...",
-            label_visibility="collapsed"
+            placeholder="Search by company name, keyword, or industry (e.g., 'wellness', 'travel tech')",
+            label_visibility="collapsed",
+            help="Enter any text to search across all company names and descriptions"
         )
         st.session_state.mini_scout_filters["search_query"] = query
 
@@ -374,16 +401,17 @@ def render_search_bar() -> bool:
 
 
 def render_filter_sidebar(store: SignalStore):
-    """Render filter sidebar."""
-    st.sidebar.markdown("### Filters")
+    """Render filter sidebar with user-friendly labels."""
+    st.sidebar.markdown("### Refine Your Search")
 
-    # Presets
-    st.sidebar.markdown('<p class="filter-header">SAVED PRESETS</p>', unsafe_allow_html=True)
+    # Presets section with better explanation
+    st.sidebar.markdown('<p class="filter-header">QUICK PRESETS</p>', unsafe_allow_html=True)
+    st.sidebar.caption("Load a saved filter combination")
     presets = run_async(store.list_filter_presets())
-    preset_names = ["None"] + [p["name"] for p in presets]
+    preset_names = ["Choose a preset..."] + [p["name"] for p in presets]
     selected_preset = st.sidebar.selectbox("Preset", preset_names, label_visibility="collapsed")
 
-    if selected_preset != "None":
+    if selected_preset != "Choose a preset...":
         preset = run_async(store.load_filter_preset(selected_preset))
         if preset:
             st.session_state.mini_scout_filters.update(preset["filters"])
@@ -391,43 +419,60 @@ def render_filter_sidebar(store: SignalStore):
 
     st.sidebar.markdown("---")
 
-    # Vertical filter
-    st.sidebar.markdown('<p class="filter-header">VERTICAL</p>', unsafe_allow_html=True)
+    # Industry/Vertical filter with friendly names
+    st.sidebar.markdown('<p class="filter-header">INDUSTRY</p>', unsafe_allow_html=True)
+    st.sidebar.caption("Filter by company focus area")
+    vertical_options = ["health", "travel", "saas", "consumer"]
+    vertical_labels = {v: VERTICAL_FRIENDLY_NAMES.get(v, v.title()) for v in vertical_options}
     verticals = st.sidebar.multiselect(
-        "Vertical",
-        options=["health", "travel", "saas", "consumer"],
+        "Industry",
+        options=vertical_options,
         default=st.session_state.mini_scout_filters.get("verticals", []),
+        format_func=lambda x: vertical_labels.get(x, x.title()),
         label_visibility="collapsed"
     )
     st.session_state.mini_scout_filters["verticals"] = verticals
 
-    # Confidence filter
-    st.sidebar.markdown('<p class="filter-header">MIN CONFIDENCE</p>', unsafe_allow_html=True)
+    # Match score filter with user-friendly label
+    st.sidebar.markdown('<p class="filter-header">MINIMUM MATCH SCORE</p>', unsafe_allow_html=True)
+    st.sidebar.caption("How well companies fit our criteria")
     min_conf = st.sidebar.slider(
-        "Confidence",
+        "Match Score",
         min_value=0.0,
         max_value=1.0,
         value=float(st.session_state.mini_scout_filters.get("min_confidence", 0.0)),
         step=0.1,
         format="%.0f%%",
-        label_visibility="collapsed"
+        label_visibility="collapsed",
+        help="Higher = better fit for our investment thesis"
     )
     st.session_state.mini_scout_filters["min_confidence"] = min_conf
 
-    # Source filter
-    st.sidebar.markdown('<p class="filter-header">SOURCE</p>', unsafe_allow_html=True)
+    # Visual guide for match scores
+    st.sidebar.markdown("""
+    <div style="font-size: 0.65rem; color: #7a7267; margin-top: -8px; margin-bottom: 16px;">
+        <span style="color: #10B981;">●</span> 70%+ Strong &nbsp;
+        <span style="color: #F59E0B;">●</span> 40%+ Worth reviewing
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Source filter with friendly names
+    st.sidebar.markdown('<p class="filter-header">DISCOVERED VIA</p>', unsafe_allow_html=True)
+    st.sidebar.caption("Where we found these companies")
     all_sources = ["producthunt", "g2crowd", "linkedin", "sec_edgar", "crunchbase"]
     sources = st.sidebar.multiselect(
         "Source",
         options=all_sources,
         default=st.session_state.mini_scout_filters.get("sources", []),
+        format_func=lambda x: SOURCE_FRIENDLY_NAMES.get(x, x.title()),
         label_visibility="collapsed"
     )
     st.session_state.mini_scout_filters["sources"] = sources
 
-    # Date range
-    st.sidebar.markdown('<p class="filter-header">DATE RANGE</p>', unsafe_allow_html=True)
-    date_options = {"all": "All time", "7d": "Last 7 days", "30d": "Last 30 days", "90d": "Last 90 days"}
+    # Date range with clearer options
+    st.sidebar.markdown('<p class="filter-header">TIME PERIOD</p>', unsafe_allow_html=True)
+    st.sidebar.caption("When these companies were discovered")
+    date_options = {"all": "All time", "7d": "Past week", "30d": "Past month", "90d": "Past 3 months"}
     current_date_range = st.session_state.mini_scout_filters.get("date_range", "all")
     date_range = st.sidebar.radio(
         "Date",
@@ -442,7 +487,7 @@ def render_filter_sidebar(store: SignalStore):
 
     col1, col2 = st.sidebar.columns(2)
     with col1:
-        if st.button("Clear", use_container_width=True):
+        if st.button("Clear All", use_container_width=True, help="Reset all filters"):
             st.session_state.mini_scout_filters = {
                 "search_query": "",
                 "verticals": [],
@@ -454,24 +499,28 @@ def render_filter_sidebar(store: SignalStore):
             st.rerun()
 
     with col2:
-        with st.popover("Save"):
-            preset_name = st.text_input("Name", key="save_preset_name")
+        with st.popover("💾 Save"):
+            st.markdown("**Save Current Filters**")
+            st.caption("Give this filter combination a name to quickly use it again later.")
+            preset_name = st.text_input("Preset name", key="save_preset_name", placeholder="e.g., High-value health")
             if st.button("Save Preset") and preset_name:
                 try:
                     run_async(store.save_filter_preset(preset_name, st.session_state.mini_scout_filters))
-                    st.success("Saved!")
+                    st.success("Saved! You can now load this preset from the dropdown above.")
                 except ValueError as e:
                     st.error(str(e))
 
-    # Index status
+    # Index status (simplified for non-technical users)
     st.sidebar.markdown("---")
     stats = run_async(store.get_fts_index_stats())
-    st.sidebar.caption(f"Index: {stats['indexed_signals']}/{stats['total_signals']}")
     if stats['unindexed'] > 0:
-        if st.sidebar.button("Rebuild Index", key="rebuild"):
-            with st.spinner("Rebuilding..."):
+        st.sidebar.warning(f"⚠️ {stats['unindexed']} companies need indexing")
+        if st.sidebar.button("Update Search Index", key="rebuild", help="Make all companies searchable"):
+            with st.spinner("Updating search index..."):
                 run_async(store.rebuild_fts_index())
                 st.rerun()
+    else:
+        st.sidebar.caption(f"✓ {stats['total_signals']} companies searchable")
 
 
 def execute_search(store: SignalStore) -> List[Dict[str, Any]]:
@@ -503,7 +552,7 @@ def execute_search(store: SignalStore) -> List[Dict[str, Any]]:
 
 
 def render_signal_card(signal: Dict[str, Any]):
-    """Render a signal card."""
+    """Render a signal card with user-friendly labels."""
     company = signal.get('company_name', 'Unknown')
     source = signal.get('source_api', '')
     sig_type = signal.get('signal_type', '')
@@ -524,48 +573,82 @@ def render_signal_card(signal: Dict[str, Any]):
         except:
             pass
 
-    # Badge classes
+    # User-friendly source and vertical names
+    friendly_source = SOURCE_FRIENDLY_NAMES.get(source, source.title() if source else "Unknown")
+    friendly_vert = VERTICAL_FRIENDLY_NAMES.get(vert, vert.title()).split(" ")[0]  # Just first word for badge
+
+    # Badge classes with user-friendly labels
     vert_class = f"badge-{vert}"
-    if conf >= 0.8:
+    if conf >= 0.7:
         conf_class = "badge-confidence-high"
-    elif conf >= 0.5:
+        conf_label = "Strong fit"
+    elif conf >= 0.4:
         conf_class = "badge-confidence-medium"
+        conf_label = "Worth reviewing"
     else:
         conf_class = "badge-confidence-low"
+        conf_label = "Early signal"
 
     # Build description HTML separately
     desc_html = f'<div class="signal-description">{description}</div>' if description else ''
 
-    card_html = f'<div class="signal-card"><div style="display:flex;justify-content:space-between;align-items:flex-start;"><div style="flex:1;"><div class="signal-company">{company}</div><div class="signal-meta">{source} · {sig_type} · {created}</div>{desc_html}</div><div class="signal-badges"><span class="badge {vert_class}">{vert}</span><span class="badge {conf_class}">{conf:.0%}</span></div></div></div>'
+    # More readable card layout
+    card_html = f'''
+    <div class="signal-card">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+            <div style="flex:1;">
+                <div class="signal-company">{company}</div>
+                <div class="signal-meta">Found via {friendly_source} · {created}</div>
+                {desc_html}
+            </div>
+            <div class="signal-badges" style="flex-direction: column; align-items: flex-end; gap: 4px;">
+                <span class="badge {vert_class}">{friendly_vert}</span>
+                <span class="badge {conf_class}" title="{conf_label}">{conf:.0%} match</span>
+            </div>
+        </div>
+    </div>
+    '''
 
     st.markdown(card_html, unsafe_allow_html=True)
 
-    # Drill-down button
-    if st.button(f"View {company}", key=f"view_{signal_id}", help="See all signals"):
+    # Drill-down button with better label
+    if st.button(f"See all details for {company}", key=f"view_{signal_id}", help="View complete company profile"):
         st.session_state.selected_company = company
         st.rerun()
 
 
 def render_results(results: List[Dict[str, Any]]):
-    """Render search results."""
+    """Render search results with user-friendly messaging."""
     if not results:
         st.markdown("""
         <div class="empty-state">
-            <h3>No signals found</h3>
-            <p>Try adjusting your search or filters</p>
+            <h3>No companies found</h3>
+            <p>Try a different search term or adjust your filters to broaden your search.</p>
+            <p style="font-size: 0.8rem; color: #7a7267; margin-top: 1rem;">
+                💡 <strong>Tip:</strong> Try searching for industry terms like "wellness", "travel", or "food"
+                instead of specific company names.
+            </p>
         </div>
         """, unsafe_allow_html=True)
         return
 
     col1, col2 = st.columns([4, 1])
     with col1:
-        st.markdown(f'<p class="result-count"><strong>{len(results)}</strong> signals</p>', unsafe_allow_html=True)
+        company_word = "company" if len(results) == 1 else "companies"
+        st.markdown(f'<p class="result-count">Found <strong>{len(results)}</strong> {company_word}</p>', unsafe_allow_html=True)
     with col2:
         csv_data = _convert_to_csv(results)
-        st.download_button("Export", csv_data, "signals.csv", "text/csv", use_container_width=True)
+        st.download_button(
+            "📥 Export",
+            csv_data,
+            "discovered_companies.csv",
+            "text/csv",
+            use_container_width=True,
+            help="Download these results as a spreadsheet"
+        )
 
     if len(results) >= 500:
-        st.warning("Showing first 500 results")
+        st.info("💡 Showing first 500 results. Use filters to narrow your search for more specific results.")
 
     for signal in results:
         render_signal_card(signal)
@@ -588,8 +671,8 @@ def _convert_to_csv(results: List[Dict[str, Any]]) -> str:
 
 
 def render_company_detail(company_name: str, store: SignalStore):
-    """Render company detail view."""
-    if st.button("← Back"):
+    """Render company detail view with user-friendly presentation."""
+    if st.button("← Back to search results"):
         st.session_state.selected_company = None
         st.rerun()
 
@@ -598,12 +681,42 @@ def render_company_detail(company_name: str, store: SignalStore):
     signals = run_async(store.get_signals_for_company_by_name(company_name))
 
     if not signals:
-        st.info("No signals found for this company.")
+        st.markdown("""
+        <div class="empty-state">
+            <h3>No information found</h3>
+            <p>We don't have any data for this company yet.</p>
+        </div>
+        """, unsafe_allow_html=True)
         return
 
     sources = len(set(s.get('source_api', '') for s in signals))
-    st.markdown(f'<p class="subtitle">{len(signals)} signals from {sources} sources</p>', unsafe_allow_html=True)
+    source_word = "source" if sources == 1 else "sources"
+    signal_word = "time" if len(signals) == 1 else "times"
+    st.markdown(f'<p class="subtitle">Discovered {len(signals)} {signal_word} from {sources} {source_word}</p>', unsafe_allow_html=True)
+
+    # Summary card
+    avg_conf = sum(s.get('confidence', 0) or 0 for s in signals) / len(signals) if signals else 0
+    if avg_conf >= 0.7:
+        fit_label = "Strong fit for our thesis"
+        fit_color = "#10B981"
+    elif avg_conf >= 0.4:
+        fit_label = "Worth further investigation"
+        fit_color = "#F59E0B"
+    else:
+        fit_label = "Early-stage signal"
+        fit_color = "#6B7280"
+
+    st.markdown(f"""
+    <div style="background: #111; border: 1px solid #2a2520; border-radius: 8px; padding: 1rem; margin-bottom: 1.5rem;">
+        <div style="font-size: 0.7rem; color: #7a7267; text-transform: uppercase; letter-spacing: 0.1em;">OVERALL ASSESSMENT</div>
+        <div style="color: {fit_color}; font-size: 1.1rem; margin-top: 0.5rem;">{fit_label}</div>
+        <div style="font-size: 0.8rem; color: #7a7267; margin-top: 0.25rem;">Average match score: {avg_conf:.0%}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
+    st.markdown("### Discovery Timeline")
+    st.caption("Each time we found this company through our data sources")
 
     for signal in signals:
         created = str(signal.get("created_at", ""))[:10]
@@ -612,13 +725,30 @@ def render_company_detail(company_name: str, store: SignalStore):
         conf = signal.get('confidence') or 0
         vert = signal.get('vertical') or 'unknown'
 
-        vert_class = f"badge-{vert}"
-        conf_class = "badge-confidence-high" if conf >= 0.8 else "badge-confidence-medium" if conf >= 0.5 else "badge-confidence-low"
+        # User-friendly labels
+        friendly_source = SOURCE_FRIENDLY_NAMES.get(source, source.title() if source else "Unknown")
+        friendly_vert = VERTICAL_FRIENDLY_NAMES.get(vert, vert.title()).split(" ")[0]
 
-        card_html = f'<div class="signal-card"><div style="display:flex;justify-content:space-between;"><div><div class="signal-company">{sig_type}</div><div class="signal-meta">{source} · {created}</div></div><div class="signal-badges"><span class="badge {vert_class}">{vert}</span><span class="badge {conf_class}">{conf:.0%}</span></div></div></div>'
+        vert_class = f"badge-{vert}"
+        conf_class = "badge-confidence-high" if conf >= 0.7 else "badge-confidence-medium" if conf >= 0.4 else "badge-confidence-low"
+
+        card_html = f'''
+        <div class="signal-card">
+            <div style="display:flex;justify-content:space-between;">
+                <div>
+                    <div class="signal-company">Found via {friendly_source}</div>
+                    <div class="signal-meta">{created}</div>
+                </div>
+                <div class="signal-badges">
+                    <span class="badge {vert_class}">{friendly_vert}</span>
+                    <span class="badge {conf_class}">{conf:.0%} match</span>
+                </div>
+            </div>
+        </div>
+        '''
         st.markdown(card_html, unsafe_allow_html=True)
 
-        with st.expander("Details"):
+        with st.expander("View raw data (technical)"):
             raw_data = signal.get("raw_data")
             if raw_data:
                 try:
@@ -626,28 +756,39 @@ def render_company_detail(company_name: str, store: SignalStore):
                     st.json(data)
                 except (json.JSONDecodeError, TypeError):
                     st.text(str(raw_data))
+            else:
+                st.caption("No additional data available")
 
 
 def render_analytics(store: SignalStore):
-    """Render analytics tab."""
-    st.markdown('<h2 style="color: #E1D8D1; font-weight: 400;">Analytics</h2>', unsafe_allow_html=True)
-    st.markdown('<p class="subtitle">Signal distribution</p>', unsafe_allow_html=True)
+    """Render analytics tab with user-friendly presentation."""
+    st.markdown('<h2 style="color: #E1D8D1; font-weight: 400;">Overview</h2>', unsafe_allow_html=True)
+    st.markdown('<p class="subtitle">See where your discovered companies come from and what industries they\'re in</p>', unsafe_allow_html=True)
 
     all_signals = run_async(store.get_filtered_signals(limit=1000))
 
     if not all_signals:
         st.markdown("""
         <div class="empty-state">
-            <h3>No data yet</h3>
-            <p>Run the pipeline to collect signals</p>
+            <h3>No companies discovered yet</h3>
+            <p>Once the discovery pipeline runs, you'll see a breakdown of companies by industry and source here.</p>
         </div>
         """, unsafe_allow_html=True)
         return
 
+    # Summary stats at top
+    st.markdown(f"""
+    <div style="background: #111; border: 1px solid #2a2520; border-radius: 8px; padding: 1rem; margin-bottom: 1.5rem; text-align: center;">
+        <div style="font-size: 2rem; color: #E1D8D1; font-weight: 600;">{len(all_signals)}</div>
+        <div style="font-size: 0.8rem; color: #7a7267;">Total companies discovered</div>
+    </div>
+    """, unsafe_allow_html=True)
+
     col1, col2 = st.columns(2)
 
     with col1:
-        st.markdown("**By Vertical**")
+        st.markdown("### By Industry")
+        st.caption("What sectors are these companies in?")
         vertical_counts = {}
         for sig in all_signals:
             v = sig.get("vertical", "unknown")
@@ -655,10 +796,22 @@ def render_analytics(store: SignalStore):
 
         for vert, count in sorted(vertical_counts.items(), key=lambda x: -x[1]):
             pct = count / len(all_signals) * 100
-            st.markdown(f'<div class="signal-card"><div style="display:flex;justify-content:space-between;"><span class="signal-company">{vert.title()}</span><span class="signal-meta">{count} ({pct:.0f}%)</span></div></div>', unsafe_allow_html=True)
+            friendly_vert = VERTICAL_FRIENDLY_NAMES.get(vert, vert.title())
+            st.markdown(f'''
+            <div class="signal-card">
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <span class="signal-company">{friendly_vert}</span>
+                    <div style="text-align: right;">
+                        <span style="color: #E1D8D1; font-weight: 600;">{count}</span>
+                        <span class="signal-meta" style="margin-left: 8px;">({pct:.0f}%)</span>
+                    </div>
+                </div>
+            </div>
+            ''', unsafe_allow_html=True)
 
     with col2:
-        st.markdown("**By Source**")
+        st.markdown("### By Discovery Source")
+        st.caption("Where did we find these companies?")
         source_counts = {}
         for sig in all_signals:
             s = sig.get("source_api", "unknown")
@@ -666,7 +819,18 @@ def render_analytics(store: SignalStore):
 
         for source, count in sorted(source_counts.items(), key=lambda x: -x[1]):
             pct = count / len(all_signals) * 100
-            st.markdown(f'<div class="signal-card"><div style="display:flex;justify-content:space-between;"><span class="signal-company">{source}</span><span class="signal-meta">{count} ({pct:.0f}%)</span></div></div>', unsafe_allow_html=True)
+            friendly_source = SOURCE_FRIENDLY_NAMES.get(source, source.title() if source else "Unknown")
+            st.markdown(f'''
+            <div class="signal-card">
+                <div style="display:flex;justify-content:space-between;align-items:center;">
+                    <span class="signal-company">{friendly_source}</span>
+                    <div style="text-align: right;">
+                        <span style="color: #E1D8D1; font-weight: 600;">{count}</span>
+                        <span class="signal-meta" style="margin-left: 8px;">({pct:.0f}%)</span>
+                    </div>
+                </div>
+            </div>
+            ''', unsafe_allow_html=True)
 
 
 def render_mini_scout_page(store: SignalStore):
@@ -684,15 +848,30 @@ def render_mini_scout_page(store: SignalStore):
     render_header()
     render_filter_sidebar(store)
 
-    tab1, tab2 = st.tabs(["SIGNALS", "ANALYTICS"])
+    # User-friendly tab labels
+    tab1, tab2 = st.tabs(["🔍 SEARCH COMPANIES", "📊 OVERVIEW"])
 
     with tab1:
         render_stats_bar(store)
         search_clicked = render_search_bar()
 
+        # Show helpful hint when no search has been done
+        if not search_clicked and not st.session_state.mini_scout_results:
+            st.markdown("""
+            <div style="text-align: center; padding: 3rem 2rem; color: #7a7267;">
+                <div style="font-size: 2.5rem; margin-bottom: 1rem;">🔍</div>
+                <h3 style="color: #E1D8D1; font-weight: 400; margin-bottom: 0.5rem;">Search for companies</h3>
+                <p style="max-width: 400px; margin: 0 auto;">
+                    Enter a company name, keyword, or industry term above to find matching companies.
+                    <br><br>
+                    Or use the filters on the left to browse by industry, match score, or discovery source.
+                </p>
+            </div>
+            """, unsafe_allow_html=True)
+
         if search_clicked or st.session_state.mini_scout_results:
             if search_clicked:
-                with st.spinner("Searching..."):
+                with st.spinner("Searching for companies..."):
                     results = execute_search(store)
                     st.session_state.mini_scout_results = results
 
