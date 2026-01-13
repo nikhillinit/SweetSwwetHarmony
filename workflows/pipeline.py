@@ -44,6 +44,7 @@ from typing import Any, Dict, List, Optional, Set
 from storage.signal_store import SignalStore, StoredSignal
 from utils.signal_consolidator import SignalConsolidator, ConsolidatedSignal
 from utils.enrichment_boost import EnrichmentBoostCalculator, EnrichmentConfig
+from utils.thesis_filter import ThesisFilter, ThesisFilterConfig, RoutingDecision
 from storage.source_asset_store import SourceAssetStore, SourceAsset
 from storage.founder_store import FounderStore
 from storage.entity_resolution import EntityResolutionStore, AssetToLead
@@ -142,6 +143,10 @@ class PipelineConfig:
     # Enrichment boost (Phase 2 enhancement)
     use_enrichment_boost: bool = True  # Enable enrichment boost calculation
 
+    # Thesis filtering (Phase 3 enhancement)
+    use_thesis_filter: bool = True  # Enable thesis filtering
+    thesis_hold_threshold: float = 0.3  # Signals below this are HELD
+
     @classmethod
     def from_env(cls) -> PipelineConfig:
         """Load configuration from environment variables"""
@@ -186,6 +191,11 @@ class PipelineStats:
     signals_needs_review: int = 0
     signals_held: int = 0
     signals_rejected: int = 0
+
+    # Thesis filtering stats
+    thesis_rejected: int = 0
+    thesis_held: int = 0
+    thesis_passed: int = 0
 
     # Notion stats
     prospects_created: int = 0
@@ -233,6 +243,11 @@ class PipelineStats:
                 "needs_review": self.signals_needs_review,
                 "held": self.signals_held,
                 "rejected": self.signals_rejected,
+            },
+            "thesis": {
+                "rejected": self.thesis_rejected,
+                "held": self.thesis_held,
+                "passed": self.thesis_passed,
             },
             "notion": {
                 "prospects_created": self.prospects_created,
@@ -331,6 +346,14 @@ class DiscoveryPipeline:
         self._enrichment_calculator: Optional[EnrichmentBoostCalculator] = (
             EnrichmentBoostCalculator() if self.config.use_enrichment_boost else None
         )
+
+        # Thesis filter (Phase 3)
+        self._thesis_filter: Optional[ThesisFilter] = None
+        if self.config.use_thesis_filter:
+            thesis_config = ThesisFilterConfig(
+                hold_threshold=self.config.thesis_hold_threshold,
+            )
+            self._thesis_filter = ThesisFilter(thesis_config)
 
         # State
         self._initialized = False
@@ -995,6 +1018,10 @@ class DiscoveryPipeline:
             "conflicts_detected": 0,
             "enrichment_boosts_applied": 0,
             "total_enrichment_boost": 0.0,
+            # Thesis filtering stats
+            "thesis_rejected": 0,
+            "thesis_held": 0,
+            "thesis_passed": 0,
         }
 
         # Get pending signals
@@ -1068,6 +1095,15 @@ class DiscoveryPipeline:
                 if enrichment_boost > 0:
                     stats["enrichment_boosts_applied"] += 1
                     stats["total_enrichment_boost"] += enrichment_boost
+
+                # Track thesis filtering metrics
+                thesis_routing = result.get("thesis_routing")
+                if thesis_routing == RoutingDecision.REJECTED:
+                    stats["thesis_rejected"] += 1
+                elif thesis_routing == RoutingDecision.HELD:
+                    stats["thesis_held"] += 1
+                elif thesis_routing == RoutingDecision.QUALIFIED:
+                    stats["thesis_passed"] += 1
 
             except Exception as e:
                 logger.exception(f"Error processing company {canonical_key}")
@@ -1263,6 +1299,71 @@ class DiscoveryPipeline:
             except Exception as e:
                 logger.warning(f"Enrichment calculation failed (non-fatal): {e}")
 
+        # Thesis filtering (before verification gate)
+        thesis_result = None
+        thesis_routing = None
+        if self._thesis_filter and consolidated:
+            try:
+                description = consolidated.description or ""
+                thesis_result = await self._thesis_filter.classify(
+                    description,
+                    company_name=consolidated.company_name,
+                    skip_llm=True,  # Use keyword-only for now
+                )
+                thesis_routing = thesis_result.routing
+
+                # Route based on thesis result
+                if thesis_result.routing == RoutingDecision.REJECTED:
+                    logger.info(f"Thesis REJECTED: {canonical_key}")
+                    # Mark signals as rejected
+                    for sig in signals:
+                        await self._store.mark_rejected(
+                            sig.id,
+                            f"Thesis rejected: negative keywords {thesis_result.negative_keywords}",
+                        )
+                    return {
+                        "decision": PushDecision.REJECT,
+                        "reason": f"Thesis rejected: {thesis_result.negative_keywords}",
+                        "thesis_routing": thesis_routing,
+                        "gating_applied": False,
+                        "enrichment_boost": enrichment_boost,
+                    }
+                elif thesis_result.routing == RoutingDecision.HELD:
+                    logger.info(f"Thesis HELD: {canonical_key}")
+                    # Keep as pending for batch review (don't mark as rejected)
+                    return {
+                        "decision": PushDecision.HOLD,
+                        "reason": f"Thesis held: score {thesis_result.keyword_score:.2f} below threshold",
+                        "thesis_routing": thesis_routing,
+                        "gating_applied": False,
+                        "enrichment_boost": enrichment_boost,
+                    }
+                else:
+                    # QUALIFIED - continue processing
+                    pass
+
+                # Save classification to DB
+                if self._store and signals:
+                    try:
+                        await self._store.save_thesis_classification(
+                            signal_id=signals[0].id,
+                            canonical_key=canonical_key,
+                            keyword_score=thesis_result.keyword_score,
+                            keyword_category=thesis_result.keyword_category,
+                            negative_keywords=thesis_result.negative_keywords,
+                            thesis_fit_score=thesis_result.llm_score,
+                            category=thesis_result.llm_category,
+                            rationale=thesis_result.llm_rationale,
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to save thesis classification (non-fatal): {e}")
+
+                # Apply confidence adjustment to enrichment boost
+                enrichment_boost += thesis_result.confidence_adjustment
+
+            except Exception as e:
+                logger.warning(f"Thesis filtering failed (non-fatal): {e}")
+
         # Run through SignalProcessor gating (if enabled)
         gating_applied = False
         gating_triggered = False
@@ -1431,6 +1532,8 @@ class DiscoveryPipeline:
             "velocity_boost": velocity_boost,
             "momentum_score": momentum_score,
             "enrichment_boost": enrichment_boost,
+            # Thesis filtering
+            "thesis_routing": thesis_routing,
         }
 
     async def _push_to_notion(
