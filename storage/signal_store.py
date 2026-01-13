@@ -190,6 +190,13 @@ MIGRATIONS = {
     CREATE INDEX IF NOT EXISTS idx_outbox_status ON notion_outbox(status);
     CREATE INDEX IF NOT EXISTS idx_outbox_next_attempt ON notion_outbox(next_attempt_at);
     CREATE INDEX IF NOT EXISTS idx_outbox_created_at ON notion_outbox(created_at);
+    """,
+    4: """
+    -- Add stage-level timing columns to pipeline_runs
+    ALTER TABLE pipeline_runs ADD COLUMN collection_duration_seconds REAL;
+    ALTER TABLE pipeline_runs ADD COLUMN processing_duration_seconds REAL;
+    ALTER TABLE pipeline_runs ADD COLUMN notion_push_duration_seconds REAL;
+    ALTER TABLE pipeline_runs ADD COLUMN collectors_timings TEXT;  -- JSON object
     """
 }
 
@@ -1380,6 +1387,9 @@ class SignalStore:
         if stats.health_report:
             health_json = json.dumps(stats.health_report.to_dict())
 
+        # Serialize collectors_timings to JSON
+        collectors_timings_json = json.dumps(stats.collectors_timings) if stats.collectors_timings else "{}"
+
         async with self.transaction() as conn:
             await conn.execute(
                 """
@@ -1390,9 +1400,11 @@ class SignalStore:
                     signals_processed, signals_auto_push, signals_needs_review,
                     signals_held, signals_rejected,
                     prospects_created, prospects_updated, prospects_skipped,
-                    errors, health_report, created_at
+                    errors, health_report, created_at,
+                    collection_duration_seconds, processing_duration_seconds,
+                    notion_push_duration_seconds, collectors_timings
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_id,
@@ -1416,6 +1428,10 @@ class SignalStore:
                     errors_json,
                     health_json,
                     now,
+                    stats.collection_duration_seconds,
+                    stats.processing_duration_seconds,
+                    stats.notion_push_duration_seconds,
+                    collectors_timings_json,
                 )
             )
 
@@ -1444,7 +1460,9 @@ class SignalStore:
                 signals_processed, signals_auto_push, signals_needs_review,
                 signals_held, signals_rejected,
                 prospects_created, prospects_updated, prospects_skipped,
-                errors, health_report
+                errors, health_report,
+                collection_duration_seconds, processing_duration_seconds,
+                notion_push_duration_seconds, collectors_timings
             FROM pipeline_runs
             ORDER BY started_at DESC
             LIMIT ?
@@ -1477,7 +1495,9 @@ class SignalStore:
                 signals_processed, signals_auto_push, signals_needs_review,
                 signals_held, signals_rejected,
                 prospects_created, prospects_updated, prospects_skipped,
-                errors, health_report
+                errors, health_report,
+                collection_duration_seconds, processing_duration_seconds,
+                notion_push_duration_seconds, collectors_timings
             FROM pipeline_runs
             WHERE run_id = ?
             """,
@@ -1513,6 +1533,10 @@ class SignalStore:
             "prospects_skipped": row[17],
             "errors": json.loads(row[18]) if row[18] else [],
             "health_report": json.loads(row[19]) if row[19] else None,
+            "collection_duration_seconds": row[20],
+            "processing_duration_seconds": row[21],
+            "notion_push_duration_seconds": row[22],
+            "collectors_timings": json.loads(row[23]) if row[23] else {},
         }
 
 

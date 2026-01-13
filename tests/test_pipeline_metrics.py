@@ -443,6 +443,183 @@ class TestGetPipelineRun:
         await store.close()
 
 
+class TestStageTimingFields:
+    """Test stage-level timing fields in PipelineStats"""
+
+    def test_collection_duration_field_exists(self):
+        """PipelineStats should have collection_duration_seconds field"""
+        stats = PipelineStats()
+        assert hasattr(stats, "collection_duration_seconds")
+        assert stats.collection_duration_seconds is None  # Default to None
+
+    def test_processing_duration_field_exists(self):
+        """PipelineStats should have processing_duration_seconds field"""
+        stats = PipelineStats()
+        assert hasattr(stats, "processing_duration_seconds")
+        assert stats.processing_duration_seconds is None  # Default to None
+
+    def test_notion_push_duration_field_exists(self):
+        """PipelineStats should have notion_push_duration_seconds field"""
+        stats = PipelineStats()
+        assert hasattr(stats, "notion_push_duration_seconds")
+        assert stats.notion_push_duration_seconds is None  # Default to None
+
+    def test_collectors_timings_field_exists(self):
+        """PipelineStats should have collectors_timings dict"""
+        stats = PipelineStats()
+        assert hasattr(stats, "collectors_timings")
+        assert isinstance(stats.collectors_timings, dict)
+        assert stats.collectors_timings == {}  # Default to empty dict
+
+    def test_to_dict_includes_stage_timings(self):
+        """to_dict() should include stage timing information"""
+        stats = PipelineStats()
+        stats.collection_duration_seconds = 10.5
+        stats.processing_duration_seconds = 5.2
+        stats.notion_push_duration_seconds = 3.1
+        stats.collectors_timings = {"github": 4.5, "sec_edgar": 6.0}
+        stats.complete()
+
+        result = stats.to_dict()
+
+        assert "timing" in result
+        timing = result["timing"]
+        assert timing["collection_duration_seconds"] == 10.5
+        assert timing["processing_duration_seconds"] == 5.2
+        assert timing["notion_push_duration_seconds"] == 3.1
+        assert timing["collectors_timings"] == {"github": 4.5, "sec_edgar": 6.0}
+
+    def test_stage_timings_can_be_set(self):
+        """Stage timing fields can be set and retrieved"""
+        stats = PipelineStats()
+        stats.collection_duration_seconds = 15.0
+        stats.processing_duration_seconds = 8.3
+        stats.notion_push_duration_seconds = 2.5
+        stats.collectors_timings = {"github": 7.2}
+
+        assert stats.collection_duration_seconds == 15.0
+        assert stats.processing_duration_seconds == 8.3
+        assert stats.notion_push_duration_seconds == 2.5
+        assert stats.collectors_timings["github"] == 7.2
+
+
+class TestStageTimmingPersistence:
+    """Test that stage timing is persisted correctly"""
+
+    @pytest.mark.asyncio
+    async def test_pipeline_runs_has_stage_timing_columns(self):
+        """pipeline_runs table should have stage timing columns"""
+        store = SignalStore(":memory:")
+        await store.initialize()
+
+        # Get table info
+        cursor = await store._db.execute("PRAGMA table_info(pipeline_runs)")
+        columns = {row[1] for row in await cursor.fetchall()}
+
+        timing_columns = {
+            "collection_duration_seconds",
+            "processing_duration_seconds",
+            "notion_push_duration_seconds",
+            "collectors_timings",  # Stored as JSON
+        }
+
+        assert timing_columns.issubset(columns)
+        await store.close()
+
+    @pytest.mark.asyncio
+    async def test_save_pipeline_run_stores_stage_timings(self):
+        """save_pipeline_run should store stage timing information"""
+        store = SignalStore(":memory:")
+        await store.initialize()
+
+        stats = PipelineStats()
+        stats.collection_duration_seconds = 12.5
+        stats.processing_duration_seconds = 6.3
+        stats.notion_push_duration_seconds = 2.1
+        stats.collectors_timings = {"github": 5.0, "sec_edgar": 7.5}
+        stats.complete()
+
+        run_id = await store.save_pipeline_run(stats)
+
+        # Retrieve and verify
+        cursor = await store._db.execute(
+            """SELECT collection_duration_seconds, processing_duration_seconds,
+               notion_push_duration_seconds, collectors_timings
+               FROM pipeline_runs WHERE run_id = ?""",
+            (run_id,)
+        )
+        row = await cursor.fetchone()
+
+        assert row is not None
+        assert abs(row[0] - 12.5) < 0.1
+        assert abs(row[1] - 6.3) < 0.1
+        assert abs(row[2] - 2.1) < 0.1
+
+        import json
+        collectors_timings = json.loads(row[3])
+        assert collectors_timings["github"] == 5.0
+        assert collectors_timings["sec_edgar"] == 7.5
+
+        await store.close()
+
+    @pytest.mark.asyncio
+    async def test_get_pipeline_run_returns_stage_timings(self):
+        """get_pipeline_run should return stage timing fields"""
+        store = SignalStore(":memory:")
+        await store.initialize()
+
+        stats = PipelineStats()
+        stats.collection_duration_seconds = 10.0
+        stats.processing_duration_seconds = 5.0
+        stats.notion_push_duration_seconds = 1.5
+        stats.collectors_timings = {"github": 8.0}
+        stats.complete()
+
+        run_id = await store.save_pipeline_run(stats)
+
+        # Retrieve by ID
+        run = await store.get_pipeline_run(run_id)
+
+        assert run is not None
+        assert run["collection_duration_seconds"] == 10.0
+        assert run["processing_duration_seconds"] == 5.0
+        assert run["notion_push_duration_seconds"] == 1.5
+        assert run["collectors_timings"]["github"] == 8.0
+
+        await store.close()
+
+    @pytest.mark.asyncio
+    async def test_save_pipeline_run_handles_null_stage_timings(self):
+        """save_pipeline_run should handle None stage timings"""
+        store = SignalStore(":memory:")
+        await store.initialize()
+
+        stats = PipelineStats()
+        # Leave stage timings as defaults (None, {})
+        stats.complete()
+
+        run_id = await store.save_pipeline_run(stats)
+
+        # Retrieve and verify
+        cursor = await store._db.execute(
+            """SELECT collection_duration_seconds, processing_duration_seconds,
+               notion_push_duration_seconds, collectors_timings
+               FROM pipeline_runs WHERE run_id = ?""",
+            (run_id,)
+        )
+        row = await cursor.fetchone()
+
+        assert row is not None
+        assert row[0] is None  # collection_duration_seconds
+        assert row[1] is None  # processing_duration_seconds
+        assert row[2] is None  # notion_push_duration_seconds
+        # Empty dict stored as JSON
+        import json
+        assert json.loads(row[3]) == {}
+
+        await store.close()
+
+
 class TestPipelineIntegration:
     """Test integration with DiscoveryPipeline"""
 

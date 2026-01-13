@@ -194,6 +194,12 @@ class PipelineStats:
     started_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     completed_at: Optional[datetime] = None
 
+    # Stage-level timing (in seconds)
+    collection_duration_seconds: Optional[float] = None
+    processing_duration_seconds: Optional[float] = None
+    notion_push_duration_seconds: Optional[float] = None
+    collectors_timings: Dict[str, float] = field(default_factory=dict)
+
     def complete(self):
         """Mark pipeline as completed"""
         self.completed_at = datetime.now(timezone.utc)
@@ -237,6 +243,10 @@ class PipelineStats:
                 "started_at": self.started_at.isoformat(),
                 "completed_at": self.completed_at.isoformat() if self.completed_at else None,
                 "duration_seconds": self.duration_seconds,
+                "collection_duration_seconds": self.collection_duration_seconds,
+                "processing_duration_seconds": self.processing_duration_seconds,
+                "notion_push_duration_seconds": self.notion_push_duration_seconds,
+                "collectors_timings": self.collectors_timings,
             },
         }
 
@@ -487,7 +497,9 @@ class DiscoveryPipeline:
             )
 
             # Stage 1: Collect signals
+            collection_start = datetime.now(timezone.utc)
             collector_results = await self._run_collectors_stage(collectors or [], dry_run)
+            stats.collection_duration_seconds = (datetime.now(timezone.utc) - collection_start).total_seconds()
             stats.collectors_run = len(collector_results)
             stats.collectors_succeeded = sum(
                 1 for r in collector_results if r.status == CollectorStatus.SUCCESS
@@ -500,8 +512,15 @@ class DiscoveryPipeline:
             )
             stats.signals_collected = sum(r.signals_found for r in collector_results)
 
+            # Capture per-collector timings
+            for result in collector_results:
+                if result.duration_seconds is not None:
+                    stats.collectors_timings[result.collector] = result.duration_seconds
+
             # Stage 2: Process pending signals
+            processing_start = datetime.now(timezone.utc)
             process_stats = await self._process_signals_stage(dry_run)
+            stats.processing_duration_seconds = (datetime.now(timezone.utc) - processing_start).total_seconds()
             stats.signals_processed = process_stats["processed"]
             stats.signals_auto_push = process_stats["auto_push"]
             stats.signals_needs_review = process_stats["needs_review"]
@@ -512,7 +531,9 @@ class DiscoveryPipeline:
             stats.prospects_skipped = process_stats["prospects_skipped"]
 
             if not dry_run:
+                notion_start = datetime.now(timezone.utc)
                 outbox_stats = await self._drain_notion_outbox(limit=self.config.batch_size)
+                stats.notion_push_duration_seconds = (datetime.now(timezone.utc) - notion_start).total_seconds()
                 if outbox_stats["processed"] > 0:
                     stats.prospects_created = outbox_stats["created"]
                     stats.prospects_updated = outbox_stats["updated"]
@@ -860,12 +881,17 @@ class DiscoveryPipeline:
                     dry_run=dry_run,
                 )
 
-            # Run collector
+            # Run collector with timing
+            collector_start = datetime.now(timezone.utc)
             result = await collector.run(dry_run=dry_run)
+            collector_duration = (datetime.now(timezone.utc) - collector_start).total_seconds()
+
+            # Set timing on result
+            result.duration_seconds = collector_duration
 
             logger.info(
                 f"Collector {collector_name} completed: "
-                f"{result.signals_found} signals found"
+                f"{result.signals_found} signals found in {collector_duration:.2f}s"
             )
 
             return result

@@ -173,12 +173,12 @@ Write failing tests first, then minimal code to pass them.
 
 ---
 
-## Current Sprint: Operational Excellence ✅ NEARLY COMPLETE
+## Current Sprint: Operational Excellence ✅ COMPLETE
 
 **Phase 1: Automated Monitoring** ✅
 - [x] Auto-trigger SignalHealthMonitor after pipeline runs (pipeline.py:645)
 - [x] Wire Slack alerts to health anomalies (pipeline.py:1049-1065)
-- [ ] Add pipeline run metrics/telemetry
+- [x] Add pipeline run metrics/telemetry (stage timing, per-collector metrics)
 
 **Phase 2: Code Cleanup** ✅
 - [x] Remove deprecated v1 files (notion_connector.py, verification_gate.py)

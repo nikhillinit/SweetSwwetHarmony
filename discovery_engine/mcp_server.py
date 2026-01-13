@@ -99,6 +99,7 @@ class CollectorResult:
     dry_run: bool = True
     error_message: Optional[str] = None
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    duration_seconds: Optional[float] = None  # Collector execution time
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -110,6 +111,7 @@ class CollectorResult:
             "dry_run": self.dry_run,
             "error_message": self.error_message,
             "timestamp": self.timestamp,
+            "duration_seconds": self.duration_seconds,
         }
 
 
