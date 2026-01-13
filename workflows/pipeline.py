@@ -481,6 +481,30 @@ class DiscoveryPipeline:
     # HIGH-LEVEL PIPELINE METHODS
     # =========================================================================
 
+    async def _save_pipeline_metrics(
+        self,
+        stats: PipelineStats,
+    ) -> Optional[str]:
+        """
+        Save pipeline run and collector metrics to database.
+
+        Returns run_id if successful, None otherwise.
+        """
+        try:
+            run_id = await self._store.save_pipeline_run(stats)
+            logger.info(f"Pipeline metrics saved (run_id: {run_id})")
+
+            # Save collector metrics
+            for metrics in self._collector_metrics:
+                await self._store.save_collector_metrics(run_id, metrics)
+
+            logger.info(f"Saved {len(self._collector_metrics)} collector metrics")
+            return run_id
+
+        except Exception as e:
+            logger.warning(f"Failed to save pipeline metrics (non-fatal): {e}")
+            return None
+
     async def run_full_pipeline(
         self,
         collectors: Optional[List[str]] = None,
@@ -506,6 +530,9 @@ class DiscoveryPipeline:
         await self.initialize()
 
         stats = PipelineStats()
+
+        # Reset collector metrics for this run
+        self._collector_metrics = []
 
         try:
             logger.info(
@@ -579,12 +606,8 @@ class DiscoveryPipeline:
             stats.complete()
 
             # Save metrics to database (non-fatal)
-            if self._store:
-                try:
-                    run_id = await self._store.save_pipeline_run(stats)
-                    logger.info(f"Pipeline metrics saved (run_id: {run_id})")
-                except Exception as e:
-                    logger.warning(f"Failed to save pipeline metrics (non-fatal): {e}")
+            if self._store and not dry_run:
+                await self._save_pipeline_metrics(stats)
 
         return stats
 
