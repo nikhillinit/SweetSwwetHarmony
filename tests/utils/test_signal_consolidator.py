@@ -356,3 +356,91 @@ class TestDescriptionAggregation:
         result = consolidator.consolidate(signals)
 
         assert len(result.descriptions) == 0
+
+
+class TestSocialProofAggregation:
+    """Test social proof aggregation from raw_data."""
+
+    def test_aggregates_github_stars(self):
+        """Should aggregate stars from GitHub signals."""
+        from storage.signal_store import StoredSignal
+        from utils.signal_consolidator import SignalConsolidator
+
+        now = datetime.now(timezone.utc)
+        signals = [
+            StoredSignal(
+                id=1,
+                signal_type="github_spike",
+                source_api="github",
+                canonical_key="domain:acme.ai",
+                company_name="Acme Inc",
+                confidence=0.8,
+                raw_data={"stars": 150, "recent_stars": 50},
+                detected_at=now,
+                created_at=now,
+            ),
+        ]
+        consolidator = SignalConsolidator()
+        result = consolidator.consolidate(signals)
+        assert result.social_proof["stars"] == 150
+        assert result.social_proof["recent_stars"] == 50
+
+    def test_aggregates_product_hunt_upvotes(self):
+        """Should aggregate upvotes from Product Hunt signals."""
+        from storage.signal_store import StoredSignal
+        from utils.signal_consolidator import SignalConsolidator
+
+        now = datetime.now(timezone.utc)
+        signals = [
+            StoredSignal(
+                id=1,
+                signal_type="product_hunt_launch",
+                source_api="product_hunt",
+                canonical_key="domain:acme.ai",
+                company_name="Acme Inc",
+                confidence=0.7,
+                raw_data={"votes": 200, "upvotes": 180, "comments": 45},
+                detected_at=now,
+                created_at=now,
+            ),
+        ]
+        consolidator = SignalConsolidator()
+        result = consolidator.consolidate(signals)
+        assert result.social_proof["votes"] == 200
+        assert result.social_proof["upvotes"] == 180
+        assert result.social_proof["comments"] == 45
+
+    def test_sums_social_proof_from_multiple_signals(self):
+        """Should sum social proof from multiple signals."""
+        from storage.signal_store import StoredSignal
+        from utils.signal_consolidator import SignalConsolidator
+
+        now = datetime.now(timezone.utc)
+        signals = [
+            StoredSignal(
+                id=1,
+                signal_type="github_spike",
+                source_api="github",
+                canonical_key="domain:acme.ai",
+                company_name="Acme Inc",
+                confidence=0.8,
+                raw_data={"stars": 100},
+                detected_at=now,
+                created_at=now,
+            ),
+            StoredSignal(
+                id=2,
+                signal_type="product_hunt_launch",
+                source_api="product_hunt",
+                canonical_key="domain:acme.ai",
+                company_name="Acme Inc",
+                confidence=0.7,
+                raw_data={"upvotes": 50},
+                detected_at=now,
+                created_at=now,
+            ),
+        ]
+        consolidator = SignalConsolidator()
+        result = consolidator.consolidate(signals)
+        assert result.social_proof["stars"] == 100
+        assert result.social_proof["upvotes"] == 50
