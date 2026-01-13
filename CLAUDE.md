@@ -107,6 +107,10 @@ python run_pipeline.py sync
 # View pipeline stats
 python run_pipeline.py stats
 
+# View pipeline metrics with collector breakdown
+python run_pipeline.py metrics
+python run_pipeline.py metrics --limit 10 --collector github
+
 # Health check (DB, APIs, anomaly detection)
 python run_pipeline.py health
 python run_pipeline.py health --json  # Machine-readable output
@@ -178,7 +182,7 @@ Write failing tests first, then minimal code to pass them.
 **Phase 1: Automated Monitoring** ✅
 - [x] Auto-trigger SignalHealthMonitor after pipeline runs (pipeline.py:645)
 - [x] Wire Slack alerts to health anomalies (pipeline.py:1049-1065)
-- [ ] Add pipeline run metrics/telemetry
+- [x] Add pipeline run metrics/telemetry
 
 **Phase 2: Code Cleanup** ✅
 - [x] Remove deprecated v1 files (notion_connector.py, verification_gate.py)
