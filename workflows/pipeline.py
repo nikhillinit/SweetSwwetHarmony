@@ -241,6 +241,29 @@ class PipelineStats:
         }
 
 
+@dataclass
+class CollectorMetrics:
+    """Metrics captured for a single collector run."""
+    collector_name: str
+    started_at: datetime
+    completed_at: Optional[datetime] = None
+    duration_seconds: Optional[float] = None
+    signals_found: int = 0
+    status: str = "pending"
+
+    # API metrics
+    api_calls: int = 0
+    rate_limit_hits: int = 0
+    retries: int = 0
+    errors: int = 0
+    error_messages: List[str] = field(default_factory=list)
+
+    def complete(self):
+        """Mark as completed and calculate duration."""
+        self.completed_at = datetime.now(timezone.utc)
+        self.duration_seconds = (self.completed_at - self.started_at).total_seconds()
+
+
 # =============================================================================
 # PIPELINE ORCHESTRATOR
 # =============================================================================
