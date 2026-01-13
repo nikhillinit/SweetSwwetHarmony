@@ -532,3 +532,148 @@ class TestFoundingDateExtraction:
         result = consolidator.consolidate(signals)
         assert result.founding_date is not None
         assert result.founding_date.year == 2022
+
+
+class TestWhyNowAggregation:
+    """Test why_now aggregation from raw_data."""
+
+    def test_aggregates_why_now_from_raw_data(self):
+        """Should collect why_now from raw_data of all signals."""
+        from storage.signal_store import StoredSignal
+        from utils.signal_consolidator import SignalConsolidator
+
+        now = datetime.now(timezone.utc)
+        signals = [
+            StoredSignal(
+                id=1,
+                signal_type="funding_event",
+                source_api="crunchbase",
+                canonical_key="domain:acme.ai",
+                company_name="Acme Inc",
+                confidence=0.9,
+                raw_data={"why_now": "Just raised $5M seed round"},
+                detected_at=now,
+                created_at=now,
+            ),
+            StoredSignal(
+                id=2,
+                signal_type="hiring_signal",
+                source_api="greenhouse",
+                canonical_key="domain:acme.ai",
+                company_name="Acme Inc",
+                confidence=0.8,
+                raw_data={"why_now": "Hiring 10 engineers"},
+                detected_at=now,
+                created_at=now,
+            ),
+        ]
+        consolidator = SignalConsolidator()
+        result = consolidator.consolidate(signals)
+        assert len(result.why_now_parts) == 2
+        assert "Just raised $5M seed round" in result.why_now_parts
+        assert "Hiring 10 engineers" in result.why_now_parts
+
+    def test_generates_fallback_why_now(self):
+        """Should generate fallback when no explicit why_now in raw_data."""
+        from storage.signal_store import StoredSignal
+        from utils.signal_consolidator import SignalConsolidator
+
+        now = datetime.now(timezone.utc)
+        signals = [
+            StoredSignal(
+                id=1,
+                signal_type="github_spike",
+                source_api="github",
+                canonical_key="domain:acme.ai",
+                company_name="Acme Inc",
+                confidence=0.8,
+                raw_data={"stars": 100},
+                detected_at=now,
+                created_at=now,
+            ),
+        ]
+        consolidator = SignalConsolidator()
+        result = consolidator.consolidate(signals)
+        assert len(result.why_now_parts) >= 1
+        assert "github_spike" in result.why_now_parts[0].lower() or "detected" in result.why_now_parts[0].lower()
+
+    def test_deduplicates_identical_why_now(self):
+        """Should not include duplicate why_now entries."""
+        from storage.signal_store import StoredSignal
+        from utils.signal_consolidator import SignalConsolidator
+
+        now = datetime.now(timezone.utc)
+        signals = [
+            StoredSignal(
+                id=1,
+                signal_type="funding_event",
+                source_api="crunchbase",
+                canonical_key="domain:acme.ai",
+                company_name="Acme Inc",
+                confidence=0.9,
+                raw_data={"why_now": "Just raised $5M"},
+                detected_at=now,
+                created_at=now,
+            ),
+            StoredSignal(
+                id=2,
+                signal_type="funding_event",
+                source_api="sec_edgar",
+                canonical_key="domain:acme.ai",
+                company_name="Acme Inc",
+                confidence=0.8,
+                raw_data={"why_now": "Just raised $5M"},  # Same
+                detected_at=now,
+                created_at=now,
+            ),
+        ]
+        consolidator = SignalConsolidator()
+        result = consolidator.consolidate(signals)
+        assert len(result.why_now_parts) == 1
+        assert result.why_now_parts[0] == "Just raised $5M"
+
+    def test_ignores_empty_why_now(self):
+        """Should ignore empty or whitespace-only why_now values."""
+        from storage.signal_store import StoredSignal
+        from utils.signal_consolidator import SignalConsolidator
+
+        now = datetime.now(timezone.utc)
+        signals = [
+            StoredSignal(
+                id=1,
+                signal_type="funding_event",
+                source_api="crunchbase",
+                canonical_key="domain:acme.ai",
+                company_name="Acme Inc",
+                confidence=0.9,
+                raw_data={"why_now": "Valid reason"},
+                detected_at=now,
+                created_at=now,
+            ),
+            StoredSignal(
+                id=2,
+                signal_type="github_spike",
+                source_api="github",
+                canonical_key="domain:acme.ai",
+                company_name="Acme Inc",
+                confidence=0.8,
+                raw_data={"why_now": "   "},  # Whitespace only
+                detected_at=now,
+                created_at=now,
+            ),
+            StoredSignal(
+                id=3,
+                signal_type="incorporation",
+                source_api="sec_edgar",
+                canonical_key="domain:acme.ai",
+                company_name="Acme Inc",
+                confidence=0.7,
+                raw_data={"why_now": ""},  # Empty
+                detected_at=now,
+                created_at=now,
+            ),
+        ]
+        consolidator = SignalConsolidator()
+        result = consolidator.consolidate(signals)
+        assert len(result.why_now_parts) == 1
+        assert result.why_now_parts[0] == "Valid reason"
