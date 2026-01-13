@@ -249,3 +249,96 @@ class TestThesisClassificationStorage:
         # But should still be available via get_thesis_classification
         result = await store.get_thesis_classification("domain:test.com")
         assert result is not None
+
+
+class TestSignalStatusUpdates:
+    """Test signal status update methods."""
+
+    @pytest.fixture
+    async def store(self, tmp_path):
+        db_path = str(tmp_path / "test_status.db")
+        store = SignalStore(db_path)
+        await store.initialize()
+        yield store
+        await store.close()
+
+    @pytest.fixture
+    async def signal_id(self, store):
+        signal_id = await store.save_signal(
+            signal_type="test",
+            source_api="test",
+            canonical_key="domain:status-test.com",
+            company_name="Status Test Co",
+            confidence=0.5,
+            raw_data={},
+        )
+        return signal_id
+
+    @pytest.mark.asyncio
+    async def test_update_status_to_held(self, store, signal_id):
+        """Should update signal status to held."""
+        updated = await store.update_signal_status(
+            "domain:status-test.com",
+            "held",
+            error_message="Low thesis fit",
+        )
+        assert updated is True
+
+        signals = await store.get_signals_by_status("held")
+        assert len(signals) >= 1
+        assert any(s.canonical_key == "domain:status-test.com" for s in signals)
+
+    @pytest.mark.asyncio
+    async def test_update_status_to_qualified(self, store, signal_id):
+        """Should update signal status to qualified."""
+        updated = await store.update_signal_status(
+            "domain:status-test.com",
+            "qualified",
+        )
+        assert updated is True
+
+        signals = await store.get_signals_by_status("qualified")
+        assert len(signals) >= 1
+
+    @pytest.mark.asyncio
+    async def test_update_status_to_rejected(self, store, signal_id):
+        """Should update signal status to rejected."""
+        updated = await store.update_signal_status(
+            "domain:status-test.com",
+            "rejected",
+            error_message="Thesis excluded",
+        )
+        assert updated is True
+
+    @pytest.mark.asyncio
+    async def test_get_signals_by_status_empty(self, store):
+        """Should return empty list if no signals with status."""
+        signals = await store.get_signals_by_status("qualified")
+        assert signals == []
+
+    @pytest.mark.asyncio
+    async def test_get_signals_by_status_with_limit(self, store):
+        """Should respect limit parameter."""
+        # Create multiple signals
+        for i in range(5):
+            sid = await store.save_signal(
+                signal_type="test",
+                source_api="test",
+                canonical_key=f"domain:limit-test-{i}.com",
+                company_name=f"Test Co {i}",
+                confidence=0.5,
+                raw_data={},
+            )
+            await store.update_signal_status(f"domain:limit-test-{i}.com", "qualified")
+
+        signals = await store.get_signals_by_status("qualified", limit=3)
+        assert len(signals) == 3
+
+    @pytest.mark.asyncio
+    async def test_get_status_counts(self, store, signal_id):
+        """Should return counts by status."""
+        await store.update_signal_status("domain:status-test.com", "qualified")
+
+        counts = await store.get_status_counts()
+        assert "qualified" in counts
+        assert counts["qualified"] >= 1
