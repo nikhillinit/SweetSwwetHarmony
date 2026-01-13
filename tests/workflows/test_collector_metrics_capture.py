@@ -129,3 +129,43 @@ async def test_collector_metrics_initialized_in_pipeline():
     assert hasattr(pipeline, "_collector_metrics")
     assert isinstance(pipeline._collector_metrics, list)
     assert len(pipeline._collector_metrics) == 0
+
+
+@pytest.mark.asyncio
+async def test_pipeline_saves_collector_metrics():
+    """Verify pipeline saves collector metrics alongside run metrics."""
+    from workflows.pipeline import PipelineStats
+
+    mock_store = AsyncMock()
+    mock_store.save_pipeline_run = AsyncMock(return_value="run-123")
+    mock_store.save_collector_metrics = AsyncMock()
+
+    config = PipelineConfig(db_path=":memory:")
+    pipeline = DiscoveryPipeline(config)
+    pipeline._store = mock_store
+    pipeline._initialized = True
+
+    # Add some metrics
+    metrics1 = CollectorMetrics(
+        collector_name="github",
+        started_at=datetime.now(timezone.utc),
+        signals_found=42,
+        status="success",
+    )
+    metrics1.complete()
+    pipeline._collector_metrics = [metrics1]
+
+    # Create a minimal PipelineStats
+    stats = PipelineStats()
+    stats.complete()
+
+    await pipeline._save_pipeline_metrics(stats)
+
+    # Verify pipeline run was saved
+    mock_store.save_pipeline_run.assert_called_once()
+
+    # Verify collector metrics were saved
+    mock_store.save_collector_metrics.assert_called_once()
+    call_args = mock_store.save_collector_metrics.call_args
+    assert call_args[0][0] == "run-123"  # run_id
+    assert call_args[0][1].collector_name == "github"
