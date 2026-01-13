@@ -155,8 +155,8 @@ class SignalConsolidator:
         signal_types = list(set(s.signal_type for s in signals))
         source_apis = list(set(s.source_api for s in signals))
 
-        # Confidence: simple average (for now)
-        avg_confidence = sum(s.confidence for s in signals) / len(signals)
+        # Confidence: weighted average by source priority
+        avg_confidence = self._calculate_weighted_confidence(signals)
 
         # Time bounds
         earliest = min(s.detected_at for s in signals)
@@ -196,6 +196,30 @@ class SignalConsolidator:
             if signal.company_name and signal.company_name.strip():
                 return signal.company_name.strip()
         return "Unknown Company"
+
+    def _calculate_weighted_confidence(self, signals: List["StoredSignal"]) -> float:
+        """
+        Calculate weighted average confidence.
+
+        Weight is inversely proportional to source priority (lower priority number = higher weight).
+        This ensures high-quality sources like Companies House and SEC EDGAR
+        have more influence on the final confidence score.
+        """
+        if len(signals) == 1:
+            return signals[0].confidence
+
+        total_weight = 0.0
+        weighted_sum = 0.0
+
+        for signal in signals:
+            # Invert priority: priority 1 -> weight 10, priority 10 -> weight 1
+            priority = self.source_priority.get(signal.source_api, DEFAULT_PRIORITY)
+            weight = 11 - min(priority, 10)  # Clamp priority to max 10
+
+            weighted_sum += signal.confidence * weight
+            total_weight += weight
+
+        return weighted_sum / total_weight if total_weight > 0 else 0.0
 
     def _detect_conflicts(self, signals: List["StoredSignal"]) -> List[ConflictFlag]:
         """Detect conflicts between signal field values."""
