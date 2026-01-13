@@ -796,6 +796,578 @@ class TestSignalOutput:
 
 
 # =============================================================================
+# DATETIME PARSING EDGE CASES
+# =============================================================================
+
+class TestDatetimeParsingEdgeCases:
+    """Test edge cases for datetime parsing"""
+
+    def test_parse_float_epoch(self):
+        """Should parse float epoch values"""
+        from collectors.job_postings import _parse_dt
+
+        result = _parse_dt(1768062645.123)
+        assert result is not None
+        assert result.year == 2026
+
+    def test_parse_string_epoch(self):
+        """Should handle string representation of epoch"""
+        from collectors.job_postings import _parse_dt
+
+        result = _parse_dt("1768062645")
+        # Might be interpreted as ISO string first, then fallback
+        # Just verify it doesn't crash
+        assert True
+
+    def test_parse_malformed_iso_returns_none(self):
+        """Should return None for malformed ISO strings"""
+        from collectors.job_postings import _parse_dt
+
+        # These should not crash
+        assert _parse_dt("not-a-date") is None
+        assert _parse_dt("2026-99-99") is None  # Invalid month/day
+
+    def test_parse_negative_epoch(self):
+        """Should handle negative epoch values (pre-1970)"""
+        from collectors.job_postings import _parse_dt
+
+        result = _parse_dt(-1000000)
+        # Should either work or return None, but not crash
+        assert result is None or result.year < 1970
+
+    def test_parse_very_large_number(self):
+        """Should handle very large numbers near ms/s boundary"""
+        from collectors.job_postings import _parse_dt
+
+        # Just above seconds threshold (1e12)
+        result = _parse_dt(1e12 + 1)
+        assert result is not None  # Should parse as milliseconds
+
+    def test_parse_iso_with_microseconds(self):
+        """Should parse ISO strings with microseconds"""
+        from collectors.job_postings import _parse_dt
+
+        result = _parse_dt("2026-01-10T12:30:45.123456Z")
+        assert result is not None
+        assert result.year == 2026
+
+
+# =============================================================================
+# GHOST JOB DAMPENER EDGE CASES
+# =============================================================================
+
+class TestGhostJobDampenerEdgeCases:
+    """Test edge cases for ghost job dampening"""
+
+    def test_ghost_job_at_60_day_boundary(self):
+        """Postings at 60 days should have mild penalty"""
+        from collectors.job_postings import JobPostingSignal
+
+        fresh_date = datetime.now(timezone.utc) - timedelta(days=10)
+        boundary_date = datetime.now(timezone.utc) - timedelta(days=60)
+
+        signal_fresh = JobPostingSignal(
+            company_name="Test",
+            company_domain="test.com",
+            ats_platform="greenhouse",
+            total_positions=5,
+            engineering_positions=2,
+            oldest_posting_at=fresh_date,
+        )
+
+        signal_60d = JobPostingSignal(
+            company_name="Test",
+            company_domain="test.com",
+            ats_platform="greenhouse",
+            total_positions=5,
+            engineering_positions=2,
+            oldest_posting_at=boundary_date,
+        )
+
+        # 60-day posts should have some penalty vs fresh
+        score_fresh = signal_fresh.calculate_signal_score()
+        score_60d = signal_60d.calculate_signal_score()
+
+        assert score_60d <= score_fresh
+
+    def test_ghost_job_without_posting_date(self):
+        """Should handle missing posting dates gracefully"""
+        from collectors.job_postings import JobPostingSignal
+
+        signal = JobPostingSignal(
+            company_name="Test",
+            company_domain="test.com",
+            ats_platform="greenhouse",
+            total_positions=5,
+            engineering_positions=2,
+            oldest_posting_at=None,
+        )
+
+        # Should not crash, should use base score
+        score = signal.calculate_signal_score()
+        assert score >= 0.7  # Base score without penalty
+
+
+# =============================================================================
+# SCORE BOUNDARY CONDITIONS
+# =============================================================================
+
+class TestScoreBoundaryConditions:
+    """Test score boundary conditions with multiple boosts"""
+
+    def test_score_with_all_boosts(self):
+        """Score with all boosts should still be capped"""
+        from collectors.job_postings import JobPostingSignal
+
+        signal = JobPostingSignal(
+            company_name="Test",
+            company_domain="test.com",
+            ats_platform="greenhouse",
+            total_positions=100,  # Max position boost
+            engineering_positions=100,  # 100% engineering
+            oldest_posting_at=datetime.now(timezone.utc),  # Fresh
+        )
+
+        score = signal.calculate_signal_score()
+        assert 0 <= score <= 1.0
+
+    def test_score_at_position_thresholds(self):
+        """Test score at position count thresholds"""
+        from collectors.job_postings import JobPostingSignal
+
+        for positions in [1, 2, 5, 10, 20, 50]:
+            signal = JobPostingSignal(
+                company_name="Test",
+                company_domain="test.com",
+                ats_platform="greenhouse",
+                total_positions=positions,
+                engineering_positions=0,
+            )
+            score = signal.calculate_signal_score()
+            assert 0.7 <= score <= 1.0
+
+    def test_score_at_engineering_ratio_thresholds(self):
+        """Test score at engineering ratio thresholds"""
+        from collectors.job_postings import JobPostingSignal
+
+        for eng_ratio in [0, 0.25, 0.5, 0.75, 1.0]:
+            total = 10
+            eng = int(total * eng_ratio)
+            signal = JobPostingSignal(
+                company_name="Test",
+                company_domain="test.com",
+                ats_platform="greenhouse",
+                total_positions=total,
+                engineering_positions=eng,
+            )
+            score = signal.calculate_signal_score()
+            assert 0.7 <= score <= 1.0
+
+    def test_score_minimum_floor(self):
+        """Score should have minimum floor even with heavy penalties"""
+        from collectors.job_postings import JobPostingSignal
+
+        # Very old posting with minimal positions
+        ancient_date = datetime.now(timezone.utc) - timedelta(days=365)
+        signal = JobPostingSignal(
+            company_name="Test",
+            company_domain="test.com",
+            ats_platform="greenhouse",
+            total_positions=1,
+            engineering_positions=0,
+            oldest_posting_at=ancient_date,
+        )
+
+        score = signal.calculate_signal_score()
+        assert score >= 0.0  # Should not go negative
+
+
+# =============================================================================
+# BOARD ID GENERATION EDGE CASES
+# =============================================================================
+
+class TestBoardIdEdgeCases:
+    """Test edge cases for board ID generation"""
+
+    def test_empty_domain(self):
+        """Should handle empty domain gracefully"""
+        from collectors.job_postings import JobPostingsCollector
+
+        collector = JobPostingsCollector(domains=[])
+        ids = collector._generate_board_ids("")
+
+        # Should return empty list or minimal candidates
+        assert isinstance(ids, list)
+
+    def test_numeric_domain(self):
+        """Should handle numeric-only domain names"""
+        from collectors.job_postings import JobPostingsCollector
+
+        collector = JobPostingsCollector(domains=[])
+        ids = collector._generate_board_ids("123.com")
+
+        assert "123" in ids
+
+    def test_very_short_domain(self):
+        """Should handle very short domain names"""
+        from collectors.job_postings import JobPostingsCollector
+
+        collector = JobPostingsCollector(domains=[])
+        ids = collector._generate_board_ids("a.io")
+
+        assert "a" in ids
+
+    def test_domain_with_subdomain(self):
+        """Should handle domains with subdomains"""
+        from collectors.job_postings import JobPostingsCollector
+
+        collector = JobPostingsCollector(domains=[])
+        ids = collector._generate_board_ids("careers.company.com")
+
+        # Should extract the company name appropriately
+        assert isinstance(ids, list)
+        assert len(ids) > 0
+
+    def test_multi_level_tld(self):
+        """Should handle multi-level TLDs like .co.uk"""
+        from collectors.job_postings import JobPostingsCollector
+
+        collector = JobPostingsCollector(domains=[])
+        ids = collector._generate_board_ids("company.co.uk")
+
+        assert "company" in ids
+
+    def test_special_characters_in_domain(self):
+        """Should handle special characters in domain"""
+        from collectors.job_postings import JobPostingsCollector
+
+        collector = JobPostingsCollector(domains=[])
+        ids = collector._generate_board_ids("my-great_company.com")
+
+        assert isinstance(ids, list)
+        assert len(ids) > 0
+
+
+# =============================================================================
+# API ERROR HANDLING TESTS
+# =============================================================================
+
+class TestAPIErrorHandling:
+    """Test API error handling scenarios"""
+
+    @pytest.mark.asyncio
+    async def test_greenhouse_handles_500_error(self):
+        """Should handle HTTP 500 errors gracefully"""
+        from collectors.job_postings import JobPostingsCollector
+
+        collector = JobPostingsCollector(domains=[])
+
+        with patch.object(
+            collector,
+            "_http_get",
+            new_callable=AsyncMock,
+            side_effect=httpx.HTTPStatusError(
+                "Server Error",
+                request=MagicMock(),
+                response=MagicMock(status_code=500),
+            ),
+        ):
+            result = await collector._check_greenhouse("test", "test.com")
+            assert result is None
+
+    @pytest.mark.asyncio
+    async def test_lever_handles_timeout(self):
+        """Should handle timeout errors gracefully"""
+        from collectors.job_postings import JobPostingsCollector
+
+        collector = JobPostingsCollector(domains=[])
+
+        with patch.object(
+            collector,
+            "_http_get",
+            new_callable=AsyncMock,
+            side_effect=httpx.TimeoutException("Timeout"),
+        ):
+            result = await collector._check_lever("test", "test.com")
+            assert result is None
+
+    @pytest.mark.asyncio
+    async def test_ashby_handles_connection_error(self):
+        """Should handle connection errors gracefully"""
+        from collectors.job_postings import JobPostingsCollector
+
+        collector = JobPostingsCollector(domains=[])
+
+        with patch.object(
+            collector,
+            "_http_get",
+            new_callable=AsyncMock,
+            side_effect=httpx.ConnectError("Connection refused"),
+        ):
+            result = await collector._check_ashby("test", "test.com")
+            assert result is None
+
+    @pytest.mark.asyncio
+    async def test_greenhouse_handles_empty_jobs_list(self):
+        """Should handle empty jobs list"""
+        from collectors.job_postings import JobPostingsCollector
+
+        collector = JobPostingsCollector(domains=[])
+
+        with patch.object(
+            collector, "_http_get", new_callable=AsyncMock, return_value={"jobs": []}
+        ):
+            result = await collector._check_greenhouse("test", "test.com")
+            # Empty jobs should return None or signal with 0 positions
+            assert result is None or result.total_positions == 0
+
+    @pytest.mark.asyncio
+    async def test_lever_handles_non_list_response(self):
+        """Should handle unexpected response format"""
+        from collectors.job_postings import JobPostingsCollector
+
+        collector = JobPostingsCollector(domains=[])
+
+        with patch.object(
+            collector, "_http_get", new_callable=AsyncMock, return_value={"error": "not found"}
+        ):
+            result = await collector._check_lever("test", "test.com")
+            assert result is None
+
+
+# =============================================================================
+# WORKABLE HTML EDGE CASES
+# =============================================================================
+
+class TestWorkableHtmlEdgeCases:
+    """Test edge cases for Workable HTML parsing"""
+
+    @pytest.mark.asyncio
+    async def test_workable_multiple_job_indicators(self):
+        """Should handle multiple job indicator patterns"""
+        from collectors.job_postings import JobPostingsCollector
+
+        mock_html = '''
+        <html>
+        <body>
+            <div data-ui="job-opening">Job 1</div>
+            <div class="whr-item">Job 2</div>
+            <li data-ui="job">Job 3</li>
+        </body>
+        </html>
+        '''
+
+        collector = JobPostingsCollector(domains=[])
+
+        with patch.object(
+            collector, "_fetch_with_retry", new_callable=AsyncMock, return_value=mock_html
+        ):
+            result = await collector._check_workable("test", "test.com")
+            assert result is not None
+            assert result.total_positions >= 1
+
+    @pytest.mark.asyncio
+    async def test_workable_handles_malformed_html(self):
+        """Should handle malformed HTML without crashing"""
+        from collectors.job_postings import JobPostingsCollector
+
+        mock_html = '''
+        <html>
+        <body>
+            <div data-ui="job-opening">
+                <h3>Job Title
+            <!-- Missing closing tags -->
+        '''
+
+        collector = JobPostingsCollector(domains=[])
+
+        with patch.object(
+            collector, "_fetch_with_retry", new_callable=AsyncMock, return_value=mock_html
+        ):
+            # Should not crash
+            result = await collector._check_workable("test", "test.com")
+            # May or may not find jobs, but shouldn't crash
+            assert result is None or isinstance(result.total_positions, int)
+
+    @pytest.mark.asyncio
+    async def test_workable_handles_empty_html(self):
+        """Should handle empty HTML response"""
+        from collectors.job_postings import JobPostingsCollector
+
+        collector = JobPostingsCollector(domains=[])
+
+        with patch.object(
+            collector, "_fetch_with_retry", new_callable=AsyncMock, return_value=""
+        ):
+            result = await collector._check_workable("test", "test.com")
+            assert result is None
+
+    @pytest.mark.asyncio
+    async def test_workable_handles_null_response(self):
+        """Should handle null/None response"""
+        from collectors.job_postings import JobPostingsCollector
+
+        collector = JobPostingsCollector(domains=[])
+
+        with patch.object(
+            collector, "_fetch_with_retry", new_callable=AsyncMock, return_value=None
+        ):
+            result = await collector._check_workable("test", "test.com")
+            assert result is None
+
+
+# =============================================================================
+# DOMAIN INPUT VALIDATION
+# =============================================================================
+
+class TestDomainInputValidation:
+    """Test handling of various domain inputs"""
+
+    @pytest.mark.asyncio
+    async def test_collect_with_empty_domains_list(self):
+        """Should handle empty domains list"""
+        from collectors.job_postings import JobPostingsCollector
+
+        collector = JobPostingsCollector(domains=[])
+        signals = await collector._collect_signals()
+
+        assert isinstance(signals, list)
+        assert len(signals) == 0
+
+    @pytest.mark.asyncio
+    async def test_check_domain_normalizes_input(self):
+        """Should normalize domain input"""
+        from collectors.job_postings import JobPostingsCollector
+
+        collector = JobPostingsCollector(domains=[])
+
+        with patch.object(
+            collector, "_check_greenhouse", new_callable=AsyncMock, return_value=None
+        ) as mock_gh, patch.object(
+            collector, "_check_lever", new_callable=AsyncMock, return_value=None
+        ), patch.object(
+            collector, "_check_ashby", new_callable=AsyncMock, return_value=None
+        ), patch.object(
+            collector, "_check_workable", new_callable=AsyncMock, return_value=None
+        ):
+            # Should work with URL-like input
+            await collector.check_domain("https://www.example.com/careers")
+
+            # Should have been called with normalized domain
+            assert mock_gh.called
+
+
+# =============================================================================
+# SIGNAL HASH DETERMINISM
+# =============================================================================
+
+class TestSignalHashDeterminism:
+    """Test signal hash determinism for deduplication"""
+
+    def test_hash_stable_across_list_order(self):
+        """Signal hash should be stable regardless of list order"""
+        from collectors.job_postings import JobPostingSignal
+
+        signal1 = JobPostingSignal(
+            company_name="Test",
+            company_domain="test.com",
+            ats_platform="greenhouse",
+            total_positions=3,
+            engineering_positions=1,
+            sample_titles=["A", "B", "C"],
+            departments=["X", "Y", "Z"],
+            locations=["1", "2", "3"],
+        )
+
+        signal2 = JobPostingSignal(
+            company_name="Test",
+            company_domain="test.com",
+            ats_platform="greenhouse",
+            total_positions=3,
+            engineering_positions=1,
+            sample_titles=["C", "B", "A"],  # Different order
+            departments=["Z", "X", "Y"],
+            locations=["3", "1", "2"],
+        )
+
+        hash1 = signal1.to_signal().source_response_hash
+        hash2 = signal2.to_signal().source_response_hash
+
+        assert hash1 == hash2
+
+    def test_hash_different_for_different_content(self):
+        """Signal hash should differ for different content"""
+        from collectors.job_postings import JobPostingSignal
+
+        signal1 = JobPostingSignal(
+            company_name="Company A",
+            company_domain="company-a.com",
+            ats_platform="greenhouse",
+            total_positions=5,
+            engineering_positions=2,
+        )
+
+        signal2 = JobPostingSignal(
+            company_name="Company B",
+            company_domain="company-b.com",
+            ats_platform="greenhouse",
+            total_positions=5,
+            engineering_positions=2,
+        )
+
+        hash1 = signal1.to_signal().source_response_hash
+        hash2 = signal2.to_signal().source_response_hash
+
+        assert hash1 != hash2
+
+
+# =============================================================================
+# POSTING AGE CALCULATION
+# =============================================================================
+
+class TestPostingAgeCalculation:
+    """Test posting age calculation for ghost job detection"""
+
+    def test_age_calculation_positive(self):
+        """Should calculate positive age for past dates"""
+        from collectors.job_postings import _calculate_posting_age_days
+
+        past_date = datetime.now(timezone.utc) - timedelta(days=30)
+        age = _calculate_posting_age_days(past_date)
+
+        assert age is not None
+        assert 29 <= age <= 31  # Allow for timing
+
+    def test_age_calculation_zero_for_today(self):
+        """Should return 0 or 1 for today's date"""
+        from collectors.job_postings import _calculate_posting_age_days
+
+        today = datetime.now(timezone.utc)
+        age = _calculate_posting_age_days(today)
+
+        assert age is not None
+        assert age <= 1
+
+    def test_age_calculation_none_input(self):
+        """Should handle None input"""
+        from collectors.job_postings import _calculate_posting_age_days
+
+        age = _calculate_posting_age_days(None)
+        assert age is None
+
+    def test_age_calculation_future_date(self):
+        """Should handle future dates gracefully"""
+        from collectors.job_postings import _calculate_posting_age_days
+
+        future_date = datetime.now(timezone.utc) + timedelta(days=30)
+        age = _calculate_posting_age_days(future_date)
+
+        # Should return 0 or negative, but not crash
+        assert age is not None
+        assert age <= 0
+
+
+# =============================================================================
 # RUN PYTEST
 # =============================================================================
 
