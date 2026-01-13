@@ -45,6 +45,7 @@ from storage.signal_store import SignalStore, StoredSignal
 from utils.signal_consolidator import SignalConsolidator, ConsolidatedSignal
 from utils.enrichment_boost import EnrichmentBoostCalculator, EnrichmentConfig
 from utils.thesis_filter import ThesisFilter, ThesisFilterConfig, RoutingDecision
+from utils.competitor_detector import CompetitorDetector
 from storage.source_asset_store import SourceAssetStore, SourceAsset
 from storage.founder_store import FounderStore
 from storage.entity_resolution import EntityResolutionStore, AssetToLead
@@ -146,6 +147,10 @@ class PipelineConfig:
     # Thesis filtering (Phase 3 enhancement)
     use_thesis_filter: bool = True  # Enable thesis filtering
     thesis_hold_threshold: float = 0.3  # Signals below this are HELD
+
+    # Competitor detection
+    use_competitor_detection: bool = True
+    portfolio_path: str = "config/portfolio.json"
 
     @classmethod
     def from_env(cls) -> PipelineConfig:
@@ -354,6 +359,11 @@ class DiscoveryPipeline:
                 hold_threshold=self.config.thesis_hold_threshold,
             )
             self._thesis_filter = ThesisFilter(thesis_config)
+
+        # Initialize competitor detector
+        self._competitor_detector: Optional[CompetitorDetector] = None
+        if self.config.use_competitor_detection:
+            self._competitor_detector = CompetitorDetector(self.config.portfolio_path)
 
         # State
         self._initialized = False
@@ -1342,7 +1352,21 @@ class DiscoveryPipeline:
                     # QUALIFIED - continue processing
                     pass
 
-                # Save classification to DB
+                # Check for competitors (only for qualified signals)
+                competitor_match = None
+                if self._competitor_detector and thesis_result.keyword_category:
+                    description = consolidated.description or ""
+                    competitor_match = self._competitor_detector.check(
+                        thesis_result.keyword_category,
+                        description,
+                    )
+                    if competitor_match:
+                        logger.warning(
+                            f"Potential competitor detected: {canonical_key} "
+                            f"similar to {competitor_match.portfolio_company}"
+                        )
+
+                # Save classification to DB (with competitor info)
                 if self._store and signals:
                     try:
                         await self._store.save_thesis_classification(
@@ -1354,6 +1378,8 @@ class DiscoveryPipeline:
                             thesis_fit_score=thesis_result.llm_score,
                             category=thesis_result.llm_category,
                             rationale=thesis_result.llm_rationale,
+                            competitor_flag=competitor_match is not None,
+                            competitor_match=competitor_match.to_dict() if competitor_match else None,
                         )
                     except Exception as e:
                         logger.warning(f"Failed to save thesis classification (non-fatal): {e}")

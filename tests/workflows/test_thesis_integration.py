@@ -94,3 +94,47 @@ class TestPipelineStatsToDictThesis:
         assert d["thesis"]["rejected"] == 5
         assert d["thesis"]["held"] == 10
         assert d["thesis"]["passed"] == 25
+
+
+class TestPipelineCompetitorDetection:
+    """Test competitor detection in pipeline."""
+
+    def test_pipeline_config_has_competitor_detection(self):
+        """PipelineConfig should have use_competitor_detection flag."""
+        from workflows.pipeline import PipelineConfig
+        config = PipelineConfig()
+        assert hasattr(config, "use_competitor_detection")
+        assert config.use_competitor_detection is True
+
+    def test_pipeline_config_has_portfolio_path(self):
+        """PipelineConfig should have portfolio_path."""
+        from workflows.pipeline import PipelineConfig
+        config = PipelineConfig()
+        assert hasattr(config, "portfolio_path")
+        assert config.portfolio_path == "config/portfolio.json"
+
+    def test_pipeline_creates_competitor_detector_when_enabled(self):
+        """Pipeline should create CompetitorDetector when use_competitor_detection=True."""
+        from utils.competitor_detector import CompetitorDetector
+        config = PipelineConfig(use_competitor_detection=True)
+        pipeline = DiscoveryPipeline(config)
+        assert pipeline._competitor_detector is not None
+        assert isinstance(pipeline._competitor_detector, CompetitorDetector)
+
+    def test_pipeline_no_competitor_detector_when_disabled(self):
+        """Pipeline should NOT create CompetitorDetector when use_competitor_detection=False."""
+        config = PipelineConfig(use_competitor_detection=False)
+        pipeline = DiscoveryPipeline(config)
+        assert pipeline._competitor_detector is None
+
+    def test_competitor_detector_uses_config_path(self):
+        """CompetitorDetector should use portfolio_path from PipelineConfig."""
+        from pathlib import Path
+        config = PipelineConfig(
+            use_competitor_detection=True,
+            portfolio_path="custom/path/portfolio.json"
+        )
+        pipeline = DiscoveryPipeline(config)
+        assert pipeline._competitor_detector is not None
+        # Use Path comparison to handle Windows/Unix path separator differences
+        assert pipeline._competitor_detector.portfolio_path == Path("custom/path/portfolio.json")
