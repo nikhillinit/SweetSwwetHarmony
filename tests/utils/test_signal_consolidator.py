@@ -677,3 +677,140 @@ class TestWhyNowAggregation:
         result = consolidator.consolidate(signals)
         assert len(result.why_now_parts) == 1
         assert result.why_now_parts[0] == "Valid reason"
+
+
+class TestWeightedConfidence:
+    """Test weighted confidence calculation."""
+
+    def test_weights_confidence_by_source_priority(self):
+        """Higher priority sources should have more weight in confidence."""
+        from storage.signal_store import StoredSignal
+        from utils.signal_consolidator import SignalConsolidator
+
+        now = datetime.now(timezone.utc)
+        signals = [
+            StoredSignal(
+                id=1,
+                signal_type="github_spike",
+                source_api="github",  # Low priority (7)
+                canonical_key="domain:acme.ai",
+                company_name="Acme Inc",
+                confidence=0.9,
+                raw_data={},
+                detected_at=now,
+                created_at=now,
+            ),
+            StoredSignal(
+                id=2,
+                signal_type="incorporation",
+                source_api="companies_house",  # High priority (1)
+                canonical_key="domain:acme.ai",
+                company_name="Acme Inc",
+                confidence=0.6,
+                raw_data={},
+                detected_at=now,
+                created_at=now,
+            ),
+        ]
+        consolidator = SignalConsolidator()
+        result = consolidator.consolidate(signals)
+        # Weighted average should be closer to 0.6 than simple average of 0.75
+        # Simple average = (0.9 + 0.6) / 2 = 0.75
+        # With weighting, Companies House signal should pull it down
+        assert result.aggregated_confidence < 0.75
+        assert result.aggregated_confidence > 0.6
+
+    def test_single_signal_uses_own_confidence(self):
+        """Single signal should use its own confidence."""
+        from storage.signal_store import StoredSignal
+        from utils.signal_consolidator import SignalConsolidator
+
+        now = datetime.now(timezone.utc)
+        signals = [
+            StoredSignal(
+                id=1,
+                signal_type="github_spike",
+                source_api="github",
+                canonical_key="domain:acme.ai",
+                company_name="Acme Inc",
+                confidence=0.85,
+                raw_data={},
+                detected_at=now,
+                created_at=now,
+            ),
+        ]
+        consolidator = SignalConsolidator()
+        result = consolidator.consolidate(signals)
+        assert result.aggregated_confidence == 0.85
+
+    def test_unknown_source_uses_default_priority(self):
+        """Unknown sources should use default priority (low weight)."""
+        from storage.signal_store import StoredSignal
+        from utils.signal_consolidator import SignalConsolidator
+
+        now = datetime.now(timezone.utc)
+        signals = [
+            StoredSignal(
+                id=1,
+                signal_type="some_signal",
+                source_api="unknown_source",  # Default priority (99)
+                canonical_key="domain:acme.ai",
+                company_name="Acme Inc",
+                confidence=0.9,
+                raw_data={},
+                detected_at=now,
+                created_at=now,
+            ),
+            StoredSignal(
+                id=2,
+                signal_type="incorporation",
+                source_api="sec_edgar",  # Priority 2
+                canonical_key="domain:acme.ai",
+                company_name="Acme Inc",
+                confidence=0.5,
+                raw_data={},
+                detected_at=now,
+                created_at=now,
+            ),
+        ]
+        consolidator = SignalConsolidator()
+        result = consolidator.consolidate(signals)
+        # SEC EDGAR has high weight (priority 2 -> weight 9)
+        # Unknown source has low weight (clamped priority 10 -> weight 1)
+        # Weighted avg should be closer to 0.5 (SEC EDGAR)
+        assert result.aggregated_confidence < 0.7  # Simple average would be 0.7
+
+    def test_equal_priority_sources_equal_weight(self):
+        """Sources with equal priority should contribute equally."""
+        from storage.signal_store import StoredSignal
+        from utils.signal_consolidator import SignalConsolidator
+
+        now = datetime.now(timezone.utc)
+        signals = [
+            StoredSignal(
+                id=1,
+                signal_type="github_spike",
+                source_api="github",  # Priority 7
+                canonical_key="domain:acme.ai",
+                company_name="Acme Inc",
+                confidence=0.8,
+                raw_data={},
+                detected_at=now,
+                created_at=now,
+            ),
+            StoredSignal(
+                id=2,
+                signal_type="github_activity",
+                source_api="github",  # Priority 7 (same)
+                canonical_key="domain:acme.ai",
+                company_name="Acme Inc",
+                confidence=0.6,
+                raw_data={},
+                detected_at=now,
+                created_at=now,
+            ),
+        ]
+        consolidator = SignalConsolidator()
+        result = consolidator.consolidate(signals)
+        # Equal weights means simple average: (0.8 + 0.6) / 2 = 0.7
+        assert result.aggregated_confidence == pytest.approx(0.7, abs=0.001)
