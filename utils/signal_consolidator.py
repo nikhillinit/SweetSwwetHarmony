@@ -15,7 +15,7 @@ Usage:
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Dict, Any, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -49,6 +49,9 @@ SOCIAL_PROOF_FIELDS = [
     "followers", "connections",  # LinkedIn
     "mentions",  # Hacker News
 ]
+
+# Founding date fields to extract from raw_data (checked in order)
+FOUNDING_DATE_FIELDS = ["founding_date", "registered_date", "incorporation_date", "created_date"]
 
 
 @dataclass
@@ -165,6 +168,9 @@ class SignalConsolidator:
         # Aggregate social proof metrics
         social_proof = self._aggregate_social_proof(signals)
 
+        # Extract founding date
+        founding_date = self._extract_founding_date(signals)
+
         return ConsolidatedSignal(
             canonical_key=canonical_key,
             company_name=company_name,
@@ -175,6 +181,7 @@ class SignalConsolidator:
             earliest_detected_at=earliest,
             latest_detected_at=latest,
             descriptions=descriptions,
+            founding_date=founding_date,
             social_proof=social_proof,
             conflict_flags=conflict_flags,
         )
@@ -236,3 +243,29 @@ class SignalConsolidator:
                 if isinstance(value, (int, float)) and value > 0:
                     totals[field] = totals.get(field, 0) + int(value)
         return totals
+
+    def _extract_founding_date(self, signals: List["StoredSignal"]) -> Optional[datetime]:
+        """Extract earliest founding/registration date from signals."""
+        dates = []
+        for signal in signals:
+            raw_data = signal.raw_data or {}
+            for field in FOUNDING_DATE_FIELDS:
+                value = raw_data.get(field)
+                if value:
+                    parsed = self._parse_date(value)
+                    if parsed:
+                        dates.append(parsed)
+        return min(dates) if dates else None
+
+    def _parse_date(self, value: Any) -> Optional[datetime]:
+        """Parse a date from various formats."""
+        if isinstance(value, datetime):
+            return value
+        if isinstance(value, str):
+            for fmt in ["%Y-%m-%d", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"]:
+                try:
+                    dt = datetime.strptime(value, fmt)
+                    return dt.replace(tzinfo=timezone.utc)
+                except ValueError:
+                    continue
+        return None
