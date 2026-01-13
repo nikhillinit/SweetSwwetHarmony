@@ -1326,12 +1326,18 @@ class DiscoveryPipeline:
                 # Route based on thesis result
                 if thesis_result.routing == RoutingDecision.REJECTED:
                     logger.info(f"Thesis REJECTED: {canonical_key}")
-                    # Mark signals as rejected
+                    # Mark signals as rejected and update status
                     for sig in signals:
                         await self._store.mark_rejected(
                             sig.id,
                             f"Thesis rejected: negative keywords {thesis_result.negative_keywords}",
                         )
+                    await self._store.update_signal_status(
+                        canonical_key,
+                        "rejected",
+                        error_message=f"Thesis rejected: {thesis_result.negative_keywords}",
+                    )
+                    self._stats.thesis_rejected += 1
                     return {
                         "decision": PushDecision.REJECT,
                         "reason": f"Thesis rejected: {thesis_result.negative_keywords}",
@@ -1341,7 +1347,13 @@ class DiscoveryPipeline:
                     }
                 elif thesis_result.routing == RoutingDecision.HELD:
                     logger.info(f"Thesis HELD: {canonical_key}")
-                    # Keep as pending for batch review (don't mark as rejected)
+                    # Update status to 'held' for dashboard visibility
+                    await self._store.update_signal_status(
+                        canonical_key,
+                        "held",
+                        error_message=f"Thesis held: score {thesis_result.keyword_score:.2f} below threshold",
+                    )
+                    self._stats.thesis_held += 1
                     return {
                         "decision": PushDecision.HOLD,
                         "reason": f"Thesis held: score {thesis_result.keyword_score:.2f} below threshold",
@@ -1351,7 +1363,7 @@ class DiscoveryPipeline:
                     }
                 else:
                     # QUALIFIED - continue processing
-                    pass
+                    self._stats.thesis_passed += 1
 
                 # Check for competitors (only for qualified signals)
                 competitor_match = None
