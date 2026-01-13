@@ -132,6 +132,9 @@ class SignalConsolidator:
         # Select company_name from highest priority source that has it
         company_name = self._select_company_name(sorted_signals)
 
+        # Detect conflicts
+        conflict_flags = self._detect_conflicts(signals)
+
         # Basic aggregation
         canonical_key = signals[0].canonical_key
         contributing_ids = [s.id for s in signals]
@@ -154,6 +157,7 @@ class SignalConsolidator:
             aggregated_confidence=avg_confidence,
             earliest_detected_at=earliest,
             latest_detected_at=latest,
+            conflict_flags=conflict_flags,
         )
 
     def _select_company_name(self, sorted_signals: List["StoredSignal"]) -> str:
@@ -162,3 +166,26 @@ class SignalConsolidator:
             if signal.company_name and signal.company_name.strip():
                 return signal.company_name.strip()
         return "Unknown Company"
+
+    def _detect_conflicts(self, signals: List["StoredSignal"]) -> List[ConflictFlag]:
+        """Detect conflicts between signal field values."""
+        conflicts = []
+
+        # Check company_name conflicts
+        company_names = set()
+        for signal in signals:
+            if signal.company_name and signal.company_name.strip():
+                company_names.add(signal.company_name.strip())
+
+        if len(company_names) > 1:
+            conflicts.append(ConflictFlag(
+                field="company_name",
+                values=sorted(company_names),
+                severity="warning",
+            ))
+            logger.warning(
+                f"Conflict detected for {signals[0].canonical_key}: "
+                f"multiple company names: {company_names}"
+            )
+
+        return conflicts
