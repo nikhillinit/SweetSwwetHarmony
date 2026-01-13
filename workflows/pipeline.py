@@ -43,6 +43,7 @@ from typing import Any, Dict, List, Optional, Set
 # Storage
 from storage.signal_store import SignalStore, StoredSignal
 from utils.signal_consolidator import SignalConsolidator, ConsolidatedSignal
+from utils.enrichment_boost import EnrichmentBoostCalculator, EnrichmentConfig
 from storage.source_asset_store import SourceAssetStore, SourceAsset
 from storage.founder_store import FounderStore
 from storage.entity_resolution import EntityResolutionStore, AssetToLead
@@ -137,6 +138,9 @@ class PipelineConfig:
 
     # Signal consolidation
     use_consolidation: bool = True  # Enable signal consolidation before processing
+
+    # Enrichment boost (Phase 2 enhancement)
+    use_enrichment_boost: bool = True  # Enable enrichment boost calculation
 
     @classmethod
     def from_env(cls) -> PipelineConfig:
@@ -321,6 +325,11 @@ class DiscoveryPipeline:
         # Signal consolidation
         self._consolidator: Optional[SignalConsolidator] = (
             SignalConsolidator() if self.config.use_consolidation else None
+        )
+
+        # Enrichment boost calculator (Phase 2)
+        self._enrichment_calculator: Optional[EnrichmentBoostCalculator] = (
+            EnrichmentBoostCalculator() if self.config.use_enrichment_boost else None
         )
 
         # State
@@ -984,6 +993,8 @@ class DiscoveryPipeline:
             "prospects_skipped": 0,
             "signals_consolidated": 0,
             "conflicts_detected": 0,
+            "enrichment_boosts_applied": 0,
+            "total_enrichment_boost": 0.0,
         }
 
         # Get pending signals
@@ -1052,12 +1063,24 @@ class DiscoveryPipeline:
                 elif result.get("notion_status") == "skipped":
                     stats["prospects_skipped"] += 1
 
+                # Track enrichment metrics
+                enrichment_boost = result.get("enrichment_boost", 0.0)
+                if enrichment_boost > 0:
+                    stats["enrichment_boosts_applied"] += 1
+                    stats["total_enrichment_boost"] += enrichment_boost
+
             except Exception as e:
                 logger.exception(f"Error processing company {canonical_key}")
 
                 # Mark signals as rejected
                 for sig in company_signals:
                     await self._store.mark_rejected(sig.id, str(e))
+
+        # Calculate average enrichment boost
+        if stats["enrichment_boosts_applied"] > 0:
+            stats["avg_enrichment_boost"] = stats["total_enrichment_boost"] / stats["enrichment_boosts_applied"]
+        else:
+            stats["avg_enrichment_boost"] = 0.0
 
         logger.info(f"Processing stage complete: {stats}")
 
@@ -1226,6 +1249,20 @@ class DiscoveryPipeline:
             except Exception as e:
                 logger.warning(f"Velocity tracking failed (non-fatal): {e}")
 
+        # Get enrichment boost (Phase 2 enhancement)
+        enrichment_boost = 0.0
+        if self._enrichment_calculator and consolidated:
+            try:
+                enrichment = self._enrichment_calculator.calculate(consolidated)
+                enrichment_boost = enrichment.total_boost
+                if enrichment_boost > 0:
+                    logger.info(
+                        f"Enrichment boost for {canonical_key}: {enrichment_boost:.3f} "
+                        f"(age: {enrichment.company_age_days}d, social: {enrichment.social_proof_score})"
+                    )
+            except Exception as e:
+                logger.warning(f"Enrichment calculation failed (non-fatal): {e}")
+
         # Run through SignalProcessor gating (if enabled)
         gating_applied = False
         gating_triggered = False
@@ -1293,6 +1330,7 @@ class DiscoveryPipeline:
             founder_score=founder_score,
             velocity_boost=velocity_boost,
             momentum_score=momentum_score,
+            enrichment_boost=enrichment_boost,
         )
 
         logger.info(
@@ -1392,6 +1430,7 @@ class DiscoveryPipeline:
             "founder_score": founder_score,
             "velocity_boost": velocity_boost,
             "momentum_score": momentum_score,
+            "enrichment_boost": enrichment_boost,
         }
 
     async def _push_to_notion(
@@ -1449,6 +1488,9 @@ class DiscoveryPipeline:
             canonical_key_candidates=[primary_signal.canonical_key],
             proposed_sector=sector_candidate,
             watchlists_matched=watchlists_matched,
+            # Enrichment fields from consolidated signal
+            founding_date=consolidated.founding_date if consolidated else None,
+            social_proof_score=sum(consolidated.social_proof.values()) if consolidated and consolidated.social_proof else 0,
         )
 
         outbox_payload = {

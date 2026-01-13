@@ -119,7 +119,11 @@ class ProspectPayload:
     
     # External refs for canonical key generation
     external_refs: Dict[str, str] = field(default_factory=dict)
-    
+
+    # Enrichment fields (from ConsolidatedSignal)
+    founding_date: Optional[datetime] = None
+    social_proof_score: int = 0
+
     def __post_init__(self):
         """Generate canonical key candidates if not provided"""
         if not self.canonical_key_candidates and self.external_refs:
