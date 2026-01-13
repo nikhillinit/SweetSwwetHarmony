@@ -167,6 +167,7 @@ class ConfidenceBreakdown:
     founder_boost: float = 0.0  # Boost applied from founder score
     velocity_boost: float = 0.0  # Boost from signal velocity/momentum
     momentum_score: float = 0.0  # Raw momentum score (0-1)
+    enrichment_boost: float = 0.0  # Boost from enrichment data (Phase 2)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -178,6 +179,7 @@ class ConfidenceBreakdown:
             "founder_boost": round(self.founder_boost, 3),
             "velocity_boost": round(self.velocity_boost, 3),
             "momentum_score": round(self.momentum_score, 3),
+            "enrichment_boost": round(self.enrichment_boost, 3),
             "signals_contributing": self.signals_contributing,
             "sources_checked": self.sources_checked,
             "sources": self.sources,
@@ -216,6 +218,7 @@ class VerificationGate:
     # Boost weights
     FOUNDER_BOOST_WEIGHT = 0.15  # Max boost from founder score
     VELOCITY_BOOST_WEIGHT = 0.20  # Max boost from velocity
+    ENRICHMENT_BOOST_WEIGHT = 0.05  # Max boost from enrichment data
 
     def __init__(
         self,
@@ -245,6 +248,7 @@ class VerificationGate:
         founder_score: float = 0.0,
         velocity_boost: float = 0.0,
         momentum_score: float = 0.0,
+        enrichment_boost: float = 0.0,
     ) -> VerificationResult:
         """
         Main entry point: evaluate signals and decide on push action.
@@ -254,6 +258,7 @@ class VerificationGate:
             founder_score: Aggregate founder score (0-1) from FounderStore.
             velocity_boost: Confidence boost from signal velocity (0-0.35).
             momentum_score: Raw momentum score (0-1) for tracking.
+            enrichment_boost: Confidence boost from enrichment data (0-0.05).
         """
         if not signals:
             return VerificationResult(
@@ -289,6 +294,7 @@ class VerificationGate:
             founder_score=founder_score,
             velocity_boost=velocity_boost,
             momentum_score=momentum_score,
+            enrichment_boost=enrichment_boost,
         )
 
         # Determine verification status
@@ -329,6 +335,7 @@ class VerificationGate:
         founder_score: float = 0.0,
         velocity_boost: float = 0.0,
         momentum_score: float = 0.0,
+        enrichment_boost: float = 0.0,
     ) -> ConfidenceBreakdown:
         """
         Calculate confidence score with anti-inflation protection.
@@ -339,6 +346,7 @@ class VerificationGate:
         Harmonic enhancements:
         - Founder score boost (up to 0.15)
         - Velocity boost (up to 0.20)
+        - Enrichment boost (up to 0.05)
         """
         # Group signals by source
         by_source = defaultdict(list)
@@ -444,8 +452,20 @@ class VerificationGate:
                 "effect": "boost"
             })
 
+        # Enrichment boost (Phase 2 enhancement)
+        enrichment_boost_applied = 0.0
+        if enrichment_boost > 0:
+            enrichment_boost_applied = min(enrichment_boost, self.ENRICHMENT_BOOST_WEIGHT)
+            signal_details.append({
+                "type": "enrichment_data",
+                "source": "consolidated_signal",
+                "enrichment_boost": round(enrichment_boost, 3),
+                "contribution": round(enrichment_boost_applied, 4),
+                "effect": "boost"
+            })
+
         # Final score with all boosts
-        final_score = min(intermediate_score + founder_boost + velocity_boost_applied, 1.0)
+        final_score = min(intermediate_score + founder_boost + velocity_boost_applied + enrichment_boost_applied, 1.0)
 
         return ConfidenceBreakdown(
             overall=final_score,
@@ -456,6 +476,7 @@ class VerificationGate:
             founder_boost=founder_boost,
             velocity_boost=velocity_boost_applied,
             momentum_score=momentum_score,
+            enrichment_boost=enrichment_boost_applied,
             signals_contributing=distinct_types,
             sources_checked=sources_checked,
             sources=list(by_source.keys()),
