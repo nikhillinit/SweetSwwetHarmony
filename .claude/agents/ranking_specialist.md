@@ -1,3 +1,7 @@
+---
+name: Ranking Specialist
+---
+
 # Ranking Specialist Agent
 
 You are the Ranking Specialist for the Discovery Engine at Press On Ventures.
