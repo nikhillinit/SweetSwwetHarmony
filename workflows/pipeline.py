@@ -42,6 +42,7 @@ from typing import Any, Dict, List, Optional, Set
 
 # Storage
 from storage.signal_store import SignalStore, StoredSignal
+from utils.signal_consolidator import SignalConsolidator, ConsolidatedSignal
 from storage.source_asset_store import SourceAssetStore, SourceAsset
 from storage.founder_store import FounderStore
 from storage.entity_resolution import EntityResolutionStore, AssetToLead
@@ -133,6 +134,9 @@ class PipelineConfig:
     # Harmonic-level enhancements
     use_founder_scoring: bool = True  # Enable founder intelligence scoring
     use_velocity_tracking: bool = True  # Enable signal velocity/momentum tracking
+
+    # Signal consolidation
+    use_consolidation: bool = True  # Enable signal consolidation before processing
 
     @classmethod
     def from_env(cls) -> PipelineConfig:
@@ -313,6 +317,11 @@ class DiscoveryPipeline:
         # Harmonic enhancements
         self._founder_store: Optional[FounderStore] = None
         self._velocity_tracker: Optional[SignalVelocityTracker] = None
+
+        # Signal consolidation
+        self._consolidator: Optional[SignalConsolidator] = (
+            SignalConsolidator() if self.config.use_consolidation else None
+        )
 
         # State
         self._initialized = False
@@ -996,10 +1005,23 @@ class DiscoveryPipeline:
             by_key = await self._regroup_signals_by_entity(by_key)
             logger.info(f"After entity regrouping: {len(by_key)} unique entities")
 
+        # Consolidate signals if enabled
+        consolidated_map: Dict[str, ConsolidatedSignal] = {}
+        if self._consolidator:
+            for key, sigs in by_key.items():
+                consolidated_map[key] = self._consolidator.consolidate(sigs)
+
+            conflicts = sum(1 for c in consolidated_map.values() if c.has_conflicts)
+            if conflicts:
+                logger.warning(f"Signal consolidation found {conflicts} companies with conflicts")
+
         # Process each company
         for canonical_key, company_signals in by_key.items():
             try:
-                result = await self._process_company(company_signals, dry_run)
+                consolidated = consolidated_map.get(canonical_key)
+                result = await self._process_company(
+                    company_signals, dry_run, consolidated=consolidated
+                )
 
                 # Update stats
                 stats["processed"] += len(company_signals)
@@ -1065,6 +1087,7 @@ class DiscoveryPipeline:
         self,
         signals: List[StoredSignal],
         dry_run: bool,
+        consolidated: Optional[ConsolidatedSignal] = None,
     ) -> Dict[str, Any]:
         """
         Process all signals for a single company.
@@ -1075,6 +1098,11 @@ class DiscoveryPipeline:
         3. Run through verification gate
         4. Queue Notion write if appropriate
         5. Update signal status
+
+        Args:
+            signals: List of StoredSignal objects for this company
+            dry_run: If True, don't actually push to Notion
+            consolidated: Optional consolidated signal with merged field values
 
         Returns dict with decision and Notion status.
         """
@@ -1268,7 +1296,9 @@ class DiscoveryPipeline:
         if verification.decision in (PushDecision.AUTO_PUSH, PushDecision.NEEDS_REVIEW):
             if self._notion and not dry_run:
                 # Queue for Notion
-                notion_result = await self._push_to_notion(signals, verification)
+                notion_result = await self._push_to_notion(
+                    signals, verification, consolidated=consolidated
+                )
                 notion_status = notion_result["status"]
 
                 # Mark signals as queued
@@ -1358,9 +1388,15 @@ class DiscoveryPipeline:
         self,
         signals: List[StoredSignal],
         verification: VerificationResult,
+        consolidated: Optional[ConsolidatedSignal] = None,
     ) -> Dict[str, Any]:
         """
         Queue a company for Notion push via the outbox.
+
+        Args:
+            signals: List of StoredSignal objects
+            verification: VerificationResult from the gate
+            consolidated: Optional consolidated signal with merged field values
 
         Returns dict with status and outbox metadata.
         """
@@ -1372,9 +1408,13 @@ class DiscoveryPipeline:
         # Build prospect payload from signals
         primary_signal = signals[0]
 
-        # Extract company info
-        company_name = primary_signal.company_name or "Unknown Company"
-        why_now = self._build_why_now(signals)
+        # Extract company info - prefer consolidated data if available
+        if consolidated:
+            company_name = consolidated.company_name
+            why_now = "; ".join(consolidated.why_now_parts[:3])  # Limit to 3 reasons
+        else:
+            company_name = primary_signal.company_name or "Unknown Company"
+            why_now = self._build_why_now(signals)
         sector_candidate = self._extract_sector_candidate(signals)
         watchlists_matched = await self._match_watchlists(
             signals,
