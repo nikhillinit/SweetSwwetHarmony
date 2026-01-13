@@ -1111,6 +1111,100 @@ class SignalStore:
         rows = await cursor.fetchall()
         return {status: count for status, count in rows}
 
+    async def update_signal_status(
+        self,
+        canonical_key: str,
+        status: str,
+        error_message: Optional[str] = None,
+    ) -> bool:
+        """
+        Update processing status for signals matching canonical key.
+
+        Args:
+            canonical_key: The canonical key to match
+            status: New status ('pending', 'qualified', 'held', 'rejected', 'pushed')
+            error_message: Optional error/reason message
+
+        Returns:
+            True if any signals were updated
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        now = datetime.now(timezone.utc).isoformat()
+
+        async with self.transaction() as conn:
+            cursor = await conn.execute(
+                """
+                UPDATE signal_processing
+                SET status = ?,
+                    error_message = ?,
+                    updated_at = ?
+                WHERE signal_id IN (
+                    SELECT id FROM signals WHERE canonical_key = ?
+                )
+                """,
+                (status, error_message, now, canonical_key),
+            )
+            return cursor.rowcount > 0
+
+    async def get_signals_by_status(
+        self,
+        status: str,
+        limit: Optional[int] = None,
+    ) -> List[StoredSignal]:
+        """
+        Get signals with a specific processing status.
+
+        Args:
+            status: Status to filter by
+            limit: Maximum number to return
+
+        Returns:
+            List of StoredSignal objects
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        query = """
+            SELECT s.id, s.signal_type, s.source_api, s.canonical_key,
+                   s.company_name, s.confidence, s.raw_data,
+                   s.detected_at, s.created_at,
+                   p.status, p.notion_page_id, p.processed_at, p.error_message
+            FROM signals s
+            JOIN signal_processing p ON s.id = p.signal_id
+            WHERE p.status = ?
+            ORDER BY s.created_at DESC
+        """
+
+        if limit:
+            query += f" LIMIT {limit}"
+
+        cursor = await self._db.execute(query, (status,))
+        rows = await cursor.fetchall()
+
+        return [self._row_to_signal(row) for row in rows]
+
+    async def get_status_counts(self) -> Dict[str, int]:
+        """
+        Get counts of signals by processing status.
+
+        Returns:
+            Dict mapping status to count, e.g. {"pending": 5, "qualified": 10}
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        cursor = await self._db.execute(
+            """
+            SELECT status, COUNT(*) as count
+            FROM signal_processing
+            GROUP BY status
+            """
+        )
+        rows = await cursor.fetchall()
+        return {row[0]: row[1] for row in rows}
+
     # =========================================================================
     # NOTION OUTBOX
     # =========================================================================
