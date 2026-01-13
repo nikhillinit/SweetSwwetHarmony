@@ -62,7 +62,7 @@ logger = logging.getLogger(__name__)
 # SCHEMA VERSION
 # =============================================================================
 
-CURRENT_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 4
 
 # SQL for creating tables (migrations applied in order)
 MIGRATIONS = {
@@ -190,6 +190,29 @@ MIGRATIONS = {
     CREATE INDEX IF NOT EXISTS idx_outbox_status ON notion_outbox(status);
     CREATE INDEX IF NOT EXISTS idx_outbox_next_attempt ON notion_outbox(next_attempt_at);
     CREATE INDEX IF NOT EXISTS idx_outbox_created_at ON notion_outbox(created_at);
+    """,
+    4: """
+    -- Collector metrics: per-collector timing and API stats
+    CREATE TABLE IF NOT EXISTS collector_metrics (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id TEXT NOT NULL,
+        collector_name TEXT NOT NULL,
+        started_at TEXT NOT NULL,
+        completed_at TEXT,
+        duration_seconds REAL,
+        signals_found INTEGER NOT NULL DEFAULT 0,
+        status TEXT NOT NULL,
+        api_calls INTEGER NOT NULL DEFAULT 0,
+        rate_limit_hits INTEGER NOT NULL DEFAULT 0,
+        retries INTEGER NOT NULL DEFAULT 0,
+        errors INTEGER NOT NULL DEFAULT 0,
+        error_messages TEXT,
+        created_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_collector_metrics_run_id ON collector_metrics(run_id);
+    CREATE INDEX IF NOT EXISTS idx_collector_metrics_collector ON collector_metrics(collector_name);
+    CREATE INDEX IF NOT EXISTS idx_collector_metrics_started_at ON collector_metrics(started_at);
     """
 }
 
