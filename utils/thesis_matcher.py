@@ -1,16 +1,17 @@
 """
-Thesis Matcher - Keyword-based thesis fit scoring.
+Consumer Thesis Matcher - Keyword-based thesis fit scoring.
 
-Matches companies against Press On Ventures' investment thesis:
-- Healthtech
-- Cleantech
-- AI Infrastructure
+Matches companies against Press On Ventures' Consumer investment thesis:
+- Consumer CPG: Food, beverage, snacks, beauty, personal care
+- Consumer Health Tech: Fitness, wellness, mental health, supplements
+- Travel & Hospitality: Travel booking, hospitality tech, restaurants
+- Consumer Marketplaces: Consumer-facing two-sided markets
 
 Usage:
     from utils.thesis_matcher import ThesisMatcher, ThesisFit
 
     matcher = ThesisMatcher()
-    fit = matcher.score("AI startup building inference optimization")
+    fit = matcher.score("Meal kit delivery startup")
     print(f"Thesis: {fit.thesis}, Score: {fit.score}")
 """
 
@@ -19,176 +20,144 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional
 
 
-# =============================================================================
-# THESIS DEFINITIONS
-# =============================================================================
-
-class Thesis(str, Enum):
-    """Investment thesis categories."""
-    AI_INFRASTRUCTURE = "ai_infrastructure"
-    HEALTHTECH = "healthtech"
-    CLEANTECH = "cleantech"
+class ConsumerThesis(str, Enum):
+    """Consumer investment thesis categories."""
+    CONSUMER_CPG = "consumer_cpg"
+    CONSUMER_HEALTH_TECH = "consumer_health_tech"
+    TRAVEL_HOSPITALITY = "travel_hospitality"
+    CONSUMER_MARKETPLACE = "consumer_marketplace"
     UNKNOWN = "unknown"
 
 
 # Keyword lists for each thesis (weighted by specificity)
-THESIS_KEYWORDS: Dict[Thesis, Dict[str, float]] = {
-    Thesis.AI_INFRASTRUCTURE: {
-        # Core AI infra (high weight)
-        "llm": 0.9,
-        "large language model": 0.9,
-        "inference": 0.8,
-        "vector database": 0.9,
-        "embedding": 0.7,
-        "ml ops": 0.8,
-        "mlops": 0.8,
-        "fine-tuning": 0.8,
-        "fine tuning": 0.8,
-        "model training": 0.7,
-        "gpu": 0.5,
-        "cuda": 0.6,
-        "transformer": 0.7,
-        "neural network": 0.5,
-        "deep learning": 0.5,
-
-        # AI tooling (medium weight)
-        "ai platform": 0.6,
-        "machine learning": 0.4,
-        "ml platform": 0.7,
-        "data pipeline": 0.5,
-        "feature store": 0.8,
-        "model serving": 0.8,
-        "model deployment": 0.7,
-        "ai api": 0.6,
-        "prompt engineering": 0.6,
-        "rag": 0.7,  # Retrieval augmented generation
-        "retrieval augmented": 0.8,
-
-        # Specific technologies (medium weight)
-        "pytorch": 0.5,
-        "tensorflow": 0.5,
-        "langchain": 0.7,
-        "openai api": 0.5,
-        "anthropic api": 0.5,
-        "hugging face": 0.6,
-        "vertex ai": 0.5,
-        "sagemaker": 0.5,
+CONSUMER_KEYWORDS: Dict[ConsumerThesis, Dict[str, float]] = {
+    ConsumerThesis.CONSUMER_CPG: {
+        # High weight - specific CPG terms
+        "meal kit": 0.9,
+        "meal kits": 0.9,
+        "beverage brand": 0.9,
+        "food brand": 0.8,
+        "snack brand": 0.8,
+        "skincare brand": 0.9,
+        "beauty brand": 0.8,
+        "personal care": 0.8,
+        "household products": 0.7,
+        "cpg": 0.8,
+        "d2c": 0.7,
+        "dtc": 0.7,
+        "direct to consumer": 0.7,
+        # Medium weight - general terms
+        "healthy": 0.4,
+        "food": 0.4,
+        "beverage": 0.5,
+        "snack": 0.4,
+        "drink": 0.4,
+        "grocery": 0.5,
+        "organic": 0.4,
+        "vegan": 0.5,
+        "plant-based": 0.5,
+        "beauty": 0.4,
+        "skincare": 0.5,
+        "cosmetics": 0.5,
     },
-
-    Thesis.HEALTHTECH: {
-        # Clinical/Medical (high weight)
-        "clinical trial": 0.9,
-        "clinical": 0.6,
-        "fda": 0.8,
-        "fda approval": 0.9,
-        "diagnostic": 0.7,
-        "therapeutics": 0.8,
-        "drug discovery": 0.9,
-        "pharmaceutical": 0.6,
-        "biotech": 0.6,
-        "medical device": 0.8,
-        "patient data": 0.7,
-        "patient care": 0.6,
-        "healthcare ai": 0.9,
-        "clinical decision": 0.8,
-
-        # Digital health (medium weight)
-        "telehealth": 0.8,
-        "telemedicine": 0.8,
-        "digital health": 0.7,
-        "health platform": 0.6,
-        "electronic health record": 0.7,
-        "ehr": 0.6,
-        "emr": 0.6,
-        "hipaa": 0.7,
-        "health insurance": 0.5,
-        "healthcare": 0.4,
-        "hospital": 0.4,
-        "physician": 0.5,
-        "medical imaging": 0.8,
-        "radiology": 0.7,
-
-        # Wellness/Prevention (lower weight)
-        "mental health": 0.6,
+    ConsumerThesis.CONSUMER_HEALTH_TECH: {
+        # High weight - specific health tech terms
+        "fitness app": 0.9,
+        "wellness app": 0.9,
+        "wellness platform": 0.8,
+        "mental health app": 0.9,
+        "health tracker": 0.8,
+        "meditation app": 0.8,
+        "sleep app": 0.8,
+        "nutrition app": 0.7,
+        # Medium weight - general terms
+        "fitness": 0.5,
+        "workout": 0.5,
         "wellness": 0.4,
-        "fitness": 0.3,
-        "nutrition": 0.4,
-        "health monitoring": 0.5,
-        "wearable": 0.4,
+        "meditation": 0.5,
+        "sleep": 0.4,
+        "supplements": 0.5,
+        "vitamins": 0.4,
+        "wearable": 0.5,
+        "health app": 0.6,
+        "mental health": 0.5,
+        "therapy": 0.4,
     },
-
-    Thesis.CLEANTECH: {
-        # Climate/Carbon (high weight)
-        "carbon capture": 0.9,
-        "carbon offset": 0.8,
-        "carbon credit": 0.8,
-        "carbon footprint": 0.7,
-        "net zero": 0.8,
-        "climate tech": 0.9,
-        "climate change": 0.5,
-        "decarbonization": 0.9,
-        "emissions reduction": 0.8,
-        "greenhouse gas": 0.7,
-
-        # Renewable energy (high weight)
-        "renewable energy": 0.9,
-        "solar energy": 0.8,
-        "wind energy": 0.8,
-        "battery storage": 0.8,
-        "energy storage": 0.8,
-        "ev charging": 0.7,
-        "electric vehicle": 0.6,
-        "clean energy": 0.8,
-        "green energy": 0.7,
-        "hydrogen fuel": 0.8,
-
-        # ESG/Sustainability (medium weight)
-        "esg": 0.6,
-        "sustainability": 0.5,
-        "sustainable": 0.4,
-        "circular economy": 0.7,
-        "waste reduction": 0.6,
-        "recycling": 0.4,
-        "green": 0.3,
-        "eco-friendly": 0.4,
-
-        # Specific technologies (medium weight)
-        "smart grid": 0.7,
-        "energy efficiency": 0.6,
-        "building efficiency": 0.6,
-        "water treatment": 0.6,
-        "agtech": 0.5,
-        "food tech": 0.5,
+    ConsumerThesis.TRAVEL_HOSPITALITY: {
+        # High weight - specific travel terms
+        "travel booking": 0.9,
+        "hotel tech": 0.8,
+        "hospitality tech": 0.8,
+        "hospitality platform": 0.8,
+        "restaurant tech": 0.8,
+        "travel platform": 0.7,
+        "vacation rental": 0.8,
+        "experience booking": 0.7,
+        # Medium weight - general terms
+        "travel": 0.5,
+        "booking": 0.4,
+        "hotel": 0.5,
+        "hospitality": 0.5,
+        "restaurant": 0.4,
+        "vacation": 0.4,
+        "experiences": 0.4,
+        "tourism": 0.5,
+        "lodging": 0.5,
+    },
+    ConsumerThesis.CONSUMER_MARKETPLACE: {
+        # High weight - specific marketplace terms
+        "consumer marketplace": 0.9,
+        "two-sided market": 0.8,
+        "peer-to-peer": 0.7,
+        "p2p marketplace": 0.8,
+        "c2c marketplace": 0.8,
+        "buyer seller": 0.6,
+        # Medium weight - general terms
+        "marketplace": 0.6,
+        "e-commerce": 0.5,
+        "delivery": 0.4,
+        "subscription": 0.4,
+        "shopping": 0.4,
+        "resale": 0.5,
+        "secondhand": 0.5,
+        "rental": 0.4,
     },
 }
 
-# Negative signals (lower score if present)
+# Negative signals - exclusions from thesis
 NEGATIVE_KEYWORDS: Dict[str, float] = {
-    "consumer app": 0.3,
-    "social media": 0.5,
-    "marketing": 0.3,
-    "advertising": 0.3,
-    "gaming": 0.4,
-    "crypto": 0.4,
-    "blockchain": 0.4,
+    # B2B/Enterprise
+    "enterprise": 0.5,
+    "b2b": 0.5,
+    "saas platform": 0.4,
+    "developer tool": 0.5,
+    "api platform": 0.4,
+    "devops": 0.5,
+    "infrastructure": 0.4,
+    # Crypto/Web3
+    "blockchain": 0.5,
+    "crypto": 0.5,
+    "web3": 0.5,
     "nft": 0.5,
-    "web3": 0.4,
-    "real estate": 0.4,
-    "fintech": 0.2,  # Not negative, just not in thesis
+    "defi": 0.5,
+    "token": 0.3,
+    # Other exclusions
+    "consulting": 0.4,
+    "agency": 0.4,
+    "services firm": 0.4,
+    "series b": 0.3,
+    "series c": 0.4,
+    "series d": 0.5,
 }
 
-
-# =============================================================================
-# DATA CLASSES
-# =============================================================================
 
 @dataclass
 class ThesisFit:
     """Result of thesis matching."""
-    thesis: Thesis
+    thesis: ConsumerThesis
     score: float  # 0.0-1.0
     matched_keywords: List[str]
     negative_keywords: List[str]
@@ -212,13 +181,9 @@ class ThesisFit:
         }
 
 
-# =============================================================================
-# MATCHER
-# =============================================================================
-
 class ThesisMatcher:
     """
-    Matches company descriptions against investment thesis.
+    Matches company descriptions against Consumer investment thesis.
 
     Uses keyword matching with weights to score thesis fit.
     Returns the best-matching thesis with a confidence score.
@@ -226,15 +191,9 @@ class ThesisMatcher:
 
     def __init__(
         self,
-        custom_keywords: Optional[Dict[Thesis, Dict[str, float]]] = None,
+        custom_keywords: Optional[Dict[ConsumerThesis, Dict[str, float]]] = None,
     ):
-        """
-        Args:
-            custom_keywords: Optional custom keyword definitions to merge
-        """
-        self.keywords = dict(THESIS_KEYWORDS)
-
-        # Merge custom keywords if provided
+        self.keywords = {k: dict(v) for k, v in CONSUMER_KEYWORDS.items()}
         if custom_keywords:
             for thesis, kws in custom_keywords.items():
                 if thesis in self.keywords:
@@ -246,22 +205,11 @@ class ThesisMatcher:
         self,
         text: str,
         company_name: Optional[str] = None,
-        sic_code: Optional[str] = None,
     ) -> ThesisFit:
-        """
-        Score text against all thesis categories.
-
-        Args:
-            text: Description, about text, or combined signals
-            company_name: Optional company name for additional context
-            sic_code: Optional SIC code for sector hint
-
-        Returns:
-            ThesisFit with best matching thesis
-        """
+        """Score text against all Consumer thesis categories."""
         if not text:
             return ThesisFit(
-                thesis=Thesis.UNKNOWN,
+                thesis=ConsumerThesis.UNKNOWN,
                 score=0.0,
                 matched_keywords=[],
                 negative_keywords=[],
@@ -269,7 +217,6 @@ class ThesisMatcher:
                 confidence="LOW",
             )
 
-        # Normalize text
         normalized = self._normalize(text)
         if company_name:
             normalized += " " + self._normalize(company_name)
@@ -280,12 +227,6 @@ class ThesisMatcher:
 
         for thesis, keywords in self.keywords.items():
             score, matches = self._score_thesis(normalized, keywords)
-
-            # Apply SIC code boost if available
-            if sic_code:
-                sic_boost = self._sic_boost(sic_code, thesis)
-                score = min(score + sic_boost, 1.0)
-
             scores[thesis.value] = score
             all_matches[thesis.value] = matches
 
@@ -296,17 +237,17 @@ class ThesisMatcher:
         if scores:
             best_thesis_name = max(scores, key=scores.get)
             best_score = scores[best_thesis_name]
-            best_thesis = Thesis(best_thesis_name)
+            best_thesis = ConsumerThesis(best_thesis_name)
             matched_kws = all_matches.get(best_thesis_name, [])
         else:
-            best_thesis = Thesis.UNKNOWN
+            best_thesis = ConsumerThesis.UNKNOWN
             best_score = 0.0
             matched_kws = []
 
         # Apply negative penalty
         if negative_matches:
             penalty = sum(NEGATIVE_KEYWORDS.get(kw, 0.2) for kw in negative_matches)
-            best_score = max(0.0, best_score - penalty * 0.3)
+            best_score = max(0.0, best_score - penalty * 0.5)
 
         # Determine confidence
         if best_score >= 0.7:
@@ -317,7 +258,7 @@ class ThesisMatcher:
             confidence = "LOW"
 
         return ThesisFit(
-            thesis=best_thesis if best_score > 0.1 else Thesis.UNKNOWN,
+            thesis=best_thesis if best_score > 0.1 else ConsumerThesis.UNKNOWN,
             score=best_score,
             matched_keywords=matched_kws,
             negative_keywords=negative_matches,
@@ -326,7 +267,6 @@ class ThesisMatcher:
         )
 
     def _normalize(self, text: str) -> str:
-        """Normalize text for matching."""
         return text.lower().strip()
 
     def _score_thesis(
@@ -334,30 +274,26 @@ class ThesisMatcher:
         text: str,
         keywords: Dict[str, float],
     ) -> tuple[float, List[str]]:
-        """Score text against a single thesis keyword set."""
         matches: List[str] = []
         total_weight = 0.0
         max_possible = sum(keywords.values())
 
         for keyword, weight in keywords.items():
-            # Use word boundaries to avoid partial matches
             pattern = r'\b' + re.escape(keyword) + r'\b'
             if re.search(pattern, text):
                 matches.append(keyword)
                 total_weight += weight
 
-        # Normalize score (0-1)
         if max_possible > 0:
-            # Don't require all keywords - just measure how much thesis signal
-            # Cap at reasonable max (e.g., matching 40% of keywords = 1.0)
-            score = min(total_weight / (max_possible * 0.4), 1.0)
+            # Normalize score: matching ~15% of keyword weight gives 1.0
+            # This allows single high-weight keywords (0.9) to score well
+            score = min(total_weight / (max_possible * 0.15), 1.0)
         else:
             score = 0.0
 
         return score, matches
 
     def _find_negative_keywords(self, text: str) -> List[str]:
-        """Find negative keywords in text."""
         matches = []
         for keyword in NEGATIVE_KEYWORDS:
             pattern = r'\b' + re.escape(keyword) + r'\b'
@@ -365,112 +301,31 @@ class ThesisMatcher:
                 matches.append(keyword)
         return matches
 
-    def _sic_boost(self, sic_code: str, thesis: Thesis) -> float:
-        """Apply boost based on SIC code matching thesis."""
-        # SIC code ranges for each thesis
-        SIC_MAPPINGS = {
-            Thesis.HEALTHTECH: [
-                ("8000", "8099"),  # Health services
-                ("2833", "2836"),  # Pharmaceuticals
-                ("3841", "3845"),  # Medical instruments
-            ],
-            Thesis.CLEANTECH: [
-                ("4911", "4941"),  # Electric, gas, sanitary services
-                ("1311", "1389"),  # Oil and gas (for transition tech)
-                ("4953", "4959"),  # Refuse systems
-            ],
-            Thesis.AI_INFRASTRUCTURE: [
-                ("7370", "7379"),  # Computer services
-                ("3571", "3579"),  # Computer equipment
-                ("7372", "7372"),  # Prepackaged software
-            ],
-        }
-
-        mappings = SIC_MAPPINGS.get(thesis, [])
-        for start, end in mappings:
-            if start <= sic_code <= end:
-                return 0.15  # Small boost for matching SIC
-
-        return 0.0
-
     def score_signals(self, signals: List[Dict]) -> ThesisFit:
-        """
-        Score a list of signals to determine thesis fit.
-
-        Combines text from all signals for comprehensive matching.
-
-        Args:
-            signals: List of signal dicts with raw_data
-
-        Returns:
-            ThesisFit
-        """
-        # Combine all text from signals
+        """Score a list of signals to determine thesis fit."""
         texts = []
-        sic_code = None
         company_name = None
 
         for signal in signals:
             raw = signal.get("raw_data", {}) if isinstance(signal, dict) else {}
-
-            # Get description fields
             for field in ["description", "short_description", "about", "bio"]:
                 if field in raw and raw[field]:
                     texts.append(str(raw[field]))
-
-            # Get company name
             if "company_name" in raw and not company_name:
                 company_name = raw["company_name"]
 
-            # Get SIC code
-            if "sic_code" in raw and not sic_code:
-                sic_code = raw["sic_code"]
-            if "sic_codes" in raw and not sic_code:
-                codes = raw["sic_codes"]
-                if isinstance(codes, list) and codes:
-                    sic_code = codes[0]
-
-            # Get topics/tags
-            if "topics" in raw:
-                topics = raw["topics"]
-                if isinstance(topics, list):
-                    texts.extend(topics)
-
         combined_text = " ".join(texts)
-        return self.score(combined_text, company_name=company_name, sic_code=sic_code)
+        return self.score(combined_text, company_name=company_name)
 
 
-# =============================================================================
-# CONVENIENCE FUNCTIONS
-# =============================================================================
-
-def score_thesis_fit(
-    text: str,
-    company_name: Optional[str] = None,
-    sic_code: Optional[str] = None,
-) -> ThesisFit:
-    """
-    Convenience function to score thesis fit.
-
-    Usage:
-        fit = score_thesis_fit("AI startup building vector databases")
-        print(f"Best fit: {fit.thesis}, Score: {fit.score}")
-    """
+def score_thesis_fit(text: str, company_name: Optional[str] = None) -> ThesisFit:
+    """Convenience function to score thesis fit."""
     matcher = ThesisMatcher()
-    return matcher.score(text, company_name, sic_code)
+    return matcher.score(text, company_name)
 
 
-def is_thesis_fit(
-    text: str,
-    min_score: float = 0.4,
-) -> bool:
-    """
-    Quick check if text matches investment thesis.
-
-    Usage:
-        if is_thesis_fit(description):
-            print("Matches thesis!")
-    """
+def is_thesis_fit(text: str, min_score: float = 0.4) -> bool:
+    """Quick check if text matches investment thesis."""
     fit = score_thesis_fit(text)
     return fit.score >= min_score
 
@@ -481,31 +336,29 @@ def is_thesis_fit(
 
 def main():
     """CLI for testing thesis matcher."""
-    import sys
-
     test_cases = [
-        "Building AI infrastructure for LLM inference optimization",
-        "Healthcare platform for clinical decision support",
-        "Carbon capture technology for industrial emissions",
-        "Social media app for Gen Z",
-        "Enterprise vector database for RAG applications",
-        "Telehealth platform with FDA-approved diagnostics",
-        "Renewable energy storage for EV charging networks",
-        "Consumer fintech app for crypto trading",
-        "ML ops platform for model deployment and serving",
-        "Drug discovery using deep learning and transformers",
+        "We make healthy meal kits delivered to your door",
+        "A fitness app for tracking your workouts and wellness",
+        "Travel booking platform for unique hotel experiences",
+        "Consumer marketplace connecting buyers and sellers",
+        "Enterprise B2B SaaS platform for developers",
+        "Premium skincare brand with d2c subscription model",
+        "Blockchain crypto trading platform",
+        "Mental health app for meditation and therapy",
+        "Restaurant tech platform for hospitality businesses",
+        "P2P marketplace for secondhand fashion resale",
     ]
 
     matcher = ThesisMatcher()
 
     print("=" * 70)
-    print("THESIS MATCHER TEST")
+    print("CONSUMER THESIS MATCHER TEST")
     print("=" * 70)
 
     for text in test_cases:
         fit = matcher.score(text)
-        emoji = "✓" if fit.is_fit else "✗"
-        print(f"\n{emoji} {text[:50]}...")
+        marker = "[FIT]" if fit.is_fit else "[---]"
+        print(f"\n{marker} {text[:55]}...")
         print(f"   Thesis: {fit.thesis.value}")
         print(f"   Score: {fit.score:.2f} ({fit.confidence})")
         print(f"   Matched: {', '.join(fit.matched_keywords[:5])}")
