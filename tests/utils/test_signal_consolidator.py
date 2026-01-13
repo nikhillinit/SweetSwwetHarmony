@@ -129,3 +129,123 @@ class TestSourcePriority:
         result = consolidator.consolidate(signals)
 
         assert result.company_name == "acme-ai"
+
+
+class TestConflictDetection:
+    """Test conflict detection during consolidation."""
+
+    def test_detects_different_company_names(self):
+        """Should flag when signals have different company names."""
+        from storage.signal_store import StoredSignal
+        from utils.signal_consolidator import SignalConsolidator
+
+        now = datetime.now(timezone.utc)
+
+        signals = [
+            StoredSignal(
+                id=1,
+                signal_type="github_spike",
+                source_api="github",
+                canonical_key="domain:acme.ai",
+                company_name="Acme AI",
+                confidence=0.8,
+                raw_data={},
+                detected_at=now,
+                created_at=now,
+            ),
+            StoredSignal(
+                id=2,
+                signal_type="incorporation",
+                source_api="sec_edgar",
+                canonical_key="domain:acme.ai",
+                company_name="ACME Corporation",  # Different name!
+                confidence=0.7,
+                raw_data={},
+                detected_at=now,
+                created_at=now,
+            ),
+        ]
+
+        consolidator = SignalConsolidator()
+        result = consolidator.consolidate(signals)
+
+        assert result.has_conflicts is True
+        assert len(result.conflict_flags) == 1
+        assert result.conflict_flags[0].field == "company_name"
+        assert "Acme AI" in result.conflict_flags[0].values
+        assert "ACME Corporation" in result.conflict_flags[0].values
+
+    def test_no_conflict_for_same_company_name(self):
+        """Should not flag when all signals have same company name."""
+        from storage.signal_store import StoredSignal
+        from utils.signal_consolidator import SignalConsolidator
+
+        now = datetime.now(timezone.utc)
+
+        signals = [
+            StoredSignal(
+                id=1,
+                signal_type="github_spike",
+                source_api="github",
+                canonical_key="domain:acme.ai",
+                company_name="Acme Inc",
+                confidence=0.8,
+                raw_data={},
+                detected_at=now,
+                created_at=now,
+            ),
+            StoredSignal(
+                id=2,
+                signal_type="incorporation",
+                source_api="sec_edgar",
+                canonical_key="domain:acme.ai",
+                company_name="Acme Inc",  # Same name
+                confidence=0.7,
+                raw_data={},
+                detected_at=now,
+                created_at=now,
+            ),
+        ]
+
+        consolidator = SignalConsolidator()
+        result = consolidator.consolidate(signals)
+
+        assert result.has_conflicts is False
+        assert len(result.conflict_flags) == 0
+
+    def test_ignores_none_and_empty_company_names(self):
+        """Should not treat None/empty as conflicts."""
+        from storage.signal_store import StoredSignal
+        from utils.signal_consolidator import SignalConsolidator
+
+        now = datetime.now(timezone.utc)
+
+        signals = [
+            StoredSignal(
+                id=1,
+                signal_type="github_spike",
+                source_api="github",
+                canonical_key="domain:acme.ai",
+                company_name="Acme Inc",
+                confidence=0.8,
+                raw_data={},
+                detected_at=now,
+                created_at=now,
+            ),
+            StoredSignal(
+                id=2,
+                signal_type="domain_registration",
+                source_api="domain_whois",
+                canonical_key="domain:acme.ai",
+                company_name=None,  # No name from WHOIS
+                confidence=0.5,
+                raw_data={},
+                detected_at=now,
+                created_at=now,
+            ),
+        ]
+
+        consolidator = SignalConsolidator()
+        result = consolidator.consolidate(signals)
+
+        assert result.has_conflicts is False
