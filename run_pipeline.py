@@ -783,7 +783,70 @@ async def cmd_health(args):
 
 async def cmd_metrics(args):
     """Show pipeline run metrics with per-collector breakdown."""
-    print("Metrics command - implementation pending")
+    print("=" * 70)
+    print("DISCOVERY ENGINE - PIPELINE METRICS")
+    print("=" * 70)
+
+    config = PipelineConfig.from_env()
+    if args.db_path:
+        config.db_path = args.db_path
+
+    pipeline = DiscoveryPipeline(config)
+
+    try:
+        await pipeline.initialize()
+
+        # Get recent pipeline runs
+        runs = await pipeline._store.get_pipeline_runs(limit=args.limit)
+
+        if not runs:
+            print("\nNo pipeline runs found.")
+            return
+
+        print(f"\nLast {len(runs)} runs:\n")
+
+        for run in runs:
+            run_id = run["run_id"]
+            started = run["started_at"][:19].replace("T", " ")
+            duration = run.get("duration_seconds", 0) or 0
+
+            print(f"Run: {started} ({duration:.1f}s total)")
+
+            # Get collector metrics for this run
+            collector_metrics = await pipeline._store.get_collector_metrics(
+                run_id=run_id,
+                collector_name=args.collector,
+            )
+
+            if not collector_metrics:
+                print("  (no collector metrics)")
+            else:
+                for cm in collector_metrics:
+                    name = cm["collector_name"]
+                    dur = cm.get("duration_seconds", 0) or 0
+                    signals = cm.get("signals_found", 0)
+                    status = cm.get("status", "unknown")
+                    api_calls = cm.get("api_calls", 0)
+                    retries = cm.get("retries", 0)
+                    rate_limits = cm.get("rate_limit_hits", 0)
+
+                    # Status indicator
+                    status_icon = "+" if status == "success" else "x" if status == "error" else "o"
+
+                    # Format API metrics
+                    api_parts = [f"{api_calls} calls"]
+                    if retries > 0:
+                        api_parts.append(f"{retries} retries")
+                    if rate_limits > 0:
+                        api_parts.append(f"{rate_limits} rate limits")
+                    api_str = ", ".join(api_parts)
+
+                    print(f"  {name:<16} {dur:>6.1f}s   {status_icon}   {signals:>3} signals   |  API: {api_str}")
+
+            print()
+
+    finally:
+        await pipeline.close()
 
 
 # =============================================================================
