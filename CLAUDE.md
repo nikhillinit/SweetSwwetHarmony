@@ -158,8 +158,9 @@ Write failing tests first, then minimal code to pass them.
 ## Current Sprint: Signal Quality & Enrichment
 
 > **Critical Context from Codebase Analysis:**
-> - thesis_matcher.py exists with negative keywords but is UNUSED
-> - llm_classifier.py runs but results are NOT PERSISTED
+> - thesis_matcher.py rewritten with Consumer keywords and integrated into pipeline ✅
+> - llm_classifier.py results now persisted in thesis_classifications table ✅
+> - Signal routing now uses thesis fit (QUALIFIED/HELD/REJECTED) ✅
 > - New collectors should wait until existing signal flow is solid
 
 **Phase 1: Signal Consolidation** ✅ COMPLETE
@@ -191,26 +192,32 @@ Write failing tests first, then minimal code to pass them.
 - [x] Added enrichment metrics: enrichment_boosts_applied, avg_enrichment_boost
 - [x] 52 tests (25 calculator + 14 integration + 13 gate)
 
-**Phase 3: Thesis Integration** (NOT "improvements" - tools exist but unused)
+**Phase 3: Thesis Integration** ✅ COMPLETE
 
-Problem: thesis_matcher.py and llm_classifier.py exist but don't affect routing.
+- [x] Rewrote `utils/thesis_matcher.py` with Consumer keywords (CPG, Health Tech, Travel, Marketplace)
+- [x] Added `thesis_classifications` table (migration 5) with full audit trail
+- [x] Created `utils/thesis_filter.py` combining keyword + LLM classification
+- [x] Integrated thesis filter into pipeline with routing:
+  - QUALIFIED: thesis_fit >= 0.3, continues to verification gate
+  - HELD: thesis_fit < 0.3, awaits batch review
+  - REJECTED: category == "excluded", filtered out
+- [x] Confidence adjustments from keyword matching:
+  - HIGH fit (≥0.7): +0.08 confidence
+  - LOW fit (<0.4): -0.08 confidence
+  - Negative keywords: -0.12 penalty
+- [x] Added CLI dashboard commands:
+  - `pipeline status` - overview of signal counts by status
+  - `pipeline qualified` - list signals ready for push
+  - `pipeline push --confirm` - export to Notion (user-triggered)
+- [x] Created `utils/competitor_detector.py` with `config/portfolio.json`
+- [x] Competitor detection wired into pipeline (flags, doesn't auto-reject)
+- [x] 110 tests (23 matcher + 36 filter + 17 storage + 17 integration + 8 competitor + 9 CLI)
 
-- [ ] Integrate thesis_matcher into verification gate:
-  - HIGH fit (≥0.7): +0.10 confidence
-  - LOW fit (<0.4): -0.10 confidence
-  - Negative keywords found: -0.15
-- [ ] Persist llm_classifier results with signal:
-  - Store category, thesis_fit_score, rationale
-  - New table or columns in signals
-- [ ] Thesis-based routing:
-  - thesis_fit_score < 0.3: HOLD (don't push)
-  - category == "excluded": REJECT
-- [ ] Minimal competitor detection:
-  - Create `config/portfolio.json` (company names + categories)
-  - Flag same-category matches as "potential competitor"
-  - Surface as warning, don't auto-reject
-
-Exit criteria: Thesis factors into push decision, low-fit held, classifications persisted.
+Exit criteria met:
+- ✓ Thesis factors into routing decisions
+- ✓ Low-fit signals held (not pushed)
+- ✓ Classifications persisted in DB
+- ✓ User controls push action via CLI
 
 **Phase 4: Collector Evaluation** (research FIRST, build LAST)
 
