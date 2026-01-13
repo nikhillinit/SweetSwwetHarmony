@@ -171,6 +171,9 @@ class SignalConsolidator:
         # Extract founding date
         founding_date = self._extract_founding_date(signals)
 
+        # Aggregate why_now reasons
+        why_now_parts = self._aggregate_why_now(signals)
+
         return ConsolidatedSignal(
             canonical_key=canonical_key,
             company_name=company_name,
@@ -181,6 +184,7 @@ class SignalConsolidator:
             earliest_detected_at=earliest,
             latest_detected_at=latest,
             descriptions=descriptions,
+            why_now_parts=why_now_parts,
             founding_date=founding_date,
             social_proof=social_proof,
             conflict_flags=conflict_flags,
@@ -269,3 +273,21 @@ class SignalConsolidator:
                 except ValueError:
                     continue
         return None
+
+    def _aggregate_why_now(self, signals: List["StoredSignal"]) -> List[str]:
+        """Extract why_now reasons from signal raw_data."""
+        seen = set()
+        parts = []
+        for signal in signals:
+            raw_data = signal.raw_data or {}
+            why_now = raw_data.get("why_now")
+            if isinstance(why_now, str) and why_now.strip():
+                normalized = why_now.strip()
+                if normalized not in seen:
+                    seen.add(normalized)
+                    parts.append(normalized)
+        # Fallback if no explicit why_now found
+        if not parts:
+            signal_types = list(set(s.signal_type for s in signals))
+            parts.append(f"Detected via {', '.join(signal_types)}")
+        return parts
