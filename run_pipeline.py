@@ -9,6 +9,7 @@ Commands:
   sync      - Sync suppression cache from Notion
   stats     - Show pipeline statistics
   health    - Run health checks on all components
+  metrics   - Show pipeline run metrics with per-collector breakdown
 
 Examples:
   # Run full pipeline with specific collectors (dry run)
@@ -780,6 +781,11 @@ async def cmd_health(args):
         await pipeline.close()
 
 
+async def cmd_metrics(args):
+    """Show pipeline run metrics with per-collector breakdown."""
+    print("Metrics command - implementation pending")
+
+
 # =============================================================================
 # HELPERS
 # =============================================================================
@@ -1081,6 +1087,31 @@ Environment variables:
         help="Show detailed signal health report",
     )
 
+    # Metrics command
+    metrics_parser = subparsers.add_parser(
+        "metrics",
+        help="Show pipeline run metrics with per-collector breakdown",
+    )
+    metrics_parser.add_argument(
+        "--limit", "-n",
+        type=int,
+        default=5,
+        help="Number of recent runs to show (default: 5)",
+    )
+    metrics_parser.add_argument(
+        "--collector", "-c",
+        type=str,
+        default=None,
+        help="Filter to specific collector",
+    )
+    metrics_parser.add_argument(
+        "--db-path",
+        type=str,
+        default=None,
+        dest="db_path",
+        help="Path to signals database",
+    )
+
     # Schema command with subcommands
     schema_parser = subparsers.add_parser(
         "schema",
@@ -1233,6 +1264,8 @@ async def main():
             await cmd_stats(args)
         elif args.command == "health":
             exit_code = await cmd_health(args)
+        elif args.command == "metrics":
+            await cmd_metrics(args)
         elif args.command == "schema":
             # Handle schema subcommands
             if hasattr(args, "schema_command"):
