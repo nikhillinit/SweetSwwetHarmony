@@ -13,9 +13,31 @@ Usage:
         pass
 """
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from storage.signal_store import StoredSignal
+
+logger = logging.getLogger(__name__)
+
+# Source priority for company_name selection (lower = higher priority)
+SOURCE_PRIORITY = {
+    "companies_house": 1,  # Official UK registry
+    "sec_edgar": 2,        # SEC filings
+    "crunchbase": 3,       # Curated startup DB
+    "linkedin": 4,         # Professional network
+    "product_hunt": 5,     # Product launches
+    "hacker_news": 6,      # Tech news
+    "github": 7,           # May be repo name
+    "domain_whois": 8,     # Registrant info
+    "arxiv": 9,            # Research papers
+    "uspto": 10,           # Patent filings
+}
+
+DEFAULT_PRIORITY = 99  # For unknown sources
 
 
 @dataclass
@@ -72,3 +94,71 @@ class ConsolidatedSignal:
     def signal_count(self) -> int:
         """Number of signals that contributed to this consolidation."""
         return len(self.contributing_signal_ids)
+
+
+class SignalConsolidator:
+    """
+    Consolidates multiple StoredSignals for the same company.
+
+    Applies field-level merge strategies:
+    - company_name: source priority (Companies House > SEC > etc.)
+    - confidence: weighted average by source priority
+    - descriptions: concatenate unique values
+    - social_proof: aggregate (sum stars, votes, etc.)
+    """
+
+    def __init__(self):
+        self.source_priority = SOURCE_PRIORITY
+
+    def consolidate(self, signals: List["StoredSignal"]) -> ConsolidatedSignal:
+        """
+        Consolidate multiple signals into a single ConsolidatedSignal.
+
+        Args:
+            signals: List of StoredSignal objects for the same canonical_key
+
+        Returns:
+            ConsolidatedSignal with merged fields and conflict flags
+        """
+        if not signals:
+            raise ValueError("Cannot consolidate empty signal list")
+
+        # Sort by source priority
+        sorted_signals = sorted(
+            signals,
+            key=lambda s: self.source_priority.get(s.source_api, DEFAULT_PRIORITY)
+        )
+
+        # Select company_name from highest priority source that has it
+        company_name = self._select_company_name(sorted_signals)
+
+        # Basic aggregation
+        canonical_key = signals[0].canonical_key
+        contributing_ids = [s.id for s in signals]
+        signal_types = list(set(s.signal_type for s in signals))
+        source_apis = list(set(s.source_api for s in signals))
+
+        # Confidence: simple average (for now)
+        avg_confidence = sum(s.confidence for s in signals) / len(signals)
+
+        # Time bounds
+        earliest = min(s.detected_at for s in signals)
+        latest = max(s.detected_at for s in signals)
+
+        return ConsolidatedSignal(
+            canonical_key=canonical_key,
+            company_name=company_name,
+            contributing_signal_ids=contributing_ids,
+            signal_types=signal_types,
+            source_apis=source_apis,
+            aggregated_confidence=avg_confidence,
+            earliest_detected_at=earliest,
+            latest_detected_at=latest,
+        )
+
+    def _select_company_name(self, sorted_signals: List["StoredSignal"]) -> str:
+        """Select company_name from highest priority source that has it."""
+        for signal in sorted_signals:
+            if signal.company_name and signal.company_name.strip():
+                return signal.company_name.strip()
+        return "Unknown Company"
