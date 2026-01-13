@@ -155,6 +155,111 @@ Write failing tests first, then minimal code to pass them.
 
 ---
 
+## Current Sprint: Signal Quality & Enrichment
+
+> **Critical Context from Codebase Analysis:**
+> - thesis_matcher.py exists with negative keywords but is UNUSED
+> - llm_classifier.py runs but results are NOT PERSISTED
+> - New collectors should wait until existing signal flow is solid
+
+**Phase 1: Signal Consolidation** ✅ COMPLETE
+
+- [x] Implemented `utils/signal_consolidator.py` with ConsolidatedSignal dataclass
+- [x] Source priority for company_name (Companies House > SEC > Crunchbase > etc.)
+- [x] Conflict detection for different company names
+- [x] Description aggregation from raw_data
+- [x] Social proof aggregation (stars, votes, upvotes)
+- [x] Founding date extraction (earliest from raw_data)
+- [x] Why now aggregation
+- [x] Weighted confidence calculation
+- [x] Pipeline integration after grouping, before verification gate
+- [x] Metrics: signals_consolidated, conflicts_detected
+- [x] 34 tests (25 unit + 9 integration)
+
+**Phase 2: Enrichment Boost Integration** ✅ COMPLETE
+
+- [x] Created `utils/enrichment_boost.py` with EnrichmentBoostCalculator
+- [x] Threshold-based scoring (validated by MCDM/SAW research):
+  - company_age > 2yr: +0.03
+  - company_age > 1yr: +0.02
+  - stars > 1000 OR upvotes > 200: +0.02
+  - stars > 500 OR upvotes > 100: +0.01
+  - Max total enrichment boost: 0.05
+- [x] Added enrichment_boost parameter to VerificationGate
+- [x] Wired EnrichmentBoostCalculator into pipeline
+- [x] Added founding_date and social_proof_score to ProspectPayload
+- [x] Added enrichment metrics: enrichment_boosts_applied, avg_enrichment_boost
+- [x] 52 tests (25 calculator + 14 integration + 13 gate)
+
+**Phase 3: Thesis Integration** (NOT "improvements" - tools exist but unused)
+
+Problem: thesis_matcher.py and llm_classifier.py exist but don't affect routing.
+
+- [ ] Integrate thesis_matcher into verification gate:
+  - HIGH fit (≥0.7): +0.10 confidence
+  - LOW fit (<0.4): -0.10 confidence
+  - Negative keywords found: -0.15
+- [ ] Persist llm_classifier results with signal:
+  - Store category, thesis_fit_score, rationale
+  - New table or columns in signals
+- [ ] Thesis-based routing:
+  - thesis_fit_score < 0.3: HOLD (don't push)
+  - category == "excluded": REJECT
+- [ ] Minimal competitor detection:
+  - Create `config/portfolio.json` (company names + categories)
+  - Flag same-category matches as "potential competitor"
+  - Surface as warning, don't auto-reject
+
+Exit criteria: Thesis factors into push decision, low-fit held, classifications persisted.
+
+**Phase 4: Collector Evaluation** (research FIRST, build LAST)
+
+Problem: Proposed collectors may not have accessible APIs.
+
+- [ ] Research & document API availability:
+  - Wellfound: API deprecated 2023, scraping violates ToS → likely ABANDON
+  - App Store: iTunes Search limited, no new app listings API → likely DEFER
+  - Play Store: NO official API, 3rd-party services expensive → likely DEFER
+  - Press releases: Enterprise subscription required → likely ABANDON
+- [ ] For any viable options: signal quality analysis, cost-benefit
+- [ ] Build at most ONE collector if research justifies it
+
+Exit criteria: Research doc with BUILD/DEFER/ABANDON decisions + rationale.
+
+**Dependency Order:** Phase 1 → Phase 2 → Phase 3 → Phase 4 (sequential)
+
+**Key Risks:**
+| Risk | Mitigation |
+|------|------------|
+| Merge logic corrupts data | Preserve originals, extensive tests |
+| Canonical key collision | Conflict detection, human review queue |
+| Thesis rejection too aggressive | Start with HOLD not REJECT, tune thresholds |
+| New collector APIs unavailable | Research FIRST, commit to building LAST |
+
+---
+
+## Previous Sprint: Operational Excellence ✅ COMPLETE
+
+**Phase 1: Automated Monitoring** ✅
+- [x] Auto-trigger SignalHealthMonitor after pipeline runs (pipeline.py:645)
+- [x] Wire Slack alerts to health anomalies (pipeline.py:1049-1065)
+- [x] Add pipeline run metrics/telemetry
+
+**Phase 2: Code Cleanup** ✅
+- [x] Remove deprecated v1 files (notion_connector.py, verification_gate.py)
+- [x] Complete process_pending_with_gating() in SignalProcessor (4 tests)
+
+**Phase 3: Feature Enablement** ✅
+- [x] Wire EntityResolver into processing flow (integrated, feature-flagged via ENABLE_ENTITY_RESOLVER)
+- [x] Wire SourceAssetStore into collection flow (integrated, feature-flagged via ENABLE_ASSET_STORE)
+- Note: Both components are fully wired but disabled by default; enable via environment variables
+
+**Phase 4: New Collectors** ✅
+- [x] Add LinkedIn collector (22 tests, uses Proxycurl API)
+- [x] Add Crunchbase collector (26 tests, uses Crunchbase API)
+
+---
+
 ## Previous Sprint: Production Hardening ✅ COMPLETE
 
 **Phase 1: Quick Wins** ✅
@@ -174,28 +279,6 @@ Write failing tests first, then minimal code to pass them.
 **Phase 4: Test Coverage** ✅ (445 tests passing)
 - [x] Tests for github.py, product_hunt.py, arxiv.py, uspto.py
 - [x] Consumer module tests (6 test files, 80+ tests)
-
----
-
-## Current Sprint: Operational Excellence ✅ NEARLY COMPLETE
-
-**Phase 1: Automated Monitoring** ✅
-- [x] Auto-trigger SignalHealthMonitor after pipeline runs (pipeline.py:645)
-- [x] Wire Slack alerts to health anomalies (pipeline.py:1049-1065)
-- [x] Add pipeline run metrics/telemetry
-
-**Phase 2: Code Cleanup** ✅
-- [x] Remove deprecated v1 files (notion_connector.py, verification_gate.py)
-- [x] Complete process_pending_with_gating() in SignalProcessor (4 tests)
-
-**Phase 3: Feature Enablement** ✅
-- [x] Wire EntityResolver into processing flow (integrated, feature-flagged via ENABLE_ENTITY_RESOLVER)
-- [x] Wire SourceAssetStore into collection flow (integrated, feature-flagged via ENABLE_ASSET_STORE)
-- Note: Both components are fully wired but disabled by default; enable via environment variables
-
-**Phase 4: New Collectors** ✅
-- [x] Add LinkedIn collector (22 tests, uses Proxycurl API)
-- [x] Add Crunchbase collector (26 tests, uses Crunchbase API)
 
 ---
 
