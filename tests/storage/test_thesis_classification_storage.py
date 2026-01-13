@@ -47,3 +47,205 @@ class TestThesisClassificationSchema:
             "latency_ms", "classified_at", "competitor_flag", "competitor_match"
         }
         assert required.issubset(column_names)
+
+
+class TestThesisClassificationStorage:
+    """Test save/get methods for thesis classifications."""
+
+    @pytest.fixture
+    async def store(self, tmp_path):
+        db_path = str(tmp_path / "test_thesis.db")
+        store = SignalStore(db_path)
+        await store.initialize()
+        yield store
+        await store.close()
+
+    @pytest.fixture
+    async def signal_id(self, store):
+        """Create a test signal and return its ID."""
+        signal_id = await store.save_signal(
+            signal_type="test",
+            source_api="test",
+            canonical_key="domain:test.com",
+            company_name="Test Co",
+            confidence=0.5,
+            raw_data={"description": "Test company"},
+        )
+        return signal_id
+
+    @pytest.mark.asyncio
+    async def test_save_thesis_classification(self, store, signal_id):
+        """Should save a thesis classification."""
+        result = await store.save_thesis_classification(
+            signal_id=signal_id,
+            canonical_key="domain:test.com",
+            keyword_score=0.6,
+            keyword_category="consumer_cpg",
+            negative_keywords=[],
+            thesis_match=True,
+            thesis_fit_score=0.75,
+            category="consumer_cpg",
+            stage_estimate="seed",
+            confidence="high",
+            rationale="Meal kit delivery startup",
+            key_signals=["meal kit", "d2c"],
+            prompt_version="v1.2.0",
+            model="gemini-2.0-flash",
+        )
+        assert result > 0  # Returns the inserted row ID
+
+    @pytest.mark.asyncio
+    async def test_get_thesis_classification(self, store, signal_id):
+        """Should retrieve a saved classification."""
+        await store.save_thesis_classification(
+            signal_id=signal_id,
+            canonical_key="domain:test.com",
+            keyword_score=0.6,
+            keyword_category="consumer_cpg",
+            negative_keywords=["enterprise"],
+            thesis_match=True,
+            thesis_fit_score=0.75,
+            category="consumer_cpg",
+        )
+
+        result = await store.get_thesis_classification("domain:test.com")
+        assert result is not None
+        assert result["thesis_fit_score"] == 0.75
+        assert result["category"] == "consumer_cpg"
+
+    @pytest.mark.asyncio
+    async def test_get_thesis_classification_not_found(self, store):
+        """Should return None for unknown canonical key."""
+        result = await store.get_thesis_classification("domain:unknown.com")
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_get_recent_classification_within_cache(self, store, signal_id):
+        """Should return recent classification (within 7 days)."""
+        await store.save_thesis_classification(
+            signal_id=signal_id,
+            canonical_key="domain:test.com",
+            thesis_fit_score=0.8,
+            category="consumer_health_tech",
+        )
+
+        result = await store.get_recent_classification("domain:test.com", days=7)
+        assert result is not None
+        assert result["thesis_fit_score"] == 0.8
+
+    @pytest.mark.asyncio
+    async def test_get_thesis_classification_returns_most_recent(self, store, signal_id):
+        """Should return the most recent classification when multiple exist."""
+        # Save first classification
+        await store.save_thesis_classification(
+            signal_id=signal_id,
+            canonical_key="domain:test.com",
+            thesis_fit_score=0.5,
+            category="consumer_cpg",
+        )
+
+        # Save second classification (should be returned)
+        await store.save_thesis_classification(
+            signal_id=signal_id,
+            canonical_key="domain:test.com",
+            thesis_fit_score=0.9,
+            category="consumer_health_tech",
+        )
+
+        result = await store.get_thesis_classification("domain:test.com")
+        assert result is not None
+        assert result["thesis_fit_score"] == 0.9
+        assert result["category"] == "consumer_health_tech"
+
+    @pytest.mark.asyncio
+    async def test_save_thesis_classification_with_all_fields(self, store, signal_id):
+        """Should save and retrieve all fields correctly."""
+        await store.save_thesis_classification(
+            signal_id=signal_id,
+            canonical_key="domain:test.com",
+            keyword_score=0.7,
+            keyword_category="consumer_health_tech",
+            negative_keywords=["b2b", "enterprise"],
+            thesis_match=True,
+            thesis_fit_score=0.85,
+            category="consumer_health_tech",
+            stage_estimate="pre-seed",
+            confidence="high",
+            rationale="Fitness app for consumers",
+            key_signals=["fitness", "wellness", "d2c"],
+            prompt_version="v1.3.0",
+            model="gemini-2.0-flash",
+            input_tokens=150,
+            output_tokens=75,
+            latency_ms=450,
+            competitor_flag=True,
+            competitor_match={"name": "Peloton", "similarity": 0.65},
+        )
+
+        result = await store.get_thesis_classification("domain:test.com")
+        assert result is not None
+        assert result["keyword_score"] == 0.7
+        assert result["keyword_category"] == "consumer_health_tech"
+        assert result["negative_keywords"] == ["b2b", "enterprise"]
+        assert result["thesis_match"] is True
+        assert result["thesis_fit_score"] == 0.85
+        assert result["category"] == "consumer_health_tech"
+        assert result["stage_estimate"] == "pre-seed"
+        assert result["confidence"] == "high"
+        assert result["rationale"] == "Fitness app for consumers"
+        assert result["key_signals"] == ["fitness", "wellness", "d2c"]
+        assert result["prompt_version"] == "v1.3.0"
+        assert result["model"] == "gemini-2.0-flash"
+        assert result["input_tokens"] == 150
+        assert result["output_tokens"] == 75
+        assert result["latency_ms"] == 450
+        assert result["competitor_flag"] is True
+        assert result["competitor_match"] == {"name": "Peloton", "similarity": 0.65}
+
+    @pytest.mark.asyncio
+    async def test_save_thesis_classification_with_minimal_fields(self, store, signal_id):
+        """Should save with only required fields."""
+        result = await store.save_thesis_classification(
+            signal_id=signal_id,
+            canonical_key="domain:test.com",
+        )
+        assert result > 0
+
+        classification = await store.get_thesis_classification("domain:test.com")
+        assert classification is not None
+        assert classification["signal_id"] == signal_id
+        assert classification["canonical_key"] == "domain:test.com"
+        assert classification["thesis_fit_score"] is None
+        assert classification["category"] is None
+        assert classification["negative_keywords"] == []
+        assert classification["key_signals"] == []
+
+    @pytest.mark.asyncio
+    async def test_get_recent_classification_expired(self, store, signal_id):
+        """Should return None for classifications older than cache window."""
+        from datetime import timezone, timedelta
+        import aiosqlite
+
+        # Save a classification
+        await store.save_thesis_classification(
+            signal_id=signal_id,
+            canonical_key="domain:test.com",
+            thesis_fit_score=0.8,
+            category="consumer_cpg",
+        )
+
+        # Manually update the classified_at to be 10 days ago
+        old_date = (datetime.now(timezone.utc) - timedelta(days=10)).isoformat()
+        await store._db.execute(
+            "UPDATE thesis_classifications SET classified_at = ? WHERE canonical_key = ?",
+            (old_date, "domain:test.com")
+        )
+        await store._db.commit()
+
+        # Should return None for 7-day cache window
+        result = await store.get_recent_classification("domain:test.com", days=7)
+        assert result is None
+
+        # But should still be available via get_thesis_classification
+        result = await store.get_thesis_classification("domain:test.com")
+        assert result is not None

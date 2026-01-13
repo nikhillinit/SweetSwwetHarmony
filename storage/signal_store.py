@@ -1684,6 +1684,196 @@ class SignalStore:
             for row in rows
         ]
 
+    # =========================================================================
+    # THESIS CLASSIFICATION STORAGE
+    # =========================================================================
+
+    async def save_thesis_classification(
+        self,
+        signal_id: int,
+        canonical_key: str,
+        keyword_score: Optional[float] = None,
+        keyword_category: Optional[str] = None,
+        negative_keywords: Optional[List[str]] = None,
+        thesis_match: Optional[bool] = None,
+        thesis_fit_score: Optional[float] = None,
+        category: Optional[str] = None,
+        stage_estimate: Optional[str] = None,
+        confidence: Optional[str] = None,
+        rationale: Optional[str] = None,
+        key_signals: Optional[List[str]] = None,
+        prompt_version: Optional[str] = None,
+        model: Optional[str] = None,
+        input_tokens: Optional[int] = None,
+        output_tokens: Optional[int] = None,
+        latency_ms: Optional[int] = None,
+        competitor_flag: bool = False,
+        competitor_match: Optional[Dict] = None,
+    ) -> int:
+        """
+        Save a thesis classification result.
+
+        Args:
+            signal_id: ID of the signal being classified
+            canonical_key: Canonical key for the company
+            keyword_score: Score from keyword matcher (stage 1)
+            keyword_category: Category from keyword matcher
+            negative_keywords: List of negative keywords found
+            thesis_match: Whether LLM determined thesis match
+            thesis_fit_score: Fit score from LLM (0-1)
+            category: Thesis category from LLM
+            stage_estimate: Estimated funding stage
+            confidence: LLM confidence level
+            rationale: LLM's explanation for the classification
+            key_signals: Key signals identified by LLM
+            prompt_version: Version of the prompt used
+            model: LLM model name
+            input_tokens: Input token count
+            output_tokens: Output token count
+            latency_ms: API call latency in milliseconds
+            competitor_flag: Whether a competitor was detected
+            competitor_match: Details of matched portfolio company
+
+        Returns:
+            The inserted row ID
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        now = datetime.now(timezone.utc).isoformat()
+
+        async with self.transaction() as conn:
+            cursor = await conn.execute(
+                """
+                INSERT INTO thesis_classifications (
+                    signal_id, canonical_key,
+                    keyword_score, keyword_category, negative_keywords,
+                    thesis_match, thesis_fit_score, category,
+                    stage_estimate, confidence, rationale, key_signals,
+                    prompt_version, model, input_tokens, output_tokens, latency_ms,
+                    competitor_flag, competitor_match,
+                    classified_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    signal_id,
+                    canonical_key,
+                    keyword_score,
+                    keyword_category,
+                    json.dumps(negative_keywords) if negative_keywords else None,
+                    thesis_match,
+                    thesis_fit_score,
+                    category,
+                    stage_estimate,
+                    confidence,
+                    rationale,
+                    json.dumps(key_signals) if key_signals else None,
+                    prompt_version,
+                    model,
+                    input_tokens,
+                    output_tokens,
+                    latency_ms,
+                    competitor_flag,
+                    json.dumps(competitor_match) if competitor_match else None,
+                    now,
+                ),
+            )
+            return cursor.lastrowid
+
+    async def get_thesis_classification(
+        self,
+        canonical_key: str,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get the most recent thesis classification for a canonical key.
+
+        Args:
+            canonical_key: The canonical key to look up
+
+        Returns:
+            Dictionary with classification details or None if not found
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        cursor = await self._db.execute(
+            """
+            SELECT signal_id, canonical_key,
+                   keyword_score, keyword_category, negative_keywords,
+                   thesis_match, thesis_fit_score, category,
+                   stage_estimate, confidence, rationale, key_signals,
+                   prompt_version, model, input_tokens, output_tokens, latency_ms,
+                   competitor_flag, competitor_match,
+                   classified_at
+            FROM thesis_classifications
+            WHERE canonical_key = ?
+            ORDER BY classified_at DESC
+            LIMIT 1
+            """,
+            (canonical_key,),
+        )
+        row = await cursor.fetchone()
+
+        if not row:
+            return None
+
+        return {
+            "signal_id": row[0],
+            "canonical_key": row[1],
+            "keyword_score": row[2],
+            "keyword_category": row[3],
+            "negative_keywords": json.loads(row[4]) if row[4] else [],
+            "thesis_match": bool(row[5]) if row[5] is not None else None,
+            "thesis_fit_score": row[6],
+            "category": row[7],
+            "stage_estimate": row[8],
+            "confidence": row[9],
+            "rationale": row[10],
+            "key_signals": json.loads(row[11]) if row[11] else [],
+            "prompt_version": row[12],
+            "model": row[13],
+            "input_tokens": row[14],
+            "output_tokens": row[15],
+            "latency_ms": row[16],
+            "competitor_flag": bool(row[17]),
+            "competitor_match": json.loads(row[18]) if row[18] else None,
+            "classified_at": row[19],
+        }
+
+    async def get_recent_classification(
+        self,
+        canonical_key: str,
+        days: int = 7,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get classification if within cache window.
+
+        Args:
+            canonical_key: The canonical key to look up
+            days: Number of days to consider as "recent" (default 7)
+
+        Returns:
+            Dictionary with classification details or None if not found or expired
+        """
+        result = await self.get_thesis_classification(canonical_key)
+        if not result:
+            return None
+
+        classified_at_str = result["classified_at"]
+        # Handle both formats: with and without timezone
+        if classified_at_str.endswith("Z"):
+            classified_at_str = classified_at_str[:-1] + "+00:00"
+        elif "+" not in classified_at_str and not classified_at_str.endswith("Z"):
+            # Assume UTC if no timezone info
+            classified_at_str = classified_at_str + "+00:00"
+
+        classified_at = datetime.fromisoformat(classified_at_str)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+
+        if classified_at >= cutoff:
+            return result
+        return None
+
 
 # =============================================================================
 # CONTEXT MANAGER FOR EASY USAGE
