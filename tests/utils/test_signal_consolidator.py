@@ -444,3 +444,91 @@ class TestSocialProofAggregation:
         result = consolidator.consolidate(signals)
         assert result.social_proof["stars"] == 100
         assert result.social_proof["upvotes"] == 50
+
+
+class TestFoundingDateExtraction:
+    """Test founding date extraction from raw_data."""
+
+    def test_extracts_founding_date_from_companies_house(self):
+        """Should extract founding_date from Companies House signal."""
+        from storage.signal_store import StoredSignal
+        from utils.signal_consolidator import SignalConsolidator
+
+        now = datetime.now(timezone.utc)
+        signals = [
+            StoredSignal(
+                id=1,
+                signal_type="incorporation",
+                source_api="companies_house",
+                canonical_key="domain:acme.ai",
+                company_name="Acme Inc",
+                confidence=0.8,
+                raw_data={"founding_date": "2023-06-15"},
+                detected_at=now,
+                created_at=now,
+            ),
+        ]
+        consolidator = SignalConsolidator()
+        result = consolidator.consolidate(signals)
+        assert result.founding_date is not None
+        assert result.founding_date.year == 2023
+        assert result.founding_date.month == 6
+        assert result.founding_date.day == 15
+
+    def test_prefers_earliest_founding_date(self):
+        """Should pick earliest founding_date when multiple exist."""
+        from storage.signal_store import StoredSignal
+        from utils.signal_consolidator import SignalConsolidator
+
+        now = datetime.now(timezone.utc)
+        signals = [
+            StoredSignal(
+                id=1,
+                signal_type="incorporation",
+                source_api="sec_edgar",
+                canonical_key="domain:acme.ai",
+                company_name="Acme Inc",
+                confidence=0.7,
+                raw_data={"founding_date": "2024-01-01"},
+                detected_at=now,
+                created_at=now,
+            ),
+            StoredSignal(
+                id=2,
+                signal_type="incorporation",
+                source_api="companies_house",
+                canonical_key="domain:acme.ai",
+                company_name="Acme Inc",
+                confidence=0.8,
+                raw_data={"founding_date": "2023-06-15"},
+                detected_at=now,
+                created_at=now,
+            ),
+        ]
+        consolidator = SignalConsolidator()
+        result = consolidator.consolidate(signals)
+        assert result.founding_date.year == 2023
+
+    def test_extracts_from_registered_date_field(self):
+        """Should also check registered_date field (domain WHOIS)."""
+        from storage.signal_store import StoredSignal
+        from utils.signal_consolidator import SignalConsolidator
+
+        now = datetime.now(timezone.utc)
+        signals = [
+            StoredSignal(
+                id=1,
+                signal_type="domain_registration",
+                source_api="domain_whois",
+                canonical_key="domain:acme.ai",
+                company_name=None,
+                confidence=0.5,
+                raw_data={"registered_date": "2022-03-01"},
+                detected_at=now,
+                created_at=now,
+            ),
+        ]
+        consolidator = SignalConsolidator()
+        result = consolidator.consolidate(signals)
+        assert result.founding_date is not None
+        assert result.founding_date.year == 2022
