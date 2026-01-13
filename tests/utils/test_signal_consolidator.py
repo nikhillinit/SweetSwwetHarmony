@@ -53,3 +53,79 @@ class TestConsolidatedSignalDataclass:
         assert len(consolidated.conflict_flags) == 1
         assert consolidated.conflict_flags[0].field == "company_name"
         assert consolidated.has_conflicts is True
+
+
+class TestSourcePriority:
+    """Test source priority for field selection."""
+
+    def test_source_priority_order(self):
+        """Companies House has highest priority for company_name."""
+        from utils.signal_consolidator import SOURCE_PRIORITY
+
+        assert SOURCE_PRIORITY["companies_house"] < SOURCE_PRIORITY["github"]
+        assert SOURCE_PRIORITY["sec_edgar"] < SOURCE_PRIORITY["product_hunt"]
+        assert SOURCE_PRIORITY["crunchbase"] < SOURCE_PRIORITY["domain_whois"]
+
+    def test_select_company_name_prefers_companies_house(self):
+        """Should prefer company_name from Companies House over GitHub."""
+        from storage.signal_store import StoredSignal
+        from utils.signal_consolidator import SignalConsolidator
+
+        now = datetime.now(timezone.utc)
+
+        signals = [
+            StoredSignal(
+                id=1,
+                signal_type="github_spike",
+                source_api="github",
+                canonical_key="domain:acme.ai",
+                company_name="acme-ai",  # GitHub style name
+                confidence=0.8,
+                raw_data={},
+                detected_at=now,
+                created_at=now,
+            ),
+            StoredSignal(
+                id=2,
+                signal_type="incorporation",
+                source_api="companies_house",
+                canonical_key="domain:acme.ai",
+                company_name="Acme AI Limited",  # Official name
+                confidence=0.7,
+                raw_data={},
+                detected_at=now,
+                created_at=now,
+            ),
+        ]
+
+        consolidator = SignalConsolidator()
+        result = consolidator.consolidate(signals)
+
+        # Should pick Companies House name despite GitHub having higher confidence
+        assert result.company_name == "Acme AI Limited"
+
+    def test_select_company_name_falls_back_to_lower_priority(self):
+        """Should fall back to lower priority if higher is missing."""
+        from storage.signal_store import StoredSignal
+        from utils.signal_consolidator import SignalConsolidator
+
+        now = datetime.now(timezone.utc)
+
+        signals = [
+            StoredSignal(
+                id=1,
+                signal_type="github_spike",
+                source_api="github",
+                canonical_key="domain:acme.ai",
+                company_name="acme-ai",
+                confidence=0.8,
+                raw_data={},
+                detected_at=now,
+                created_at=now,
+            ),
+        ]
+
+        consolidator = SignalConsolidator()
+        result = consolidator.consolidate(signals)
+
+        assert result.company_name == "acme-ai"
