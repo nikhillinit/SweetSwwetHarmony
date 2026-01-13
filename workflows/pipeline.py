@@ -317,6 +317,9 @@ class DiscoveryPipeline:
         # State
         self._initialized = False
 
+        # Collector metrics for current run
+        self._collector_metrics: List[CollectorMetrics] = []
+
     async def initialize(self) -> None:
         """Initialize pipeline components"""
         if self._initialized:
@@ -771,6 +774,13 @@ class DiscoveryPipeline:
         dry_run: bool,
     ) -> CollectorResult:
         """Run a single collector and return results"""
+        # Start timing
+        metrics = CollectorMetrics(
+            collector_name=collector_name,
+            started_at=datetime.now(timezone.utc),
+        )
+        collector = None
+
         try:
             logger.info(f"Running collector: {collector_name}")
 
@@ -817,6 +827,7 @@ class DiscoveryPipeline:
                 job_domains = os.getenv("JOB_POSTING_DOMAINS", "").split(",")
                 job_domains = [d.strip() for d in job_domains if d.strip()]
                 if not job_domains:
+                    metrics.status = "skipped"
                     return CollectorResult(
                         collector=collector_name,
                         status=CollectorStatus.SKIPPED,
@@ -832,6 +843,7 @@ class DiscoveryPipeline:
                 gh_orgs = os.getenv("GITHUB_ACTIVITY_ORGS", "").split(",")
                 gh_orgs = [o.strip() for o in gh_orgs if o.strip()]
                 if not gh_usernames and not gh_orgs:
+                    metrics.status = "skipped"
                     return CollectorResult(
                         collector=collector_name,
                         status=CollectorStatus.SKIPPED,
@@ -847,6 +859,7 @@ class DiscoveryPipeline:
                 from collectors.linkedin import LinkedInCollector
                 linkedin_key = os.getenv("PROXYCURL_API_KEY")
                 if not linkedin_key:
+                    metrics.status = "skipped"
                     return CollectorResult(
                         collector=collector_name,
                         status=CollectorStatus.SKIPPED,
@@ -865,6 +878,7 @@ class DiscoveryPipeline:
                 from collectors.crunchbase import CrunchbaseCollector
                 cb_key = os.getenv("CRUNCHBASE_API_KEY")
                 if not cb_key:
+                    metrics.status = "skipped"
                     return CollectorResult(
                         collector=collector_name,
                         status=CollectorStatus.SKIPPED,
@@ -876,6 +890,8 @@ class DiscoveryPipeline:
                 from collectors.uspto import USPTOCollector
                 collector = USPTOCollector(**common_args)
             else:
+                metrics.status = "error"
+                metrics.error_messages = [f"Unknown collector: {collector_name}"]
                 return CollectorResult(
                     collector=collector_name,
                     status=CollectorStatus.ERROR,
@@ -886,6 +902,13 @@ class DiscoveryPipeline:
             # Run collector
             result = await collector.run(dry_run=dry_run)
 
+            # Capture metrics from collector
+            metrics.signals_found = result.signals_found
+            metrics.status = result.status.value
+            metrics.retries = getattr(collector, '_retry_count', 0)
+            metrics.errors = len(getattr(collector, '_errors', []))
+            metrics.error_messages = getattr(collector, '_errors', [])
+
             logger.info(
                 f"Collector {collector_name} completed: "
                 f"{result.signals_found} signals found"
@@ -895,12 +918,22 @@ class DiscoveryPipeline:
 
         except Exception as e:
             logger.exception(f"Error running collector {collector_name}")
+            metrics.status = "error"
+            metrics.errors = 1
+            metrics.error_messages = [str(e)]
+            # Try to capture retry count from collector if it was created
+            if collector is not None:
+                metrics.retries = getattr(collector, '_retry_count', 0)
             return CollectorResult(
                 collector=collector_name,
                 status=CollectorStatus.ERROR,
                 error_message=str(e),
                 dry_run=dry_run,
             )
+        finally:
+            # Always capture timing
+            metrics.complete()
+            self._collector_metrics.append(metrics)
 
     async def _process_signals_stage(self, dry_run: bool) -> Dict[str, int]:
         """
