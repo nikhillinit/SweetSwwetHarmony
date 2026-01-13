@@ -10,6 +10,7 @@ Commands:
   stats     - Show pipeline statistics
   health    - Run health checks on all components
   metrics   - Show pipeline run metrics with per-collector breakdown
+  pipeline  - Pipeline dashboard commands (status, qualified, push)
 
 Examples:
   # Run full pipeline with specific collectors (dry run)
@@ -29,6 +30,18 @@ Examples:
 
   # Run health check
   python run_pipeline.py health
+
+  # View pipeline status (signal counts by status)
+  python run_pipeline.py pipeline status
+
+  # List qualified signals ready for push
+  python run_pipeline.py pipeline qualified --limit 50
+
+  # Preview push to Notion (dry run)
+  python run_pipeline.py pipeline push --dry-run
+
+  # Push qualified signals to Notion
+  python run_pipeline.py pipeline push --confirm
 """
 
 import argparse
@@ -42,6 +55,8 @@ from pathlib import Path
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
+from typing import Optional
+
 from workflows.pipeline import (
     DiscoveryPipeline,
     PipelineConfig,
@@ -50,6 +65,7 @@ from workflows.pipeline import (
 )
 from utils.signal_health import SignalHealthMonitor
 from connectors.notion_connector_v2 import NotionConnector
+from storage.signal_store import SignalStore
 
 try:
     import httpx
@@ -850,6 +866,108 @@ async def cmd_metrics(args):
 
 
 # =============================================================================
+# PIPELINE DASHBOARD COMMANDS
+# =============================================================================
+
+async def cmd_pipeline_status(db_path: str = "signals.db") -> None:
+    """Show pipeline status overview."""
+    store = SignalStore(db_path)
+    await store.initialize()
+
+    try:
+        counts = await store.get_status_counts()
+
+        print("\n" + "=" * 50)
+        print("Pipeline Status")
+        print("=" * 50)
+        print(f"\n  Qualified:  {counts.get('qualified', 0):>5} signals (ready for push)")
+        print(f"  Held:       {counts.get('held', 0):>5} signals (need review)")
+        print(f"  Rejected:   {counts.get('rejected', 0):>5} signals (excluded)")
+        print(f"  Pushed:     {counts.get('pushed', 0):>5} signals (in Notion)")
+        print(f"  Pending:    {counts.get('pending', 0):>5} signals (not processed)")
+        print()
+        print("Commands:")
+        print("  python run_pipeline.py pipeline qualified  - List signals ready for push")
+        print("  python run_pipeline.py pipeline push       - Export qualified to Notion")
+        print("=" * 50 + "\n")
+
+    finally:
+        await store.close()
+
+
+async def cmd_pipeline_qualified(
+    db_path: str = "signals.db",
+    limit: int = 20,
+) -> None:
+    """List qualified signals ready for push."""
+    store = SignalStore(db_path)
+    await store.initialize()
+
+    try:
+        signals = await store.get_signals_by_status("qualified", limit=limit)
+
+        print(f"\n{'='*60}")
+        print(f"Qualified Signals ({len(signals)} shown, limit={limit})")
+        print(f"{'='*60}\n")
+
+        if not signals:
+            print("  No qualified signals found.\n")
+            return
+
+        for i, sig in enumerate(signals, 1):
+            print(f"{i:3}. {sig.company_name or 'Unknown'}")
+            print(f"     Key: {sig.canonical_key}")
+            print(f"     Confidence: {sig.confidence:.2f}")
+            print(f"     Source: {sig.source_api}")
+            print()
+
+        print(f"Run 'python run_pipeline.py pipeline push --confirm' to export to Notion")
+        print(f"{'='*60}\n")
+
+    finally:
+        await store.close()
+
+
+async def cmd_pipeline_push(
+    db_path: str = "signals.db",
+    confirm: bool = False,
+    dry_run: bool = False,
+    signal_id: Optional[int] = None,
+) -> None:
+    """Push qualified signals to Notion."""
+    store = SignalStore(db_path)
+    await store.initialize()
+
+    try:
+        signals = await store.get_signals_by_status("qualified")
+
+        if not signals:
+            print("No qualified signals to push.")
+            return
+
+        print(f"\nFound {len(signals)} qualified signal(s) to push.")
+
+        if not confirm and not dry_run:
+            print("\nUse --confirm to push, or --dry-run to preview.")
+            return
+
+        if dry_run:
+            print("\n[DRY RUN] Would push:")
+            for sig in signals[:10]:
+                print(f"  - {sig.company_name or sig.canonical_key}")
+            if len(signals) > 10:
+                print(f"  ... and {len(signals) - 10} more")
+            return
+
+        # Actual push would integrate with NotionPusher
+        print(f"\nPushing {len(signals)} signals to Notion...")
+        print("(Push integration with NotionPusher pending)")
+
+    finally:
+        await store.close()
+
+
+# =============================================================================
 # HELPERS
 # =============================================================================
 
@@ -1175,6 +1293,40 @@ Environment variables:
         help="Path to signals database",
     )
 
+    # Pipeline subcommands
+    pipeline_parser = subparsers.add_parser(
+        "pipeline",
+        help="Pipeline dashboard commands",
+    )
+    pipeline_sub = pipeline_parser.add_subparsers(dest="pipeline_cmd")
+
+    # pipeline status
+    pipeline_status_parser = pipeline_sub.add_parser("status", help="Show pipeline status overview")
+    pipeline_status_parser.add_argument(
+        "--db-path",
+        type=str,
+        help="Path to SQLite database",
+    )
+
+    # pipeline qualified
+    qual_parser = pipeline_sub.add_parser("qualified", help="List qualified signals")
+    qual_parser.add_argument("--limit", type=int, default=20, help="Max signals to show")
+    qual_parser.add_argument(
+        "--db-path",
+        type=str,
+        help="Path to SQLite database",
+    )
+
+    # pipeline push
+    push_parser = pipeline_sub.add_parser("push", help="Push qualified to Notion")
+    push_parser.add_argument("--confirm", action="store_true", help="Confirm push")
+    push_parser.add_argument("--dry-run", action="store_true", help="Preview only")
+    push_parser.add_argument(
+        "--db-path",
+        type=str,
+        help="Path to SQLite database",
+    )
+
     # Schema command with subcommands
     schema_parser = subparsers.add_parser(
         "schema",
@@ -1329,6 +1481,22 @@ async def main():
             exit_code = await cmd_health(args)
         elif args.command == "metrics":
             await cmd_metrics(args)
+        elif args.command == "pipeline":
+            # Handle pipeline subcommands
+            db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+            if args.pipeline_cmd == "status":
+                await cmd_pipeline_status(db_path=db_path)
+            elif args.pipeline_cmd == "qualified":
+                await cmd_pipeline_qualified(db_path=db_path, limit=args.limit)
+            elif args.pipeline_cmd == "push":
+                await cmd_pipeline_push(
+                    db_path=db_path,
+                    confirm=args.confirm,
+                    dry_run=args.dry_run,
+                )
+            else:
+                print("Pipeline command requires a subcommand (status, qualified, push)")
+                sys.exit(1)
         elif args.command == "schema":
             # Handle schema subcommands
             if hasattr(args, "schema_command"):
