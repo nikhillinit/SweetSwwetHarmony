@@ -62,7 +62,7 @@ logger = logging.getLogger(__name__)
 # SCHEMA VERSION
 # =============================================================================
 
-CURRENT_SCHEMA_VERSION = 4
+CURRENT_SCHEMA_VERSION = 5
 
 # SQL for creating tables (migrations applied in order)
 MIGRATIONS = {
@@ -213,6 +213,48 @@ MIGRATIONS = {
     CREATE INDEX IF NOT EXISTS idx_collector_metrics_run_id ON collector_metrics(run_id);
     CREATE INDEX IF NOT EXISTS idx_collector_metrics_collector ON collector_metrics(collector_name);
     CREATE INDEX IF NOT EXISTS idx_collector_metrics_started_at ON collector_metrics(started_at);
+    """,
+    5: """
+    -- Thesis classifications: persist LLM classification results
+    CREATE TABLE IF NOT EXISTS thesis_classifications (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        signal_id INTEGER NOT NULL,
+        canonical_key TEXT NOT NULL,
+
+        -- Keyword matcher results (stage 1)
+        keyword_score REAL,
+        keyword_category TEXT,
+        negative_keywords TEXT,  -- JSON array
+
+        -- LLM classifier results (stage 2)
+        thesis_match BOOLEAN,
+        thesis_fit_score REAL,
+        category TEXT,
+        stage_estimate TEXT,
+        confidence TEXT,
+        rationale TEXT,
+        key_signals TEXT,  -- JSON array
+
+        -- Audit trail
+        prompt_version TEXT,
+        model TEXT,
+        input_tokens INTEGER,
+        output_tokens INTEGER,
+        latency_ms INTEGER,
+
+        -- Competitor detection
+        competitor_flag BOOLEAN DEFAULT 0,
+        competitor_match TEXT,  -- JSON: matched portfolio company
+
+        classified_at TEXT NOT NULL,  -- ISO 8601
+
+        FOREIGN KEY (signal_id) REFERENCES signals(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_thesis_class_signal_id ON thesis_classifications(signal_id);
+    CREATE INDEX IF NOT EXISTS idx_thesis_class_canonical ON thesis_classifications(canonical_key);
+    CREATE INDEX IF NOT EXISTS idx_thesis_class_category ON thesis_classifications(category);
+    CREATE INDEX IF NOT EXISTS idx_thesis_class_classified_at ON thesis_classifications(classified_at);
     """
 }
 
