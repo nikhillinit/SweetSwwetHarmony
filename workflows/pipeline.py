@@ -1314,7 +1314,8 @@ class DiscoveryPipeline:
         thesis_routing = None
         if self._thesis_filter and consolidated:
             try:
-                description = consolidated.description or ""
+                # Join descriptions list into single string for thesis matching
+                description = " ".join(consolidated.descriptions) if consolidated.descriptions else ""
                 thesis_result = await self._thesis_filter.classify(
                     description,
                     company_name=consolidated.company_name,
@@ -1355,7 +1356,7 @@ class DiscoveryPipeline:
                 # Check for competitors (only for qualified signals)
                 competitor_match = None
                 if self._competitor_detector and thesis_result.keyword_category:
-                    description = consolidated.description or ""
+                    # description already computed above
                     competitor_match = self._competitor_detector.check(
                         thesis_result.keyword_category,
                         description,
