@@ -173,7 +173,7 @@ Write failing tests first, then minimal code to pass them.
 
 ---
 
-## Current Sprint: Operational Excellence 🚧 IN PROGRESS
+## Current Sprint: Operational Excellence ✅ NEARLY COMPLETE
 
 **Phase 1: Automated Monitoring** ✅
 - [x] Auto-trigger SignalHealthMonitor after pipeline runs (pipeline.py:645)
@@ -184,10 +184,10 @@ Write failing tests first, then minimal code to pass them.
 - [x] Remove deprecated v1 files (notion_connector.py, verification_gate.py)
 - [x] Complete process_pending_with_gating() in SignalProcessor (4 tests)
 
-**Phase 3: Feature Enablement** (requires architecture planning)
-- [ ] Wire EntityResolver into processing flow (initialized but not called)
-- [ ] Wire SourceAssetStore into collection flow (initialized but not called)
-- Note: Components exist but integration points need design work
+**Phase 3: Feature Enablement** ✅
+- [x] Wire EntityResolver into processing flow (integrated, feature-flagged via ENABLE_ENTITY_RESOLVER)
+- [x] Wire SourceAssetStore into collection flow (integrated, feature-flagged via ENABLE_ASSET_STORE)
+- Note: Both components are fully wired but disabled by default; enable via environment variables
 
 **Phase 4: New Collectors** ✅
 - [x] Add LinkedIn collector (22 tests, uses Proxycurl API)
