@@ -53,7 +53,7 @@ from typing import Any, Dict, List, Optional, AsyncIterator, TYPE_CHECKING
 import aiosqlite
 
 if TYPE_CHECKING:
-    from workflows.pipeline import PipelineStats
+    from workflows.pipeline import PipelineStats, CollectorMetrics
 
 logger = logging.getLogger(__name__)
 
@@ -1537,6 +1537,110 @@ class SignalStore:
             "errors": json.loads(row[18]) if row[18] else [],
             "health_report": json.loads(row[19]) if row[19] else None,
         }
+
+    async def save_collector_metrics(self, run_id: str, metrics: "CollectorMetrics") -> None:
+        """
+        Save collector metrics for a pipeline run.
+
+        Args:
+            run_id: Pipeline run ID to associate with
+            metrics: CollectorMetrics object with timing and API stats
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        now = datetime.now(timezone.utc).isoformat()
+        error_messages_json = json.dumps(metrics.error_messages) if metrics.error_messages else None
+
+        async with self.transaction() as conn:
+            await conn.execute(
+                """
+                INSERT INTO collector_metrics (
+                    run_id, collector_name, started_at, completed_at, duration_seconds,
+                    signals_found, status, api_calls, rate_limit_hits, retries,
+                    errors, error_messages, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    run_id,
+                    metrics.collector_name,
+                    metrics.started_at.isoformat(),
+                    metrics.completed_at.isoformat() if metrics.completed_at else None,
+                    metrics.duration_seconds,
+                    metrics.signals_found,
+                    metrics.status,
+                    metrics.api_calls,
+                    metrics.rate_limit_hits,
+                    metrics.retries,
+                    metrics.errors,
+                    error_messages_json,
+                    now,
+                )
+            )
+
+        logger.debug(f"Saved metrics for collector {metrics.collector_name} (run: {run_id})")
+
+    async def get_collector_metrics(
+        self,
+        run_id: Optional[str] = None,
+        collector_name: Optional[str] = None,
+        limit: int = 100
+    ) -> List[Dict[str, Any]]:
+        """
+        Query collector metrics with optional filters.
+
+        Args:
+            run_id: Filter to specific pipeline run
+            collector_name: Filter to specific collector
+            limit: Maximum results (default 100)
+
+        Returns:
+            List of collector metrics dictionaries
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        query = """
+            SELECT
+                run_id, collector_name, started_at, completed_at, duration_seconds,
+                signals_found, status, api_calls, rate_limit_hits, retries,
+                errors, error_messages
+            FROM collector_metrics
+            WHERE 1=1
+        """
+        params = []
+
+        if run_id:
+            query += " AND run_id = ?"
+            params.append(run_id)
+        if collector_name:
+            query += " AND collector_name = ?"
+            params.append(collector_name)
+
+        query += " ORDER BY started_at DESC LIMIT ?"
+        params.append(limit)
+
+        cursor = await self._db.execute(query, params)
+        rows = await cursor.fetchall()
+
+        return [
+            {
+                "run_id": row[0],
+                "collector_name": row[1],
+                "started_at": row[2],
+                "completed_at": row[3],
+                "duration_seconds": row[4],
+                "signals_found": row[5],
+                "status": row[6],
+                "api_calls": row[7],
+                "rate_limit_hits": row[8],
+                "retries": row[9],
+                "errors": row[10],
+                "error_messages": json.loads(row[11]) if row[11] else [],
+            }
+            for row in rows
+        ]
 
 
 # =============================================================================
