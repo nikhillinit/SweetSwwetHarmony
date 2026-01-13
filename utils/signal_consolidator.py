@@ -39,6 +39,9 @@ SOURCE_PRIORITY = {
 
 DEFAULT_PRIORITY = 99  # For unknown sources
 
+# Fields to extract descriptions from (in order of preference)
+DESCRIPTION_FIELDS = ["description", "tagline", "summary", "bio", "about"]
+
 
 @dataclass
 class ConflictFlag:
@@ -148,6 +151,9 @@ class SignalConsolidator:
         earliest = min(s.detected_at for s in signals)
         latest = max(s.detected_at for s in signals)
 
+        # Aggregate descriptions from raw_data
+        descriptions = self._aggregate_descriptions(signals)
+
         return ConsolidatedSignal(
             canonical_key=canonical_key,
             company_name=company_name,
@@ -157,6 +163,7 @@ class SignalConsolidator:
             aggregated_confidence=avg_confidence,
             earliest_detected_at=earliest,
             latest_detected_at=latest,
+            descriptions=descriptions,
             conflict_flags=conflict_flags,
         )
 
@@ -189,3 +196,20 @@ class SignalConsolidator:
             )
 
         return conflicts
+
+    def _aggregate_descriptions(self, signals: List["StoredSignal"]) -> List[str]:
+        """Extract and deduplicate descriptions from signal raw_data."""
+        seen = set()
+        descriptions = []
+
+        for signal in signals:
+            raw_data = signal.raw_data or {}
+            for field in DESCRIPTION_FIELDS:
+                value = raw_data.get(field)
+                if isinstance(value, str) and value.strip():
+                    normalized = value.strip()
+                    if normalized not in seen:
+                        seen.add(normalized)
+                        descriptions.append(normalized)
+
+        return descriptions

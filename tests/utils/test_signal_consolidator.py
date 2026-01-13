@@ -249,3 +249,110 @@ class TestConflictDetection:
         result = consolidator.consolidate(signals)
 
         assert result.has_conflicts is False
+
+
+class TestDescriptionAggregation:
+    """Test description aggregation from raw_data."""
+
+    def test_aggregates_descriptions_from_raw_data(self):
+        """Should collect descriptions from raw_data of all signals."""
+        from storage.signal_store import StoredSignal
+        from utils.signal_consolidator import SignalConsolidator
+
+        now = datetime.now(timezone.utc)
+
+        signals = [
+            StoredSignal(
+                id=1,
+                signal_type="github_spike",
+                source_api="github",
+                canonical_key="domain:acme.ai",
+                company_name="Acme Inc",
+                confidence=0.8,
+                raw_data={"description": "AI-powered automation tool"},
+                detected_at=now,
+                created_at=now,
+            ),
+            StoredSignal(
+                id=2,
+                signal_type="product_hunt_launch",
+                source_api="product_hunt",
+                canonical_key="domain:acme.ai",
+                company_name="Acme Inc",
+                confidence=0.7,
+                raw_data={"tagline": "Automate your workflow with AI"},
+                detected_at=now,
+                created_at=now,
+            ),
+        ]
+
+        consolidator = SignalConsolidator()
+        result = consolidator.consolidate(signals)
+
+        assert len(result.descriptions) == 2
+        assert "AI-powered automation tool" in result.descriptions
+        assert "Automate your workflow with AI" in result.descriptions
+
+    def test_deduplicates_identical_descriptions(self):
+        """Should not include duplicate descriptions."""
+        from storage.signal_store import StoredSignal
+        from utils.signal_consolidator import SignalConsolidator
+
+        now = datetime.now(timezone.utc)
+
+        signals = [
+            StoredSignal(
+                id=1,
+                signal_type="github_spike",
+                source_api="github",
+                canonical_key="domain:acme.ai",
+                company_name="Acme Inc",
+                confidence=0.8,
+                raw_data={"description": "AI tool"},
+                detected_at=now,
+                created_at=now,
+            ),
+            StoredSignal(
+                id=2,
+                signal_type="github_activity",
+                source_api="github",
+                canonical_key="domain:acme.ai",
+                company_name="Acme Inc",
+                confidence=0.6,
+                raw_data={"description": "AI tool"},  # Same
+                detected_at=now,
+                created_at=now,
+            ),
+        ]
+
+        consolidator = SignalConsolidator()
+        result = consolidator.consolidate(signals)
+
+        assert len(result.descriptions) == 1
+        assert result.descriptions[0] == "AI tool"
+
+    def test_handles_missing_descriptions(self):
+        """Should handle signals without descriptions gracefully."""
+        from storage.signal_store import StoredSignal
+        from utils.signal_consolidator import SignalConsolidator
+
+        now = datetime.now(timezone.utc)
+
+        signals = [
+            StoredSignal(
+                id=1,
+                signal_type="incorporation",
+                source_api="sec_edgar",
+                canonical_key="domain:acme.ai",
+                company_name="Acme Inc",
+                confidence=0.8,
+                raw_data={"form_d": "D-123"},  # No description
+                detected_at=now,
+                created_at=now,
+            ),
+        ]
+
+        consolidator = SignalConsolidator()
+        result = consolidator.consolidate(signals)
+
+        assert len(result.descriptions) == 0
