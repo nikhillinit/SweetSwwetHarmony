@@ -331,3 +331,63 @@ class TestPipelineConsolidationIntegration:
         # Why now should be from consolidated (joined with "; ")
         assert "Trending on GitHub" in payload["prospect"]["why_now"]
         assert "New SEC filing" in payload["prospect"]["why_now"]
+
+
+class TestConsolidationMetrics:
+    """Test consolidation metrics in pipeline stats."""
+
+    @pytest.mark.asyncio
+    async def test_pipeline_stats_include_consolidation_metrics(self):
+        """Pipeline stats should include signals_consolidated and conflicts_detected."""
+        from workflows.pipeline import DiscoveryPipeline, PipelineConfig
+
+        now = datetime.now(timezone.utc)
+
+        # Create signals that will produce a conflict
+        signals = [
+            StoredSignal(
+                id=1,
+                signal_type="github_spike",
+                source_api="github",
+                canonical_key="domain:acme.ai",
+                company_name="Acme AI",
+                confidence=0.8,
+                raw_data={},
+                detected_at=now,
+                created_at=now,
+            ),
+            StoredSignal(
+                id=2,
+                signal_type="incorporation",
+                source_api="sec_edgar",
+                canonical_key="domain:acme.ai",
+                company_name="ACME Corp",  # Different name = conflict
+                confidence=0.7,
+                raw_data={},
+                detected_at=now,
+                created_at=now,
+            ),
+        ]
+
+        store = AsyncMock()
+        store.get_pending_signals.return_value = signals
+        store.check_suppression.return_value = None
+        store.mark_queued = AsyncMock()
+        store.mark_rejected = AsyncMock()
+
+        config = PipelineConfig(use_consolidation=True)
+        pipeline = DiscoveryPipeline(config=config)
+        pipeline._store = store
+        pipeline._gate = MagicMock()
+        pipeline._gate.evaluate.return_value = MagicMock(
+            decision=MagicMock(value="hold"),
+            confidence_score=0.5,
+            reason="Test",
+        )
+
+        stats = await pipeline._process_signals_stage(dry_run=True)
+
+        assert "signals_consolidated" in stats
+        assert "conflicts_detected" in stats
+        assert stats["signals_consolidated"] == 2  # 2 signals consolidated into 1
+        assert stats["conflicts_detected"] == 1  # 1 company with conflict

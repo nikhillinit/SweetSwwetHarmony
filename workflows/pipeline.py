@@ -982,6 +982,8 @@ class DiscoveryPipeline:
             "prospects_created": 0,
             "prospects_updated": 0,
             "prospects_skipped": 0,
+            "signals_consolidated": 0,
+            "conflicts_detected": 0,
         }
 
         # Get pending signals
@@ -1014,6 +1016,14 @@ class DiscoveryPipeline:
             conflicts = sum(1 for c in consolidated_map.values() if c.has_conflicts)
             if conflicts:
                 logger.warning(f"Signal consolidation found {conflicts} companies with conflicts")
+
+            # Update consolidation metrics
+            stats["signals_consolidated"] = sum(
+                c.signal_count for c in consolidated_map.values()
+            )
+            stats["conflicts_detected"] = sum(
+                1 for c in consolidated_map.values() if c.has_conflicts
+            )
 
         # Process each company
         for canonical_key, company_signals in by_key.items():
