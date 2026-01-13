@@ -42,6 +42,14 @@ DEFAULT_PRIORITY = 99  # For unknown sources
 # Fields to extract descriptions from (in order of preference)
 DESCRIPTION_FIELDS = ["description", "tagline", "summary", "bio", "about"]
 
+# Social proof fields to aggregate (summed across signals)
+SOCIAL_PROOF_FIELDS = [
+    "stars", "recent_stars", "forks", "watchers",  # GitHub
+    "votes", "upvotes", "comments",  # Product Hunt
+    "followers", "connections",  # LinkedIn
+    "mentions",  # Hacker News
+]
+
 
 @dataclass
 class ConflictFlag:
@@ -154,6 +162,9 @@ class SignalConsolidator:
         # Aggregate descriptions from raw_data
         descriptions = self._aggregate_descriptions(signals)
 
+        # Aggregate social proof metrics
+        social_proof = self._aggregate_social_proof(signals)
+
         return ConsolidatedSignal(
             canonical_key=canonical_key,
             company_name=company_name,
@@ -164,6 +175,7 @@ class SignalConsolidator:
             earliest_detected_at=earliest,
             latest_detected_at=latest,
             descriptions=descriptions,
+            social_proof=social_proof,
             conflict_flags=conflict_flags,
         )
 
@@ -213,3 +225,14 @@ class SignalConsolidator:
                         descriptions.append(normalized)
 
         return descriptions
+
+    def _aggregate_social_proof(self, signals: List["StoredSignal"]) -> Dict[str, int]:
+        """Aggregate social proof metrics from signal raw_data."""
+        totals: Dict[str, int] = {}
+        for signal in signals:
+            raw_data = signal.raw_data or {}
+            for field in SOCIAL_PROOF_FIELDS:
+                value = raw_data.get(field)
+                if isinstance(value, (int, float)) and value > 0:
+                    totals[field] = totals.get(field, 0) + int(value)
+        return totals
