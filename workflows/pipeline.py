@@ -51,6 +51,7 @@ from utils.traction_calculator import TractionCalculator, TractionScore
 from utils.investor_network import InvestorNetworkAnalyzer, InvestorRanking, CompanyInvestorScore
 from utils.founder_intent import FounderIntentDetector, IntentSignal, FounderIntentSummary
 from utils.deal_quality_scorer import DealQualityScorer, DealQualityScore, RoutingRecommendation
+from utils.semantic_search import SemanticSearch, SearchResult
 from storage.source_asset_store import SourceAssetStore, SourceAsset
 from storage.founder_store import FounderStore
 from storage.entity_resolution import EntityResolutionStore, AssetToLead
@@ -171,6 +172,9 @@ class PipelineConfig:
 
     # Deal quality scoring (Deal Intelligence Engine Phase 5)
     use_deal_quality_scorer: bool = True  # Enable unified deal quality scoring
+
+    # Semantic search (Deal Intelligence Engine Phase 6)
+    use_semantic_search: bool = True  # Enable natural language search with Gemini embeddings
 
     @classmethod
     def from_env(cls) -> PipelineConfig:
@@ -405,6 +409,10 @@ class DiscoveryPipeline:
         # Initialized in initialize() after store is ready
         self._deal_quality_scorer: Optional[DealQualityScorer] = None
 
+        # Semantic search (Deal Intelligence Engine Phase 6)
+        # Initialized in initialize() after store is ready
+        self._semantic_search: Optional[SemanticSearch] = None
+
         # State
         self._initialized = False
 
@@ -501,6 +509,11 @@ class DiscoveryPipeline:
         if self.config.use_deal_quality_scorer:
             self._deal_quality_scorer = DealQualityScorer(self._store)
             logger.info("DealQualityScorer initialized (unified scoring enabled)")
+
+        # Initialize SemanticSearch (Deal Intelligence Engine Phase 6)
+        if self.config.use_semantic_search:
+            self._semantic_search = SemanticSearch(self._store)
+            logger.info("SemanticSearch initialized (Gemini embeddings enabled)")
 
         # Initialize SignalVelocityTracker (if velocity tracking enabled)
         if self.config.use_velocity_tracking:
@@ -2142,6 +2155,55 @@ class DiscoveryPipeline:
             logger.warning(f"Deal quality scoring failed: {e}")
 
         return stats
+
+    # =========================================================================
+    # SEMANTIC SEARCH UTILITIES (PHASE 6)
+    # =========================================================================
+
+    async def search_signals(
+        self,
+        query: str,
+        top_k: int = 10,
+        min_similarity: float = 0.3,
+    ) -> List[SearchResult]:
+        """
+        Search signals using natural language query.
+
+        Uses Gemini embeddings for semantic similarity search.
+
+        Args:
+            query: Natural language search query (e.g., "AI health startups")
+            top_k: Maximum number of results to return
+            min_similarity: Minimum similarity threshold [0, 1]
+
+        Returns:
+            List of SearchResult sorted by similarity descending
+        """
+        if not self._semantic_search:
+            logger.warning("SemanticSearch not initialized")
+            return []
+
+        return await self._semantic_search.search(query, top_k, min_similarity)
+
+    async def embed_pending_signals(self, batch_size: int = 100) -> int:
+        """
+        Generate embeddings for signals that don't have them yet.
+
+        Should be called periodically or after collecting new signals.
+
+        Args:
+            batch_size: Number of signals to embed in this batch
+
+        Returns:
+            Number of signals embedded
+        """
+        if not self._semantic_search:
+            logger.warning("SemanticSearch not initialized")
+            return 0
+
+        count = await self._semantic_search.embed_pending_signals(batch_size)
+        logger.info(f"Embedded {count} pending signals")
+        return count
 
     async def _regroup_signals_by_entity(
         self, signals_by_key: Dict[str, List[StoredSignal]]

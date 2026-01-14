@@ -62,7 +62,7 @@ logger = logging.getLogger(__name__)
 # SCHEMA VERSION
 # =============================================================================
 
-CURRENT_SCHEMA_VERSION = 10
+CURRENT_SCHEMA_VERSION = 11
 
 # SQL for creating tables (migrations applied in order)
 MIGRATIONS = {
@@ -386,6 +386,30 @@ MIGRATIONS = {
     CREATE INDEX IF NOT EXISTS idx_deal_quality_raw_score ON deal_quality_scores(raw_score);
     CREATE INDEX IF NOT EXISTS idx_deal_quality_percentile ON deal_quality_scores(percentile);
     CREATE INDEX IF NOT EXISTS idx_deal_quality_routing ON deal_quality_scores(routing_recommendation);
+    """,
+    11: """
+    -- Signal embeddings for semantic search (Deal Intelligence Engine Phase 6)
+    CREATE TABLE IF NOT EXISTS signal_embeddings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        signal_id INTEGER NOT NULL,
+        canonical_key TEXT NOT NULL,
+
+        -- Embedding vector stored as JSON array
+        embedding TEXT NOT NULL,  -- JSON array of 768 floats
+
+        -- Searchable text that was embedded
+        text TEXT NOT NULL,
+        company_name TEXT,
+
+        -- Audit
+        created_at TEXT NOT NULL,  -- ISO 8601
+
+        FOREIGN KEY (signal_id) REFERENCES signals(id) ON DELETE CASCADE,
+        UNIQUE(signal_id)  -- One embedding per signal
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_embedding_signal_id ON signal_embeddings(signal_id);
+    CREATE INDEX IF NOT EXISTS idx_embedding_canonical ON signal_embeddings(canonical_key);
     """
 }
 
@@ -2148,6 +2172,135 @@ class SignalStore:
         rows = await cursor.fetchall()
 
         return [{'raw_score': row[0]} for row in rows]
+
+    # =========================================================================
+    # SIGNAL EMBEDDING METHODS (PHASE 6)
+    # =========================================================================
+
+    async def save_signal_embedding(
+        self,
+        signal_id: int,
+        canonical_key: str,
+        embedding: List[float],
+        text: str,
+        company_name: Optional[str] = None,
+    ) -> None:
+        """
+        Save or update signal embedding.
+
+        Args:
+            signal_id: Signal database ID
+            canonical_key: Company identifier
+            embedding: 768-dimensional vector
+            text: Searchable text that was embedded
+            company_name: Optional company name
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        now = datetime.now(timezone.utc).isoformat()
+
+        # Store embedding as JSON array
+        embedding_json = json.dumps(embedding)
+
+        await self._db.execute(
+            """
+            INSERT OR REPLACE INTO signal_embeddings (
+                signal_id, canonical_key, embedding, text, company_name, created_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                signal_id,
+                canonical_key,
+                embedding_json,
+                text,
+                company_name,
+                now,
+            ),
+        )
+        await self._db.commit()
+
+        logger.debug(f"Saved embedding for signal {signal_id} ({canonical_key})")
+
+    async def get_all_signal_embeddings(self) -> List[Dict[str, Any]]:
+        """
+        Get all signal embeddings for similarity search.
+
+        Returns:
+            List of dicts with signal_id, canonical_key, embedding, text, company_name
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        cursor = await self._db.execute(
+            """
+            SELECT signal_id, canonical_key, embedding, text, company_name
+            FROM signal_embeddings
+            """
+        )
+        rows = await cursor.fetchall()
+
+        results = []
+        for row in rows:
+            try:
+                embedding = json.loads(row[2]) if row[2] else []
+                results.append({
+                    'signal_id': row[0],
+                    'canonical_key': row[1],
+                    'embedding': embedding,
+                    'text': row[3],
+                    'company_name': row[4],
+                })
+            except json.JSONDecodeError:
+                logger.warning(f"Invalid embedding JSON for signal {row[0]}")
+
+        return results
+
+    async def get_signals_without_embeddings(
+        self,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """
+        Get signals that don't have embeddings yet.
+
+        Args:
+            limit: Maximum number of signals to return
+
+        Returns:
+            List of signal dicts
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        cursor = await self._db.execute(
+            """
+            SELECT s.id, s.canonical_key, s.company_name, s.raw_data
+            FROM signals s
+            LEFT JOIN signal_embeddings e ON s.id = e.signal_id
+            WHERE e.id IS NULL
+            ORDER BY s.created_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+
+        results = []
+        for row in rows:
+            try:
+                raw_data = json.loads(row[3]) if row[3] else {}
+            except json.JSONDecodeError:
+                raw_data = {}
+
+            results.append({
+                'id': row[0],
+                'canonical_key': row[1],
+                'company_name': row[2],
+                'raw_data': raw_data,
+            })
+
+        return results
 
     # =========================================================================
     # NOTION OUTBOX
