@@ -30,6 +30,8 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 
 import streamlit as st
+import pandas as pd
+import altair as alt
 from dotenv import load_dotenv
 
 # Add parent directory to path for imports
@@ -1359,6 +1361,12 @@ def render_welcome_banner(view: str):
             "body": "Use Mini-Scout to search through all discovered companies. "
                    "Type a company name, keyword, or industry to find matches. "
                    "You can save your favorite filter combinations as <strong>Presets</strong> for quick access later."
+        },
+        "Analytics": {
+            "title": "Deal Flow Analytics",
+            "body": "See high-level insights into your discovery pipeline. "
+                   "Track which thesis categories are performing best, which sources deliver quality signals, "
+                   "and how your deal flow changes over time."
         }
     }
 
@@ -1717,6 +1725,207 @@ def render_signals_view(signals: List[Dict], filters: Dict):
 
 
 # =============================================================================
+# ANALYTICS VIEW
+# =============================================================================
+
+# Custom color palette for thesis categories
+THESIS_COLORS = {
+    'Consumer CPG': '#2D5016',           # Forest green
+    'Consumer Health Tech': '#1E3A5F',   # Deep navy
+    'Travel & Hospitality': '#8B4513',   # Saddle brown
+    'Consumer Marketplaces': '#4A1942',  # Deep plum
+    'Unclassified': '#9CA3AF'            # Neutral gray
+}
+
+
+def render_analytics_view(store: SignalStore):
+    """
+    Render the Analytics dashboard with thesis performance, source quality,
+    and volume trends visualizations.
+    """
+    # Time range selector in sidebar
+    with st.sidebar:
+        st.markdown('<p class="filter-header" style="font-size: 0.65rem; color: #737373; margin-bottom: 0.5rem;">TIME RANGE</p>', unsafe_allow_html=True)
+        time_range = st.selectbox(
+            "Time Range",
+            options=[7, 30, 90, 0],
+            format_func=lambda x: "All time" if x == 0 else f"Last {x} days",
+            index=1,  # Default: 30 days
+            label_visibility="collapsed"
+        )
+
+    # Fetch data
+    days = time_range if time_range > 0 else 9999
+    with st.spinner("Loading analytics..."):
+        data = run_async(store.get_signals_for_analytics(days=days))
+        df = pd.DataFrame(data)
+
+    # Empty state
+    if df.empty:
+        render_empty_state(
+            "No signals in this time period",
+            "Try selecting a longer time range or wait for new signals to be discovered.",
+            icon="📊"
+        )
+        return
+
+    # Calculate hero KPI
+    total_signals = len(df)
+    qualified_signals = len(df[df['thesis_fit_score'] >= 0.3])
+    qualified_pct = int((qualified_signals / total_signals * 100)) if total_signals > 0 else 0
+    pushed_signals = len(df[df['processing_status'] == 'pushed'])
+    conversion_pct = round((pushed_signals / total_signals * 100), 1) if total_signals > 0 else 0
+
+    # Hero KPI
+    st.markdown(f'''
+    <div class="analytics-container">
+        <div class="analytics-hero">
+            <span class="analytics-kpi">{qualified_pct}%</span>
+            <span class="analytics-kpi-underline"></span>
+            <p class="analytics-kpi-label">of signals are thesis-qualified</p>
+        </div>
+    </div>
+    ''', unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # Charts row - asymmetric 60/40 split
+    col1, col2 = st.columns([3, 2])
+
+    with col1:
+        render_thesis_chart(df)
+
+    with col2:
+        render_source_chart(df)
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    # Volume trends - full width
+    render_volume_chart(df)
+
+    # Summary footer
+    st.markdown(f'''
+    <div class="analytics-footer">
+        <span class="analytics-footer-stat"><strong>{total_signals}</strong> signals</span>
+        <span class="analytics-footer-stat"><strong>{qualified_signals}</strong> qualified</span>
+        <span class="analytics-footer-stat"><strong>{pushed_signals}</strong> pushed</span>
+        <span class="analytics-footer-stat"><strong>{conversion_pct}%</strong> conversion</span>
+    </div>
+    ''', unsafe_allow_html=True)
+
+
+def render_thesis_chart(df: pd.DataFrame):
+    """Render thesis performance horizontal bar chart."""
+    st.markdown('<p class="analytics-section-title">THESIS PERFORMANCE</p>', unsafe_allow_html=True)
+
+    # Aggregate by category
+    thesis_agg = df.groupby('category').agg(
+        count=('signal_id', 'count'),
+        avg_fit=('thesis_fit_score', 'mean'),
+        avg_conf=('confidence', 'mean')
+    ).reset_index().sort_values('count', ascending=False)
+
+    # Create chart
+    chart = alt.Chart(thesis_agg).mark_bar(
+        cornerRadiusEnd=4,
+    ).encode(
+        x=alt.X('count:Q', axis=alt.Axis(grid=False, title=None)),
+        y=alt.Y('category:N', sort='-x', axis=alt.Axis(title=None, labelFontWeight=600)),
+        color=alt.Color('category:N', scale=alt.Scale(
+            domain=list(THESIS_COLORS.keys()),
+            range=list(THESIS_COLORS.values())
+        ), legend=None),
+        tooltip=[
+            alt.Tooltip('category:N', title='Category'),
+            alt.Tooltip('count:Q', title='Signals'),
+            alt.Tooltip('avg_fit:Q', title='Avg Fit', format='.0%'),
+        ]
+    ).properties(height=200)
+
+    st.markdown('<div class="analytics-chart-container analytics-animate analytics-animate-1">', unsafe_allow_html=True)
+    st.altair_chart(chart, use_container_width=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
+def render_source_chart(df: pd.DataFrame):
+    """Render source quality lollipop chart."""
+    st.markdown('<p class="analytics-section-title">SOURCE QUALITY</p>', unsafe_allow_html=True)
+
+    # Aggregate by source
+    source_agg = df.groupby('source_api').agg(
+        total=('signal_id', 'count'),
+        pushed=('processing_status', lambda x: (x == 'pushed').sum())
+    ).reset_index()
+    source_agg['conversion'] = (source_agg['pushed'] / source_agg['total'] * 100).round(1)
+
+    # Lollipop: line from 0 to conversion rate
+    line = alt.Chart(source_agg).mark_rule(
+        strokeWidth=2,
+        color='#E0D8D1'
+    ).encode(
+        y=alt.Y('source_api:N', sort='-x', axis=alt.Axis(title=None)),
+        x=alt.X('conversion:Q', axis=alt.Axis(title='Conversion %', grid=False)),
+        x2=alt.value(0)
+    )
+
+    # Dot sized by total signals
+    dot = alt.Chart(source_agg).mark_circle(
+        color='#F59E0B'
+    ).encode(
+        y=alt.Y('source_api:N', sort='-x'),
+        x='conversion:Q',
+        size=alt.Size('total:Q', scale=alt.Scale(range=[80, 400]), legend=None),
+        tooltip=[
+            alt.Tooltip('source_api:N', title='Source'),
+            alt.Tooltip('total:Q', title='Total Signals'),
+            alt.Tooltip('conversion:Q', title='Conversion', format='.1f')
+        ]
+    )
+
+    chart = (line + dot).properties(height=200)
+
+    st.markdown('<div class="analytics-chart-container analytics-animate analytics-animate-2">', unsafe_allow_html=True)
+    st.altair_chart(chart, use_container_width=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
+def render_volume_chart(df: pd.DataFrame):
+    """Render signal volume trends stacked area chart."""
+    st.markdown('<p class="analytics-section-title">SIGNAL VOLUME OVER TIME</p>', unsafe_allow_html=True)
+
+    # Aggregate by date and category
+    df['date'] = pd.to_datetime(df['detected_at']).dt.date
+    daily = df.groupby(['date', 'category']).size().reset_index(name='count')
+
+    chart = alt.Chart(daily).mark_area(
+        interpolate='monotone',
+        opacity=0.85
+    ).encode(
+        x=alt.X('date:T', axis=alt.Axis(
+            title=None,
+            format='%b %d',
+            labelAngle=0,
+            gridOpacity=0.3
+        )),
+        y=alt.Y('count:Q', axis=alt.Axis(title=None, gridOpacity=0.3)),
+        color=alt.Color('category:N', scale=alt.Scale(
+            domain=list(THESIS_COLORS.keys()),
+            range=list(THESIS_COLORS.values())
+        ), legend=alt.Legend(
+            orient='bottom',
+            direction='horizontal',
+            title=None
+        )),
+        order=alt.Order('category:N'),
+        tooltip=['date:T', 'category:N', 'count:Q']
+    ).properties(height=280)
+
+    st.markdown('<div class="analytics-chart-container analytics-animate analytics-animate-3">', unsafe_allow_html=True)
+    st.altair_chart(chart, use_container_width=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
+# =============================================================================
 # MAIN
 # =============================================================================
 
@@ -1762,15 +1971,16 @@ def main():
         view_descriptions = {
             "Pipeline": "Your deal flow organized by stage",
             "Signals": "Newly discovered companies",
-            "Mini-Scout": "Search all companies"
+            "Mini-Scout": "Search all companies",
+            "Analytics": "Deal flow insights & trends"
         }
 
         if has_notion and has_db:
-            view_options = ["Pipeline", "Signals", "Mini-Scout"]
+            view_options = ["Pipeline", "Signals", "Mini-Scout", "Analytics"]
         elif has_notion:
-            view_options = ["Pipeline", "Mini-Scout"]
+            view_options = ["Pipeline", "Mini-Scout", "Analytics"]
         else:
-            view_options = ["Signals", "Mini-Scout"]
+            view_options = ["Signals", "Mini-Scout", "Analytics"]
 
         view = st.radio(
             "View",
@@ -1981,6 +2191,14 @@ def main():
         render_welcome_banner("Mini-Scout")
         store = get_store()
         render_mini_scout_page(store)
+
+    # ==========================================================================
+    # ANALYTICS VIEW
+    # ==========================================================================
+    elif view == "Analytics":
+        render_welcome_banner("Analytics")
+        store = get_store()
+        render_analytics_view(store)
 
     # Footer
     st.markdown("""
