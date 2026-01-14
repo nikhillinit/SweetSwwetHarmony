@@ -991,6 +991,152 @@ st.markdown("""
         color: var(--press-dark);
         padding: 0.75rem 1rem;
     }
+
+    /* ==========================================================================
+       ANALYTICS TAB STYLES - Editorial/Magazine aesthetic
+       ========================================================================== */
+
+    /* Import editorial display font */
+    @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display&display=swap');
+
+    /* Analytics container with subtle background gradient */
+    .analytics-container {
+        background: linear-gradient(180deg, #FFFFFF 0%, #F5F3F0 100%);
+        padding: 2rem;
+        border-radius: 12px;
+        position: relative;
+    }
+
+    /* Subtle noise texture overlay */
+    .analytics-container::before {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E");
+        opacity: 0.02;
+        pointer-events: none;
+        border-radius: 12px;
+    }
+
+    /* Hero KPI styling */
+    .analytics-hero {
+        text-align: left;
+        margin-bottom: 2.5rem;
+        animation: fadeInUp 0.5s ease-out;
+    }
+
+    .analytics-kpi {
+        font-family: 'DM Serif Display', serif;
+        font-size: 4rem;
+        line-height: 1;
+        letter-spacing: -0.02em;
+        color: #292929;
+        display: block;
+    }
+
+    .analytics-kpi-underline {
+        display: block;
+        width: 80px;
+        height: 4px;
+        background: linear-gradient(90deg, #F59E0B 0%, #FBBF24 100%);
+        margin: 0.5rem 0 1rem 0;
+        border-radius: 2px;
+    }
+
+    .analytics-kpi-label {
+        font-family: 'Poppins', sans-serif;
+        font-size: 1.1rem;
+        font-weight: 400;
+        font-style: italic;
+        color: #525252;
+        margin: 0;
+    }
+
+    /* Chart container with hover effect */
+    .analytics-chart-container {
+        background: #FFFFFF;
+        border-radius: 8px;
+        padding: 1.5rem;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+        position: relative;
+        z-index: 1;
+    }
+
+    .analytics-chart-container:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    }
+
+    /* Section headers */
+    .analytics-section-title {
+        font-family: 'Inter', sans-serif;
+        font-size: 0.75rem;
+        font-weight: 700;
+        letter-spacing: 0.1em;
+        text-transform: uppercase;
+        color: #737373;
+        margin-bottom: 1rem;
+    }
+
+    /* Summary footer */
+    .analytics-footer {
+        display: flex;
+        justify-content: flex-start;
+        gap: 2rem;
+        padding: 1rem 0;
+        border-top: 1px solid #E0D8D1;
+        margin-top: 2rem;
+    }
+
+    .analytics-footer-stat {
+        font-family: 'Inter', sans-serif;
+        font-size: 0.9rem;
+        color: #525252;
+    }
+
+    .analytics-footer-stat strong {
+        color: #292929;
+        font-weight: 600;
+    }
+
+    /* Fade-in animation for chart reveals */
+    @keyframes fadeInUp {
+        from {
+            opacity: 0;
+            transform: translateY(12px);
+        }
+        to {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    }
+
+    .analytics-animate {
+        animation: fadeInUp 0.4s ease-out;
+        animation-fill-mode: both;
+    }
+
+    .analytics-animate-1 { animation-delay: 0.1s; }
+    .analytics-animate-2 { animation-delay: 0.2s; }
+    .analytics-animate-3 { animation-delay: 0.3s; }
+
+    /* Loading skeleton animation */
+    @keyframes shimmer {
+        0% { background-position: -200% 0; }
+        100% { background-position: 200% 0; }
+    }
+
+    .analytics-skeleton {
+        background: linear-gradient(90deg, #F2F2F2 25%, #E8E8E8 50%, #F2F2F2 75%);
+        background-size: 200% 100%;
+        animation: shimmer 1.5s infinite;
+        border-radius: 8px;
+        height: 200px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
