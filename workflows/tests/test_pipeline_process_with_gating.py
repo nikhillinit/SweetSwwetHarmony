@@ -178,9 +178,11 @@ class TestProcessCompanyWithGating:
                 trigger_reason="description_change",
             ),
             classification=ClassificationResult(
+                schema_version="1.0",
                 label=ClassificationLabel.PIVOT,
                 confidence=0.9,
-                reasoning="Company pivoted to consumer space",
+                rationale="Company pivoted to consumer space",
+                input_hash="test_hash",
                 cached=False,
             ),
         )
@@ -235,9 +237,11 @@ class TestProcessCompanyWithGating:
                 trigger_reason="description_change",
             ),
             classification=ClassificationResult(
+                schema_version="1.0",
                 label=ClassificationLabel.PIVOT,  # Actionable
                 confidence=0.9,
-                reasoning="Company pivoted to consumer space",
+                rationale="Company pivoted to consumer space",
+                input_hash="test_hash",
                 cached=False,
             ),
         )
