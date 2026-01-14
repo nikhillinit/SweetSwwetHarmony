@@ -1205,6 +1205,64 @@ class SignalStore:
         rows = await cursor.fetchall()
         return {row[0]: row[1] for row in rows}
 
+    async def get_signals_for_analytics(
+        self,
+        days: int = 30,
+    ) -> List[Dict[str, Any]]:
+        """
+        Fetch signals with thesis and processing data for analytics dashboard.
+
+        Uses a 4-way LEFT JOIN to combine:
+        - signals: Core signal data
+        - thesis_classifications: Thesis fit and category
+        - signals_fts: Vertical information
+        - signal_processing: Processing status
+
+        Args:
+            days: Number of days to look back (default 30). Use large value for all time.
+
+        Returns:
+            List of dicts with: signal_id, company_name, canonical_key, source_api,
+            confidence, detected_at, vertical, category, thesis_fit_score,
+            competitor_flag, processing_status
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        cursor = await self._db.execute(
+            """
+            SELECT
+                s.id as signal_id,
+                s.company_name,
+                s.canonical_key,
+                s.source_api,
+                s.confidence,
+                s.detected_at,
+                COALESCE(fts.vertical, 'Unknown') as vertical,
+                COALESCE(tc.category, 'Unclassified') as category,
+                COALESCE(tc.thesis_fit_score, 0) as thesis_fit_score,
+                COALESCE(tc.competitor_flag, 0) as competitor_flag,
+                COALESCE(sp.status, 'pending') as processing_status
+            FROM signals s
+            LEFT JOIN thesis_classifications tc ON s.id = tc.signal_id
+            LEFT JOIN signals_fts fts ON CAST(s.id AS TEXT) = fts.signal_id
+            LEFT JOIN signal_processing sp ON s.id = sp.signal_id
+            WHERE s.detected_at >= datetime('now', '-' || ? || ' days')
+            ORDER BY s.detected_at DESC
+            LIMIT 5000
+            """,
+            (days,)
+        )
+
+        rows = await cursor.fetchall()
+        columns = [
+            "signal_id", "company_name", "canonical_key", "source_api",
+            "confidence", "detected_at", "vertical", "category",
+            "thesis_fit_score", "competitor_flag", "processing_status"
+        ]
+
+        return [dict(zip(columns, row)) for row in rows]
+
     # =========================================================================
     # NOTION OUTBOX
     # =========================================================================
