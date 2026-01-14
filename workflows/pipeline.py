@@ -49,6 +49,7 @@ from utils.competitor_detector import CompetitorDetector
 from utils.signal_correlator import SignalCorrelator, CorrelatedSignal, DetectedFounder
 from utils.traction_calculator import TractionCalculator, TractionScore
 from utils.investor_network import InvestorNetworkAnalyzer, InvestorRanking, CompanyInvestorScore
+from utils.founder_intent import FounderIntentDetector, IntentSignal, FounderIntentSummary
 from storage.source_asset_store import SourceAssetStore, SourceAsset
 from storage.founder_store import FounderStore
 from storage.entity_resolution import EntityResolutionStore, AssetToLead
@@ -163,6 +164,9 @@ class PipelineConfig:
 
     # Investor network (Deal Intelligence Engine Phase 3)
     use_investor_network: bool = True  # Enable investor centrality analysis
+
+    # Founder intent detection (Deal Intelligence Engine Phase 4)
+    use_founder_intent: bool = True  # Enable founder intent detection
 
     @classmethod
     def from_env(cls) -> PipelineConfig:
@@ -389,6 +393,10 @@ class DiscoveryPipeline:
         # Initialized in initialize() after store is ready
         self._investor_network: Optional[InvestorNetworkAnalyzer] = None
 
+        # Founder intent detector (Deal Intelligence Engine Phase 4)
+        # Initialized in initialize() after store is ready
+        self._founder_intent: Optional[FounderIntentDetector] = None
+
         # State
         self._initialized = False
 
@@ -475,6 +483,11 @@ class DiscoveryPipeline:
         if self.config.use_investor_network:
             self._investor_network = InvestorNetworkAnalyzer(self._store)
             logger.info("InvestorNetworkAnalyzer initialized (investor centrality enabled)")
+
+        # Initialize FounderIntentDetector (Deal Intelligence Engine Phase 4)
+        if self.config.use_founder_intent:
+            self._founder_intent = FounderIntentDetector(self._store)
+            logger.info("FounderIntentDetector initialized (founder intent detection enabled)")
 
         # Initialize SignalVelocityTracker (if velocity tracking enabled)
         if self.config.use_velocity_tracking:
@@ -1149,6 +1162,20 @@ class DiscoveryPipeline:
                 logger.info(
                     f"Investor network: {network_stats['investors_ranked']} investors ranked, "
                     f"{network_stats['network_edges']} co-investment edges"
+                )
+
+        # Run founder intent detection (Deal Intelligence Engine Phase 4)
+        # Detect behavioral patterns suggesting new ventures
+        if self._founder_intent:
+            # Flatten all signals for intent detection
+            all_signals = [sig for signals in by_key.values() for sig in signals]
+            intent_stats = await self._run_founder_intent_detection(all_signals)
+            stats["intents_detected"] = intent_stats["intents_detected"]
+            stats["high_confidence_intents"] = intent_stats["high_confidence_intents"]
+            if intent_stats["intents_detected"] > 0:
+                logger.info(
+                    f"Founder intent: {intent_stats['intents_detected']} intents detected, "
+                    f"{intent_stats['high_confidence_intents']} high confidence"
                 )
 
         # Process each company
@@ -1983,6 +2010,56 @@ class DiscoveryPipeline:
             )
         except Exception as e:
             logger.warning(f"Investor network analysis failed: {e}")
+
+        return stats
+
+    async def _run_founder_intent_detection(
+        self, signals: List[StoredSignal]
+    ) -> Dict[str, Any]:
+        """
+        Run founder intent detection on signals.
+
+        Deal Intelligence Engine Phase 4: Detects behavioral patterns
+        suggesting new ventures (Evertrace-inspired).
+
+        Args:
+            signals: List of stored signals to analyze
+
+        Returns:
+            Dict with 'intents_detected' and 'high_confidence_intents' counts
+        """
+        stats = {"intents_detected": 0, "high_confidence_intents": 0}
+
+        if not self._founder_intent:
+            return stats
+
+        try:
+            for signal in signals:
+                # Convert StoredSignal to dict format expected by detector
+                signal_dict = {
+                    "id": signal.id,
+                    "canonical_key": signal.canonical_key,
+                    "signal_type": signal.signal_type,
+                    "detected_at": signal.detected_at,
+                    "raw_data": signal.raw_data or {},
+                }
+
+                intent = await self._founder_intent.detect_intent(signal_dict)
+
+                if intent:
+                    stats["intents_detected"] += 1
+                    if intent.confidence >= 0.7:
+                        stats["high_confidence_intents"] += 1
+
+                    # Save to database
+                    await self._store.save_founder_intent_signal(intent)
+
+            logger.info(
+                f"Founder intent detection: {stats['intents_detected']} intents detected, "
+                f"{stats['high_confidence_intents']} high confidence"
+            )
+        except Exception as e:
+            logger.warning(f"Founder intent detection failed: {e}")
 
         return stats
 

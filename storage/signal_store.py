@@ -62,7 +62,7 @@ logger = logging.getLogger(__name__)
 # SCHEMA VERSION
 # =============================================================================
 
-CURRENT_SCHEMA_VERSION = 8
+CURRENT_SCHEMA_VERSION = 9
 
 # SQL for creating tables (migrations applied in order)
 MIGRATIONS = {
@@ -332,6 +332,32 @@ MIGRATIONS = {
 
     CREATE INDEX IF NOT EXISTS idx_company_investor_canonical ON company_investor_scores(canonical_key);
     CREATE INDEX IF NOT EXISTS idx_company_investor_quality ON company_investor_scores(investor_quality_score);
+    """,
+    9: """
+    -- Founder intent signals (Deal Intelligence Engine Phase 4)
+    CREATE TABLE IF NOT EXISTS founder_intent_signals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        signal_id INTEGER NOT NULL,
+        canonical_key TEXT NOT NULL,
+
+        -- Intent detection
+        intent_type TEXT NOT NULL,  -- 'new_venture', 'activity_spike', 'career_transition', 'stealth_mode', 'cofounder_seeking'
+        founder_id INTEGER NOT NULL,
+        founder_name TEXT,
+        confidence REAL NOT NULL DEFAULT 0.0,
+        evidence TEXT,
+
+        -- Audit
+        detected_at TEXT NOT NULL,  -- ISO 8601
+
+        FOREIGN KEY (signal_id) REFERENCES signals(id) ON DELETE CASCADE
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_intent_signal_id ON founder_intent_signals(signal_id);
+    CREATE INDEX IF NOT EXISTS idx_intent_canonical ON founder_intent_signals(canonical_key);
+    CREATE INDEX IF NOT EXISTS idx_intent_founder ON founder_intent_signals(founder_id);
+    CREATE INDEX IF NOT EXISTS idx_intent_type ON founder_intent_signals(intent_type);
+    CREATE INDEX IF NOT EXISTS idx_intent_detected ON founder_intent_signals(detected_at);
     """
 }
 
@@ -1781,6 +1807,111 @@ class SignalStore:
             f"Saved investor score for {score.canonical_key}: "
             f"quality={score.investor_quality_score:.2f}"
         )
+
+    # =========================================================================
+    # FOUNDER INTENT METHODS (PHASE 4)
+    # =========================================================================
+
+    async def save_founder_intent_signal(
+        self,
+        intent: "IntentSignal",
+    ) -> None:
+        """
+        Save a detected founder intent signal.
+
+        Args:
+            intent: IntentSignal dataclass
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        detected_at = intent.detected_at
+        if isinstance(detected_at, datetime):
+            detected_at = detected_at.isoformat()
+
+        await self._db.execute(
+            """
+            INSERT INTO founder_intent_signals (
+                signal_id, canonical_key, intent_type, founder_id,
+                founder_name, confidence, evidence, detected_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                intent.signal_id,
+                intent.canonical_key,
+                intent.intent_type,
+                intent.founder_id,
+                intent.founder_name,
+                intent.confidence,
+                intent.evidence,
+                detected_at,
+            )
+        )
+        await self._db.commit()
+
+        logger.debug(
+            f"Saved intent signal: {intent.intent_type} for founder {intent.founder_id} "
+            f"(confidence={intent.confidence:.2f})"
+        )
+
+    async def get_founder_intent_signals(
+        self,
+        founder_id: int = None,
+        intent_type: str = None,
+        days: int = 30,
+    ) -> List[Dict[str, Any]]:
+        """
+        Get founder intent signals.
+
+        Args:
+            founder_id: Optional founder ID to filter by
+            intent_type: Optional intent type to filter by
+            days: Number of days to look back
+
+        Returns:
+            List of intent signal dicts
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+        query = """
+            SELECT id, signal_id, canonical_key, intent_type, founder_id,
+                   founder_name, confidence, evidence, detected_at
+            FROM founder_intent_signals
+            WHERE detected_at >= ?
+        """
+        params = [cutoff]
+
+        if founder_id:
+            query += " AND founder_id = ?"
+            params.append(founder_id)
+
+        if intent_type:
+            query += " AND intent_type = ?"
+            params.append(intent_type)
+
+        query += " ORDER BY detected_at DESC"
+
+        cursor = await self._db.execute(query, params)
+        rows = await cursor.fetchall()
+
+        return [
+            {
+                'id': row[0],
+                'signal_id': row[1],
+                'canonical_key': row[2],
+                'intent_type': row[3],
+                'founder_id': row[4],
+                'founder_name': row[5],
+                'confidence': row[6],
+                'evidence': row[7],
+                'detected_at': row[8],
+            }
+            for row in rows
+        ]
 
     # =========================================================================
     # NOTION OUTBOX
