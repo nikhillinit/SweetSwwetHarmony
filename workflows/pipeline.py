@@ -47,6 +47,7 @@ from utils.enrichment_boost import EnrichmentBoostCalculator, EnrichmentConfig
 from utils.thesis_filter import ThesisFilter, ThesisFilterConfig, RoutingDecision
 from utils.competitor_detector import CompetitorDetector
 from utils.signal_correlator import SignalCorrelator, CorrelatedSignal, DetectedFounder
+from utils.traction_calculator import TractionCalculator, TractionScore
 from storage.source_asset_store import SourceAssetStore, SourceAsset
 from storage.founder_store import FounderStore
 from storage.entity_resolution import EntityResolutionStore, AssetToLead
@@ -155,6 +156,9 @@ class PipelineConfig:
 
     # Signal correlation (Deal Intelligence Engine Phase 1)
     use_signal_correlation: bool = True  # Enable founder-signal correlation
+
+    # Traction calculation (Deal Intelligence Engine Phase 2)
+    use_traction_calculator: bool = True  # Enable momentum metrics
 
     @classmethod
     def from_env(cls) -> PipelineConfig:
@@ -373,6 +377,10 @@ class DiscoveryPipeline:
         # Initialized in initialize() after store is ready
         self._signal_correlator: Optional[SignalCorrelator] = None
 
+        # Traction calculator (Deal Intelligence Engine Phase 2)
+        # Initialized in initialize() after store is ready
+        self._traction_calculator: Optional[TractionCalculator] = None
+
         # State
         self._initialized = False
 
@@ -449,6 +457,11 @@ class DiscoveryPipeline:
         if self.config.use_signal_correlation and self._founder_store:
             self._signal_correlator = SignalCorrelator(self._founder_store)
             logger.info("SignalCorrelator initialized (founder-signal linking enabled)")
+
+        # Initialize TractionCalculator (Deal Intelligence Engine Phase 2)
+        if self.config.use_traction_calculator:
+            self._traction_calculator = TractionCalculator(self._store)
+            logger.info("TractionCalculator initialized (momentum metrics enabled)")
 
         # Initialize SignalVelocityTracker (if velocity tracking enabled)
         if self.config.use_velocity_tracking:
@@ -1100,6 +1113,18 @@ class DiscoveryPipeline:
             stats["conflicts_detected"] = sum(
                 1 for c in consolidated_map.values() if c.has_conflicts
             )
+
+        # Run traction calculation (Deal Intelligence Engine Phase 2)
+        # Calculate momentum metrics for each company
+        if self._traction_calculator:
+            traction_stats = await self._run_traction_calculation(list(by_key.keys()))
+            stats["traction_scores_calculated"] = traction_stats["calculated"]
+            stats["avg_momentum"] = traction_stats["avg_momentum"]
+            if traction_stats["calculated"] > 0:
+                logger.info(
+                    f"Traction calculation: {traction_stats['calculated']} scores calculated, "
+                    f"avg momentum={traction_stats['avg_momentum']:.2f}"
+                )
 
         # Process each company
         for canonical_key, company_signals in by_key.items():
@@ -1851,6 +1876,51 @@ class DiscoveryPipeline:
                     )
             except Exception as e:
                 logger.warning(f"Signal correlation failed for signal {signal.id}: {e}")
+
+        return stats
+
+    async def _run_traction_calculation(
+        self,
+        canonical_keys: List[str],
+    ) -> Dict[str, int]:
+        """
+        Calculate traction/momentum scores for companies.
+
+        Deal Intelligence Engine Phase 2: Calculates momentum metrics
+        including GitHub stars growth, hiring velocity, and social signals.
+
+        Args:
+            canonical_keys: List of canonical keys to calculate scores for
+
+        Returns:
+            Dict with 'calculated' count and 'avg_momentum' score
+        """
+        stats = {"calculated": 0, "avg_momentum": 0.0}
+
+        if not self._traction_calculator:
+            return stats
+
+        total_momentum = 0.0
+
+        for canonical_key in canonical_keys:
+            try:
+                score = await self._traction_calculator.calculate(canonical_key)
+
+                # Save to database
+                await self._store.save_traction_score(canonical_key, score)
+                stats["calculated"] += 1
+                total_momentum += score.composite_momentum
+
+                logger.debug(
+                    f"Traction score for {canonical_key}: "
+                    f"composite={score.composite_momentum:.2f}, "
+                    f"percentile={score.momentum_percentile}"
+                )
+            except Exception as e:
+                logger.warning(f"Traction calculation failed for {canonical_key}: {e}")
+
+        if stats["calculated"] > 0:
+            stats["avg_momentum"] = total_momentum / stats["calculated"]
 
         return stats
 

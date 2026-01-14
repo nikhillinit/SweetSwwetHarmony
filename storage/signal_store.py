@@ -62,7 +62,7 @@ logger = logging.getLogger(__name__)
 # SCHEMA VERSION
 # =============================================================================
 
-CURRENT_SCHEMA_VERSION = 6
+CURRENT_SCHEMA_VERSION = 7
 
 # SQL for creating tables (migrations applied in order)
 MIGRATIONS = {
@@ -263,6 +263,38 @@ MIGRATIONS = {
     ALTER TABLE signals ADD COLUMN correlation_type TEXT;
 
     CREATE INDEX IF NOT EXISTS idx_signals_correlated_founder ON signals(correlated_founder_id);
+    """,
+    7: """
+    -- Traction scores: momentum metrics (Deal Intelligence Engine Phase 2)
+    CREATE TABLE IF NOT EXISTS traction_scores (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        canonical_key TEXT NOT NULL,
+
+        -- GitHub momentum
+        github_stars_growth_30d REAL DEFAULT 0.0,
+        github_commit_velocity REAL DEFAULT 0.0,
+
+        -- Hiring velocity
+        job_posting_velocity REAL DEFAULT 0.0,
+        job_count_growth_30d REAL DEFAULT 0.0,
+
+        -- Social momentum
+        ph_vote_growth_30d REAL DEFAULT 0.0,
+        hn_mention_growth_30d REAL DEFAULT 0.0,
+
+        -- Composite score
+        composite_momentum REAL NOT NULL DEFAULT 0.0,
+        momentum_percentile INTEGER DEFAULT 50,
+
+        -- Audit
+        calculated_at TEXT NOT NULL,  -- ISO 8601
+
+        UNIQUE(canonical_key)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_traction_canonical ON traction_scores(canonical_key);
+    CREATE INDEX IF NOT EXISTS idx_traction_composite ON traction_scores(composite_momentum);
+    CREATE INDEX IF NOT EXISTS idx_traction_calculated ON traction_scores(calculated_at);
     """
 }
 
@@ -1396,6 +1428,180 @@ class SignalStore:
         logger.debug(
             f"Updated signal {signal_id} with founder {founder_id} "
             f"(confidence={confidence}, type={correlation_type})"
+        )
+
+    # =========================================================================
+    # TRACTION METHODS (PHASE 2)
+    # =========================================================================
+
+    async def get_signals_for_traction(
+        self,
+        canonical_key: str = None,
+        signal_types: List[str] = None,
+        days: int = 60,
+    ) -> List[Dict[str, Any]]:
+        """
+        Get signals for traction calculation.
+
+        Args:
+            canonical_key: Optional canonical key to filter by
+            signal_types: List of signal types to include
+            days: Number of days to look back (default 60 for comparison)
+
+        Returns:
+            List of signal dicts with raw_data parsed
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+        query = """
+            SELECT id, signal_type, canonical_key, detected_at, raw_data
+            FROM signals
+            WHERE detected_at >= ?
+        """
+        params = [cutoff]
+
+        if canonical_key:
+            query += " AND canonical_key = ?"
+            params.append(canonical_key)
+
+        if signal_types:
+            placeholders = ",".join("?" * len(signal_types))
+            query += f" AND signal_type IN ({placeholders})"
+            params.extend(signal_types)
+
+        query += " ORDER BY detected_at ASC"
+
+        cursor = await self._db.execute(query, params)
+        rows = await cursor.fetchall()
+
+        results = []
+        for row in rows:
+            raw_data = {}
+            if row[4]:
+                try:
+                    raw_data = json.loads(row[4])
+                except json.JSONDecodeError:
+                    pass
+
+            # Parse detected_at
+            detected_at = datetime.min.replace(tzinfo=timezone.utc)
+            if row[3]:
+                try:
+                    detected_at = datetime.fromisoformat(row[3].replace('Z', '+00:00'))
+                except (ValueError, AttributeError):
+                    pass
+
+            results.append({
+                'id': row[0],
+                'signal_type': row[1],
+                'canonical_key': row[2],
+                'detected_at': detected_at,
+                'raw_data': raw_data,
+            })
+
+        return results
+
+    async def get_historical_traction_scores(
+        self,
+        limit: int = 1000,
+    ) -> List[float]:
+        """
+        Get historical composite momentum scores for percentile calculation.
+
+        Args:
+            limit: Maximum scores to return
+
+        Returns:
+            List of composite_momentum values
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        # Check if table exists (might not exist yet)
+        cursor = await self._db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='traction_scores'"
+        )
+        if not await cursor.fetchone():
+            return []
+
+        cursor = await self._db.execute(
+            """
+            SELECT composite_momentum
+            FROM traction_scores
+            ORDER BY calculated_at DESC
+            LIMIT ?
+            """,
+            (limit,)
+        )
+        rows = await cursor.fetchall()
+
+        return [row[0] for row in rows if row[0] is not None]
+
+    async def save_traction_score(
+        self,
+        canonical_key: str,
+        score: "TractionScore",
+    ) -> None:
+        """
+        Save or update a traction score.
+
+        Args:
+            canonical_key: The canonical key for the company
+            score: TractionScore dataclass with all metrics
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        now = datetime.now(timezone.utc).isoformat()
+
+        await self._db.execute(
+            """
+            INSERT INTO traction_scores (
+                canonical_key,
+                github_stars_growth_30d,
+                github_commit_velocity,
+                job_posting_velocity,
+                job_count_growth_30d,
+                ph_vote_growth_30d,
+                hn_mention_growth_30d,
+                composite_momentum,
+                momentum_percentile,
+                calculated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(canonical_key) DO UPDATE SET
+                github_stars_growth_30d = excluded.github_stars_growth_30d,
+                github_commit_velocity = excluded.github_commit_velocity,
+                job_posting_velocity = excluded.job_posting_velocity,
+                job_count_growth_30d = excluded.job_count_growth_30d,
+                ph_vote_growth_30d = excluded.ph_vote_growth_30d,
+                hn_mention_growth_30d = excluded.hn_mention_growth_30d,
+                composite_momentum = excluded.composite_momentum,
+                momentum_percentile = excluded.momentum_percentile,
+                calculated_at = excluded.calculated_at
+            """,
+            (
+                canonical_key,
+                score.github_stars_growth_30d,
+                score.github_commit_velocity,
+                score.job_posting_velocity,
+                score.job_count_growth_30d,
+                score.ph_vote_growth_30d,
+                score.hn_mention_growth_30d,
+                score.composite_momentum,
+                score.momentum_percentile,
+                now,
+            )
+        )
+        await self._db.commit()
+
+        logger.debug(
+            f"Saved traction score for {canonical_key}: "
+            f"composite={score.composite_momentum:.2f}, "
+            f"percentile={score.momentum_percentile}"
         )
 
     # =========================================================================
