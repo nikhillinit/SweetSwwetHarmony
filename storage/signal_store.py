@@ -1272,6 +1272,133 @@ class SignalStore:
         return [dict(zip(columns, row)) for row in rows]
 
     # =========================================================================
+    # SIGNAL CORRELATION (Deal Intelligence Engine Phase 1)
+    # =========================================================================
+
+    async def get_signals_for_correlation(
+        self,
+        limit: int = 1000,
+    ) -> List[Dict[str, Any]]:
+        """
+        Get recent signals for founder correlation matching.
+
+        Used by SignalCorrelator to search for founder identifiers
+        in signal raw_data.
+
+        Args:
+            limit: Maximum number of signals to return
+
+        Returns:
+            List of signal dicts with id, canonical_key, signal_type, raw_data
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        cursor = await self._db.execute(
+            """
+            SELECT id, canonical_key, signal_type, raw_data
+            FROM signals
+            WHERE correlated_founder_id IS NULL
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            (limit,)
+        )
+        rows = await cursor.fetchall()
+
+        results = []
+        for row in rows:
+            raw_data = row[3]
+            if isinstance(raw_data, str):
+                try:
+                    raw_data = json.loads(raw_data)
+                except json.JSONDecodeError:
+                    raw_data = {}
+
+            results.append({
+                "id": row[0],
+                "canonical_key": row[1],
+                "signal_type": row[2],
+                "raw_data": raw_data,
+            })
+
+        return results
+
+    async def get_signals_for_founder(
+        self,
+        founder_id: int,
+    ) -> List[Dict[str, Any]]:
+        """
+        Get all signals linked to a specific founder.
+
+        Used by SignalCorrelator to find serial founder ventures.
+
+        Args:
+            founder_id: ID of the founder
+
+        Returns:
+            List of signal dicts with id, canonical_key, signal_type
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        cursor = await self._db.execute(
+            """
+            SELECT id, canonical_key, signal_type
+            FROM signals
+            WHERE correlated_founder_id = ?
+            ORDER BY detected_at DESC
+            """,
+            (founder_id,)
+        )
+        rows = await cursor.fetchall()
+
+        return [
+            {
+                "id": row[0],
+                "canonical_key": row[1],
+                "signal_type": row[2],
+            }
+            for row in rows
+        ]
+
+    async def update_signal_correlation(
+        self,
+        signal_id: int,
+        founder_id: int,
+        confidence: float,
+        correlation_type: str,
+    ) -> None:
+        """
+        Update a signal with founder correlation data.
+
+        Args:
+            signal_id: ID of the signal
+            founder_id: ID of the correlated founder
+            confidence: Correlation confidence (0.0-1.0)
+            correlation_type: Type of match (email, github, domain, etc.)
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        await self._db.execute(
+            """
+            UPDATE signals
+            SET correlated_founder_id = ?,
+                correlation_confidence = ?,
+                correlation_type = ?
+            WHERE id = ?
+            """,
+            (founder_id, confidence, correlation_type, signal_id)
+        )
+        await self._db.commit()
+
+        logger.debug(
+            f"Updated signal {signal_id} with founder {founder_id} "
+            f"(confidence={confidence}, type={correlation_type})"
+        )
+
+    # =========================================================================
     # NOTION OUTBOX
     # =========================================================================
 

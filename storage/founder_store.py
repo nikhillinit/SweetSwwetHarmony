@@ -906,6 +906,113 @@ class FounderStore:
 
         return founders
 
+    async def get_founder_by_id(self, founder_id: int) -> Optional[Dict[str, Any]]:
+        """
+        Get a founder by their integer ID.
+
+        Used by SignalCorrelator to fetch founder details.
+
+        Args:
+            founder_id: Integer ID of the founder
+
+        Returns:
+            Dict with founder fields or None if not found
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        cursor = await self._db.execute(
+            """
+            SELECT id, canonical_key, founder_key, name, email,
+                   linkedin_url, github_username, twitter_handle,
+                   is_serial_founder, founder_score
+            FROM founders WHERE id = ?
+            """,
+            (founder_id,)
+        )
+        row = await cursor.fetchone()
+
+        if not row:
+            return None
+
+        return {
+            "id": row[0],
+            "canonical_key": row[1],
+            "founder_key": row[2],
+            "name": row[3],
+            "email": row[4],
+            "linkedin_url": row[5],
+            "github_username": row[6],
+            "twitter_handle": row[7],
+            "is_serial_founder": bool(row[8]),
+            "founder_score": row[9],
+        }
+
+    async def search_founders_by_identifiers(
+        self,
+        identifiers: Dict[str, str],
+    ) -> List[Dict[str, Any]]:
+        """
+        Search for founders by email, GitHub username, or LinkedIn.
+
+        Used by SignalCorrelator to detect known founders in signals.
+
+        Args:
+            identifiers: Dict with keys like 'email', 'github', 'linkedin'
+
+        Returns:
+            List of matching founder dicts
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        conditions = []
+        params = []
+
+        if identifiers.get("email"):
+            conditions.append("LOWER(email) = ?")
+            params.append(identifiers["email"].lower())
+
+        if identifiers.get("github"):
+            conditions.append("LOWER(github_username) = ?")
+            params.append(identifiers["github"].lower())
+
+        if identifiers.get("linkedin"):
+            conditions.append("LOWER(linkedin_url) LIKE ?")
+            params.append(f"%{identifiers['linkedin'].lower()}%")
+
+        if not conditions:
+            return []
+
+        query = f"""
+            SELECT id, canonical_key, founder_key, name, email,
+                   linkedin_url, github_username, twitter_handle,
+                   is_serial_founder, founder_score
+            FROM founders
+            WHERE {" OR ".join(conditions)}
+            ORDER BY founder_score DESC
+            LIMIT 10
+        """
+
+        cursor = await self._db.execute(query, params)
+        rows = await cursor.fetchall()
+
+        return [
+            {
+                "id": row[0],
+                "canonical_key": row[1],
+                "founder_key": row[2],
+                "name": row[3],
+                "email": row[4],
+                "linkedin_url": row[5],
+                "github_username": row[6],
+                "twitter_handle": row[7],
+                "is_serial_founder": bool(row[8]),
+                "founder_score": row[9],
+            }
+            for row in rows
+        ]
+
     # =========================================================================
     # STATISTICS
     # =========================================================================
