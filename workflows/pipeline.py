@@ -172,6 +172,8 @@ class PipelineConfig:
             use_asset_store=os.getenv("USE_ASSET_STORE", "false").lower() == "true",
             use_founder_scoring=os.getenv("USE_FOUNDER_SCORING", "true").lower() == "true",
             use_velocity_tracking=os.getenv("USE_VELOCITY_TRACKING", "true").lower() == "true",
+            use_thesis_filter=os.getenv("USE_THESIS_FILTER", "true").lower() == "true",
+            use_competitor_detection=os.getenv("USE_COMPETITOR_DETECTION", "true").lower() == "true",
         )
 
 
