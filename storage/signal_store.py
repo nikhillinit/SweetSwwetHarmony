@@ -2173,6 +2173,64 @@ class SignalStore:
 
         return [{'raw_score': row[0]} for row in rows]
 
+    async def get_top_deals_by_quality(
+        self,
+        limit: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """
+        Get top deals by deal quality percentile.
+
+        Args:
+            limit: Number of top deals to return (default 10)
+
+        Returns:
+            List of top deals with quality scores and company info
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        cursor = await self._db.execute(
+            """
+            SELECT
+                dq.canonical_key,
+                dq.thesis_fit,
+                dq.traction,
+                dq.investor_quality,
+                dq.founder,
+                dq.raw_score,
+                dq.percentile,
+                dq.routing_recommendation,
+                dq.calculated_at,
+                s.company_name,
+                s.signal_type,
+                s.confidence
+            FROM deal_quality_scores dq
+            LEFT JOIN signals s ON dq.canonical_key = s.canonical_key
+            ORDER BY dq.percentile DESC
+            LIMIT ?
+            """,
+            (limit,),
+        )
+        rows = await cursor.fetchall()
+
+        return [
+            {
+                'canonical_key': row[0],
+                'thesis_fit': row[1],
+                'traction': row[2],
+                'investor_quality': row[3],
+                'founder': row[4],
+                'raw_score': row[5],
+                'percentile': row[6],
+                'routing_recommendation': row[7],
+                'calculated_at': row[8],
+                'company_name': row[9] or 'Unknown',
+                'signal_type': row[10],
+                'confidence': row[11] or 0.0,
+            }
+            for row in rows
+        ]
+
     # =========================================================================
     # SIGNAL EMBEDDING METHODS (PHASE 6)
     # =========================================================================

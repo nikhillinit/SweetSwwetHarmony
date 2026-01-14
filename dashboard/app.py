@@ -43,6 +43,7 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 from storage.signal_store import SignalStore
 from utils.signal_health import SignalHealthMonitor
 from dashboard.mini_scout import render_mini_scout_page
+from utils.semantic_search import SemanticSearch
 
 # =============================================================================
 # CONFIG
@@ -1926,6 +1927,247 @@ def render_volume_chart(df: pd.DataFrame):
 
 
 # =============================================================================
+# DEAL QUALITY PANEL (Deal Intelligence Engine)
+# =============================================================================
+
+ROUTING_COLORS = {
+    'source': '#10B981',      # Emerald - auto-push
+    'tracking': '#3B82F6',    # Blue - needs review
+    'hold': '#F59E0B',        # Amber - batch review
+    'pass': '#6B7280',        # Gray - not a fit
+}
+
+ROUTING_LABELS = {
+    'source': 'Auto-Push',
+    'tracking': 'Review',
+    'hold': 'Batch',
+    'pass': 'Skip',
+}
+
+
+def render_deal_quality_panel(store: SignalStore):
+    """
+    Render the Deal Quality panel showing top deals by percentile
+    with score breakdowns.
+    """
+    st.markdown('<p class="analytics-section-title">TOP DEALS BY QUALITY</p>', unsafe_allow_html=True)
+
+    # Load top deals
+    with st.spinner("Loading top deals..."):
+        top_deals = run_async(store.get_top_deals_by_quality(limit=10))
+
+    if not top_deals:
+        st.info("No deal quality scores available yet. Run the pipeline to calculate scores.")
+        return
+
+    # Display each deal as a card with score breakdown
+    for deal in top_deals:
+        render_deal_quality_card(deal)
+
+
+def render_deal_quality_card(deal: Dict[str, Any]):
+    """Render a single deal quality card with score breakdown."""
+    company = deal.get('company_name', 'Unknown')
+    canonical_key = deal.get('canonical_key', '')
+    percentile = deal.get('percentile', 0) * 100
+    raw_score = deal.get('raw_score', 0)
+    routing = deal.get('routing_recommendation', 'hold')
+
+    # Component scores
+    thesis = deal.get('thesis_fit', 0)
+    traction = deal.get('traction', 0)
+    investor = deal.get('investor_quality', 0)
+    founder = deal.get('founder', 0)
+
+    routing_color = ROUTING_COLORS.get(routing, '#6B7280')
+    routing_label = ROUTING_LABELS.get(routing, routing)
+
+    with st.container():
+        col1, col2, col3 = st.columns([3, 2, 1])
+
+        with col1:
+            st.markdown(f"**{company}**")
+            st.caption(f"`{canonical_key}`")
+
+        with col2:
+            # Score breakdown as small bars
+            st.markdown(f"""
+            <div style="font-size: 0.75rem; color: #737373;">
+                <div style="display: flex; align-items: center; margin-bottom: 2px;">
+                    <span style="width: 50px;">Thesis</span>
+                    <div style="flex: 1; height: 6px; background: #F2F2F2; border-radius: 3px; margin: 0 8px;">
+                        <div style="width: {thesis * 100}%; height: 100%; background: #2D5016; border-radius: 3px;"></div>
+                    </div>
+                    <span>{thesis:.0%}</span>
+                </div>
+                <div style="display: flex; align-items: center; margin-bottom: 2px;">
+                    <span style="width: 50px;">Traction</span>
+                    <div style="flex: 1; height: 6px; background: #F2F2F2; border-radius: 3px; margin: 0 8px;">
+                        <div style="width: {traction * 100}%; height: 100%; background: #1E3A5F; border-radius: 3px;"></div>
+                    </div>
+                    <span>{traction:.0%}</span>
+                </div>
+                <div style="display: flex; align-items: center; margin-bottom: 2px;">
+                    <span style="width: 50px;">Investor</span>
+                    <div style="flex: 1; height: 6px; background: #F2F2F2; border-radius: 3px; margin: 0 8px;">
+                        <div style="width: {investor * 100}%; height: 100%; background: #8B4513; border-radius: 3px;"></div>
+                    </div>
+                    <span>{investor:.0%}</span>
+                </div>
+                <div style="display: flex; align-items: center;">
+                    <span style="width: 50px;">Founder</span>
+                    <div style="flex: 1; height: 6px; background: #F2F2F2; border-radius: 3px; margin: 0 8px;">
+                        <div style="width: {founder * 100}%; height: 100%; background: #4A1942; border-radius: 3px;"></div>
+                    </div>
+                    <span>{founder:.0%}</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        with col3:
+            # Percentile and routing
+            st.markdown(f"""
+            <div style="text-align: right;">
+                <div style="font-family: 'Inter', sans-serif; font-size: 1.5rem; font-weight: 700; color: #292929;">
+                    {percentile:.0f}
+                </div>
+                <div style="font-size: 0.65rem; color: #737373; text-transform: uppercase; letter-spacing: 0.05em;">
+                    percentile
+                </div>
+                <div style="margin-top: 8px;">
+                    <span style="background: {routing_color}20; color: {routing_color}; padding: 2px 8px; border-radius: 10px; font-size: 0.7rem; font-weight: 500;">
+                        {routing_label}
+                    </span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        st.divider()
+
+
+def render_deal_quality_trends(store: SignalStore):
+    """Render deal quality score trends over time."""
+    st.markdown('<p class="analytics-section-title">DEAL QUALITY TRENDS</p>', unsafe_allow_html=True)
+
+    # Load historical scores
+    with st.spinner("Loading trends..."):
+        historical = run_async(store.get_historical_deal_quality_scores(days=30))
+
+    if not historical or len(historical) < 2:
+        st.info("Not enough historical data for trends. Check back after more signals are processed.")
+        return
+
+    # Create simple histogram of score distribution
+    df = pd.DataFrame(historical)
+
+    chart = alt.Chart(df).mark_bar(
+        color='#F59E0B',
+        cornerRadiusEnd=4
+    ).encode(
+        x=alt.X('raw_score:Q', bin=alt.Bin(maxbins=20), title='Raw Score'),
+        y=alt.Y('count():Q', title='Count')
+    ).properties(height=150)
+
+    st.markdown('<div class="analytics-chart-container">', unsafe_allow_html=True)
+    st.altair_chart(chart, use_container_width=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
+# =============================================================================
+# SEMANTIC SEARCH
+# =============================================================================
+
+def render_semantic_search(store: SignalStore):
+    """
+    Render semantic search interface using Gemini embeddings.
+    """
+    st.markdown("### AI-Powered Search")
+    st.markdown("""
+    <p style="font-size: 0.9rem; color: #525252; margin-bottom: 1rem;">
+        Search using natural language. Find companies by describing what you're looking for.
+    </p>
+    """, unsafe_allow_html=True)
+
+    # Check if Google API key is available
+    api_key = os.environ.get("GOOGLE_API_KEY")
+    if not api_key:
+        st.warning("Semantic search requires GOOGLE_API_KEY to be set for Gemini embeddings.")
+        return
+
+    # Initialize semantic search
+    semantic_search = SemanticSearch(store, api_key)
+
+    # Search input
+    query = st.text_input(
+        "Search",
+        placeholder="e.g., 'AI health monitoring for seniors', 'sustainable food delivery'",
+        label_visibility="collapsed"
+    )
+
+    # Search parameters
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        top_k = st.slider("Results to show", 5, 25, 10, label_visibility="collapsed")
+    with col2:
+        min_sim = st.slider("Minimum similarity", 0.0, 1.0, 0.3, 0.1, label_visibility="collapsed")
+
+    if query:
+        with st.spinner("Searching..."):
+            try:
+                results = run_async(semantic_search.search(query, top_k=top_k, min_similarity=min_sim))
+
+                if results:
+                    st.markdown(f"**Found {len(results)} matching companies:**")
+                    for result in results:
+                        similarity_pct = result.similarity_score * 100
+                        company = result.company_name or 'Unknown'
+
+                        st.markdown(f"""
+                        <div class="deal-card" style="padding: 1rem;">
+                            <div style="display: flex; justify-content: space-between; align-items: center;">
+                                <div>
+                                    <div style="font-weight: 600; color: #292929;">{company}</div>
+                                    <div style="font-size: 0.8rem; color: #737373; margin-top: 4px;">
+                                        {result.text[:150]}{'...' if len(result.text) > 150 else ''}
+                                    </div>
+                                </div>
+                                <div style="text-align: right;">
+                                    <div style="font-size: 1.25rem; font-weight: 700; color: {'#10B981' if similarity_pct >= 70 else '#F59E0B' if similarity_pct >= 50 else '#6B7280'};">
+                                        {similarity_pct:.0f}%
+                                    </div>
+                                    <div style="font-size: 0.65rem; color: #737373;">match</div>
+                                </div>
+                            </div>
+                        </div>
+                        """, unsafe_allow_html=True)
+                else:
+                    st.info("No matching companies found. Try a different search term.")
+
+            except Exception as e:
+                st.error(f"Search error: {str(e)}")
+    else:
+        # Show embedding status
+        with st.expander("📊 Embedding Status"):
+            try:
+                pending = run_async(store.get_signals_without_embeddings(limit=1000))
+                embedded = run_async(store.get_all_signal_embeddings())
+
+                st.markdown(f"""
+                - **Embedded signals:** {len(embedded)}
+                - **Pending signals:** {len(pending)}
+                """)
+
+                if pending and st.button("Embed pending signals"):
+                    with st.spinner(f"Embedding {len(pending)} signals..."):
+                        count = run_async(semantic_search.embed_pending_signals(batch_size=50))
+                        st.success(f"Embedded {count} signals!")
+                        st.rerun()
+
+            except Exception as e:
+                st.error(f"Could not load embedding status: {str(e)}")
+
+
+# =============================================================================
 # MAIN
 # =============================================================================
 
@@ -2198,7 +2440,22 @@ def main():
     elif view == "Analytics":
         render_welcome_banner("Analytics")
         store = get_store()
-        render_analytics_view(store)
+
+        # Tabs for different analytics sections
+        tab1, tab2, tab3 = st.tabs(["📊 OVERVIEW", "🏆 DEAL QUALITY", "🔍 AI SEARCH"])
+
+        with tab1:
+            render_analytics_view(store)
+
+        with tab2:
+            st.markdown('<br>', unsafe_allow_html=True)
+            render_deal_quality_panel(store)
+            st.markdown('<br>', unsafe_allow_html=True)
+            render_deal_quality_trends(store)
+
+        with tab3:
+            st.markdown('<br>', unsafe_allow_html=True)
+            render_semantic_search(store)
 
     # Footer
     st.markdown("""
