@@ -48,6 +48,7 @@ from utils.thesis_filter import ThesisFilter, ThesisFilterConfig, RoutingDecisio
 from utils.competitor_detector import CompetitorDetector
 from utils.signal_correlator import SignalCorrelator, CorrelatedSignal, DetectedFounder
 from utils.traction_calculator import TractionCalculator, TractionScore
+from utils.investor_network import InvestorNetworkAnalyzer, InvestorRanking, CompanyInvestorScore
 from storage.source_asset_store import SourceAssetStore, SourceAsset
 from storage.founder_store import FounderStore
 from storage.entity_resolution import EntityResolutionStore, AssetToLead
@@ -159,6 +160,9 @@ class PipelineConfig:
 
     # Traction calculation (Deal Intelligence Engine Phase 2)
     use_traction_calculator: bool = True  # Enable momentum metrics
+
+    # Investor network (Deal Intelligence Engine Phase 3)
+    use_investor_network: bool = True  # Enable investor centrality analysis
 
     @classmethod
     def from_env(cls) -> PipelineConfig:
@@ -381,6 +385,10 @@ class DiscoveryPipeline:
         # Initialized in initialize() after store is ready
         self._traction_calculator: Optional[TractionCalculator] = None
 
+        # Investor network analyzer (Deal Intelligence Engine Phase 3)
+        # Initialized in initialize() after store is ready
+        self._investor_network: Optional[InvestorNetworkAnalyzer] = None
+
         # State
         self._initialized = False
 
@@ -462,6 +470,11 @@ class DiscoveryPipeline:
         if self.config.use_traction_calculator:
             self._traction_calculator = TractionCalculator(self._store)
             logger.info("TractionCalculator initialized (momentum metrics enabled)")
+
+        # Initialize InvestorNetworkAnalyzer (Deal Intelligence Engine Phase 3)
+        if self.config.use_investor_network:
+            self._investor_network = InvestorNetworkAnalyzer(self._store)
+            logger.info("InvestorNetworkAnalyzer initialized (investor centrality enabled)")
 
         # Initialize SignalVelocityTracker (if velocity tracking enabled)
         if self.config.use_velocity_tracking:
@@ -1124,6 +1137,18 @@ class DiscoveryPipeline:
                 logger.info(
                     f"Traction calculation: {traction_stats['calculated']} scores calculated, "
                     f"avg momentum={traction_stats['avg_momentum']:.2f}"
+                )
+
+        # Run investor network analysis (Deal Intelligence Engine Phase 3)
+        # Build co-investment network and rank investors by centrality
+        if self._investor_network:
+            network_stats = await self._run_investor_network_analysis()
+            stats["investors_ranked"] = network_stats["investors_ranked"]
+            stats["network_edges"] = network_stats["network_edges"]
+            if network_stats["investors_ranked"] > 0:
+                logger.info(
+                    f"Investor network: {network_stats['investors_ranked']} investors ranked, "
+                    f"{network_stats['network_edges']} co-investment edges"
                 )
 
         # Process each company
@@ -1921,6 +1946,43 @@ class DiscoveryPipeline:
 
         if stats["calculated"] > 0:
             stats["avg_momentum"] = total_momentum / stats["calculated"]
+
+        return stats
+
+    async def _run_investor_network_analysis(self) -> Dict[str, Any]:
+        """
+        Run investor network analysis.
+
+        Deal Intelligence Engine Phase 3: Builds co-investment network
+        and calculates investor centrality rankings.
+
+        Returns:
+            Dict with 'investors_ranked' and 'network_edges' counts
+        """
+        stats = {"investors_ranked": 0, "network_edges": 0}
+
+        if not self._investor_network:
+            return stats
+
+        try:
+            # Build the network
+            graph = await self._investor_network.build_network()
+            stats["network_edges"] = graph.number_of_edges()
+
+            # Rank investors by centrality
+            rankings = await self._investor_network.rank_investors()
+            stats["investors_ranked"] = len(rankings)
+
+            # Save rankings to database
+            if rankings:
+                await self._store.save_investor_rankings(rankings)
+
+            logger.info(
+                f"Investor network: {graph.number_of_nodes()} investors, "
+                f"{stats['network_edges']} co-investment edges"
+            )
+        except Exception as e:
+            logger.warning(f"Investor network analysis failed: {e}")
 
         return stats
 

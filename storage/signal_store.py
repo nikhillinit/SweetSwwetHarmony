@@ -62,7 +62,7 @@ logger = logging.getLogger(__name__)
 # SCHEMA VERSION
 # =============================================================================
 
-CURRENT_SCHEMA_VERSION = 7
+CURRENT_SCHEMA_VERSION = 8
 
 # SQL for creating tables (migrations applied in order)
 MIGRATIONS = {
@@ -295,6 +295,43 @@ MIGRATIONS = {
     CREATE INDEX IF NOT EXISTS idx_traction_canonical ON traction_scores(canonical_key);
     CREATE INDEX IF NOT EXISTS idx_traction_composite ON traction_scores(composite_momentum);
     CREATE INDEX IF NOT EXISTS idx_traction_calculated ON traction_scores(calculated_at);
+    """,
+    8: """
+    -- Investor network: centrality rankings (Deal Intelligence Engine Phase 3)
+    CREATE TABLE IF NOT EXISTS investor_rankings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        investor_name TEXT NOT NULL UNIQUE,
+
+        -- Network metrics
+        centrality_score REAL NOT NULL DEFAULT 0.0,
+        coinvestment_count INTEGER NOT NULL DEFAULT 0,
+        rank INTEGER,
+
+        -- Audit
+        calculated_at TEXT NOT NULL  -- ISO 8601
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_investor_name ON investor_rankings(investor_name);
+    CREATE INDEX IF NOT EXISTS idx_investor_centrality ON investor_rankings(centrality_score);
+    CREATE INDEX IF NOT EXISTS idx_investor_rank ON investor_rankings(rank);
+
+    -- Company investor scores
+    CREATE TABLE IF NOT EXISTS company_investor_scores (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        canonical_key TEXT NOT NULL UNIQUE,
+
+        -- Investor quality metrics
+        investor_quality_score REAL NOT NULL DEFAULT 0.0,
+        top_investor TEXT,
+        known_investors_count INTEGER DEFAULT 0,
+        total_investors_count INTEGER DEFAULT 0,
+
+        -- Audit
+        calculated_at TEXT NOT NULL  -- ISO 8601
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_company_investor_canonical ON company_investor_scores(canonical_key);
+    CREATE INDEX IF NOT EXISTS idx_company_investor_quality ON company_investor_scores(investor_quality_score);
     """
 }
 
@@ -1602,6 +1639,147 @@ class SignalStore:
             f"Saved traction score for {canonical_key}: "
             f"composite={score.composite_momentum:.2f}, "
             f"percentile={score.momentum_percentile}"
+        )
+
+    # =========================================================================
+    # INVESTOR NETWORK METHODS (PHASE 3)
+    # =========================================================================
+
+    async def get_signals_for_network(
+        self,
+        days: int = 365,
+    ) -> List[Dict[str, Any]]:
+        """
+        Get funding signals for investor network building.
+
+        Args:
+            days: Number of days to look back (default 365)
+
+        Returns:
+            List of funding signals with investor data
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+        cursor = await self._db.execute(
+            """
+            SELECT id, signal_type, canonical_key, detected_at, raw_data
+            FROM signals
+            WHERE signal_type IN ('crunchbase_funding', 'sec_filing', 'funding_event')
+            AND detected_at >= ?
+            ORDER BY detected_at DESC
+            """,
+            (cutoff,)
+        )
+        rows = await cursor.fetchall()
+
+        results = []
+        for row in rows:
+            raw_data = {}
+            if row[4]:
+                try:
+                    raw_data = json.loads(row[4])
+                except json.JSONDecodeError:
+                    pass
+
+            # Only include signals with investor data
+            if raw_data.get('investors'):
+                results.append({
+                    'id': row[0],
+                    'signal_type': row[1],
+                    'canonical_key': row[2],
+                    'detected_at': row[3],
+                    'raw_data': raw_data,
+                })
+
+        return results
+
+    async def save_investor_rankings(
+        self,
+        rankings: List["InvestorRanking"],
+    ) -> None:
+        """
+        Save investor centrality rankings.
+
+        Args:
+            rankings: List of InvestorRanking dataclasses
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        now = datetime.now(timezone.utc).isoformat()
+
+        for ranking in rankings:
+            await self._db.execute(
+                """
+                INSERT INTO investor_rankings (
+                    investor_name, centrality_score, coinvestment_count,
+                    rank, calculated_at
+                )
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(investor_name) DO UPDATE SET
+                    centrality_score = excluded.centrality_score,
+                    coinvestment_count = excluded.coinvestment_count,
+                    rank = excluded.rank,
+                    calculated_at = excluded.calculated_at
+                """,
+                (
+                    ranking.investor_name,
+                    ranking.centrality_score,
+                    ranking.coinvestment_count,
+                    ranking.rank,
+                    now,
+                )
+            )
+
+        await self._db.commit()
+        logger.debug(f"Saved {len(rankings)} investor rankings")
+
+    async def save_company_investor_score(
+        self,
+        score: "CompanyInvestorScore",
+    ) -> None:
+        """
+        Save company investor quality score.
+
+        Args:
+            score: CompanyInvestorScore dataclass
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        now = datetime.now(timezone.utc).isoformat()
+
+        await self._db.execute(
+            """
+            INSERT INTO company_investor_scores (
+                canonical_key, investor_quality_score, top_investor,
+                known_investors_count, total_investors_count, calculated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(canonical_key) DO UPDATE SET
+                investor_quality_score = excluded.investor_quality_score,
+                top_investor = excluded.top_investor,
+                known_investors_count = excluded.known_investors_count,
+                total_investors_count = excluded.total_investors_count,
+                calculated_at = excluded.calculated_at
+            """,
+            (
+                score.canonical_key,
+                score.investor_quality_score,
+                score.top_investor,
+                score.known_investors_count,
+                score.total_investors_count,
+                now,
+            )
+        )
+        await self._db.commit()
+
+        logger.debug(
+            f"Saved investor score for {score.canonical_key}: "
+            f"quality={score.investor_quality_score:.2f}"
         )
 
     # =========================================================================
