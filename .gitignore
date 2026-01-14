@@ -65,3 +65,7 @@ Thumbs.db
 
 # Claude Code temp files
 tmpclaude-*
+
+
+#Ignore vscode AI rules
+.github\instructions\codacy.instructions.md
