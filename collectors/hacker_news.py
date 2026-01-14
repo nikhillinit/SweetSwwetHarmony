@@ -268,13 +268,13 @@ class HackerNewsCollector(BaseCollector):
             if self.asset_store:
                 is_new, changes = await self._save_asset_with_change_detection(
                     source_type=self.SOURCE_TYPE,
-                    external_id=str(post.story_id),
+                    external_id=str(post.object_id),
                     raw_data=post.to_dict() if hasattr(post, 'to_dict') else vars(post),
                 )
 
                 # Skip unchanged posts
                 if not is_new and not changes:
-                    logger.debug(f"Skipping unchanged HN post: {post.story_id}")
+                    logger.debug(f"Skipping unchanged HN post: {post.object_id}")
                     continue
 
             signals.append(post.to_signal())
