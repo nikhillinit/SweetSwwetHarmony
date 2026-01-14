@@ -46,6 +46,7 @@ from utils.signal_consolidator import SignalConsolidator, ConsolidatedSignal
 from utils.enrichment_boost import EnrichmentBoostCalculator, EnrichmentConfig
 from utils.thesis_filter import ThesisFilter, ThesisFilterConfig, RoutingDecision
 from utils.competitor_detector import CompetitorDetector
+from utils.signal_correlator import SignalCorrelator, CorrelatedSignal, DetectedFounder
 from storage.source_asset_store import SourceAssetStore, SourceAsset
 from storage.founder_store import FounderStore
 from storage.entity_resolution import EntityResolutionStore, AssetToLead
@@ -151,6 +152,9 @@ class PipelineConfig:
     # Competitor detection
     use_competitor_detection: bool = True
     portfolio_path: str = "config/portfolio.json"
+
+    # Signal correlation (Deal Intelligence Engine Phase 1)
+    use_signal_correlation: bool = True  # Enable founder-signal correlation
 
     @classmethod
     def from_env(cls) -> PipelineConfig:
@@ -365,6 +369,10 @@ class DiscoveryPipeline:
         if self.config.use_competitor_detection:
             self._competitor_detector = CompetitorDetector(self.config.portfolio_path)
 
+        # Signal correlator (Deal Intelligence Engine Phase 1)
+        # Initialized in initialize() after store is ready
+        self._signal_correlator: Optional[SignalCorrelator] = None
+
         # State
         self._initialized = False
 
@@ -436,6 +444,11 @@ class DiscoveryPipeline:
             self._founder_store = FounderStore(db_path=self.config.db_path)
             await self._founder_store.initialize()
             logger.info("FounderStore initialized (founder intelligence enabled)")
+
+        # Initialize SignalCorrelator (Deal Intelligence Engine Phase 1)
+        if self.config.use_signal_correlation and self._founder_store:
+            self._signal_correlator = SignalCorrelator(self._founder_store)
+            logger.info("SignalCorrelator initialized (founder-signal linking enabled)")
 
         # Initialize SignalVelocityTracker (if velocity tracking enabled)
         if self.config.use_velocity_tracking:
@@ -1032,6 +1045,9 @@ class DiscoveryPipeline:
             "thesis_rejected": 0,
             "thesis_held": 0,
             "thesis_passed": 0,
+            # Signal correlation stats (Deal Intelligence Engine Phase 1)
+            "signals_correlated": 0,
+            "founders_detected": 0,
         }
 
         # Get pending signals
@@ -1042,6 +1058,18 @@ class DiscoveryPipeline:
             return stats
 
         logger.info(f"Processing {len(pending)} pending signals")
+
+        # Run signal correlation (Deal Intelligence Engine Phase 1)
+        # Detect known founders in new signals
+        if self._signal_correlator:
+            correlation_stats = await self._run_signal_correlation(pending)
+            stats["signals_correlated"] = correlation_stats["correlated"]
+            stats["founders_detected"] = correlation_stats["founders_detected"]
+            if correlation_stats["correlated"] > 0:
+                logger.info(
+                    f"Signal correlation: {correlation_stats['correlated']} signals linked, "
+                    f"{correlation_stats['founders_detected']} founders detected"
+                )
 
         # Group by canonical key
         by_key: Dict[str, List[StoredSignal]] = {}
@@ -1763,6 +1791,68 @@ class DiscoveryPipeline:
             raw_payload=stored.raw_data,
             fetched_at=stored.detected_at,
         )
+
+    async def _run_signal_correlation(
+        self,
+        signals: List[StoredSignal],
+    ) -> Dict[str, int]:
+        """
+        Run signal correlation to detect known founders in signals.
+
+        Deal Intelligence Engine Phase 1: Links signals to founders
+        by matching email, GitHub username, LinkedIn URL in raw_data.
+
+        Args:
+            signals: List of pending signals to correlate
+
+        Returns:
+            Dict with 'correlated' and 'founders_detected' counts
+        """
+        stats = {"correlated": 0, "founders_detected": 0}
+
+        if not self._signal_correlator:
+            return stats
+
+        founders_seen = set()
+
+        for signal in signals:
+            # Skip if already correlated
+            if getattr(signal, 'correlated_founder_id', None):
+                continue
+
+            # Convert StoredSignal to dict for correlator
+            signal_dict = {
+                "id": signal.id,
+                "canonical_key": signal.canonical_key,
+                "signal_type": signal.signal_type,
+                "raw_data": signal.raw_data,
+            }
+
+            try:
+                detected = await self._signal_correlator.detect_founder_in_signal(signal_dict)
+
+                if detected:
+                    # Update signal with correlation
+                    await self._store.update_signal_correlation(
+                        signal_id=signal.id,
+                        founder_id=detected.founder_id,
+                        confidence=detected.confidence,
+                        correlation_type=detected.match_type,
+                    )
+                    stats["correlated"] += 1
+
+                    if detected.founder_id not in founders_seen:
+                        founders_seen.add(detected.founder_id)
+                        stats["founders_detected"] += 1
+
+                    logger.debug(
+                        f"Signal {signal.id} linked to founder {detected.founder_name} "
+                        f"via {detected.match_type} (confidence={detected.confidence:.2f})"
+                    )
+            except Exception as e:
+                logger.warning(f"Signal correlation failed for signal {signal.id}: {e}")
+
+        return stats
 
     async def _regroup_signals_by_entity(
         self, signals_by_key: Dict[str, List[StoredSignal]]
