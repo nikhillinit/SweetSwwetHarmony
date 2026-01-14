@@ -62,7 +62,7 @@ logger = logging.getLogger(__name__)
 # SCHEMA VERSION
 # =============================================================================
 
-CURRENT_SCHEMA_VERSION = 9
+CURRENT_SCHEMA_VERSION = 10
 
 # SQL for creating tables (migrations applied in order)
 MIGRATIONS = {
@@ -358,6 +358,34 @@ MIGRATIONS = {
     CREATE INDEX IF NOT EXISTS idx_intent_founder ON founder_intent_signals(founder_id);
     CREATE INDEX IF NOT EXISTS idx_intent_type ON founder_intent_signals(intent_type);
     CREATE INDEX IF NOT EXISTS idx_intent_detected ON founder_intent_signals(detected_at);
+    """,
+    10: """
+    -- Deal quality scores (Deal Intelligence Engine Phase 5)
+    CREATE TABLE IF NOT EXISTS deal_quality_scores (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        canonical_key TEXT NOT NULL UNIQUE,
+
+        -- Component scores [0, 1]
+        thesis_fit REAL NOT NULL DEFAULT 0.0,
+        traction REAL NOT NULL DEFAULT 0.0,
+        investor_quality REAL NOT NULL DEFAULT 0.0,
+        founder REAL NOT NULL DEFAULT 0.0,
+
+        -- Unified score
+        raw_score REAL NOT NULL DEFAULT 0.0,  -- Weighted combination
+        percentile REAL NOT NULL DEFAULT 0.5,  -- Rank vs historical
+
+        -- Routing
+        routing_recommendation TEXT NOT NULL,  -- 'source', 'tracking', 'hold', 'pass'
+
+        -- Audit
+        calculated_at TEXT NOT NULL  -- ISO 8601
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_deal_quality_canonical ON deal_quality_scores(canonical_key);
+    CREATE INDEX IF NOT EXISTS idx_deal_quality_raw_score ON deal_quality_scores(raw_score);
+    CREATE INDEX IF NOT EXISTS idx_deal_quality_percentile ON deal_quality_scores(percentile);
+    CREATE INDEX IF NOT EXISTS idx_deal_quality_routing ON deal_quality_scores(routing_recommendation);
     """
 }
 
@@ -1667,6 +1695,51 @@ class SignalStore:
             f"percentile={score.momentum_percentile}"
         )
 
+    async def get_traction_score(
+        self,
+        canonical_key: str,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get traction score for a company.
+
+        Args:
+            canonical_key: Company identifier
+
+        Returns:
+            Dict with traction metrics, or None if not found
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        cursor = await self._db.execute(
+            """
+            SELECT canonical_key, github_stars_growth_30d, github_commit_velocity,
+                   job_posting_velocity, job_count_growth_30d,
+                   ph_vote_growth_30d, hn_mention_growth_30d,
+                   composite_momentum, momentum_percentile, calculated_at
+            FROM traction_scores
+            WHERE canonical_key = ?
+            """,
+            (canonical_key,),
+        )
+        row = await cursor.fetchone()
+
+        if not row:
+            return None
+
+        return {
+            'canonical_key': row[0],
+            'github_stars_growth_30d': row[1],
+            'github_commit_velocity': row[2],
+            'job_posting_velocity': row[3],
+            'job_count_growth_30d': row[4],
+            'ph_vote_growth_30d': row[5],
+            'hn_mention_growth_30d': row[6],
+            'composite_momentum': row[7],
+            'momentum_percentile': row[8],
+            'calculated_at': row[9],
+        }
+
     # =========================================================================
     # INVESTOR NETWORK METHODS (PHASE 3)
     # =========================================================================
@@ -1808,6 +1881,45 @@ class SignalStore:
             f"quality={score.investor_quality_score:.2f}"
         )
 
+    async def get_company_investor_score(
+        self,
+        canonical_key: str,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get company investor quality score.
+
+        Args:
+            canonical_key: Company identifier
+
+        Returns:
+            Dict with investor metrics, or None if not found
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        cursor = await self._db.execute(
+            """
+            SELECT canonical_key, investor_quality_score, top_investor,
+                   known_investors_count, total_investors_count, calculated_at
+            FROM company_investor_scores
+            WHERE canonical_key = ?
+            """,
+            (canonical_key,),
+        )
+        row = await cursor.fetchone()
+
+        if not row:
+            return None
+
+        return {
+            'canonical_key': row[0],
+            'investor_quality_score': row[1],
+            'top_investor': row[2],
+            'known_investors_count': row[3],
+            'total_investors_count': row[4],
+            'calculated_at': row[5],
+        }
+
     # =========================================================================
     # FOUNDER INTENT METHODS (PHASE 4)
     # =========================================================================
@@ -1912,6 +2024,130 @@ class SignalStore:
             }
             for row in rows
         ]
+
+    # =========================================================================
+    # DEAL QUALITY METHODS (PHASE 5)
+    # =========================================================================
+
+    async def save_deal_quality_score(
+        self,
+        score: "DealQualityScore",
+    ) -> None:
+        """
+        Save or update a deal quality score.
+
+        Args:
+            score: DealQualityScore dataclass
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        calculated_at = score.calculated_at
+        if isinstance(calculated_at, datetime):
+            calculated_at = calculated_at.isoformat()
+
+        await self._db.execute(
+            """
+            INSERT OR REPLACE INTO deal_quality_scores (
+                canonical_key, thesis_fit, traction, investor_quality,
+                founder, raw_score, percentile, routing_recommendation,
+                calculated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                score.canonical_key,
+                score.thesis_fit,
+                score.traction,
+                score.investor_quality,
+                score.founder,
+                score.raw_score,
+                score.percentile,
+                score.routing_recommendation.value if hasattr(score.routing_recommendation, 'value') else str(score.routing_recommendation),
+                calculated_at,
+            ),
+        )
+        await self._db.commit()
+
+        logger.debug(
+            f"Saved deal quality score: {score.canonical_key} "
+            f"raw={score.raw_score:.2f} percentile={score.percentile:.2f} "
+            f"routing={score.routing_recommendation}"
+        )
+
+    async def get_deal_quality_score(
+        self,
+        canonical_key: str,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get deal quality score for a company.
+
+        Args:
+            canonical_key: Company identifier
+
+        Returns:
+            Dict with score components, or None if not found
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        cursor = await self._db.execute(
+            """
+            SELECT canonical_key, thesis_fit, traction, investor_quality,
+                   founder, raw_score, percentile, routing_recommendation,
+                   calculated_at
+            FROM deal_quality_scores
+            WHERE canonical_key = ?
+            """,
+            (canonical_key,),
+        )
+        row = await cursor.fetchone()
+
+        if not row:
+            return None
+
+        return {
+            'canonical_key': row[0],
+            'thesis_fit': row[1],
+            'traction': row[2],
+            'investor_quality': row[3],
+            'founder': row[4],
+            'raw_score': row[5],
+            'percentile': row[6],
+            'routing_recommendation': row[7],
+            'calculated_at': row[8],
+        }
+
+    async def get_historical_deal_quality_scores(
+        self,
+        days: int = 90,
+    ) -> List[Dict[str, Any]]:
+        """
+        Get historical deal quality scores for percentile calculation.
+
+        Args:
+            days: Number of days to look back (default 90)
+
+        Returns:
+            List of score dicts with raw_score
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+        cursor = await self._db.execute(
+            """
+            SELECT raw_score
+            FROM deal_quality_scores
+            WHERE calculated_at >= ?
+            ORDER BY raw_score ASC
+            """,
+            (cutoff,),
+        )
+        rows = await cursor.fetchall()
+
+        return [{'raw_score': row[0]} for row in rows]
 
     # =========================================================================
     # NOTION OUTBOX

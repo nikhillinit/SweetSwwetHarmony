@@ -50,6 +50,7 @@ from utils.signal_correlator import SignalCorrelator, CorrelatedSignal, Detected
 from utils.traction_calculator import TractionCalculator, TractionScore
 from utils.investor_network import InvestorNetworkAnalyzer, InvestorRanking, CompanyInvestorScore
 from utils.founder_intent import FounderIntentDetector, IntentSignal, FounderIntentSummary
+from utils.deal_quality_scorer import DealQualityScorer, DealQualityScore, RoutingRecommendation
 from storage.source_asset_store import SourceAssetStore, SourceAsset
 from storage.founder_store import FounderStore
 from storage.entity_resolution import EntityResolutionStore, AssetToLead
@@ -167,6 +168,9 @@ class PipelineConfig:
 
     # Founder intent detection (Deal Intelligence Engine Phase 4)
     use_founder_intent: bool = True  # Enable founder intent detection
+
+    # Deal quality scoring (Deal Intelligence Engine Phase 5)
+    use_deal_quality_scorer: bool = True  # Enable unified deal quality scoring
 
     @classmethod
     def from_env(cls) -> PipelineConfig:
@@ -397,6 +401,10 @@ class DiscoveryPipeline:
         # Initialized in initialize() after store is ready
         self._founder_intent: Optional[FounderIntentDetector] = None
 
+        # Deal quality scorer (Deal Intelligence Engine Phase 5)
+        # Initialized in initialize() after store is ready
+        self._deal_quality_scorer: Optional[DealQualityScorer] = None
+
         # State
         self._initialized = False
 
@@ -488,6 +496,11 @@ class DiscoveryPipeline:
         if self.config.use_founder_intent:
             self._founder_intent = FounderIntentDetector(self._store)
             logger.info("FounderIntentDetector initialized (founder intent detection enabled)")
+
+        # Initialize DealQualityScorer (Deal Intelligence Engine Phase 5)
+        if self.config.use_deal_quality_scorer:
+            self._deal_quality_scorer = DealQualityScorer(self._store)
+            logger.info("DealQualityScorer initialized (unified scoring enabled)")
 
         # Initialize SignalVelocityTracker (if velocity tracking enabled)
         if self.config.use_velocity_tracking:
@@ -1176,6 +1189,21 @@ class DiscoveryPipeline:
                 logger.info(
                     f"Founder intent: {intent_stats['intents_detected']} intents detected, "
                     f"{intent_stats['high_confidence_intents']} high confidence"
+                )
+
+        # Run deal quality scoring (Deal Intelligence Engine Phase 5)
+        # Calculate unified quality scores for all companies
+        if self._deal_quality_scorer:
+            canonical_keys = list(by_key.keys())
+            quality_stats = await self._run_deal_quality_scoring(canonical_keys)
+            stats["deals_scored"] = quality_stats["scored"]
+            stats["deals_source_recommended"] = quality_stats["source_recommended"]
+            stats["avg_deal_quality"] = quality_stats["avg_score"]
+            if quality_stats["scored"] > 0:
+                logger.info(
+                    f"Deal quality: {quality_stats['scored']} deals scored, "
+                    f"{quality_stats['source_recommended']} recommended as SOURCE, "
+                    f"avg score={quality_stats['avg_score']:.2f}"
                 )
 
         # Process each company
@@ -2060,6 +2088,58 @@ class DiscoveryPipeline:
             )
         except Exception as e:
             logger.warning(f"Founder intent detection failed: {e}")
+
+        return stats
+
+    async def _run_deal_quality_scoring(
+        self,
+        canonical_keys: List[str],
+    ) -> Dict[str, Any]:
+        """
+        Run deal quality scoring on companies.
+
+        Deal Intelligence Engine Phase 5: Calculates unified quality scores
+        combining thesis fit, traction, investor quality, and founder signals.
+
+        Args:
+            canonical_keys: List of company identifiers to score
+
+        Returns:
+            Dict with 'scored', 'source_recommended', and 'avg_score'
+        """
+        stats = {"scored": 0, "source_recommended": 0, "avg_score": 0.0}
+
+        if not self._deal_quality_scorer:
+            return stats
+
+        try:
+            total_score = 0.0
+
+            for canonical_key in canonical_keys:
+                try:
+                    score = await self._deal_quality_scorer.calculate_score(canonical_key)
+
+                    stats["scored"] += 1
+                    total_score += score.raw_score
+
+                    if score.routing_recommendation == RoutingRecommendation.SOURCE:
+                        stats["source_recommended"] += 1
+
+                    # Save to database
+                    await self._store.save_deal_quality_score(score)
+
+                except Exception as e:
+                    logger.debug(f"Failed to score {canonical_key}: {e}")
+
+            if stats["scored"] > 0:
+                stats["avg_score"] = total_score / stats["scored"]
+
+            logger.info(
+                f"Deal quality scoring: {stats['scored']} deals scored, "
+                f"avg score={stats['avg_score']:.2f}"
+            )
+        except Exception as e:
+            logger.warning(f"Deal quality scoring failed: {e}")
 
         return stats
 
