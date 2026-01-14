@@ -62,7 +62,7 @@ logger = logging.getLogger(__name__)
 # SCHEMA VERSION
 # =============================================================================
 
-CURRENT_SCHEMA_VERSION = 5
+CURRENT_SCHEMA_VERSION = 6
 
 # SQL for creating tables (migrations applied in order)
 MIGRATIONS = {
@@ -255,6 +255,14 @@ MIGRATIONS = {
     CREATE INDEX IF NOT EXISTS idx_thesis_class_canonical ON thesis_classifications(canonical_key);
     CREATE INDEX IF NOT EXISTS idx_thesis_class_category ON thesis_classifications(category);
     CREATE INDEX IF NOT EXISTS idx_thesis_class_classified_at ON thesis_classifications(classified_at);
+    """,
+    6: """
+    -- Signal correlation: link signals to founders (Deal Intelligence Engine Phase 1)
+    ALTER TABLE signals ADD COLUMN correlated_founder_id INTEGER;
+    ALTER TABLE signals ADD COLUMN correlation_confidence REAL;
+    ALTER TABLE signals ADD COLUMN correlation_type TEXT;
+
+    CREATE INDEX IF NOT EXISTS idx_signals_correlated_founder ON signals(correlated_founder_id);
     """
 }
 
