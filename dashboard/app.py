@@ -4,13 +4,19 @@ Discovery Engine Dashboard - Deal Pipeline for Press On Ventures
 A refined, editorial-style dashboard for viewing deals and signals.
 Designed for non-technical users with clear guidance and plain language.
 
-Design Direction: Editorial/Refined
-- Magazine-style typography (DM Serif Display + DM Sans)
-- Dark mode with warm accent colors
+Design Direction: Editorial/Refined with Press On Branding
+- Official Press On typography (Inter Bold headings + Poppins body)
+- Light theme with Press On color palette
 - Card-based layout with generous whitespace
 - Status-driven color coding with clear legends
 - Contextual help and tooltips throughout
 - Plain-language labels for all technical concepts
+
+Brand Colors:
+- Press Dark: #292929 (headers, buttons, primary text)
+- Press Beige: #E0D8D1 (borders, accents, highlights)
+- Press White: #FFFFFF (backgrounds, cards)
+- Press Light: #F2F2F2 (subtle backgrounds)
 
 Run:
     streamlit run dashboard/app.py
@@ -108,22 +114,44 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-# Custom CSS for editorial design
+# Custom CSS for Press On Ventures branding
 st.markdown("""
 <style>
-    /* Import distinctive fonts */
-    @import url('https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&display=swap');
+    /* Import Press On brand fonts with preconnect for faster loading */
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@400;500;600&display=swap');
 
-    /* Root variables */
+    /* Fallback font definitions */
+    @font-face {
+        font-family: 'Inter';
+        font-style: normal;
+        font-weight: 700;
+        font-display: swap;
+        src: url('https://fonts.gstatic.com/s/inter/v13/UcCO3FwrK3iLTeHuS_fvQtMwCp50KnMw2boKoduKmMEVuFuYMZhrib2Bg-4.ttf') format('truetype');
+    }
+
+    @font-face {
+        font-family: 'Poppins';
+        font-style: normal;
+        font-weight: 400;
+        font-display: swap;
+        src: url('https://fonts.gstatic.com/s/poppins/v20/pxiEyp8kv8JHgFVrFJDUc1NECPY.ttf') format('truetype');
+    }
+
+    /* Press On brand variables - Light Theme */
     :root {
-        --bg-primary: #0F0F0F;
-        --bg-secondary: #1A1A1A;
-        --bg-card: #242424;
-        --bg-hover: #2A2A2A;
-        --text-primary: #FAFAFA;
-        --text-secondary: #A3A3A3;
+        --press-dark: #292929;
+        --press-beige: #E0D8D1;
+        --press-white: #FFFFFF;
+        --press-light: #F2F2F2;
+
+        --bg-primary: var(--press-white);
+        --bg-secondary: var(--press-light);
+        --bg-card: var(--press-white);
+        --bg-hover: var(--press-light);
+        --text-primary: var(--press-dark);
+        --text-secondary: #525252;
         --text-muted: #737373;
-        --border-color: #333333;
+        --border-color: var(--press-beige);
         --accent-gold: #F59E0B;
         --accent-emerald: #10B981;
         --accent-blue: #3B82F6;
@@ -139,21 +167,84 @@ st.markdown("""
     footer {visibility: hidden;}
     header {visibility: hidden;}
 
-    /* Typography overrides */
-    h1, h2, h3 {
-        font-family: 'DM Serif Display', serif !important;
-        color: var(--text-primary) !important;
-        letter-spacing: -0.02em;
+    /* Typography overrides - Press On brand (maximum specificity) */
+    h1, h2, h3, h4,
+    .stMarkdown h1, .stMarkdown h2, .stMarkdown h3, .stMarkdown h4,
+    [data-testid="stMarkdownContainer"] h1,
+    [data-testid="stMarkdownContainer"] h2,
+    [data-testid="stMarkdownContainer"] h3,
+    [data-testid="stMarkdownContainer"] h4,
+    .main h1, .main h2, .main h3,
+    [data-testid="stAppViewContainer"] h1,
+    [data-testid="stAppViewContainer"] h2,
+    [data-testid="stAppViewContainer"] h3,
+    .element-container h1, .element-container h2, .element-container h3,
+    div[data-testid="stHeading"] span,
+    [data-testid="stHeadingWithActionElements"] span {
+        font-family: 'Inter', sans-serif !important;
+        font-weight: 700 !important;
+        color: #292929 !important;
+        letter-spacing: -0.01em !important;
     }
 
-    h1 {
-        font-size: 2.5rem !important;
-        font-weight: 400 !important;
+    h1, .stMarkdown h1, [data-testid="stMarkdownContainer"] h1,
+    .main h1, [data-testid="stAppViewContainer"] h1,
+    div[data-testid="stHeading"] span {
+        font-size: 2.25rem !important;
         margin-bottom: 0.5rem !important;
     }
 
-    p, span, div, label {
-        font-family: 'DM Sans', sans-serif !important;
+    h2, .stMarkdown h2, [data-testid="stMarkdownContainer"] h2,
+    .main h2, [data-testid="stAppViewContainer"] h2 {
+        font-size: 1.5rem !important;
+    }
+
+    h3, .stMarkdown h3, [data-testid="stMarkdownContainer"] h3,
+    .main h3, [data-testid="stAppViewContainer"] h3 {
+        font-size: 1.25rem !important;
+    }
+
+    /* Body text - Poppins */
+    p, span, label,
+    .stMarkdown p, .stMarkdown span,
+    [data-testid="stMarkdownContainer"] p {
+        font-family: 'Poppins', sans-serif !important;
+        color: var(--text-secondary);
+    }
+
+    /* Company names in cards - bold Inter */
+    .stMarkdown strong, [data-testid="stMarkdownContainer"] strong {
+        font-family: 'Inter', sans-serif !important;
+        font-weight: 700 !important;
+        color: var(--press-dark) !important;
+        font-size: 1.1rem !important;
+    }
+
+    /* Caption text */
+    .stCaption, [data-testid="stCaptionContainer"] {
+        font-family: 'Poppins', sans-serif !important;
+        color: var(--text-muted) !important;
+    }
+
+    /* Dividers between cards */
+    hr, [data-testid="stDivider"] {
+        border-color: var(--press-beige) !important;
+        margin: 1rem 0 !important;
+    }
+
+    /* Card containers */
+    [data-testid="stVerticalBlock"] > [data-testid="stVerticalBlockBorderWrapper"] {
+        background: var(--press-white);
+        border: 1px solid var(--press-beige);
+        border-radius: 12px;
+        padding: 1rem;
+        margin-bottom: 0.5rem;
+        transition: all 0.2s ease;
+    }
+
+    [data-testid="stVerticalBlock"] > [data-testid="stVerticalBlockBorderWrapper"]:hover {
+        border-color: var(--press-dark);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
     }
 
     /* Sidebar styling */
@@ -166,46 +257,71 @@ st.markdown("""
         color: var(--text-secondary) !important;
     }
 
-    /* Metric cards */
+    /* Sidebar button - explicit Press On dark styling */
+    [data-testid="stSidebar"] .stButton > button,
+    [data-testid="stSidebar"] button,
+    section[data-testid="stSidebar"] .stButton > button {
+        background-color: #292929 !important;
+        border: 1px solid #292929 !important;
+        color: #FFFFFF !important;
+        font-family: 'Poppins', -apple-system, BlinkMacSystemFont, sans-serif !important;
+        font-weight: 500 !important;
+        border-radius: 12px !important;
+    }
+
+    [data-testid="stSidebar"] .stButton > button:hover,
+    [data-testid="stSidebar"] button:hover {
+        background-color: #1a1a1a !important;
+        border-color: #1a1a1a !important;
+        color: #FFFFFF !important;
+    }
+
+    /* Metric cards - Press On style */
     [data-testid="stMetricValue"] {
-        font-family: 'DM Serif Display', serif !important;
+        font-family: 'Inter', sans-serif !important;
+        font-weight: 700 !important;
         font-size: 2.25rem !important;
-        color: var(--text-primary) !important;
+        color: var(--press-dark) !important;
     }
 
     [data-testid="stMetricLabel"] {
-        font-family: 'DM Sans', sans-serif !important;
+        font-family: 'Poppins', sans-serif !important;
+        font-weight: 500 !important;
         color: var(--text-secondary) !important;
         text-transform: uppercase;
         font-size: 0.7rem !important;
         letter-spacing: 0.1em;
     }
 
-    /* Custom card styling */
+    /* Custom card styling - Press On style */
     .deal-card {
-        background: var(--bg-card);
-        border: 1px solid var(--border-color);
+        background: var(--press-white);
+        border: 1px solid var(--press-beige);
         border-radius: 12px;
         padding: 1.5rem;
         margin-bottom: 1rem;
         transition: all 0.2s ease;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
     }
 
     .deal-card:hover {
-        background: var(--bg-hover);
-        border-color: var(--accent-gold);
+        background: var(--press-white);
+        border-color: var(--press-dark);
         transform: translateY(-2px);
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -2px rgba(0, 0, 0, 0.04);
     }
 
     .deal-name {
-        font-family: 'DM Serif Display', serif;
+        font-family: 'Inter', sans-serif;
+        font-weight: 700;
         font-size: 1.25rem;
-        color: var(--text-primary);
+        color: var(--press-dark);
         margin-bottom: 0.25rem;
     }
 
     .deal-meta {
-        font-family: 'DM Sans', sans-serif;
+        font-family: 'Poppins', sans-serif;
+        font-weight: 400;
         font-size: 0.85rem;
         color: var(--text-secondary);
     }
@@ -214,10 +330,11 @@ st.markdown("""
         color: var(--text-muted);
         text-decoration: none;
         font-size: 0.8rem;
+        transition: color 0.2s ease;
     }
 
     .deal-link:hover {
-        color: var(--accent-gold);
+        color: var(--press-dark);
     }
 
     /* Status badges */
@@ -238,7 +355,7 @@ st.markdown("""
 
     /* Section headers */
     .section-header {
-        font-family: 'DM Sans', sans-serif;
+        font-family: 'Poppins', sans-serif;
         font-size: 0.75rem;
         color: var(--text-muted);
         text-transform: uppercase;
@@ -248,77 +365,156 @@ st.markdown("""
         border-bottom: 1px solid var(--border-color);
     }
 
-    /* Expander styling */
+    /* Expander styling - Press On style */
     .streamlit-expanderHeader {
-        font-family: 'DM Sans', sans-serif !important;
+        font-family: 'Poppins', sans-serif !important;
         font-weight: 500 !important;
-        background-color: var(--bg-card) !important;
-        border-radius: 8px !important;
+        background-color: var(--press-white) !important;
+        border: 1px solid var(--press-beige) !important;
+        border-radius: 12px !important;
+        color: var(--press-dark) !important;
     }
 
-    /* Tabs styling */
+    .streamlit-expanderHeader:hover {
+        border-color: var(--press-dark) !important;
+    }
+
+    /* Tabs styling - Press On style */
     .stTabs [data-baseweb="tab-list"] {
         gap: 0;
-        border-bottom: 1px solid var(--border-color);
+        border-bottom: 1px solid var(--press-beige);
     }
 
     .stTabs [data-baseweb="tab"] {
-        font-family: 'DM Sans', sans-serif !important;
+        font-family: 'Poppins', sans-serif !important;
+        font-weight: 500 !important;
         font-size: 0.85rem;
         text-transform: uppercase;
         letter-spacing: 0.1em;
         padding: 1rem 1.5rem;
         color: var(--text-secondary);
         border-bottom: 2px solid transparent;
+        transition: all 0.2s ease;
+    }
+
+    .stTabs [data-baseweb="tab"]:hover {
+        color: var(--press-dark);
     }
 
     .stTabs [aria-selected="true"] {
-        color: var(--accent-gold) !important;
-        border-bottom-color: var(--accent-gold) !important;
+        color: var(--press-dark) !important;
+        border-bottom-color: var(--press-dark) !important;
     }
 
-    /* Button styling */
-    .stButton > button {
-        font-family: 'DM Sans', sans-serif !important;
-        background-color: var(--bg-card) !important;
-        border: 1px solid var(--border-color) !important;
-        color: var(--text-primary) !important;
-        border-radius: 8px !important;
+    /* Button styling - Press On brand (maximum specificity) */
+    .stButton > button,
+    .stButton button,
+    .stButton > button[kind],
+    button[kind="primary"],
+    button[kind="secondary"],
+    button[kind="tertiary"],
+    [data-testid="baseButton-primary"],
+    [data-testid="baseButton-secondary"],
+    [data-testid="stBaseButton-secondary"],
+    div.stButton > button,
+    div[data-testid="stButton"] > button,
+    .row-widget.stButton > button {
+        font-family: 'Poppins', sans-serif !important;
+        font-weight: 500 !important;
+        background-color: #292929 !important;
+        border: 1px solid #292929 !important;
+        color: #FFFFFF !important;
+        border-radius: 12px !important;
         transition: all 0.2s ease !important;
+        padding: 0.5rem 1.25rem !important;
     }
 
-    .stButton > button:hover {
-        background-color: var(--bg-hover) !important;
-        border-color: var(--accent-gold) !important;
+    .stButton > button:hover,
+    .stButton button:hover,
+    div.stButton > button:hover,
+    div[data-testid="stButton"] > button:hover {
+        background-color: #1a1a1a !important;
+        border-color: #1a1a1a !important;
+        transform: translateY(-1px);
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15) !important;
+        color: #FFFFFF !important;
     }
 
-    /* Select boxes */
+    .stButton > button:focus,
+    .stButton button:focus {
+        outline: none !important;
+        box-shadow: 0 0 0 2px #E0D8D1 !important;
+    }
+
+    .stButton > button:active,
+    .stButton button:active {
+        background-color: #000000 !important;
+        transform: translateY(0);
+    }
+
+    /* Override any tertiary/outline styles */
+    button[kind="tertiary"],
+    button[kind="secondary"] {
+        background-color: transparent !important;
+        border: 1px solid #E0D8D1 !important;
+        color: #292929 !important;
+    }
+
+    button[kind="tertiary"]:hover,
+    button[kind="secondary"]:hover {
+        background-color: rgba(224, 216, 209, 0.3) !important;
+        border-color: #292929 !important;
+        color: #292929 !important;
+    }
+
+    /* Select boxes - Press On style */
     .stSelectbox > div > div {
-        background-color: var(--bg-card) !important;
-        border-color: var(--border-color) !important;
+        background-color: var(--press-white) !important;
+        border: 1px solid var(--press-beige) !important;
+        border-radius: 12px !important;
     }
 
-    /* Hero section */
+    .stSelectbox > div > div:focus-within {
+        border-color: var(--press-dark) !important;
+        box-shadow: 0 0 0 1px var(--press-dark) !important;
+    }
+
+    /* Text inputs - Press On style */
+    .stTextInput > div > div > input {
+        background-color: var(--press-white) !important;
+        border: 1px solid var(--press-beige) !important;
+        border-radius: 12px !important;
+        font-family: 'Poppins', sans-serif !important;
+    }
+
+    .stTextInput > div > div > input:focus {
+        border-color: var(--press-dark) !important;
+        box-shadow: 0 0 0 1px var(--press-dark) !important;
+    }
+
+    /* Hero section - Press On style */
     .hero-section {
         padding: 2rem 0;
         margin-bottom: 2rem;
-        border-bottom: 1px solid var(--border-color);
+        border-bottom: 1px solid var(--press-beige);
     }
 
     .hero-title {
-        font-family: 'DM Serif Display', serif;
+        font-family: 'Inter', sans-serif;
+        font-weight: 700;
         font-size: 2.5rem;
-        color: var(--text-primary);
+        color: var(--press-dark);
         margin-bottom: 0.5rem;
     }
 
     .hero-subtitle {
-        font-family: 'DM Sans', sans-serif;
+        font-family: 'Poppins', sans-serif;
+        font-weight: 400;
         font-size: 1rem;
         color: var(--text-secondary);
     }
 
-    /* Stats grid */
+    /* Stats grid - Press On style */
     .stats-grid {
         display: grid;
         grid-template-columns: repeat(4, 1fr);
@@ -327,21 +523,30 @@ st.markdown("""
     }
 
     .stat-card {
-        background: var(--bg-card);
-        border: 1px solid var(--border-color);
+        background: var(--press-white);
+        border: 1px solid var(--press-beige);
         border-radius: 12px;
         padding: 1.5rem;
         text-align: center;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+        transition: all 0.2s ease;
+    }
+
+    .stat-card:hover {
+        border-color: var(--press-dark);
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.08);
     }
 
     .stat-value {
-        font-family: 'DM Serif Display', serif;
+        font-family: 'Inter', sans-serif;
+        font-weight: 700;
         font-size: 2.5rem;
-        color: var(--text-primary);
+        color: var(--press-dark);
     }
 
     .stat-label {
-        font-family: 'DM Sans', sans-serif;
+        font-family: 'Poppins', sans-serif;
+        font-weight: 500;
         font-size: 0.7rem;
         color: var(--text-muted);
         text-transform: uppercase;
@@ -360,21 +565,23 @@ st.markdown("""
        USABILITY ENHANCEMENTS FOR NON-TECHNICAL USERS
        ========================================= */
 
-    /* Welcome/onboarding banner */
+    /* Welcome/onboarding banner - Press On style */
     .welcome-banner {
-        background: linear-gradient(135deg, #1a1a1a 0%, #242424 100%);
-        border: 1px solid var(--border-color);
-        border-left: 4px solid var(--accent-gold);
+        background: var(--press-white);
+        border: 1px solid var(--press-beige);
+        border-left: 4px solid var(--press-dark);
         border-radius: 12px;
         padding: 1.5rem 2rem;
         margin-bottom: 2rem;
         animation: fadeIn 0.5s ease;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
     }
 
     .welcome-banner h3 {
-        font-family: 'DM Serif Display', serif !important;
+        font-family: 'Inter', sans-serif !important;
+        font-weight: 700 !important;
         font-size: 1.25rem !important;
-        color: var(--text-primary) !important;
+        color: var(--press-dark) !important;
         margin-bottom: 0.5rem !important;
     }
 
@@ -391,10 +598,11 @@ st.markdown("""
         cursor: pointer;
         margin-top: 1rem;
         display: inline-block;
+        transition: color 0.2s ease;
     }
 
     .welcome-banner .dismiss-btn:hover {
-        color: var(--text-primary);
+        color: var(--press-dark);
     }
 
     @keyframes fadeIn {
@@ -417,8 +625,8 @@ st.markdown("""
         width: 16px;
         height: 16px;
         border-radius: 50%;
-        background: var(--bg-hover);
-        border: 1px solid var(--border-color);
+        background: var(--press-light);
+        border: 1px solid var(--press-beige);
         color: var(--text-muted);
         font-size: 10px;
         font-weight: 600;
@@ -427,9 +635,9 @@ st.markdown("""
     }
 
     .help-icon:hover {
-        background: var(--accent-gold);
-        color: var(--bg-primary);
-        border-color: var(--accent-gold);
+        background: var(--press-dark);
+        color: var(--press-white);
+        border-color: var(--press-dark);
     }
 
     .tooltip-text {
@@ -439,17 +647,17 @@ st.markdown("""
         bottom: 125%;
         left: 50%;
         transform: translateX(-50%);
-        background: #333;
-        color: var(--text-primary);
+        background: var(--press-dark);
+        color: var(--press-white);
         padding: 8px 12px;
-        border-radius: 6px;
+        border-radius: 8px;
         font-size: 0.75rem;
         white-space: nowrap;
         max-width: 250px;
         white-space: normal;
         z-index: 1000;
         transition: all 0.2s ease;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
     }
 
     .help-tooltip:hover .tooltip-text {
@@ -457,17 +665,19 @@ st.markdown("""
         opacity: 1;
     }
 
-    /* Status legend card */
+    /* Status legend card - Press On style */
     .status-legend {
-        background: var(--bg-card);
-        border: 1px solid var(--border-color);
+        background: var(--press-white);
+        border: 1px solid var(--press-beige);
         border-radius: 12px;
         padding: 1.25rem;
         margin-bottom: 1.5rem;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
     }
 
     .status-legend-title {
-        font-family: 'DM Sans', sans-serif;
+        font-family: 'Poppins', sans-serif;
+        font-weight: 500;
         font-size: 0.7rem;
         color: var(--text-muted);
         text-transform: uppercase;
@@ -479,7 +689,7 @@ st.markdown("""
         display: flex;
         align-items: center;
         padding: 0.5rem 0;
-        border-bottom: 1px solid var(--border-color);
+        border-bottom: 1px solid var(--press-beige);
     }
 
     .status-legend-item:last-child {
@@ -495,7 +705,7 @@ st.markdown("""
     }
 
     .status-legend-name {
-        color: var(--text-primary);
+        color: var(--press-dark);
         font-size: 0.85rem;
         flex: 1;
     }
@@ -507,7 +717,7 @@ st.markdown("""
         text-align: right;
     }
 
-    /* Confidence meter visual */
+    /* Confidence meter visual - Press On style */
     .confidence-meter {
         display: flex;
         align-items: center;
@@ -517,7 +727,7 @@ st.markdown("""
     .confidence-bar {
         width: 60px;
         height: 6px;
-        background: var(--bg-secondary);
+        background: var(--press-light);
         border-radius: 3px;
         overflow: hidden;
     }
@@ -537,7 +747,7 @@ st.markdown("""
         color: var(--text-secondary);
     }
 
-    /* Quick actions bar */
+    /* Quick actions bar - Press On style */
     .quick-actions {
         display: flex;
         gap: 0.75rem;
@@ -546,8 +756,8 @@ st.markdown("""
     }
 
     .quick-action-btn {
-        background: var(--bg-card);
-        border: 1px solid var(--border-color);
+        background: var(--press-white);
+        border: 1px solid var(--press-beige);
         border-radius: 20px;
         padding: 0.5rem 1rem;
         color: var(--text-secondary);
@@ -560,23 +770,23 @@ st.markdown("""
     }
 
     .quick-action-btn:hover {
-        background: var(--bg-hover);
-        border-color: var(--accent-gold);
-        color: var(--text-primary);
+        background: var(--press-light);
+        border-color: var(--press-dark);
+        color: var(--press-dark);
     }
 
     .quick-action-btn.active {
-        background: var(--accent-gold);
-        border-color: var(--accent-gold);
-        color: var(--bg-primary);
+        background: var(--press-dark);
+        border-color: var(--press-dark);
+        color: var(--press-white);
     }
 
-    /* Empty state with guidance */
+    /* Empty state with guidance - Press On style */
     .empty-state {
         text-align: center;
         padding: 4rem 2rem;
-        background: var(--bg-card);
-        border: 1px dashed var(--border-color);
+        background: var(--press-white);
+        border: 1px dashed var(--press-beige);
         border-radius: 12px;
         margin: 2rem 0;
     }
@@ -588,8 +798,9 @@ st.markdown("""
     }
 
     .empty-state h3 {
-        font-family: 'DM Serif Display', serif !important;
-        color: var(--text-primary) !important;
+        font-family: 'Inter', sans-serif !important;
+        font-weight: 700 !important;
+        color: var(--press-dark) !important;
         margin-bottom: 0.5rem !important;
     }
 
@@ -602,10 +813,10 @@ st.markdown("""
 
     .empty-state-action {
         display: inline-block;
-        background: var(--accent-gold);
-        color: var(--bg-primary);
+        background: var(--press-dark);
+        color: var(--press-white);
         padding: 0.75rem 1.5rem;
-        border-radius: 8px;
+        border-radius: 12px;
         font-weight: 500;
         text-decoration: none;
         transition: all 0.2s ease;
@@ -613,7 +824,7 @@ st.markdown("""
 
     .empty-state-action:hover {
         transform: translateY(-2px);
-        box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
+        box-shadow: 0 4px 12px rgba(41, 41, 41, 0.2);
     }
 
     /* Section intro text */
@@ -625,23 +836,25 @@ st.markdown("""
         max-width: 600px;
     }
 
-    /* Feature highlight card */
+    /* Feature highlight card - Press On style */
     .feature-card {
-        background: linear-gradient(135deg, var(--bg-card) 0%, var(--bg-secondary) 100%);
-        border: 1px solid var(--border-color);
+        background: var(--press-white);
+        border: 1px solid var(--press-beige);
         border-radius: 12px;
         padding: 1.25rem;
         margin-bottom: 1rem;
         transition: all 0.2s ease;
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
     }
 
     .feature-card:hover {
-        border-color: var(--accent-gold);
+        border-color: var(--press-dark);
+        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.08);
     }
 
     .feature-card-title {
-        color: var(--text-primary);
-        font-weight: 500;
+        color: var(--press-dark);
+        font-weight: 600;
         margin-bottom: 0.25rem;
     }
 
@@ -650,15 +863,15 @@ st.markdown("""
         font-size: 0.8rem;
     }
 
-    /* Notification badge */
+    /* Notification badge - Press On style */
     .notification-badge {
         display: inline-flex;
         align-items: center;
         justify-content: center;
         min-width: 20px;
         height: 20px;
-        background: var(--accent-gold);
-        color: var(--bg-primary);
+        background: var(--press-dark);
+        color: var(--press-white);
         border-radius: 10px;
         font-size: 0.7rem;
         font-weight: 600;
@@ -666,9 +879,9 @@ st.markdown("""
         margin-left: 8px;
     }
 
-    /* Animated loading state */
+    /* Animated loading state - Press On style */
     .loading-shimmer {
-        background: linear-gradient(90deg, var(--bg-card) 0%, var(--bg-hover) 50%, var(--bg-card) 100%);
+        background: linear-gradient(90deg, var(--press-light) 0%, var(--press-beige) 50%, var(--press-light) 100%);
         background-size: 200% 100%;
         animation: shimmer 1.5s infinite;
         border-radius: 8px;
@@ -677,6 +890,106 @@ st.markdown("""
     @keyframes shimmer {
         0% { background-position: 200% 0; }
         100% { background-position: -200% 0; }
+    }
+
+    /* Links - Press On style */
+    a, .stMarkdown a, [data-testid="stMarkdownContainer"] a {
+        color: #3B82F6 !important;
+        text-decoration: none !important;
+        transition: color 0.2s ease;
+    }
+
+    a:hover, .stMarkdown a:hover {
+        color: var(--press-dark) !important;
+        text-decoration: underline !important;
+    }
+
+    /* Alert/Info banners */
+    .stAlert, [data-testid="stAlert"] {
+        background-color: rgba(224, 216, 209, 0.3) !important;
+        border: 1px solid var(--press-beige) !important;
+        border-left: 4px solid var(--press-dark) !important;
+        border-radius: 8px !important;
+        color: var(--press-dark) !important;
+    }
+
+    /* Success alert */
+    .stAlert[data-baseweb="notification"][kind="positive"],
+    [data-testid="stAlert"] .st-success {
+        border-left-color: #10B981 !important;
+    }
+
+    /* Warning alert - the yellow banner */
+    .stAlert[data-baseweb="notification"][kind="warning"],
+    [data-testid="stAlert"] .st-warning,
+    .element-container:has(.stAlert) {
+        background-color: rgba(245, 158, 11, 0.1) !important;
+        border-left-color: #F59E0B !important;
+    }
+
+    /* Radio buttons - Press On style */
+    .stRadio > div {
+        gap: 0.5rem;
+    }
+
+    .stRadio label {
+        font-family: 'Poppins', sans-serif !important;
+        color: var(--press-dark) !important;
+        padding: 0.5rem 0;
+    }
+
+    .stRadio [data-testid="stMarkdownContainer"] p {
+        margin: 0 !important;
+    }
+
+    /* Checkbox styling */
+    .stCheckbox label {
+        font-family: 'Poppins', sans-serif !important;
+        color: var(--text-secondary) !important;
+    }
+
+    /* Press On brand header */
+    .press-on-header {
+        background: var(--press-dark);
+        color: var(--press-white);
+        padding: 1rem 2rem;
+        margin: -1rem -1rem 2rem -1rem;
+        font-family: 'Inter', sans-serif;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+    }
+
+    /* Tables - Press On style */
+    table {
+        border-collapse: collapse;
+        width: 100%;
+    }
+
+    thead tr {
+        background: var(--press-dark) !important;
+    }
+
+    thead th {
+        color: var(--press-white) !important;
+        font-family: 'Poppins', sans-serif !important;
+        font-weight: 600 !important;
+        padding: 0.75rem 1rem !important;
+        text-align: left !important;
+    }
+
+    tbody tr {
+        border-bottom: 1px solid var(--press-beige);
+        transition: background 0.2s ease;
+    }
+
+    tbody tr:hover {
+        background: var(--press-light);
+    }
+
+    tbody td {
+        font-family: 'Poppins', sans-serif;
+        color: var(--press-dark);
+        padding: 0.75rem 1rem;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -1064,31 +1377,35 @@ def render_deal_card(deal: Dict, show_status: bool = True):
         truncated = why_now[:120] + "..." if len(why_now) > 120 else why_now
         why_now_html = f'<div class="deal-meta" style="margin-top: 0.75rem; color: #737373; font-style: italic;">"Why now: {truncated}"</div>'
 
-    st.markdown(f"""
-    <div class="deal-card">
-        <div style="display: flex; justify-content: space-between; align-items: flex-start;">
-            <div style="flex: 1;">
-                <div class="deal-name">{company}</div>
-                {f'<div class="deal-meta" style="margin-bottom: 0.5rem;">{website_html}</div>' if website_html else ''}
-                <div class="deal-meta">{" · ".join(meta_parts)}</div>
-                {why_now_html}
-            </div>
-            <div style="text-align: right; min-width: 140px;">
-                {status_html}
-                <div style="margin-top: 0.75rem;">
-                    <div class="confidence-meter" style="justify-content: flex-end;">
-                        <div class="confidence-bar" style="width: 50px;">
-                            <div class="confidence-fill {conf_class.replace('confidence-', '')}" style="width: {int(confidence * 100)}%;"></div>
-                        </div>
-                    </div>
-                    <div style="font-size: 0.75rem; color: {conf_color}; margin-top: 4px;">{conf_label} ({confidence:.0%})</div>
-                </div>
-                {signals_html}
-                {f'<a href="{notion_url}" target="_blank" class="deal-link" style="display: block; margin-top: 0.75rem;">View full details →</a>' if notion_url else ''}
-            </div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    # Use Streamlit native components for reliable rendering
+    with st.container():
+        col1, col2 = st.columns([3, 1])
+
+        with col1:
+            st.markdown(f"**{company}**")
+            if website:
+                st.markdown(f"[{website}]({website})")
+            if meta_parts:
+                st.caption(" · ".join(meta_parts))
+            if why_now:
+                truncated = why_now[:120] + "..." if len(why_now) > 120 else why_now
+                st.caption(f"*Why now: {truncated}*")
+
+        with col2:
+            if show_status and status:
+                st.markdown(f'<span style="background-color: {STATUS_COLORS.get(status, "#6B7280")}20; color: {STATUS_COLORS.get(status, "#6B7280")}; padding: 2px 8px; border-radius: 12px; font-size: 0.75rem;">{status}</span>', unsafe_allow_html=True)
+
+            # Confidence indicator
+            st.markdown(f'<div style="margin-top: 8px;"><span style="color: {conf_color}; font-size: 0.85rem;">{conf_label}</span> <span style="color: #737373; font-size: 0.75rem;">({confidence:.0%})</span></div>', unsafe_allow_html=True)
+
+            if friendly_signals:
+                st.caption(f"Via: {' · '.join(friendly_signals[:2])}")
+
+            if page_id:
+                notion_url = f"https://notion.so/{page_id}"
+                st.markdown(f"[View details →]({notion_url})")
+
+        st.divider()
 
 
 def render_pipeline_section(deals: List[Dict], status: str):
@@ -1277,14 +1594,14 @@ def main():
         )
         return
 
-    # Sidebar with improved UX
+    # Sidebar with improved UX - Press On branding
     with st.sidebar:
         st.markdown("""
-        <div style="padding: 1rem 0; border-bottom: 1px solid #333;">
-            <div style="font-family: 'DM Serif Display', serif; font-size: 1.5rem; color: #FAFAFA;">
+        <div style="padding: 1rem 0; border-bottom: 1px solid #E0D8D1;">
+            <div style="font-family: 'Inter', sans-serif; font-weight: 700; font-size: 1.5rem; color: #292929;">
                 ◆ Discovery Engine
             </div>
-            <div style="font-family: 'DM Sans', sans-serif; font-size: 0.8rem; color: #737373; margin-top: 0.25rem;">
+            <div style="font-family: 'Poppins', sans-serif; font-size: 0.8rem; color: #525252; margin-top: 0.25rem;">
                 Press On Ventures Deal Sourcing
             </div>
         </div>
@@ -1498,7 +1815,7 @@ def main():
             st.markdown(f"""
             <div style="text-align: center;">
                 <div style="font-size: 0.7rem; color: #A3A3A3; text-transform: uppercase; letter-spacing: 0.1em;">System Status</div>
-                <div style="font-size: 1.5rem; color: {health_color}; font-family: 'DM Serif Display', serif; margin-top: 4px;">{health_label}</div>
+                <div style="font-size: 1.5rem; color: {health_color}; font-family: 'Inter', sans-serif; margin-top: 4px;">{health_label}</div>
             </div>
             """, unsafe_allow_html=True)
 
