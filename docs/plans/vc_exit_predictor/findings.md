@@ -11,6 +11,14 @@
 | sionic-ai/muvera-py | GitHub | HIGH | FDE for multi-vector encoding (8.5x speedup) |
 | sionic-ai/claude-code-skills-training | HuggingFace | HIGH | Team memory: `/advise` + `/retrospective` pattern |
 | ahmnouira/pillar-landing | GitHub | MEDIUM | Investment lifecycle stages (Discovery → Execution) |
+| povc_ssh_integration_analysis.md | Internal | HIGH | Multi-agent LLM (3 experts + manager), weight generator |
+| VCGraphBuilder Implementation Plan.md | Internal | HIGH | ETL pipeline: EntityResolver + RelationshipParsers |
+| VC Investment Graph Schema.md | Internal | HIGH | 4-table graph schema for entity-centric architecture |
+| base.py (BaseCollector) | Internal | HIGH | Retry strategy, rate limiting patterns |
+| signal_store.py (migrations) | Internal | HIGH | thesis_classifications, collector_metrics tables |
+| Implementation Guide: LLMClassifier.classify | Internal | HIGH | Self-correction loop, Pydantic validation, graceful degradation |
+| Specification: LLMClassifier Output Format | Internal | HIGH | 3-layer validation (prompt, JSON schema, Pydantic), evidence schema |
+| Specification: CompanyClassifierService | Internal | HIGH | Signal bundling, citation-backed classifications, CLI-driven |
 
 ## Evidence Matrix
 | Claim | Supporting Sources | Contradicting Sources | Confidence |
@@ -384,3 +392,337 @@ From Pillar: Clear stage gates with defined criteria.
 From Skills Training: Make contribution frictionless so knowledge compounds.
 - **Apply to**: Exit prediction calibration data
 - **Benefit**: Predictions improve with each reviewed outcome
+
+---
+
+## VC Investment Graph Architecture (from Internal Docs)
+
+### Source: povc_ssh_integration_analysis.md
+
+**Three-Pillar Prediction System:**
+| Pillar | Purpose | Relevance to Exit Predictor |
+|--------|---------|----------------------------|
+| Path Selector | Sample informative paths on VC graph | Find paths to successful exits |
+| Weight Generator | Learn per-sample weights for agent fusion | Adaptive feature weighting |
+| Inference Pipeline | Aggregate 3 agents → Manager Agent | Ensemble exit predictions |
+
+**Multi-Agent LLM Architecture:**
+```python
+class MultiAgentLLM:
+    def __init__(self):
+        self.technical_agent = TechnicalAgent()   # Tech stack, GitHub activity
+        self.market_agent = MarketAgent()         # Market size, PMF
+        self.network_agent = NetworkAgent()       # Investor quality, graph centrality
+        self.manager_agent = ManagerAgent()       # Final decision
+        self.weight_generator = WeightGenerator() # Learned weights
+
+    def predict(self, company_data):
+        analyses = [
+            self.technical_agent.analyze(company_data),
+            self.market_agent.analyze(company_data),
+            self.network_agent.analyze(company_data['graph_context'])
+        ]
+        weights = self.weight_generator.get_weights(company_data)
+        return self.manager_agent.decide(analyses, weights)
+```
+
+**Integration Roadmap (12 weeks):**
+| Phase | Weeks | Deliverable |
+|-------|-------|-------------|
+| Foundation | 1-4 | VC Graph + graph-based features |
+| Multi-Agent | 5-8 | 3 agents + weight generator |
+| Advanced | 9-12 | Path selector + similar-company analysis |
+
+### Source: VCGraphBuilder Service Implementation Plan
+
+**ETL Pipeline Architecture:**
+```
+SignalStore → VCGraphBuilder → EntityResolver → RelationshipParsers → Graph DB
+```
+
+**Key Components:**
+1. **VCGraphBuilder (Orchestrator)**: Fetches signals, delegates to parsers
+2. **EntityResolver (Stateful)**: Alias cache for O(1) entity lookup
+3. **RelationshipParsers (Stateless)**: One per signal_type (Crunchbase, SEC EDGAR)
+
+**Entity Resolution Pattern:**
+```python
+class EntityResolver:
+    async def get_or_create_entity(self, aliases, entity_type, canonical_name, properties):
+        # 1. Check cache for any matching alias
+        for alias_type, alias_value in aliases.items():
+            cache_key = f"{alias_type}:{alias_value}"
+            if cache_key in self._alias_cache:
+                return await self.store.get_graph_entity(self._alias_cache[cache_key])
+
+        # 2. Create new entity + aliases if not found
+        new_entity = await self.store.create_graph_entity(...)
+        for alias_type, alias_value in aliases.items():
+            await self.store.add_entity_alias(...)
+            self._alias_cache[f"{alias_type}:{alias_value}"] = new_entity.id
+        return new_entity
+```
+
+### Source: VC Investment Graph Schema
+
+**Four-Table Schema:**
+```sql
+-- Canonical nodes (companies, people, investors)
+CREATE TABLE graph_entities (
+    id INTEGER PRIMARY KEY,
+    canonical_key TEXT NOT NULL UNIQUE,  -- e.g., "domain:acme.com"
+    entity_type TEXT NOT NULL,           -- 'company', 'person', 'investor_firm'
+    canonical_name TEXT NOT NULL,
+    properties TEXT,                     -- JSON
+    created_at TEXT, updated_at TEXT
+);
+
+-- Alias → Entity mapping for entity resolution
+CREATE TABLE entity_aliases (
+    id INTEGER PRIMARY KEY,
+    entity_id INTEGER NOT NULL,
+    alias TEXT NOT NULL,
+    alias_type TEXT NOT NULL,            -- 'crunchbase_name', 'domain', 'manual'
+    UNIQUE(alias, alias_type)
+);
+
+-- Typed, directed, time-stamped edges
+CREATE TABLE graph_relationships (
+    id INTEGER PRIMARY KEY,
+    source_entity_id INTEGER NOT NULL,
+    target_entity_id INTEGER NOT NULL,
+    relationship_type TEXT NOT NULL,     -- 'invested_in', 'founded', 'acquired'
+    effective_date TEXT,                 -- When relationship started
+    observed_date TEXT NOT NULL,         -- When we saw it
+    properties TEXT                      -- JSON (amount, round, etc.)
+);
+
+-- Signal traceability
+CREATE TABLE relationship_sources (
+    relationship_id INTEGER NOT NULL,
+    signal_id INTEGER NOT NULL,
+    UNIQUE(relationship_id, signal_id)
+);
+```
+
+**Query Examples:**
+```sql
+-- Find all investors in a company
+SELECT i.* FROM graph_entities c
+JOIN graph_relationships r ON c.id = r.target_entity_id
+JOIN graph_entities i ON r.source_entity_id = i.id
+WHERE c.canonical_key = 'domain:acme.com'
+  AND r.relationship_type = 'invested_in';
+
+-- Compute investor quality (exit rate)
+SELECT i.canonical_name,
+       COUNT(CASE WHEN r2.relationship_type = 'acquired' THEN 1 END) as exits,
+       COUNT(*) as total_investments
+FROM graph_entities i
+JOIN graph_relationships r ON i.id = r.source_entity_id
+LEFT JOIN graph_relationships r2 ON r.target_entity_id = r2.target_entity_id
+WHERE i.entity_type = 'investor_firm'
+GROUP BY i.id;
+```
+
+### Synthesis: Graph Architecture for Exit Predictor
+
+**Phase 2 Enhancement - Investor Network:**
+1. Implement `graph_entities` + `graph_relationships` schema (migration 7)
+2. Build `VCGraphBuilder` ETL from existing Crunchbase signals
+3. Compute investor centrality using NetworkX PageRank
+4. Add `investor_quality_score` to exit prediction
+
+**Phase 3 Enhancement - Multi-Agent:**
+1. Implement Technical, Market, Network agents
+2. Train Weight Generator on historical predictions
+3. Use Manager Agent for final exit probability
+
+**Key Integration Points:**
+| Current Component | Graph Enhancement |
+|-------------------|-------------------|
+| `founder_store` | Link to `graph_entities` (person type) |
+| `thesis_classifications` | Feed Market Agent |
+| `signal_velocity` | Feed Technical Agent |
+| Crunchbase collector | Populate `graph_relationships` |
+
+---
+
+## LLM Classification Specifications (from Internal Docs)
+
+### Source: Implementation Guide - LLMClassifier.classify Method
+
+**Self-Correction Loop Pattern:**
+```python
+async def classify(self, signals: List[Signal]) -> ThesisClassification:
+    # Stage 1: Initial API call
+    response = await self._call_gemini_api(signals)
+
+    # Stage 2: Initial validation
+    result = self._validate_response(response)
+    if result.success:
+        return self._create_success_response(result.data)
+
+    # Stage 3: Self-correction attempt
+    corrected = await self._attempt_self_correction(response, result.error)
+
+    # Stage 4: Final validation
+    final_result = self._validate_response(corrected)
+    if final_result.success:
+        return self._create_success_response(final_result.data, was_corrected=True)
+
+    # Stage 5: Graceful failure
+    return self._handle_final_error(signals, final_result.error)
+```
+
+**Key Patterns:**
+| Pattern | Description | Exit Predictor Application |
+|---------|-------------|---------------------------|
+| Self-correction loop | LLM fixes own malformed JSON | Apply to exit prediction prompts |
+| Graceful degradation | Failures return structured objects, not exceptions | `ExitPrediction` with `prediction_failed=True` |
+| Pydantic validation | Schema enforcement with constraints | `exit_probability` bounded 0.0-1.0 |
+| Correction metadata | Track `was_corrected` flag | Monitor prediction reliability |
+
+### Source: Specification - LLMClassifier Output Format
+
+**Three-Layer Validation System:**
+```
+Layer 1: Prompt Engineering → Explicit JSON format instructions
+Layer 2: JSON Schema → Language-agnostic contract
+Layer 3: Pydantic Models → Runtime type safety (final gatekeeper)
+```
+
+**ThesisClassification Schema:**
+```python
+class Evidence(BaseModel):
+    signal_id: int
+    source_name: str
+    claim: str = Field(min_length=1)
+    quote: str = Field(min_length=1)
+
+class ThesisClassificationOutput(BaseModel):
+    thesis_match: bool
+    thesis_fit_score: float = Field(ge=0.0, le=1.0)
+    category: Literal['consumer_cpg', 'consumer_health_tech',
+                      'travel_hospitality', 'consumer_marketplace',
+                      'other', 'excluded']
+    stage_estimate: Literal['pre_seed', 'seed', 'series_a',
+                            'later_stage', 'unknown']
+    confidence: Literal['high', 'medium', 'low']
+    company_name: str
+    rationale: str
+    evidence: List[Evidence] = Field(min_items=1)
+```
+
+**Extension for Exit Prediction:**
+```python
+class ExitPredictionOutput(BaseModel):
+    exit_probability: float = Field(ge=0.0, le=1.0)
+    exit_timeline: Literal['1-2yr', '2-3yr', '3-5yr', '5-7yr', '7+yr']
+    exit_type_probabilities: Dict[str, float]  # {ipo: 0.3, acquisition: 0.6, failure: 0.1}
+    confidence: Literal['high', 'medium', 'low']
+    key_factors: List[str] = Field(min_items=1)
+    evidence: List[Evidence] = Field(min_items=1)
+```
+
+### Source: Specification - CompanyClassifierService
+
+**Service Architecture:**
+```
+CLI (run_pipeline.py classify)
+    → CompanyClassifierService
+        → SignalStore.get_companies_needing_classification()
+        → SignalStore.get_all_signals_for_company()
+        → LLMClassifier.classify(signal_bundle)
+        → SignalStore.save_thesis_classification()
+```
+
+**Signal Bundling Pattern:**
+- All signals for a company gathered by canonical_key
+- Entire bundle passed to LLM for context-rich analysis
+- Classification produces citation-backed results
+
+**Classification Priority Logic:**
+1. Companies without any classification (new signals)
+2. Companies where latest signal > last classification timestamp
+3. Process oldest-first for fairness
+
+**CLI Interface:**
+```bash
+# Batch classification
+python run_pipeline.py classify --limit 10
+
+# Single company re-classification
+python run_pipeline.py classify --company-key "domain:acme.com"
+```
+
+**Required SignalStore Methods:**
+| Method | Purpose |
+|--------|---------|
+| `get_companies_needing_classification(limit)` | Find unclassified companies |
+| `get_all_signals_for_company(canonical_key)` | Bundle signals per company |
+| `save_thesis_classification(result, canonical_key)` | Persist with evidence JSON |
+| `log_classification_error(canonical_key, error)` | Track failures for review |
+
+### Synthesis: Classification Patterns for Exit Predictor
+
+**Recommended ExitPredictorService Architecture:**
+```python
+# services/exit_predictor_service.py
+class ExitPredictorService:
+    """Orchestrates exit prediction workflow."""
+
+    def __init__(self, store: SignalStore, predictor: ExitPredictor):
+        self.store = store
+        self.predictor = predictor
+
+    async def run(self, limit: int = 10):
+        """Batch prediction with signal bundling."""
+        companies = await self.store.get_companies_needing_exit_prediction(limit)
+
+        for canonical_key in companies:
+            try:
+                # Bundle all signals for context
+                signals = await self.store.get_all_signals_for_company(canonical_key)
+                consolidated = await self._consolidate_signals(signals)
+
+                # Generate prediction with self-correction
+                prediction = await self.predictor.predict(consolidated)
+
+                # Persist with evidence
+                await self.store.save_exit_prediction(prediction, canonical_key)
+
+            except Exception as e:
+                await self.store.log_prediction_error(canonical_key, str(e))
+```
+
+**Evidence-Based Exit Prediction:**
+```python
+class ExitEvidence(BaseModel):
+    signal_id: int
+    source_name: str  # e.g., "crunchbase_funding", "github_activity"
+    factor: str       # e.g., "serial_founder", "investor_centrality"
+    value: float      # e.g., 0.85
+    quote: str        # Supporting evidence text
+
+class ExitPrediction(BaseModel):
+    canonical_key: str
+    exit_probability: float = Field(ge=0.0, le=1.0)
+    percentile_rank: int = Field(ge=0, le=100)
+    exit_timeline: str
+    confidence: Literal['high', 'medium', 'low']
+    key_factors: List[str]
+    evidence: List[ExitEvidence] = Field(min_items=1)
+    was_corrected: bool = False
+    prediction_failed: bool = False
+```
+
+**Integration with Existing Pipeline:**
+| Step | Current | With Exit Predictor |
+|------|---------|---------------------|
+| 1 | Signal collection | Signal collection |
+| 2 | Signal consolidation | Signal consolidation |
+| 3 | Thesis classification | Thesis classification |
+| 4 | Verification gate | Verification gate |
+| 5 | - | **Exit prediction** |
+| 6 | Notion push | Notion push (with exit score) |

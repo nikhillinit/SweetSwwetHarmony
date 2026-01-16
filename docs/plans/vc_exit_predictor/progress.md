@@ -102,6 +102,57 @@
 3. **Investment Lifecycle Stages** (Pillar): Clear stage gates with exit predictor enhancing transitions
 4. **Team Memory** (Skills Training): Frictionless contribution so knowledge compounds
 
+## Internal Architecture Documents Reviewed
+
+| Document | Key Value |
+|----------|-----------|
+| povc_ssh_integration_analysis.md | Multi-agent LLM architecture with 3 expert agents + manager |
+| VCGraphBuilder Implementation Plan.md | ETL pipeline: EntityResolver + RelationshipParsers |
+| VC Investment Graph Schema.md | 4-table schema: graph_entities, entity_aliases, graph_relationships, relationship_sources |
+| base.py (BaseCollector) | Retry strategy, rate limiting, asset store integration |
+| signal_store.py (migrations) | thesis_classifications table, collector metrics |
+
+### Architecture Patterns Extracted
+
+1. **Three-Pillar Prediction System**:
+   - Path Selector: Sample informative paths on VC graph
+   - Weight Generator: Learn per-sample weights for agent fusion
+   - Inference Pipeline: Aggregate 3 agents → Manager Agent
+
+2. **Multi-Agent LLM**:
+   - Technical Agent (GitHub, tech stack)
+   - Market Agent (market size, PMF)
+   - Network Agent (investor quality, graph centrality)
+   - Manager Agent (final weighted decision)
+
+3. **Entity Resolution Pattern**:
+   - Alias cache warmed on startup for O(1) lookups
+   - `{alias_type}:{alias_value}` → entity_id mapping
+   - Create new entity + all aliases if not found
+
+4. **Graph Schema**:
+   - `graph_entities`: Canonical nodes (company, person, investor_firm)
+   - `entity_aliases`: Multiple identifiers → single entity
+   - `graph_relationships`: Typed, time-stamped edges
+   - `relationship_sources`: Signal traceability
+
+## LLM Classification Specifications Reviewed
+
+| Document | Key Value |
+|----------|-----------|
+| Implementation Guide: LLMClassifier.classify | Self-correction loop, Pydantic validation, graceful degradation |
+| Specification: LLMClassifier Output Format | 3-layer validation (prompt → JSON schema → Pydantic), evidence schema |
+| Specification: CompanyClassifierService | Signal bundling, citation-backed classifications, CLI interface |
+
+### Key Patterns for Exit Predictor
+
+1. **Self-Correction Loop**: If LLM returns malformed JSON, ask it to fix → reduces failures by 30-50%
+2. **Three-Layer Validation**: Prompt engineering + JSON schema + Pydantic for bulletproof validation
+3. **Signal Bundling**: All signals for a company passed to LLM for context-rich analysis
+4. **Evidence Trail**: Every classification/prediction must cite specific signals
+5. **Graceful Failure**: Return structured error objects, not exceptions
+6. **CLI-First Architecture**: `run_pipeline.py predict --limit 10` for batch processing
+
 ## Error Log
 | Error | Cause | Resolution | Attempt |
 |-------|-------|------------|---------|
