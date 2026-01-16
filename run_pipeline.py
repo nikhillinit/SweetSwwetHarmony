@@ -3,14 +3,15 @@
 CLI interface for the Discovery Engine pipeline.
 
 Commands:
-  full      - Run complete pipeline (collect + process + push)
-  collect   - Run collectors only
-  process   - Process pending signals
-  sync      - Sync suppression cache from Notion
-  stats     - Show pipeline statistics
-  health    - Run health checks on all components
-  metrics   - Show pipeline run metrics with per-collector breakdown
-  pipeline  - Pipeline dashboard commands (status, qualified, push)
+  full       - Run complete pipeline (collect + process + push)
+  collect    - Run collectors only
+  process    - Process pending signals
+  sync       - Sync suppression cache from Notion
+  stats      - Show pipeline statistics
+  health     - Run health checks on all components
+  metrics    - Show pipeline run metrics with per-collector breakdown
+  pipeline   - Pipeline dashboard commands (status, qualified, push)
+  import-csv - Import signals from CSV files (OpenVC, etc.)
 
 Examples:
   # Run full pipeline with specific collectors (dry run)
@@ -42,6 +43,12 @@ Examples:
 
   # Push qualified signals to Notion
   python run_pipeline.py pipeline push --confirm
+
+  # Import OpenVC CSV export (dry run)
+  python run_pipeline.py import-csv --source openvc export.csv --dry-run
+
+  # Import with thesis filter (consumer sectors only)
+  python run_pipeline.py import-csv --source openvc export.csv --sectors Consumer,HealthTech
 """
 
 import argparse
@@ -1374,6 +1381,62 @@ Environment variables:
         help="Output file path (default: stdout)",
     )
 
+    # --- import-csv command ---
+    import_parser = subparsers.add_parser(
+        "import-csv",
+        help="Import signals from CSV files (OpenVC, etc.)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="""
+Import signals from CSV exports.
+
+Supported sources:
+  openvc - OpenVC.app CSV exports (deal flow, investor connections)
+
+Examples:
+  # Dry run to see what would be imported
+  python run_pipeline.py import-csv --source openvc path/to/export.csv --dry-run
+
+  # Import with thesis filter (only consumer sectors)
+  python run_pipeline.py import-csv --source openvc export.csv --sectors Consumer,HealthTech
+
+  # Import only pre-seed and seed stage companies
+  python run_pipeline.py import-csv --source openvc export.csv --stages pre-seed,seed,series-a
+""",
+    )
+    import_parser.add_argument(
+        "file",
+        type=str,
+        help="Path to CSV file to import",
+    )
+    import_parser.add_argument(
+        "--source",
+        type=str,
+        default="openvc",
+        choices=["openvc"],
+        help="CSV source format (default: openvc)",
+    )
+    import_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be imported without persisting",
+    )
+    import_parser.add_argument(
+        "--sectors",
+        type=str,
+        help="Only import these sectors (comma-separated, e.g., Consumer,HealthTech)",
+    )
+    import_parser.add_argument(
+        "--stages",
+        type=str,
+        help="Only import these stages (comma-separated, e.g., pre-seed,seed,series-a)",
+    )
+    import_parser.add_argument(
+        "--db-path",
+        type=str,
+        default=os.getenv("DISCOVERY_DB_PATH", "signals.db"),
+        help="Path to signals database",
+    )
+
     return parser
 
 
@@ -1450,6 +1513,60 @@ async def cmd_schema_docs(args):
         print(docs)
 
 
+async def cmd_import_csv(args):
+    """Import signals from CSV files."""
+    from importers.openvc_csv import OpenVCImporter
+
+    # Parse filters
+    sector_filter = None
+    if getattr(args, "sectors", None):
+        sector_filter = [s.strip() for s in args.sectors.split(",")]
+
+    stage_filter = None
+    if getattr(args, "stages", None):
+        stage_filter = [s.strip() for s in args.stages.split(",")]
+
+    # Initialize store
+    store = SignalStore(args.db_path)
+    await store.initialize()
+
+    try:
+        if args.source == "openvc":
+            importer = OpenVCImporter(store)
+            result = await importer.import_csv(
+                args.file,
+                dry_run=args.dry_run,
+                sector_filter=sector_filter,
+                stage_filter=stage_filter,
+            )
+        else:
+            print(f"Unknown source: {args.source}")
+            sys.exit(1)
+
+        # Print results
+        print("\n" + "=" * 60)
+        print("CSV IMPORT RESULTS")
+        print("=" * 60)
+        print(f"Source:   {args.source}")
+        print(f"File:     {args.file}")
+        print(f"Dry Run:  {args.dry_run}")
+        if sector_filter:
+            print(f"Sectors:  {', '.join(sector_filter)}")
+        if stage_filter:
+            print(f"Stages:   {', '.join(stage_filter)}")
+        print("-" * 60)
+        print(f"Imported: {result['imported']}")
+        print(f"Skipped:  {result['skipped']}")
+        print(f"Errors:   {result['errors']}")
+        print("=" * 60)
+
+        if args.dry_run:
+            print("\n(Dry run - no changes made)")
+
+    finally:
+        await store.close()
+
+
 async def main():
     """Main entry point"""
 
@@ -1512,6 +1629,8 @@ async def main():
             else:
                 print("Schema command requires a subcommand (validate, repair, docs)")
                 sys.exit(1)
+        elif args.command == "import-csv":
+            await cmd_import_csv(args)
         else:
             print(f"Unknown command: {args.command}")
             parser.print_help()
