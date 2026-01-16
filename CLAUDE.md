@@ -6,13 +6,15 @@ Automated deal sourcing system for Press On Ventures (early-stage VC).
 
 **Fund Focus:** Consumer | Pre-Seed to Series A | US/UK
 
+> **Investment Thesis (One-Liner):** Press On Ventures invests in Pre-Seed to Series A consumer companies in CPG (food, beverage, beauty), health tech (fitness, wellness, mental health), travel & hospitality, and consumer marketplaces — excluding B2B, enterprise SaaS, developer tools, crypto, and hardware.
+
 **Thesis Categories:**
 - **Consumer CPG**: Food, beverage, snacks, beauty, personal care, household products
 - **Consumer Health Tech**: Fitness apps, wellness, mental health, supplements, wearables
 - **Travel & Hospitality**: Travel booking, hospitality tech, restaurants, experiences
 - **Consumer Marketplaces**: Consumer-facing two-sided markets
 
-**Exclusions:** B2B/Enterprise, developer tools, crypto/Web3, services/agencies, Series B+, hardware-only
+**Exclusions:** B2B/Enterprise, developer tools, crypto/Web3, cleantech/climate, services/agencies, Series B+, hardware-only
 
 **What This Does:**
 1. Collects signals (GitHub, incorporations, domains, SEC filings, job postings, Product Hunt, Hacker News, ArXiv, patents)
