@@ -4,10 +4,11 @@ UK Companies House Collector for Discovery Engine
 Collects signals from UK Companies House API for recent incorporations.
 New incorporations signal early-stage startups in target sectors.
 
-Focus areas for Press On Ventures:
-- Healthtech (SIC codes: 86xxx - health activities, 72xxx - R&D)
-- Cleantech (SIC codes: 35xxx - electricity, 38xxx - waste management)
-- AI/Software (SIC codes: 62xxx - computer programming, 63xxx - information services)
+Focus areas for Press On Ventures (Consumer thesis):
+- Consumer CPG (SIC codes: 10xxx-11xxx food/beverage, 20xxx cosmetics)
+- Consumer Health Tech (SIC codes: 86xxx health, 93xxx fitness + broader healthtech)
+- Travel & Hospitality (SIC codes: 55xxx accommodation, 56xxx restaurants, 79xxx travel)
+- Consumer Marketplaces (SIC codes: 47xxx retail, 62xxx consumer apps)
 
 Companies House API:
 - Base: https://api.company-information.service.gov.uk
@@ -62,16 +63,37 @@ logger = logging.getLogger(__name__)
 # INDUSTRY CLASSIFICATIONS - THESIS FIT
 # =============================================================================
 
-# SIC 2007 codes for healthtech (UK standard)
-HEALTHTECH_SIC_CODES = {
-    # Healthcare activities
+# SIC 2007 codes for Consumer thesis (UK standard)
+
+# Consumer CPG - Food, Beverage, Beauty, Personal Care
+CONSUMER_CPG_SIC_CODES = {
+    # Food manufacturing
+    "10110", "10120", "10130",  # Meat processing
+    "10200",  # Fish processing
+    "10310", "10320",  # Potato & fruit processing
+    "10390",  # Other fruit & vegetable processing
+    "10410", "10420",  # Oils and fats
+    "10510", "10520",  # Dairy products
+    "10610", "10620",  # Grain mill products
+    "10710", "10720",  # Bread, biscuits, pastry
+    "10810", "10820", "10830",  # Sugar, cocoa, tea/coffee
+    "10840",  # Condiments and seasonings
+    "10850",  # Prepared meals
+    "10890",  # Other food products
+    # Beverages
+    "11010", "11020", "11030", "11040", "11050", "11060", "11070",
+    # Cosmetics & personal care
+    "20420",  # Perfumes and toilet preparations
+}
+
+# Consumer Health Tech - Fitness, Wellness + broader healthtech (abundance of caution)
+CONSUMER_HEALTHTECH_SIC_CODES = {
+    # Fitness & sports
+    "93110", "93120", "93130", "93190", "93210", "93290",
+    # Healthcare activities (broader healthtech - keep for NorthStar Care, Cofertility type investments)
     "86101", "86102", "86210", "86220", "86230", "86900",
-    # Medical/dental practice
-    "86210", "86220", "86230",
     # Residential health facilities
     "87100", "87200", "87300", "87900",
-    # Human health activities
-    "86900",
     # Pharmaceutical manufacturing
     "21100", "21200",
     # Medical and dental instruments
@@ -80,52 +102,52 @@ HEALTHTECH_SIC_CODES = {
     "72110", "72190", "72200",
 }
 
-# SIC 2007 codes for cleantech
-CLEANTECH_SIC_CODES = {
-    # Electricity generation
-    "35110", "35120", "35130", "35140",
-    # Electric power distribution
-    "35220", "35230",
-    # Waste collection, treatment, disposal
-    "38110", "38120", "38210", "38220", "38310", "38320",
-    # Remediation and waste management services
-    "39000",
-    # Manufacture of electric motors, generators
-    "27110", "27120",
-    # Energy-related R&D
-    "72190", "72200",
+# Travel & Hospitality - Hotels, Restaurants, Travel, Experiences
+TRAVEL_HOSPITALITY_SIC_CODES = {
+    # Accommodation
+    "55100", "55201", "55202", "55209", "55300", "55900",
+    # Restaurants, cafes, bars
+    "56101", "56102", "56103", "56210", "56290", "56301", "56302",
+    # Travel agencies and tour operators
+    "79110", "79120", "79901", "79909",
+    # Recreation & amusement
+    "93210", "93290",
 }
 
-# SIC 2007 codes for AI/Software
-AI_INFRASTRUCTURE_SIC_CODES = {
-    # Computer programming
+# Consumer Marketplaces - Retail, E-commerce, Consumer Services
+CONSUMER_MARKETPLACE_SIC_CODES = {
+    # Retail trade (consumer-facing)
+    "47110", "47190", "47210", "47220", "47230", "47240", "47250",
+    "47260", "47290", "47410", "47420", "47430", "47510", "47520",
+    "47530", "47540", "47590", "47610", "47620", "47630", "47640",
+    "47650", "47710", "47720", "47730", "47740", "47750", "47760",
+    "47770", "47781", "47782", "47789", "47791", "47799",
+    "47810", "47820", "47890", "47910", "47990",
+    # Consumer apps & services (subset of software that's consumer-facing)
     "62011", "62012", "62020", "62030", "62090",
-    # Computer consultancy
-    "62020",
-    # Information service activities
-    "63110", "63120", "63910", "63990",
-    # Data processing, hosting
-    "63110", "63120",
-    # Web portals
-    "63120",
-    # Research and development - natural sciences/engineering
-    "72110", "72190", "72200",
+    # Personal services
+    "96010", "96020", "96040", "96090",
 }
 
 # Combine all target SIC codes
-TARGET_SIC_CODES = HEALTHTECH_SIC_CODES | CLEANTECH_SIC_CODES | AI_INFRASTRUCTURE_SIC_CODES
+TARGET_SIC_CODES = (
+    CONSUMER_CPG_SIC_CODES
+    | CONSUMER_HEALTHTECH_SIC_CODES
+    | TRAVEL_HOSPITALITY_SIC_CODES
+    | CONSUMER_MARKETPLACE_SIC_CODES
+)
 
 # Map SIC codes to industry groups
-# Note: Some codes (like 72110 - biotech R&D) appear in multiple categories
-# We prioritize in order: healthtech, cleantech, ai_infrastructure
+# Priority: consumer_healthtech > travel_hospitality > consumer_cpg > consumer_marketplace
 SIC_TO_INDUSTRY = {}
-# Build in priority order (later ones will overwrite earlier ones)
-for code in AI_INFRASTRUCTURE_SIC_CODES:
-    SIC_TO_INDUSTRY[code] = "ai_infrastructure"
-for code in CLEANTECH_SIC_CODES:
-    SIC_TO_INDUSTRY[code] = "cleantech"
-for code in HEALTHTECH_SIC_CODES:
-    SIC_TO_INDUSTRY[code] = "healthtech"
+for code in CONSUMER_MARKETPLACE_SIC_CODES:
+    SIC_TO_INDUSTRY[code] = "consumer_marketplace"
+for code in CONSUMER_CPG_SIC_CODES:
+    SIC_TO_INDUSTRY[code] = "consumer_cpg"
+for code in TRAVEL_HOSPITALITY_SIC_CODES:
+    SIC_TO_INDUSTRY[code] = "travel_hospitality"
+for code in CONSUMER_HEALTHTECH_SIC_CODES:
+    SIC_TO_INDUSTRY[code] = "consumer_healthtech"
 
 
 # =============================================================================
@@ -165,7 +187,7 @@ class CompanyProfile:
     # Classification
     company_type: Optional[str] = None  # ltd, plc, llp, etc.
     sic_codes: List[str] = field(default_factory=list)
-    industry_group: Optional[str] = None  # healthtech, cleantech, ai_infrastructure
+    industry_group: Optional[str] = None  # consumer_cpg, consumer_healthtech, travel_hospitality, consumer_marketplace
 
     # Location
     registered_office_address: Dict[str, str] = field(default_factory=dict)

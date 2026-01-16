@@ -12,10 +12,11 @@ Key Form D fields we extract:
 - Location (jurisdiction)
 - Issuer type (determines stage)
 
-Focus areas for Press On Ventures:
-- Healthtech (SIC codes: 2834, 3841, 8071, 8082, etc.)
-- Cleantech (SIC codes: 3711, 4911, 4931, 4939, etc.)
-- AI Infrastructure (SIC codes: 7371, 7372, 7373, etc.)
+Focus areas for Press On Ventures (Consumer thesis):
+- Consumer CPG (SIC codes: 20xx food, 28xx beauty/personal care)
+- Consumer Health Tech (SIC codes: 80xx health services, fitness)
+- Travel & Hospitality (SIC codes: 58xx restaurants, 70xx hotels, 47xx travel)
+- Consumer Marketplaces (SIC codes: 59xx retail, 73xx consumer services)
 
 SEC EDGAR API docs:
 - Form D RSS feed: https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type=D
@@ -51,57 +52,96 @@ logger = logging.getLogger(__name__)
 # INDUSTRY CLASSIFICATIONS
 # =============================================================================
 
-# SIC codes for thesis fit (Press On Ventures focus areas)
-HEALTHTECH_SIC_CODES = {
+# SIC codes for thesis fit (Press On Ventures - Consumer focus)
+
+# Consumer CPG - Food, Beverage, Beauty, Personal Care
+CONSUMER_CPG_SIC_CODES = {
+    "2000",  # Food & Kindred Products
+    "2011",  # Meat Packing Plants
+    "2013",  # Sausages & Other Prepared Meat Products
+    "2020",  # Dairy Products
+    "2024",  # Ice Cream & Frozen Desserts
+    "2030",  # Canned, Frozen & Preserved Fruits, Vegetables
+    "2050",  # Bakery Products
+    "2052",  # Cookies & Crackers
+    "2060",  # Sugar & Confectionery Products
+    "2080",  # Beverages
+    "2082",  # Malt Beverages
+    "2086",  # Bottled & Canned Soft Drinks
+    "2087",  # Flavoring Extracts & Flavoring Syrups
+    "2090",  # Miscellaneous Food Preparations
+    "2099",  # Food Preparations, NEC
+    "2840",  # Soap, Detergent, Cleaning Preparations
+    "2844",  # Perfumes, Cosmetics & Other Toilet Preparations
+}
+
+# Consumer Health Tech - Fitness, Wellness, Mental Health + broader healthtech
+CONSUMER_HEALTHTECH_SIC_CODES = {
+    # Consumer-facing health & fitness
+    "7991",  # Physical Fitness Facilities
+    "7997",  # Membership Sports & Recreation Clubs
+    "8049",  # Offices & Clinics of Health Practitioners, NEC
+    "8082",  # Home Health Care Services
+    "8090",  # Miscellaneous Health & Allied Services
+    "8099",  # Health & Allied Services, NEC
+    # Broader healthtech (keep for abundance of caution)
     "2834",  # Pharmaceutical Preparations
     "2835",  # In Vitro & In Vivo Diagnostic Substances
     "2836",  # Biological Products (No Diagnostic Substances)
     "3841",  # Surgical & Medical Instruments & Apparatus
     "3842",  # Orthopedic, Prosthetic & Surgical Appliances
     "3845",  # Electromedical & Electrotherapeutic Apparatus
-    "5047",  # Medical, Dental & Hospital Equipment & Supplies
+    "5047",  # Medical, Dental & Hospital Equipment (consumer wearables)
     "8071",  # Medical Laboratories
-    "8082",  # Home Health Care Services
-    "8090",  # Miscellaneous Health & Allied Services, NEC
     "8091",  # Health & Allied Services, NEC
 }
 
-CLEANTECH_SIC_CODES = {
-    "1311",  # Crude Petroleum & Natural Gas
-    "1381",  # Drilling Oil & Gas Wells
-    "2860",  # Industrial Organic Chemicals
-    "2890",  # Miscellaneous Chemical Products
-    "3510",  # Engines & Turbines
-    "3511",  # Steam, Gas & Hydraulic Turbines
-    "3531",  # Construction Machinery & Equipment
-    "3600",  # Electronic & Other Electrical Equipment (No Computer Equipment)
-    "3621",  # Motors & Generators
-    "3711",  # Motor Vehicles & Passenger Car Bodies
-    "3714",  # Motor Vehicle Parts & Accessories
-    "4911",  # Electric Services
-    "4922",  # Natural Gas Transmission
-    "4923",  # Natural Gas Transmission & Distribution
-    "4931",  # Electric & Other Services Combined
-    "4939",  # Combination Utilities, NEC
-    "4953",  # Refuse Systems
+# Travel & Hospitality - Travel, Hotels, Restaurants, Experiences
+TRAVEL_HOSPITALITY_SIC_CODES = {
+    "4724",  # Travel Agencies
+    "4725",  # Tour Operators
+    "4729",  # Arrangement of Passenger Transportation, NEC
+    "5812",  # Eating Places (Restaurants)
+    "5813",  # Drinking Places (Bars)
+    "7011",  # Hotels & Motels
+    "7021",  # Rooming & Boarding Houses
+    "7032",  # Sporting & Recreational Camps
+    "7033",  # Recreational Vehicle Parks & Campsites
+    "7900",  # Amusement & Recreation Services
+    "7941",  # Professional Sports Clubs
+    "7948",  # Racing, Including Track Operation
+    "7990",  # Miscellaneous Amusement & Recreation
+    "7999",  # Amusement & Recreation Services, NEC
 }
 
-AI_INFRASTRUCTURE_SIC_CODES = {
-    "3570",  # Computer & Office Equipment
-    "3571",  # Electronic Computers
-    "3572",  # Computer Storage Devices
-    "3576",  # Computer Communications Equipment
-    "3577",  # Computer Peripheral Equipment, NEC
-    "7370",  # Computer Programming, Data Processing, etc.
-    "7371",  # Computer Programming Services
-    "7372",  # Prepackaged Software
-    "7373",  # Computer Integrated Systems Design
+# Consumer Marketplaces - Retail, E-commerce, Consumer Services
+CONSUMER_MARKETPLACE_SIC_CODES = {
+    "5300",  # General Merchandise Stores
+    "5311",  # Department Stores
+    "5331",  # Variety Stores
+    "5399",  # Miscellaneous General Merchandise Stores
+    "5600",  # Apparel & Accessory Stores
+    "5700",  # Home Furniture, Furnishings & Equipment Stores
+    "5900",  # Miscellaneous Retail
+    "5912",  # Drug Stores & Proprietary Stores
+    "5940",  # Miscellaneous Shopping Goods Stores
+    "5960",  # Nonstore Retailers
+    "5961",  # Catalog & Mail-Order Houses
+    "5990",  # Retail Stores, NEC
+    "7200",  # Personal Services
+    "7299",  # Miscellaneous Personal Services, NEC
+    "7310",  # Advertising Services (consumer-facing)
+    "7370",  # Computer Programming, Data Processing (consumer apps)
     "7374",  # Computer Processing & Data Preparation
-    "7389",  # Business Services, NEC (includes AI/ML services)
 }
 
 # Combine all target SIC codes
-TARGET_SIC_CODES = HEALTHTECH_SIC_CODES | CLEANTECH_SIC_CODES | AI_INFRASTRUCTURE_SIC_CODES
+TARGET_SIC_CODES = (
+    CONSUMER_CPG_SIC_CODES
+    | CONSUMER_HEALTHTECH_SIC_CODES
+    | TRAVEL_HOSPITALITY_SIC_CODES
+    | CONSUMER_MARKETPLACE_SIC_CODES
+)
 
 
 # =============================================================================
@@ -125,7 +165,7 @@ class FormDFiling:
 
     # Classification
     sic_code: Optional[str] = None
-    industry_group: Optional[str] = None  # healthtech, cleantech, ai_infrastructure
+    industry_group: Optional[str] = None  # consumer_cpg, consumer_healthtech, travel_hospitality, consumer_marketplace
     issuer_type: Optional[str] = None     # Corporation, LLC, LP, etc.
 
     # Location
@@ -634,22 +674,24 @@ class SECEdgarCollector(BaseCollector):
 
     def _classify_industry(self, sic_code: str) -> Optional[str]:
         """
-        Classify SIC code into thesis-fit industry groups.
+        Classify SIC code into thesis-fit industry groups (Consumer focus).
 
         Returns:
-            "healthtech", "cleantech", "ai_infrastructure", or None
+            "consumer_cpg", "consumer_healthtech", "travel_hospitality", "consumer_marketplace", or None
         """
         if not sic_code:
             return None
 
         sic_code = sic_code.strip()
 
-        if sic_code in HEALTHTECH_SIC_CODES:
-            return "healthtech"
-        elif sic_code in CLEANTECH_SIC_CODES:
-            return "cleantech"
-        elif sic_code in AI_INFRASTRUCTURE_SIC_CODES:
-            return "ai_infrastructure"
+        if sic_code in CONSUMER_CPG_SIC_CODES:
+            return "consumer_cpg"
+        elif sic_code in CONSUMER_HEALTHTECH_SIC_CODES:
+            return "consumer_healthtech"
+        elif sic_code in TRAVEL_HOSPITALITY_SIC_CODES:
+            return "travel_hospitality"
+        elif sic_code in CONSUMER_MARKETPLACE_SIC_CODES:
+            return "consumer_marketplace"
 
         return None
 
