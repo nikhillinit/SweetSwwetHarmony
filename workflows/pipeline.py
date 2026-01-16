@@ -863,8 +863,10 @@ class DiscoveryPipeline:
             # Common parameters for all collectors
             common_args = {
                 "store": self._store,
-                "asset_store": self._asset_store if self.config.use_asset_store else None,
             }
+            # Only include asset_store if enabled (collectors may not accept it)
+            if self.config.use_asset_store and self._asset_store:
+                common_args["asset_store"] = self._asset_store
 
             # Import collector dynamically based on name
             if collector_name == "github":
@@ -1339,7 +1341,7 @@ class DiscoveryPipeline:
                         "rejected",
                         error_message=f"Thesis rejected: {thesis_result.negative_keywords}",
                     )
-                    self._stats.thesis_rejected += 1
+                    # Stats tracked via returned dict in _process_signals_stage
                     return {
                         "decision": PushDecision.REJECT,
                         "reason": f"Thesis rejected: {thesis_result.negative_keywords}",
@@ -1355,7 +1357,7 @@ class DiscoveryPipeline:
                         "held",
                         error_message=f"Thesis held: score {thesis_result.keyword_score:.2f} below threshold",
                     )
-                    self._stats.thesis_held += 1
+                    # Stats tracked via returned dict in _process_signals_stage
                     return {
                         "decision": PushDecision.HOLD,
                         "reason": f"Thesis held: score {thesis_result.keyword_score:.2f} below threshold",
@@ -1364,8 +1366,8 @@ class DiscoveryPipeline:
                         "enrichment_boost": enrichment_boost,
                     }
                 else:
-                    # QUALIFIED - continue processing
-                    self._stats.thesis_passed += 1
+                    # QUALIFIED - continue processing (stats tracked via returned dict)
+                    pass
 
                 # Check for competitors (only for qualified signals)
                 competitor_match = None
