@@ -54,6 +54,7 @@ import aiosqlite
 
 if TYPE_CHECKING:
     from workflows.pipeline import PipelineStats, CollectorMetrics
+    from utils.exit_predictor import ExitPrediction
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +63,7 @@ logger = logging.getLogger(__name__)
 # SCHEMA VERSION
 # =============================================================================
 
-CURRENT_SCHEMA_VERSION = 5
+CURRENT_SCHEMA_VERSION = 6
 
 # SQL for creating tables (migrations applied in order)
 MIGRATIONS = {
@@ -255,6 +256,47 @@ MIGRATIONS = {
     CREATE INDEX IF NOT EXISTS idx_thesis_class_canonical ON thesis_classifications(canonical_key);
     CREATE INDEX IF NOT EXISTS idx_thesis_class_category ON thesis_classifications(category);
     CREATE INDEX IF NOT EXISTS idx_thesis_class_classified_at ON thesis_classifications(classified_at);
+    """,
+    6: """
+    -- Exit predictions: store heuristic exit prediction results
+    CREATE TABLE IF NOT EXISTS exit_predictions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        canonical_key TEXT NOT NULL UNIQUE,
+
+        -- Component scores (0-1 each)
+        thesis_fit REAL NOT NULL,
+        founder_score REAL NOT NULL,
+        traction_score REAL NOT NULL,
+        funding_score REAL NOT NULL,
+        velocity_score REAL NOT NULL,
+        age_score REAL NOT NULL,
+        investor_centrality REAL NOT NULL,  -- Stubbed at 0.5 in Phase 1
+        patent_count REAL NOT NULL,  -- Stubbed at 0 in Phase 1
+
+        -- Computed outputs
+        deal_quality_score REAL NOT NULL,
+        percentile_rank INTEGER,  -- NULL until nightly batch
+        exit_probability REAL NOT NULL,
+        confidence TEXT NOT NULL,  -- high, medium, low
+        recommendation TEXT NOT NULL,  -- source, tracking, hold, pass
+
+        -- Placeholders for Phase 3
+        exit_timeline TEXT DEFAULT 'unknown',
+        exit_type_probabilities TEXT,  -- JSON
+
+        -- Evidence trail
+        evidence TEXT,  -- JSON array of ExitEvidence
+
+        -- Metadata
+        model_version TEXT NOT NULL,
+        predicted_at TEXT NOT NULL,  -- ISO 8601
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_exit_pred_canonical ON exit_predictions(canonical_key);
+    CREATE INDEX IF NOT EXISTS idx_exit_pred_deal_quality ON exit_predictions(deal_quality_score DESC);
+    CREATE INDEX IF NOT EXISTS idx_exit_pred_recommendation ON exit_predictions(recommendation);
+    CREATE INDEX IF NOT EXISTS idx_exit_pred_percentile ON exit_predictions(percentile_rank);
     """
 }
 
@@ -2025,6 +2067,246 @@ class SignalStore:
         if classified_at >= cutoff:
             return result
         return None
+
+    # =========================================================================
+    # EXIT PREDICTIONS
+    # =========================================================================
+
+    async def store_exit_prediction(
+        self,
+        prediction: "ExitPrediction",
+    ) -> int:
+        """
+        Store or update an exit prediction.
+
+        Uses UPSERT to handle updates for existing canonical keys.
+
+        Args:
+            prediction: ExitPrediction dataclass from exit_predictor.py
+
+        Returns:
+            ID of the inserted/updated row
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        # Serialize evidence and exit_type_probabilities to JSON
+        evidence_json = json.dumps(
+            [{"signal_id": e.signal_id, "factor": e.factor, "value": e.value}
+             for e in prediction.evidence]
+        ) if prediction.evidence else None
+
+        exit_type_json = json.dumps(prediction.exit_type_probabilities) \
+            if prediction.exit_type_probabilities else None
+
+        cursor = await self._db.execute(
+            """
+            INSERT INTO exit_predictions (
+                canonical_key, thesis_fit, founder_score, traction_score,
+                funding_score, velocity_score, age_score, investor_centrality,
+                patent_count, deal_quality_score, percentile_rank,
+                exit_probability, confidence, recommendation,
+                exit_timeline, exit_type_probabilities, evidence,
+                model_version, predicted_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(canonical_key) DO UPDATE SET
+                thesis_fit = excluded.thesis_fit,
+                founder_score = excluded.founder_score,
+                traction_score = excluded.traction_score,
+                funding_score = excluded.funding_score,
+                velocity_score = excluded.velocity_score,
+                age_score = excluded.age_score,
+                investor_centrality = excluded.investor_centrality,
+                patent_count = excluded.patent_count,
+                deal_quality_score = excluded.deal_quality_score,
+                exit_probability = excluded.exit_probability,
+                confidence = excluded.confidence,
+                recommendation = excluded.recommendation,
+                exit_timeline = excluded.exit_timeline,
+                exit_type_probabilities = excluded.exit_type_probabilities,
+                evidence = excluded.evidence,
+                model_version = excluded.model_version,
+                predicted_at = excluded.predicted_at
+            """,
+            (
+                prediction.canonical_key,
+                prediction.thesis_fit,
+                prediction.founder_score,
+                prediction.traction_score,
+                prediction.funding_score,
+                prediction.velocity_score,
+                prediction.age_score,
+                prediction.investor_centrality,
+                prediction.patent_count,
+                prediction.deal_quality_score,
+                prediction.percentile_rank,
+                prediction.exit_probability,
+                prediction.confidence,
+                prediction.recommendation,
+                prediction.exit_timeline,
+                exit_type_json,
+                evidence_json,
+                prediction.model_version,
+                prediction.predicted_at.isoformat(),
+            ),
+        )
+        await self._db.commit()
+        return cursor.lastrowid or 0
+
+    async def get_exit_prediction(
+        self,
+        canonical_key: str,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get exit prediction for a canonical key.
+
+        Args:
+            canonical_key: The canonical key to look up
+
+        Returns:
+            Dictionary with prediction details or None if not found
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        cursor = await self._db.execute(
+            """
+            SELECT id, canonical_key, thesis_fit, founder_score, traction_score,
+                   funding_score, velocity_score, age_score, investor_centrality,
+                   patent_count, deal_quality_score, percentile_rank,
+                   exit_probability, confidence, recommendation,
+                   exit_timeline, exit_type_probabilities, evidence,
+                   model_version, predicted_at, created_at
+            FROM exit_predictions
+            WHERE canonical_key = ?
+            """,
+            (canonical_key,),
+        )
+        row = await cursor.fetchone()
+
+        if not row:
+            return None
+
+        return {
+            "id": row[0],
+            "canonical_key": row[1],
+            "thesis_fit": row[2],
+            "founder_score": row[3],
+            "traction_score": row[4],
+            "funding_score": row[5],
+            "velocity_score": row[6],
+            "age_score": row[7],
+            "investor_centrality": row[8],
+            "patent_count": row[9],
+            "deal_quality_score": row[10],
+            "percentile_rank": row[11],
+            "exit_probability": row[12],
+            "confidence": row[13],
+            "recommendation": row[14],
+            "exit_timeline": row[15],
+            "exit_type_probabilities": json.loads(row[16]) if row[16] else {},
+            "evidence": json.loads(row[17]) if row[17] else [],
+            "model_version": row[18],
+            "predicted_at": row[19],
+            "created_at": row[20],
+        }
+
+    async def get_all_exit_predictions(
+        self,
+        order_by: str = "deal_quality_score DESC",
+    ) -> List[Dict[str, Any]]:
+        """
+        Get all exit predictions ordered by specified column.
+
+        Args:
+            order_by: SQL ORDER BY clause (default: deal_quality_score DESC)
+
+        Returns:
+            List of prediction dictionaries
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        # Validate order_by to prevent SQL injection
+        allowed_columns = {
+            "deal_quality_score", "exit_probability", "predicted_at",
+            "created_at", "canonical_key", "percentile_rank",
+        }
+        order_parts = order_by.split()
+        if order_parts[0] not in allowed_columns:
+            order_by = "deal_quality_score DESC"
+
+        cursor = await self._db.execute(
+            f"""
+            SELECT id, canonical_key, thesis_fit, founder_score, traction_score,
+                   funding_score, velocity_score, age_score, investor_centrality,
+                   patent_count, deal_quality_score, percentile_rank,
+                   exit_probability, confidence, recommendation,
+                   exit_timeline, exit_type_probabilities, evidence,
+                   model_version, predicted_at, created_at
+            FROM exit_predictions
+            ORDER BY {order_by}
+            """
+        )
+        rows = await cursor.fetchall()
+
+        return [
+            {
+                "id": row[0],
+                "canonical_key": row[1],
+                "thesis_fit": row[2],
+                "founder_score": row[3],
+                "traction_score": row[4],
+                "funding_score": row[5],
+                "velocity_score": row[6],
+                "age_score": row[7],
+                "investor_centrality": row[8],
+                "patent_count": row[9],
+                "deal_quality_score": row[10],
+                "percentile_rank": row[11],
+                "exit_probability": row[12],
+                "confidence": row[13],
+                "recommendation": row[14],
+                "exit_timeline": row[15],
+                "exit_type_probabilities": json.loads(row[16]) if row[16] else {},
+                "evidence": json.loads(row[17]) if row[17] else [],
+                "model_version": row[18],
+                "predicted_at": row[19],
+                "created_at": row[20],
+            }
+            for row in rows
+        ]
+
+    async def update_exit_prediction_percentile(
+        self,
+        canonical_key: str,
+        percentile_rank: int,
+    ) -> bool:
+        """
+        Update the percentile rank for an exit prediction.
+
+        Called by the nightly batch job.
+
+        Args:
+            canonical_key: The canonical key to update
+            percentile_rank: Computed percentile (1-99)
+
+        Returns:
+            True if updated, False if not found
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        cursor = await self._db.execute(
+            """
+            UPDATE exit_predictions
+            SET percentile_rank = ?
+            WHERE canonical_key = ?
+            """,
+            (percentile_rank, canonical_key),
+        )
+        await self._db.commit()
+        return cursor.rowcount > 0
 
 
 # =============================================================================
