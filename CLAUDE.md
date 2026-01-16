@@ -54,6 +54,8 @@ Automated deal sourcing system for Press On Ventures (early-stage VC).
 | `utils/thesis_matcher.py` | Keyword-based thesis fit scoring (stage 1) |
 | `utils/signal_health.py` | Signal quality and anomaly detection |
 | `consumer/thesis_filter/llm_classifier.py` | Gemini LLM thesis classification (stage 2) |
+| `utils/exit_predictor.py` | Exit prediction scoring (heuristic MVP) |
+| `utils/exit_predictor_batch.py` | Nightly batch job for percentile ranking |
 
 ## Collectors
 
@@ -219,7 +221,25 @@ Exit criteria met:
 - ✓ Classifications persisted in DB
 - ✓ User controls push action via CLI
 
-**Phase 4: Collector Evaluation** (research FIRST, build LAST)
+**Phase 4: Exit Predictor MVP** ✅ COMPLETE
+
+- [x] Created `utils/exit_predictor.py` with ExitPredictor class
+- [x] Heuristic weighted scoring (academic-validated weights)
+- [x] Component scores: thesis_fit, founder_score, traction_score, funding_score, velocity_score, age_score
+- [x] Stubbed values: investor_centrality=0.5, patent_count=0 (for Phase 2/3)
+- [x] Database storage with migration 6 (exit_predictions table)
+- [x] Nightly batch job for percentile ranking (`utils/exit_predictor_batch.py`)
+- [x] Pipeline integration (after verification gate, before Notion push)
+- [x] Feature-flagged via `ENABLE_EXIT_PREDICTOR` env var (default: false)
+- [x] 77 tests (62 predictor + 15 storage/batch)
+
+Exit criteria met:
+- ✓ Heuristic exit prediction scoring working
+- ✓ Predictions stored in database
+- ✓ Percentile ranking via nightly batch
+- ✓ Non-blocking pipeline integration
+
+**Phase 5: Collector Evaluation** (research FIRST, build LAST)
 
 Problem: Proposed collectors may not have accessible APIs.
 
@@ -233,7 +253,7 @@ Problem: Proposed collectors may not have accessible APIs.
 
 Exit criteria: Research doc with BUILD/DEFER/ABANDON decisions + rationale.
 
-**Dependency Order:** Phase 1 → Phase 2 → Phase 3 → Phase 4 (sequential)
+**Dependency Order:** Phase 1 → Phase 2 → Phase 3 → Phase 4 → Phase 5 (sequential)
 
 **Key Risks:**
 | Risk | Mitigation |
