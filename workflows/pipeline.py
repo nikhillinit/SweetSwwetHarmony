@@ -46,6 +46,7 @@ from utils.signal_consolidator import SignalConsolidator, ConsolidatedSignal
 from utils.enrichment_boost import EnrichmentBoostCalculator, EnrichmentConfig
 from utils.thesis_filter import ThesisFilter, ThesisFilterConfig, RoutingDecision
 from utils.competitor_detector import CompetitorDetector
+from utils.exit_predictor import ExitPredictor
 from storage.source_asset_store import SourceAssetStore, SourceAsset
 from storage.founder_store import FounderStore
 from storage.entity_resolution import EntityResolutionStore, AssetToLead
@@ -152,6 +153,9 @@ class PipelineConfig:
     use_competitor_detection: bool = True
     portfolio_path: str = "config/portfolio.json"
 
+    # Exit prediction (Phase 4)
+    use_exit_predictor: bool = False  # Enable exit prediction scoring
+
     @classmethod
     def from_env(cls) -> PipelineConfig:
         """Load configuration from environment variables"""
@@ -174,6 +178,7 @@ class PipelineConfig:
             use_velocity_tracking=os.getenv("USE_VELOCITY_TRACKING", "true").lower() == "true",
             use_thesis_filter=os.getenv("USE_THESIS_FILTER", "true").lower() == "true",
             use_competitor_detection=os.getenv("USE_COMPETITOR_DETECTION", "true").lower() == "true",
+            use_exit_predictor=os.getenv("ENABLE_EXIT_PREDICTOR", "false").lower() == "true",
         )
 
 
@@ -343,6 +348,7 @@ class DiscoveryPipeline:
         # Harmonic enhancements
         self._founder_store: Optional[FounderStore] = None
         self._velocity_tracker: Optional[SignalVelocityTracker] = None
+        self._exit_predictor: Optional[ExitPredictor] = None
 
         # Signal consolidation
         self._consolidator: Optional[SignalConsolidator] = (
@@ -444,6 +450,15 @@ class DiscoveryPipeline:
             velocity_config = VelocityConfig()
             self._velocity_tracker = SignalVelocityTracker(self._store, velocity_config)
             logger.info("SignalVelocityTracker initialized (momentum detection enabled)")
+
+        # Initialize ExitPredictor (if exit prediction enabled)
+        if self.config.use_exit_predictor:
+            self._exit_predictor = ExitPredictor(
+                founder_store=self._founder_store,
+                velocity_tracker=self._velocity_tracker,
+                signal_store=self._store,
+            )
+            logger.info("ExitPredictor initialized (exit prediction enabled)")
 
         # Initialize SignalHealthMonitor (non-fatal if it fails)
         try:
@@ -1481,6 +1496,28 @@ class DiscoveryPipeline:
             f"Verification for {canonical_key}: "
             f"{verification.decision.value} (confidence: {verification.confidence_score:.2f})"
         )
+
+        # Compute exit prediction (if enabled and passes gate)
+        exit_prediction = None
+        if (
+            self._exit_predictor
+            and verification.decision in (PushDecision.AUTO_PUSH, PushDecision.NEEDS_REVIEW)
+            and consolidated
+        ):
+            try:
+                exit_prediction = await self._exit_predictor.predict(
+                    consolidated=consolidated,
+                    thesis_classification=thesis_result,
+                )
+                # Store prediction
+                await self._store.store_exit_prediction(exit_prediction)
+                logger.info(
+                    f"Exit prediction for {canonical_key}: "
+                    f"quality={exit_prediction.deal_quality_score:.2f}, "
+                    f"rec={exit_prediction.recommendation}"
+                )
+            except Exception as e:
+                logger.warning(f"Exit prediction failed for {canonical_key} (non-fatal): {e}")
 
         # Decide on Notion push
         notion_status = None
