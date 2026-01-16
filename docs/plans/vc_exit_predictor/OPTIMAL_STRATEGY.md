@@ -116,6 +116,26 @@ class ExitPredictor:
         # Weighted combination
         # Percentile ranking
         # Exit probability heuristic
+
+# Evidence-based prediction (from LLMClassifier spec)
+class ExitEvidence(BaseModel):
+    signal_id: int
+    source_name: str  # e.g., "crunchbase_funding"
+    factor: str       # e.g., "serial_founder"
+    value: float      # e.g., 0.85
+    quote: str        # Supporting evidence text
+
+class ExitPrediction(BaseModel):
+    canonical_key: str
+    exit_probability: float = Field(ge=0.0, le=1.0)
+    percentile_rank: int = Field(ge=0, le=100)
+    exit_timeline: Literal['1-2yr', '2-3yr', '3-5yr', '5-7yr', '7+yr']
+    exit_type_probabilities: Dict[str, float]  # {ipo: 0.3, acquisition: 0.6}
+    confidence: Literal['high', 'medium', 'low']
+    key_factors: List[str]
+    evidence: List[ExitEvidence] = Field(min_items=1)
+    was_corrected: bool = False
+    prediction_failed: bool = False
 ```
 
 **Integration point**: After verification gate in `_process_company()` (pipeline.py:1478)
@@ -126,28 +146,120 @@ class ExitPredictor:
 - Pipeline integration
 - 20+ unit tests
 
-### Phase 2: Investor Network + Snapshots (Weeks 2-3)
-Build infrastructure for enhanced scoring:
+### Phase 2: VC Investment Graph + Investor Network (Weeks 2-4)
+Build entity-centric graph infrastructure (from VCGraphBuilder docs):
 
 ```python
+# services/vc_graph_builder.py
+class VCGraphBuilder:
+    """ETL pipeline: signals → graph entities → relationships."""
+
+    def __init__(self, store: SignalStore):
+        self.store = store
+        self.entity_resolver = EntityResolver(store)
+        self._parsers = {
+            'crunchbase_funding': CrunchbaseFundingParser(),
+            'sec_edgar_form_d': SecEdgarFormDParser(),
+        }
+
+    async def run(self, batch_size: int = 100):
+        await self.entity_resolver.warm_up_cache()
+        signals = await self.store.get_unprocessed_graph_signals(limit=batch_size)
+        for signal in signals:
+            await self._process_signal(signal)
+
+# services/entity_resolver.py
+class EntityResolver:
+    """Alias cache for O(1) entity lookup."""
+
+    async def get_or_create_entity(self, aliases, entity_type, canonical_name, properties):
+        # Check cache first, then create if not found
+        for alias_type, alias_value in aliases.items():
+            cache_key = f"{alias_type}:{alias_value}"
+            if cache_key in self._alias_cache:
+                return await self.store.get_graph_entity(self._alias_cache[cache_key])
+        # Create new entity + populate aliases
+        return await self._create_entity_with_aliases(...)
+
 # utils/investor_network.py
 class InvestorNetworkAnalyzer:
-    """Build co-investment graph from Crunchbase data."""
+    """Compute investor quality from graph relationships."""
 
-    async def build_network(self) -> nx.Graph:
-        # Query funding_rounds from Crunchbase signals
-        # Create edges between co-investors
-        # Calculate eigenvector_centrality
+    def __init__(self, store: SignalStore):
+        self.store = store
+        self.graph = nx.DiGraph()
 
-    def score_investors(self, investors: List[str]) -> float:
-        # Average centrality of company's investors
-        # Normalized to 0-1
+    async def build_from_graph_tables(self):
+        """Build NetworkX graph from graph_relationships table."""
+        relationships = await self.store.get_relationships_by_type('invested_in')
+        for rel in relationships:
+            self.graph.add_edge(rel.source_entity_id, rel.target_entity_id,
+                               effective_date=rel.effective_date,
+                               properties=rel.properties)
+
+    def compute_investor_centrality(self) -> Dict[int, float]:
+        """PageRank for investor nodes."""
+        return nx.pagerank(self.graph)
+
+    def compute_investor_quality(self, investor_id: int) -> float:
+        """Quality = exit_rate * centrality * portfolio_survival."""
+        portfolio = self._get_portfolio(investor_id)
+        exits = sum(1 for c in portfolio if self._has_exit(c))
+        return (exits / len(portfolio)) * self.centrality[investor_id]
 ```
 
 ```sql
--- Migration 7: Snapshot tracking
+-- Migration 7: VC Investment Graph Schema
+-- Canonical nodes (companies, people, investors)
+CREATE TABLE graph_entities (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    canonical_key TEXT NOT NULL UNIQUE,
+    entity_type TEXT NOT NULL,  -- 'company', 'person', 'investor_firm'
+    canonical_name TEXT NOT NULL,
+    properties TEXT,  -- JSON
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
+-- Alias → Entity mapping for entity resolution
+CREATE TABLE entity_aliases (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    entity_id INTEGER NOT NULL,
+    alias TEXT NOT NULL,
+    alias_type TEXT NOT NULL,  -- 'crunchbase_uuid', 'domain', 'linkedin'
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (entity_id) REFERENCES graph_entities(id),
+    UNIQUE(alias, alias_type)
+);
+
+-- Typed, directed, time-stamped edges
+CREATE TABLE graph_relationships (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_entity_id INTEGER NOT NULL,
+    target_entity_id INTEGER NOT NULL,
+    relationship_type TEXT NOT NULL,  -- 'invested_in', 'founded', 'acquired'
+    effective_date TEXT,
+    observed_date TEXT NOT NULL,
+    properties TEXT,  -- JSON (amount, round, valuation)
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (source_entity_id) REFERENCES graph_entities(id),
+    FOREIGN KEY (target_entity_id) REFERENCES graph_entities(id)
+);
+
+-- Signal traceability
+CREATE TABLE relationship_sources (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    relationship_id INTEGER NOT NULL,
+    signal_id INTEGER NOT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (relationship_id) REFERENCES graph_relationships(id),
+    FOREIGN KEY (signal_id) REFERENCES signals(id),
+    UNIQUE(relationship_id, signal_id)
+);
+
+-- Company snapshots for growth rate calculation
 CREATE TABLE company_snapshots (
-    id INTEGER PRIMARY KEY,
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
     canonical_key TEXT NOT NULL,
     snapshot_date DATE NOT NULL,
     github_stars INTEGER,
@@ -157,23 +269,70 @@ CREATE TABLE company_snapshots (
     UNIQUE(canonical_key, snapshot_date)
 );
 
-CREATE TABLE investor_network (
-    investor_name TEXT PRIMARY KEY,
-    eigenvector_centrality REAL,
-    co_investment_count INTEGER,
-    updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-);
+CREATE INDEX idx_entities_type ON graph_entities(entity_type);
+CREATE INDEX idx_relationships_type ON graph_relationships(relationship_type);
+CREATE INDEX idx_relationships_source ON graph_relationships(source_entity_id);
+CREATE INDEX idx_relationships_target ON graph_relationships(target_entity_id);
 ```
 
 **Deliverables**:
+- `services/vc_graph_builder.py` (~300 LOC)
+- `services/entity_resolver.py` (~150 LOC)
+- `services/relationship_parsers/` (~200 LOC)
 - `utils/investor_network.py` (~200 LOC)
 - Weekly snapshot collection job
-- `utils/traction_calculator.py` (~150 LOC)
-- Enhanced exit predictor with growth rates
+- Enhanced exit predictor with investor centrality
 
-### Phase 3: ML Model (Month 2+)
-Once 12 months of predictions + outcomes exist:
+### Phase 3: Multi-Agent LLM + ML Model (Month 2+)
+Once 12 months of predictions + outcomes exist, upgrade to ensemble prediction:
 
+**Multi-Agent Architecture (from povc analysis):**
+```python
+# services/multi_agent_llm.py
+class MultiAgentLLM:
+    """Ensemble LLM system with specialized agents."""
+
+    def __init__(self, config):
+        self.technical_agent = TechnicalAgent(config)   # GitHub, tech stack
+        self.market_agent = MarketAgent(config)         # Market size, PMF
+        self.network_agent = NetworkAgent(config)       # Investor quality
+        self.manager_agent = ManagerAgent(config)       # Final decision
+        self.weight_generator = WeightGenerator()       # Learned weights
+
+    async def predict(self, company_data: ConsolidatedSignal) -> ExitPrediction:
+        # Get predictions from each agent
+        tech_analysis = await self.technical_agent.analyze(company_data)
+        market_analysis = await self.market_agent.analyze(company_data)
+        network_analysis = await self.network_agent.analyze(
+            company_data, graph_context=self._get_graph_context(company_data)
+        )
+
+        # Learn/retrieve per-company weights
+        weights = self.weight_generator.get_weights(company_data)
+
+        # Aggregate with manager agent
+        return await self.manager_agent.decide(
+            analyses=[tech_analysis, market_analysis, network_analysis],
+            weights=weights
+        )
+
+# services/weight_generator.py
+class WeightGenerator:
+    """Learn per-company weights for multi-agent fusion."""
+
+    def train(self, historical_data):
+        """Train on: company features + agent predictions → optimal weights."""
+        # Uses historical predictions where we know outcomes
+        # Learns which agent is most predictive for each company type
+        pass
+
+    def get_weights(self, company_features) -> np.ndarray:
+        """Returns [w_technical, w_market, w_network] that sum to 1."""
+        weights = self.model.predict(company_features)
+        return weights / weights.sum()
+```
+
+**ML Model Stack:**
 - **pycox DeepHit** for competing risks (IPO vs acquisition vs failure)
   - Pin version 0.3.0 (pre-alpha, may have API changes)
   - Write wrapper class to isolate from library internals
@@ -181,6 +340,44 @@ Once 12 months of predictions + outcomes exist:
 - **SHAP + SurvSHAP(t)** for explainability (investor-facing evidence)
 - Compare to heuristic baseline via A/B test
 - Quarterly retraining pipeline
+
+**Agent Prompt Templates:**
+```python
+TECHNICAL_AGENT_PROMPT = """
+Analyze this company's technical capabilities:
+- GitHub activity: {github_stats}
+- Tech stack signals: {tech_signals}
+- Team technical background: {founder_tech}
+
+Rate technical strength (0-1) and explain key factors.
+"""
+
+MARKET_AGENT_PROMPT = """
+Assess this company's market opportunity:
+- Thesis fit: {thesis_classification}
+- Market signals: {market_data}
+- Competitive landscape: {competitors}
+
+Rate market opportunity (0-1) and explain key factors.
+"""
+
+NETWORK_AGENT_PROMPT = """
+Evaluate this company's investor network strength:
+- Investors: {investor_list}
+- Investor centrality scores: {centrality}
+- Co-investment patterns: {co_investments}
+- Path to exits: {exit_paths}
+
+Rate network strength (0-1) and explain key factors.
+"""
+```
+
+**Deliverables**:
+- `services/multi_agent_llm.py` (~400 LOC)
+- `services/weight_generator.py` (~200 LOC)
+- Agent prompt templates in `config/agent_prompts/`
+- pycox integration for survival analysis
+- A/B test framework for heuristic vs ML comparison
 
 ## Governance Adoption
 
