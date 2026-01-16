@@ -75,6 +75,7 @@ Automated deal sourcing system for Press On Ventures (early-stage VC).
 | `uspto.py` | USPTO patent filings | 0.4-0.6 | None |
 | `linkedin.py` | LinkedIn company/jobs | 0.5-0.8 | PROXYCURL_API_KEY |
 | `crunchbase.py` | Crunchbase funding data | 0.6-0.9 | CRUNCHBASE_API_KEY |
+| `opencorporates.py` | Global incorporations | 0.6-0.75 | OPENCORPORATES_API_KEY |
 
 ## Architecture Rules
 
@@ -347,5 +348,6 @@ GITHUB_TOKEN=ghp_xxx (public repos only)
 COMPANIES_HOUSE_API_KEY=xxx
 PH_API_KEY=xxx (Product Hunt API key)
 GOOGLE_API_KEY=xxx (Gemini - free at aistudio.google.com/apikey)
+OPENCORPORATES_API_KEY=xxx (free tier at opencorporates.com/api_accounts/new)
 DISCOVERY_DB_PATH=signals.db (default)
 ```

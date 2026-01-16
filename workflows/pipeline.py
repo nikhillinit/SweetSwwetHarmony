@@ -982,6 +982,15 @@ class DiscoveryPipeline:
             elif collector_name == "uspto":
                 from collectors.uspto import USPTOCollector
                 collector = USPTOCollector(**common_args)
+            elif collector_name == "opencorporates":
+                from collectors.opencorporates import OpenCorporatesCollector
+                oc_key = os.getenv("OPENCORPORATES_API_KEY")
+                if not oc_key:
+                    logger.warning("OPENCORPORATES_API_KEY not set - rate limits apply")
+                collector = OpenCorporatesCollector(
+                    store=common_args.get("store"),
+                    api_key=oc_key,
+                )
             else:
                 metrics.status = "error"
                 metrics.error_messages = [f"Unknown collector: {collector_name}"]

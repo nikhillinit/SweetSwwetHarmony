@@ -1438,6 +1438,51 @@ Examples:
         help="Path to signals database",
     )
 
+    # --- corroborate command ---
+    corroborate_parser = subparsers.add_parser(
+        "corroborate",
+        help="Look up companies in incorporation databases for corroboration",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="""
+Look up companies in OpenCorporates to add corroborating incorporation signals.
+
+This command takes held/pending signals and looks them up in corporate registries
+(Delaware, California, UK Companies House) to find incorporation records.
+
+Examples:
+  # Look up top 20 held signals
+  python run_pipeline.py corroborate --limit 20
+
+  # Dry run to see what would be looked up
+  python run_pipeline.py corroborate --dry-run --limit 10
+
+  # Look up specific source (e.g., PitchBook signals)
+  python run_pipeline.py corroborate --source pitchbook --limit 50
+""",
+    )
+    corroborate_parser.add_argument(
+        "--limit",
+        type=int,
+        default=20,
+        help="Maximum companies to look up (default: 20, max 50 for rate limits)",
+    )
+    corroborate_parser.add_argument(
+        "--source",
+        type=str,
+        help="Only look up signals from this source (e.g., pitchbook)",
+    )
+    corroborate_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show what would be looked up without making API calls",
+    )
+    corroborate_parser.add_argument(
+        "--db-path",
+        type=str,
+        default=os.getenv("DISCOVERY_DB_PATH", "signals.db"),
+        help="Path to signals database",
+    )
+
     return parser
 
 
@@ -1577,6 +1622,101 @@ async def cmd_import_csv(args):
         await store.close()
 
 
+async def cmd_corroborate(args):
+    """Look up companies in OpenCorporates for corroboration."""
+    import json
+    from collectors.opencorporates import OpenCorporatesCollector
+
+    # Enforce rate limit
+    limit = min(args.limit, 50)
+
+    # Initialize store
+    store = SignalStore(args.db_path)
+    await store.initialize()
+
+    try:
+        # Build query to get companies to look up
+        source_filter = ""
+        params = []
+        if args.source:
+            source_filter = "AND source_api = ?"
+            params.append(args.source)
+
+        query = f"""
+            SELECT DISTINCT company_name, canonical_key, source_api, confidence
+            FROM signals
+            WHERE company_name IS NOT NULL
+              AND company_name != ''
+              {source_filter}
+            ORDER BY confidence DESC
+            LIMIT ?
+        """
+        params.append(limit)
+
+        cursor = await store._db.execute(query, params)
+        rows = await cursor.fetchall()
+
+        print("\n" + "=" * 70)
+        print("CORROBORATE - OpenCorporates Lookup")
+        print("=" * 70)
+        print(f"Companies to look up: {len(rows)}")
+        print(f"Source filter: {args.source or 'all'}")
+        print(f"Dry run: {args.dry_run}")
+        print("-" * 70)
+
+        if args.dry_run:
+            print("\nCompanies that would be looked up:")
+            for row in rows:
+                name, key, source, conf = row
+                print(f"  {name[:40]:<40} | {source:<12} | conf={conf:.2f}")
+            print("\n(Dry run - no API calls made)")
+            return
+
+        # Initialize OpenCorporates collector
+        collector = OpenCorporatesCollector(store=store)
+
+        found = 0
+        not_found = 0
+        errors = 0
+
+        print("\nLooking up companies...")
+        for row in rows:
+            name, existing_key, source, conf = row
+            try:
+                signal = await collector.lookup_and_corroborate(name, existing_key)
+                if signal:
+                    # Save the corroboration signal
+                    await store.save_signal(
+                        signal_type=signal["signal_type"],
+                        source_api=signal["source_api"],
+                        canonical_key=signal["canonical_key"],
+                        company_name=signal["company_name"],
+                        confidence=signal["confidence"],
+                        raw_data=signal["raw_data"],
+                        detected_at=signal["detected_at"],
+                    )
+                    status = signal["raw_data"].get("status", "Unknown")
+                    juris = signal["raw_data"].get("jurisdiction", "?")
+                    print(f"  [FOUND] {name[:35]:<35} | {juris:<6} | {status}")
+                    found += 1
+                else:
+                    print(f"  [-----] {name[:35]:<35} | not found")
+                    not_found += 1
+            except Exception as e:
+                print(f"  [ERROR] {name[:35]:<35} | {str(e)[:30]}")
+                errors += 1
+
+        print("-" * 70)
+        print(f"Found: {found} | Not found: {not_found} | Errors: {errors}")
+        print("=" * 70)
+
+        # Close collector
+        await collector.close()
+
+    finally:
+        await store.close()
+
+
 async def main():
     """Main entry point"""
 
@@ -1641,6 +1781,8 @@ async def main():
                 sys.exit(1)
         elif args.command == "import-csv":
             await cmd_import_csv(args)
+        elif args.command == "corroborate":
+            await cmd_corroborate(args)
         else:
             print(f"Unknown command: {args.command}")
             parser.print_help()
