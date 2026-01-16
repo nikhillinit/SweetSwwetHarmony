@@ -1390,7 +1390,8 @@ Environment variables:
 Import signals from CSV exports.
 
 Supported sources:
-  openvc - OpenVC.app CSV exports (deal flow, investor connections)
+  openvc    - OpenVC.app CSV exports (deal flow, investor connections)
+  pitchbook - PitchBook CSV exports (company data, deal flow)
 
 Examples:
   # Dry run to see what would be imported
@@ -1412,7 +1413,7 @@ Examples:
         "--source",
         type=str,
         default="openvc",
-        choices=["openvc"],
+        choices=["openvc", "pitchbook"],
         help="CSV source format (default: openvc)",
     )
     import_parser.add_argument(
@@ -1516,6 +1517,7 @@ async def cmd_schema_docs(args):
 async def cmd_import_csv(args):
     """Import signals from CSV files."""
     from importers.openvc_csv import OpenVCImporter
+    from importers.pitchbook_csv import PitchBookImporter
 
     # Parse filters
     sector_filter = None
@@ -1533,6 +1535,14 @@ async def cmd_import_csv(args):
     try:
         if args.source == "openvc":
             importer = OpenVCImporter(store)
+            result = await importer.import_csv(
+                args.file,
+                dry_run=args.dry_run,
+                sector_filter=sector_filter,
+                stage_filter=stage_filter,
+            )
+        elif args.source == "pitchbook":
+            importer = PitchBookImporter(store)
             result = await importer.import_csv(
                 args.file,
                 dry_run=args.dry_run,
