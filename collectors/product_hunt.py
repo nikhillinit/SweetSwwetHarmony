@@ -36,7 +36,9 @@ import httpx
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from collectors.base import BaseCollector
+from collectors.provenance import create_provenance, hash_response
 from collectors.retry_strategy import with_retry, RetryConfig
+from collectors.source_types import SOURCE_TYPE
 from discovery_engine.mcp_server import CollectorResult, CollectorStatus
 from storage.signal_store import SignalStore
 from utils.rate_limiter import get_rate_limiter
@@ -101,7 +103,7 @@ class ProductHuntLaunch:
 
         return min(base, 1.0)
 
-    def to_signal(self) -> Signal:
+    def to_signal(self, retrieved_at: Optional[datetime] = None) -> Signal:
         """Convert to verification gate Signal."""
         confidence = self.calculate_signal_score()
 
@@ -116,16 +118,35 @@ class ProductHuntLaunch:
         signal_id = f"ph_{self.product_id}"
         signal_hash = hashlib.sha256(signal_id.encode()).hexdigest()[:12]
 
+        # Use provided retrieved_at or default to now
+        if retrieved_at is None:
+            retrieved_at = datetime.now(timezone.utc)
+
+        # Build raw data for hashing
+        raw_data_for_hash = {
+            "product_id": self.product_id,
+            "votes_count": self.votes_count,
+            "comments_count": self.comments_count,
+        }
+
+        # Create provenance for audit trail
+        provenance = create_provenance(
+            source_url=self.url,
+            response_data=raw_data_for_hash,
+            endpoint="/v2/api/graphql",
+            query_params={"product_id": self.product_id},
+            retrieved_at=retrieved_at,
+        )
+
         return Signal(
             id=f"product_hunt_launch_{signal_hash}",
             signal_type="product_hunt_launch",
             confidence=confidence,
             source_api="product_hunt",
             source_url=self.url,
-            source_response_hash=hashlib.sha256(
-                f"{self.product_id}:{self.votes_count}".encode()
-            ).hexdigest()[:16],
+            source_response_hash=hash_response(raw_data_for_hash),
             detected_at=self.launched_at,
+            retrieved_at=retrieved_at,
             verification_status=VerificationStatus.SINGLE_SOURCE,
             verified_by_sources=["product_hunt"],
             raw_data={
@@ -140,6 +161,7 @@ class ProductHuntLaunch:
                 "topics": self.topics[:5],
                 "makers": self.makers[:3],
                 "website": self.website,
+                **provenance,  # Add provenance block
             }
         )
 

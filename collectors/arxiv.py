@@ -44,6 +44,8 @@ import httpx
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from collectors.base import BaseCollector
+from collectors.provenance import create_provenance, hash_response
+from collectors.source_types import SOURCE_TYPE
 from discovery_engine.mcp_server import CollectorResult, CollectorStatus
 from storage.signal_store import SignalStore
 from verification.verification_gate_v2 import Signal, VerificationStatus
@@ -124,7 +126,7 @@ class ArxivPaper:
 
         return min(base, 1.0)
 
-    def to_signal(self) -> Signal:
+    def to_signal(self, retrieved_at: Optional[datetime] = None) -> Signal:
         """Convert to verification gate Signal."""
         confidence = self.calculate_signal_score()
 
@@ -135,16 +137,35 @@ class ArxivPaper:
         signal_id = f"arxiv_{self.arxiv_id.replace('.', '_')}"
         signal_hash = hashlib.sha256(signal_id.encode()).hexdigest()[:12]
 
+        # Use provided retrieved_at or default to now
+        if retrieved_at is None:
+            retrieved_at = datetime.now(timezone.utc)
+
+        # Build raw data for hashing
+        raw_data_for_hash = {
+            "arxiv_id": self.arxiv_id,
+            "updated_at": self.updated_at.isoformat(),
+        }
+
+        # Create provenance for audit trail
+        source_url = f"https://arxiv.org/abs/{self.arxiv_id}"
+        provenance = create_provenance(
+            source_url=source_url,
+            response_data=raw_data_for_hash,
+            endpoint="/api/query",
+            query_params={"id_list": self.arxiv_id},
+            retrieved_at=retrieved_at,
+        )
+
         return Signal(
             id=f"research_paper_{signal_hash}",
             signal_type="research_paper",
             confidence=confidence,
             source_api="arxiv",
-            source_url=f"https://arxiv.org/abs/{self.arxiv_id}",
-            source_response_hash=hashlib.sha256(
-                f"{self.arxiv_id}:{self.updated_at.isoformat()}".encode()
-            ).hexdigest()[:16],
+            source_url=source_url,
+            source_response_hash=hash_response(raw_data_for_hash),
             detected_at=self.published_at,
+            retrieved_at=retrieved_at,
             verification_status=VerificationStatus.SINGLE_SOURCE,
             verified_by_sources=["arxiv"],
             raw_data={
@@ -156,6 +177,7 @@ class ArxivPaper:
                 "categories": self.categories,
                 "affiliations": self.affiliations[:3],
                 "pdf_url": self.pdf_url,
+                **provenance,  # Add provenance block
             }
         )
 

@@ -43,6 +43,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from collectors.base import BaseCollector
 from collectors.retry_strategy import with_retry, RetryConfig
+from collectors.provenance import create_provenance, hash_response
+from collectors.source_types import SOURCE_TYPE
 from discovery_engine.mcp_server import CollectorResult, CollectorStatus
 from storage.signal_store import SignalStore
 from utils.rate_limiter import get_rate_limiter
@@ -647,6 +649,16 @@ class GitHubCollector(BaseCollector):
 
             # Create signal
             signal_id = f"github_spike_{hashlib.sha256(repo.repo_full_name.encode()).hexdigest()[:12]}"
+            retrieved_at = datetime.now(timezone.utc)
+
+            # Build provenance for audit trail
+            provenance = create_provenance(
+                source_url=repo.html_url,
+                response_data=repo.raw_repo_data,
+                endpoint=f"/repos/{repo.repo_full_name}",
+                query_params=None,
+                retrieved_at=retrieved_at,
+            )
 
             signal = Signal(
                 id=signal_id,
@@ -654,9 +666,8 @@ class GitHubCollector(BaseCollector):
                 confidence=confidence,
                 source_api="github",
                 source_url=repo.html_url,
-                source_response_hash=hashlib.sha256(
-                    str(repo.raw_repo_data).encode()
-                ).hexdigest(),
+                source_response_hash=hash_response(repo.raw_repo_data),
+                retrieved_at=retrieved_at,
                 detected_at=datetime.now(timezone.utc),
                 verified_by_sources=["github"],
                 verification_status=VerificationStatus.SINGLE_SOURCE,
@@ -700,6 +711,9 @@ class GitHubCollector(BaseCollector):
                     # Why now / thesis fit
                     "why_now": self._generate_why_now(repo),
                     "thesis_fit": self._assess_thesis_fit(repo),
+
+                    # Provenance (Glass.AI: show your work)
+                    **provenance,
                 }
             )
 

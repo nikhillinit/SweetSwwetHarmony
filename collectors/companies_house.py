@@ -44,7 +44,9 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from collectors.base import BaseCollector
+from collectors.provenance import create_provenance, hash_response
 from collectors.retry_strategy import with_retry, RetryConfig
+from collectors.source_types import SOURCE_TYPE
 from discovery_engine.mcp_server import CollectorResult, CollectorStatus
 from storage.signal_store import SignalStore
 from utils.rate_limiter import get_rate_limiter
@@ -255,11 +257,6 @@ class CompanyProfile:
         # Use first candidate as primary canonical key
         canonical_key = canonical_key_candidates[0] if canonical_key_candidates else f"companies_house_{self.company_number}"
 
-        # Generate stable hash for provenance tracking
-        response_hash = hashlib.sha256(
-            f"{self.company_number}:{self.incorporation_date}".encode()
-        ).hexdigest()[:16]
-
         # Confidence based on:
         # - Active status (dissolved = 0 confidence)
         # - Industry match (target sector = higher confidence)
@@ -300,14 +297,24 @@ class CompanyProfile:
         ]
         address_str = ", ".join([p for p in address_parts if p])
 
+        # Create provenance for audit trail
+        provenance = create_provenance(
+            source_url=self.company_url,
+            response_data=self.raw_data,
+            endpoint=f"/company/{self.company_number}",
+            query_params=None,
+            retrieved_at=self.retrieved_at,
+        )
+
         return Signal(
             id=f"companies_house_{self.company_number}",
             signal_type="incorporation",
             confidence=confidence,
             source_api="companies_house",
             source_url=self.company_url,
-            source_response_hash=response_hash,
+            source_response_hash=hash_response(self.raw_data),
             detected_at=self.incorporation_date or self.retrieved_at,
+            retrieved_at=self.retrieved_at,
             verification_status=VerificationStatus.SINGLE_SOURCE,
             verified_by_sources=["companies_house"],
             raw_data={
@@ -326,6 +333,7 @@ class CompanyProfile:
                 "stage_estimate": self.stage_estimate,
                 "canonical_key": canonical_key,
                 "canonical_key_candidates": canonical_key_candidates,
+                **provenance,  # Add provenance block
             }
         )
 

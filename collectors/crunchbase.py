@@ -38,7 +38,9 @@ import httpx
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from collectors.base import BaseCollector
+from collectors.provenance import create_provenance, hash_response
 from collectors.retry_strategy import RetryConfig, with_retry
+from collectors.source_types import SOURCE_TYPE
 from discovery_engine.mcp_server import CollectorResult, CollectorStatus
 from storage.signal_store import SignalStore
 from utils.rate_limiter import AsyncRateLimiter
@@ -132,7 +134,7 @@ class CrunchbaseCompany:
 
         return min(base, 1.0)
 
-    def to_signal(self) -> Signal:
+    def to_signal(self, retrieved_at: Optional[datetime] = None) -> Signal:
         """Convert to verification gate Signal."""
         confidence = self.calculate_signal_score()
 
@@ -157,16 +159,37 @@ class CrunchbaseCompany:
         else:
             signal_type = "crunchbase_company"
 
+        # Use provided retrieved_at or default to now
+        if retrieved_at is None:
+            retrieved_at = datetime.now(timezone.utc)
+
+        # Build raw data for hashing and provenance
+        raw_data_for_hash = {
+            "uuid": self.uuid,
+            "permalink": self.permalink,
+            "total_funding_usd": self.total_funding_usd,
+            "last_funding_at": self.last_funding_at.isoformat() if self.last_funding_at else None,
+        }
+
+        # Create provenance for audit trail
+        source_url = f"https://www.crunchbase.com/organization/{self.permalink}"
+        provenance = create_provenance(
+            source_url=source_url,
+            response_data=raw_data_for_hash,
+            endpoint="/searches/organizations",
+            query_params={"uuid": self.uuid},
+            retrieved_at=retrieved_at,
+        )
+
         return Signal(
             id=f"crunchbase_{signal_hash}",
             signal_type=signal_type,
             confidence=confidence,
             source_api="crunchbase",
-            source_url=f"https://www.crunchbase.com/organization/{self.permalink}",
-            source_response_hash=hashlib.sha256(
-                f"{self.uuid}:{self.total_funding_usd or 0}".encode()
-            ).hexdigest()[:16],
+            source_url=source_url,
+            source_response_hash=hash_response(raw_data_for_hash),
             detected_at=self.last_funding_at or datetime.now(timezone.utc),
+            retrieved_at=retrieved_at,
             verification_status=VerificationStatus.SINGLE_SOURCE,
             verified_by_sources=["crunchbase"],
             raw_data={
@@ -185,6 +208,7 @@ class CrunchbaseCompany:
                 "location": self.location_identifiers[:2],
                 "website": self.website_url,
                 "why_now": self._build_why_now(),
+                **provenance,  # Add provenance block
             }
         )
 

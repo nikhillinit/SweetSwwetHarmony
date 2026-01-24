@@ -46,6 +46,11 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Optional
 
+from dotenv import load_dotenv
+
+# Load environment variables from .env file
+load_dotenv()
+
 logger = logging.getLogger("strategy-iterator")
 
 

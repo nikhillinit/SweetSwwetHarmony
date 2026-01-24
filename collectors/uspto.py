@@ -40,6 +40,8 @@ import httpx
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from collectors.base import BaseCollector
+from collectors.provenance import create_provenance, hash_response
+from collectors.source_types import SOURCE_TYPE
 from discovery_engine.mcp_server import CollectorResult, CollectorStatus
 from storage.signal_store import SignalStore
 from verification.verification_gate_v2 import Signal, VerificationStatus
@@ -108,7 +110,7 @@ class PatentFiling:
 
         return min(base, 1.0)
 
-    def to_signal(self) -> Signal:
+    def to_signal(self, retrieved_at: Optional[datetime] = None) -> Signal:
         """Convert to verification gate Signal."""
         confidence = self.calculate_signal_score()
 
@@ -124,16 +126,35 @@ class PatentFiling:
         signal_id = f"uspto_{self.patent_id}"
         signal_hash = hashlib.sha256(signal_id.encode()).hexdigest()[:12]
 
+        # Use provided retrieved_at or default to now
+        if retrieved_at is None:
+            retrieved_at = datetime.now(timezone.utc)
+
+        # Build raw data for hashing
+        raw_data_for_hash = {
+            "patent_id": self.patent_id,
+            "title": self.title,
+        }
+
+        # Create provenance for audit trail
+        source_url = f"https://patentsview.org/patent/{self.patent_number}"
+        provenance = create_provenance(
+            source_url=source_url,
+            response_data=raw_data_for_hash,
+            endpoint="/patents/query",
+            query_params={"patent_number": self.patent_number},
+            retrieved_at=retrieved_at,
+        )
+
         return Signal(
             id=f"patent_filing_{signal_hash}",
             signal_type="patent_filing",
             confidence=confidence,
             source_api="uspto",
-            source_url=f"https://patentsview.org/patent/{self.patent_number}",
-            source_response_hash=hashlib.sha256(
-                f"{self.patent_id}:{self.title}".encode()
-            ).hexdigest()[:16],
-            detected_at=self.filing_date or datetime.now(timezone.utc),
+            source_url=source_url,
+            source_response_hash=hash_response(raw_data_for_hash),
+            detected_at=self.filing_date or retrieved_at,
+            retrieved_at=retrieved_at,
             verification_status=VerificationStatus.SINGLE_SOURCE,
             verified_by_sources=["uspto"],
             raw_data={
@@ -147,6 +168,7 @@ class PatentFiling:
                 "cpc_codes": self.cpc_codes[:5],
                 "citations_count": self.citations_count,
                 "is_granted": self.grant_date is not None,
+                **provenance,  # Add provenance block
             }
         )
 

@@ -34,6 +34,8 @@ from urllib.parse import urlencode
 import httpx
 
 from collectors.base import BaseCollector
+from collectors.provenance import create_provenance, hash_response
+from collectors.source_types import SOURCE_TYPE
 
 logger = logging.getLogger(__name__)
 
@@ -400,6 +402,7 @@ class OpenCorporatesCollector(BaseCollector):
             List of signal dicts ready for storage
         """
         records = await self.search_company(name, jurisdictions)
+        retrieved_at = datetime.now(timezone.utc)
 
         signals = []
         for record in records:
@@ -413,14 +416,33 @@ class OpenCorporatesCollector(BaseCollector):
             if record.is_dissolved:
                 confidence *= 0.5
 
+            # Build source URL
+            source_url = record.registry_url or f"{API_BASE_URL}/companies/{record.jurisdiction}/{record.company_number}"
+
+            # Create provenance for audit trail
+            provenance = create_provenance(
+                source_url=source_url,
+                response_data=record.raw_data,
+                endpoint=f"/companies/{record.jurisdiction}/{record.company_number}",
+                query_params={"q": name},
+                retrieved_at=retrieved_at,
+            )
+
+            # Merge provenance into signal data
+            signal_data = record.to_signal_data()
+            signal_data.update(provenance)
+
             signal = {
                 "signal_type": "incorporation",
                 "source_api": "opencorporates",
+                "source_url": source_url,
+                "source_response_hash": hash_response(record.raw_data),
                 "canonical_key": record.canonical_key,
                 "company_name": record.display_name,
                 "confidence": confidence,
-                "raw_data": record.to_signal_data(),
-                "detected_at": datetime.now(timezone.utc),
+                "raw_data": signal_data,
+                "detected_at": record.incorporation_datetime or retrieved_at,
+                "retrieved_at": retrieved_at,
             }
 
             signals.append(signal)

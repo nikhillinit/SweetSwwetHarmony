@@ -43,7 +43,9 @@ import httpx
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from collectors.base import BaseCollector
+from collectors.provenance import create_provenance, hash_response
 from collectors.retry_strategy import with_retry, RetryConfig
+from collectors.source_types import SOURCE_TYPE
 from discovery_engine.mcp_server import CollectorResult, CollectorStatus
 from storage.signal_store import SignalStore
 from utils.rate_limiter import get_rate_limiter
@@ -135,7 +137,7 @@ class HackerNewsPost:
 
         return min(base, 1.0)
 
-    def to_signal(self) -> Signal:
+    def to_signal(self, retrieved_at: Optional[datetime] = None) -> Signal:
         """Convert to verification gate Signal."""
         confidence = self.calculate_signal_score()
 
@@ -149,16 +151,36 @@ class HackerNewsPost:
         signal_id = f"hn_{self.object_id}"
         signal_hash = hashlib.sha256(signal_id.encode()).hexdigest()[:12]
 
+        # Use provided retrieved_at or default to now
+        if retrieved_at is None:
+            retrieved_at = datetime.now(timezone.utc)
+
+        # Build raw data for hashing
+        raw_data_for_hash = {
+            "object_id": self.object_id,
+            "points": self.points,
+            "num_comments": self.num_comments,
+        }
+
+        # Create provenance for audit trail
+        source_url = f"https://news.ycombinator.com/item?id={self.object_id}"
+        provenance = create_provenance(
+            source_url=source_url,
+            response_data=raw_data_for_hash,
+            endpoint="/api/v1/search",
+            query_params={"objectID": self.object_id},
+            retrieved_at=retrieved_at,
+        )
+
         return Signal(
             id=f"hacker_news_mention_{signal_hash}",
             signal_type="hacker_news_mention",
             confidence=confidence,
             source_api="hacker_news",
-            source_url=f"https://news.ycombinator.com/item?id={self.object_id}",
-            source_response_hash=hashlib.sha256(
-                f"{self.object_id}:{self.points}".encode()
-            ).hexdigest()[:16],
+            source_url=source_url,
+            source_response_hash=hash_response(raw_data_for_hash),
             detected_at=self.created_at,
+            retrieved_at=retrieved_at,
             verification_status=VerificationStatus.SINGLE_SOURCE,
             verified_by_sources=["hacker_news"],
             raw_data={
@@ -173,6 +195,7 @@ class HackerNewsPost:
                 "is_show_hn": self.is_show_hn,
                 "story_text": self.story_text[:500] if self.story_text else "",
                 "url": self.url,
+                **provenance,  # Add provenance block
             },
         )
 

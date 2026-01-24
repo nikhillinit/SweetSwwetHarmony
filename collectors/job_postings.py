@@ -35,7 +35,9 @@ import httpx
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from collectors.base import BaseCollector
+from collectors.provenance import create_provenance, hash_response
 from collectors.retry_strategy import RetryConfig
+from collectors.source_types import SOURCE_TYPE
 from storage.signal_store import SignalStore
 from verification.verification_gate_v2 import Signal, VerificationStatus
 
@@ -237,7 +239,7 @@ class JobPostingSignal:
 
         return min(base, 1.0)
 
-    def to_signal(self) -> Signal:
+    def to_signal(self, retrieved_at: Optional[datetime] = None) -> Signal:
         """
         Convert to verification gate Signal format.
 
@@ -256,11 +258,6 @@ class JobPostingSignal:
         signal_id_base = f"job_{self.ats_platform}_{domain.replace('.', '_')}"
         signal_hash = hashlib.sha256(signal_id_base.encode()).hexdigest()[:12]
 
-        # Deterministic response hash for deduplication
-        response_hash = hashlib.sha256(
-            json.dumps(self.to_dict(), sort_keys=True, default=str).encode("utf-8")
-        ).hexdigest()[:16]
-
         # Canonical key candidates for entity resolution
         canonical_key = f"domain:{domain}"
         canonical_key_candidates = [
@@ -274,14 +271,31 @@ class JobPostingSignal:
                 f"ats_board:{self.ats_platform}:{self.raw_snapshot['board_id']}"
             )
 
+        # Use provided retrieved_at or default to now
+        if retrieved_at is None:
+            retrieved_at = datetime.now(timezone.utc)
+
+        # Build raw data for hashing
+        raw_data_for_hash = self.to_dict()
+
+        # Create provenance for audit trail
+        provenance = create_provenance(
+            source_url=self.job_url,
+            response_data=raw_data_for_hash,
+            endpoint=f"/{self.ats_platform}/boards",
+            query_params={"domain": domain},
+            retrieved_at=retrieved_at,
+        )
+
         return Signal(
             id=f"hiring_signal_{signal_hash}",
             signal_type="hiring_signal",
             confidence=confidence,
             source_api=f"{self.ats_platform}_jobs",
             source_url=self.job_url,
-            source_response_hash=response_hash,
-            detected_at=self.newest_posting_at or datetime.now(timezone.utc),
+            source_response_hash=hash_response(raw_data_for_hash),
+            detected_at=self.newest_posting_at or retrieved_at,
+            retrieved_at=retrieved_at,
             verification_status=VerificationStatus.SINGLE_SOURCE,
             verified_by_sources=[f"{self.ats_platform}_jobs"],
             raw_data={
@@ -298,6 +312,7 @@ class JobPostingSignal:
                 "departments": sorted([d for d in self.departments if d])[:5],
                 "locations": sorted([loc for loc in self.locations if loc])[:5],
                 "oldest_posting_age_days": _calculate_posting_age_days(self.oldest_posting_at),
+                **provenance,  # Add provenance block
             }
         )
 
