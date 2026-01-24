@@ -43,6 +43,7 @@ load_dotenv(Path(__file__).parent.parent / ".env")
 from storage.signal_store import SignalStore
 from utils.signal_health import SignalHealthMonitor
 from dashboard.mini_scout import render_mini_scout_page
+from dashboard.url_profiler_page import render_url_profiler_page
 
 # =============================================================================
 # CONFIG
@@ -1362,6 +1363,12 @@ def render_welcome_banner(view: str):
                    "Type a company name, keyword, or industry to find matches. "
                    "You can save your favorite filter combinations as <strong>Presets</strong> for quick access later."
         },
+        "URL Profiler": {
+            "title": "Profile Any Company",
+            "body": "Paste any company URL to generate a structured profile with <strong>evidence</strong>. "
+                   "We'll extract what problem they solve, who their customers are, their business model, "
+                   "and pricing — all with confidence scores and source quotes."
+        },
         "Analytics": {
             "title": "Deal Flow Analytics",
             "body": "See high-level insights into your discovery pipeline. "
@@ -1972,15 +1979,16 @@ def main():
             "Pipeline": "Your deal flow organized by stage",
             "Signals": "Newly discovered companies",
             "Mini-Scout": "Search all companies",
+            "URL Profiler": "Profile any company by URL",
             "Analytics": "Deal flow insights & trends"
         }
 
         if has_notion and has_db:
-            view_options = ["Pipeline", "Signals", "Mini-Scout", "Analytics"]
+            view_options = ["Pipeline", "Signals", "Mini-Scout", "URL Profiler", "Analytics"]
         elif has_notion:
-            view_options = ["Pipeline", "Mini-Scout", "Analytics"]
+            view_options = ["Pipeline", "Mini-Scout", "URL Profiler", "Analytics"]
         else:
-            view_options = ["Signals", "Mini-Scout", "Analytics"]
+            view_options = ["Signals", "Mini-Scout", "URL Profiler", "Analytics"]
 
         view = st.radio(
             "View",
@@ -2191,6 +2199,14 @@ def main():
         render_welcome_banner("Mini-Scout")
         store = get_store()
         render_mini_scout_page(store)
+
+    # ==========================================================================
+    # URL PROFILER VIEW
+    # ==========================================================================
+    elif view == "URL Profiler":
+        render_welcome_banner("URL Profiler")
+        store = get_store()
+        render_url_profiler_page(store)
 
     # ==========================================================================
     # ANALYTICS VIEW
