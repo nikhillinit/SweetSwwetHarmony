@@ -350,4 +350,111 @@ PH_API_KEY=xxx (Product Hunt API key)
 GOOGLE_API_KEY=xxx (Gemini - free at aistudio.google.com/apikey)
 OPENCORPORATES_API_KEY=xxx (free tier at opencorporates.com/api_accounts/new)
 DISCOVERY_DB_PATH=signals.db (default)
+
+# OpenAI Integration (for multi-LLM strategy iteration)
+OPENAI_API_KEY=sk-xxx (get at platform.openai.com/api-keys)
 ```
+
+---
+
+## OpenAI/Codex Integration
+
+Multi-LLM strategy iteration for thesis refinement using your ChatGPT Pro subscription.
+
+### Architecture
+
+```
+┌─────────────────┐     ┌─────────────────┐
+│   Claude Code   │────▶│  OpenAI/Codex   │
+│  (Orchestrator) │◀────│  (Perspectives) │
+└─────────────────┘     └─────────────────┘
+         │
+         ▼
+┌─────────────────┐
+│    Consensus    │
+│   Synthesizer   │
+└─────────────────┘
+```
+
+- **Claude Code** orchestrates all actions
+- **OpenAI/Codex** provides alternative perspectives in sandbox
+- **Consensus patterns** reduce hallucinations
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `integrations/openai_mcp.py` | OpenAI MCP server (prompts + tools) |
+| `integrations/codex_wrapper.py` | Codex CLI wrapper (sandbox execution) |
+| `integrations/strategy_iterator.py` | Multi-LLM consensus orchestrator |
+| `scripts/setup_openai_integration.sh` | Setup and verification script |
+
+### Setup
+
+```bash
+# 1. Run setup script
+./scripts/setup_openai_integration.sh
+
+# 2. Set API key
+export OPENAI_API_KEY=sk-...
+
+# 3. (Optional) Install Codex CLI for Pro subscription
+npm install -g @openai/codex
+codex login
+```
+
+### Usage
+
+```bash
+# Quick OpenAI consultation
+python -c "
+from integrations.openai_mcp import OpenAIMCPServer
+import asyncio
+
+async def consult():
+    server = OpenAIMCPServer()
+    response = await server.analyze_strategy(
+        context='30% false positive rate on GitHub signals',
+        question='How should we refine thesis keywords?'
+    )
+    print(response.content)
+
+asyncio.run(consult())
+"
+
+# Codex CLI (if installed with ChatGPT Pro)
+python -m integrations.codex_wrapper check
+python -m integrations.codex_wrapper exec "How to improve thesis matching?"
+
+# Strategy iteration with multi-LLM consensus
+python -m integrations.strategy_iterator thesis \
+    --question "How to reduce false positives in GitHub signals?"
+
+# Collector evaluation
+python -m integrations.strategy_iterator collector wellfound \
+    --notes "API deprecated 2023, scraping violates ToS"
+```
+
+### MCP Server Prompts
+
+When running `python -m integrations.openai_mcp`:
+
+| Prompt | Description |
+|--------|-------------|
+| `openai-strategy` | Get OpenAI perspective on strategy questions |
+| `openai-code-review` | Get code review for collectors/pipeline |
+| `openai-thesis-iterate` | Iterate on thesis based on signal feedback |
+
+### MCP Server Tools
+
+| Tool | Description |
+|------|-------------|
+| `openai_chat` | Direct chat with OpenAI API |
+| `openai_consensus` | Get consensus between Claude and OpenAI |
+
+### Benefits
+
+- **No incremental API costs** with ChatGPT Pro subscription
+- **Sandbox isolation** for safe experimentation
+- **Multi-LLM consensus** reduces hallucinations
+- **Specialized prompts** for thesis/collector work
