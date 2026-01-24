@@ -38,7 +38,9 @@ from urllib.parse import urlencode
 import httpx
 
 from collectors.base import BaseCollector
+from collectors.provenance import create_provenance, hash_response
 from collectors.retry_strategy import with_retry, RetryConfig
+from collectors.source_types import SOURCE_TYPE
 from discovery_engine.mcp_server import CollectorResult, CollectorStatus
 from storage.signal_store import SignalStore
 from utils.rate_limiter import get_rate_limiter
@@ -213,7 +215,7 @@ class FormDFiling:
         else:
             return "Series B"
 
-    def to_signal(self) -> Signal:
+    def to_signal(self, retrieved_at: Optional[datetime] = None) -> Signal:
         """Convert filing to a Signal for verification gate"""
 
         # Build canonical key candidates from available identifiers
@@ -253,14 +255,28 @@ class FormDFiling:
 
         confidence = min(max(base_confidence, 0.0), 1.0)
 
+        # Use provided retrieved_at or default to now
+        if retrieved_at is None:
+            retrieved_at = datetime.now(timezone.utc)
+
+        # Create provenance for audit trail
+        provenance = create_provenance(
+            source_url=self.filing_url,
+            response_data=self.raw_data,
+            endpoint=f"/Archives/edgar/data/{self.cik}/{self.accession_number}",
+            query_params={"type": "D", "cik": self.cik},
+            retrieved_at=retrieved_at,
+        )
+
         return Signal(
             id=f"sec_edgar_{self.accession_number}",
             signal_type="funding_event",
             confidence=confidence,
             source_api="sec_edgar",
             source_url=self.filing_url,
-            source_response_hash=None,  # Could hash raw XML if needed
+            source_response_hash=hash_response(self.raw_data),
             detected_at=self.filing_date,
+            retrieved_at=retrieved_at,
             verification_status=VerificationStatus.SINGLE_SOURCE,
             verified_by_sources=["sec_edgar"],
             raw_data={
@@ -278,6 +294,7 @@ class FormDFiling:
                 "website": self.website,
                 "canonical_key": canonical_key,
                 "canonical_key_candidates": canonical_key_candidates,
+                **provenance,  # Add provenance block
             }
         )
 

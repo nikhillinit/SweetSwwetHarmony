@@ -41,7 +41,9 @@ import httpx
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from collectors.base import BaseCollector
+from collectors.provenance import create_provenance, hash_response
 from collectors.retry_strategy import RetryConfig, with_retry
+from collectors.source_types import SOURCE_TYPE
 from discovery_engine.mcp_server import CollectorResult, CollectorStatus
 from storage.signal_store import SignalStore
 from utils.rate_limiter import AsyncRateLimiter
@@ -121,7 +123,7 @@ class LinkedInCompany:
 
         return min(base, 1.0)
 
-    def to_signal(self) -> Signal:
+    def to_signal(self, retrieved_at: Optional[datetime] = None) -> Signal:
         """Convert to verification gate Signal."""
         confidence = self.calculate_signal_score()
 
@@ -142,16 +144,35 @@ class LinkedInCompany:
         # Create unique signal ID
         signal_hash = hashlib.sha256(self.linkedin_url.encode()).hexdigest()[:12]
 
+        # Use provided retrieved_at or default to now
+        if retrieved_at is None:
+            retrieved_at = datetime.now(timezone.utc)
+
+        # Build raw data for hashing
+        raw_data_for_hash = {
+            "linkedin_url": self.linkedin_url,
+            "follower_count": self.follower_count,
+            "company_size_on_linkedin": self.company_size_on_linkedin,
+        }
+
+        # Create provenance for audit trail
+        provenance = create_provenance(
+            source_url=self.linkedin_url,
+            response_data=raw_data_for_hash,
+            endpoint="/linkedin/company",
+            query_params={"url": self.linkedin_url},
+            retrieved_at=retrieved_at,
+        )
+
         return Signal(
             id=f"linkedin_company_{signal_hash}",
             signal_type="linkedin_company",
             confidence=confidence,
             source_api="linkedin",
             source_url=self.linkedin_url,
-            source_response_hash=hashlib.sha256(
-                f"{self.linkedin_url}:{self.follower_count}".encode()
-            ).hexdigest()[:16],
-            detected_at=datetime.now(timezone.utc),
+            source_response_hash=hash_response(raw_data_for_hash),
+            detected_at=retrieved_at,
+            retrieved_at=retrieved_at,
             verification_status=VerificationStatus.SINGLE_SOURCE,
             verified_by_sources=["linkedin"],
             raw_data={
@@ -168,6 +189,7 @@ class LinkedInCompany:
                 "linkedin_url": self.linkedin_url,
                 "website": self.website,
                 "why_now": self._build_why_now(),
+                **provenance,  # Add provenance block
             }
         )
 
@@ -309,7 +331,7 @@ class LinkedInJobPosting:
     location: str = ""
     posted_at: Optional[datetime] = None
 
-    def to_signal(self, company_domain: str = "") -> Signal:
+    def to_signal(self, company_domain: str = "", retrieved_at: Optional[datetime] = None) -> Signal:
         """Convert to verification gate Signal."""
         # Job postings indicate growth - medium-high signal
         confidence = 0.65
@@ -328,14 +350,35 @@ class LinkedInJobPosting:
 
         signal_hash = hashlib.sha256(self.job_url.encode()).hexdigest()[:12]
 
+        # Use provided retrieved_at or default to now
+        if retrieved_at is None:
+            retrieved_at = datetime.now(timezone.utc)
+
+        # Build raw data for hashing
+        raw_data_for_hash = {
+            "job_url": self.job_url,
+            "title": self.title,
+            "company_url": self.company_url,
+        }
+
+        # Create provenance for audit trail
+        provenance = create_provenance(
+            source_url=self.job_url,
+            response_data=raw_data_for_hash,
+            endpoint="/linkedin/company/job",
+            query_params={"company_url": self.company_url},
+            retrieved_at=retrieved_at,
+        )
+
         return Signal(
             id=f"linkedin_job_{signal_hash}",
             signal_type="linkedin_job_posting",
             confidence=confidence,
             source_api="linkedin",
             source_url=self.job_url,
-            source_response_hash=hashlib.sha256(self.job_url.encode()).hexdigest()[:16],
-            detected_at=self.posted_at or datetime.now(timezone.utc),
+            source_response_hash=hash_response(raw_data_for_hash),
+            detected_at=self.posted_at or retrieved_at,
+            retrieved_at=retrieved_at,
             verification_status=VerificationStatus.SINGLE_SOURCE,
             verified_by_sources=["linkedin"],
             raw_data={
@@ -345,6 +388,7 @@ class LinkedInJobPosting:
                 "location": self.location,
                 "company_linkedin_url": self.company_url,
                 "why_now": f"Hiring: {self.title}",
+                **provenance,  # Add provenance block
             }
         )
 

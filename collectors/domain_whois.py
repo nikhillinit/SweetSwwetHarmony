@@ -49,7 +49,9 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from collectors.base import BaseCollector
+from collectors.provenance import create_provenance, hash_response
 from collectors.retry_strategy import with_retry, RetryConfig
+from collectors.source_types import SOURCE_TYPE
 from discovery_engine.mcp_server import CollectorResult, CollectorStatus
 from storage.signal_store import SignalStore
 from utils.rate_limiter import get_rate_limiter
@@ -222,9 +224,14 @@ class DomainRegistration:
         # Build canonical key from domain
         canonical_key = f"domain:{self.domain}"
 
-        # Hash raw data for provenance
-        raw_json = str(sorted(self.raw_data.items()))
-        response_hash = hashlib.sha256(raw_json.encode()).hexdigest()[:16]
+        # Create provenance for audit trail
+        provenance = create_provenance(
+            source_url=source_url,
+            response_data=self.raw_data,
+            endpoint=f"/domain/{self.domain}",
+            query_params=None,
+            retrieved_at=self.retrieved_at,
+        )
 
         return Signal(
             id=f"domain_whois_{self.domain.replace('.', '_')}",
@@ -232,8 +239,9 @@ class DomainRegistration:
             confidence=confidence,
             source_api="rdap",
             source_url=source_url,
-            source_response_hash=response_hash,
+            source_response_hash=hash_response(self.raw_data),
             detected_at=self.registration_date or self.retrieved_at,
+            retrieved_at=self.retrieved_at,
             verification_status=VerificationStatus.SINGLE_SOURCE,
             verified_by_sources=["rdap"],
             raw_data={
@@ -250,6 +258,7 @@ class DomainRegistration:
                 "registrant_country": self.registrant_country,
                 "expiration_date": self.expiration_date.isoformat() if self.expiration_date else None,
                 "canonical_key": canonical_key,
+                **provenance,  # Add provenance block
             }
         )
 

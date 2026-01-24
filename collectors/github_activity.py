@@ -39,7 +39,9 @@ import httpx
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from collectors.base import BaseCollector
+from collectors.provenance import create_provenance, hash_response
 from collectors.retry_strategy import RetryConfig
+from collectors.source_types import SOURCE_TYPE
 from storage.signal_store import SignalStore
 from verification.verification_gate_v2 import Signal, VerificationStatus
 
@@ -103,7 +105,7 @@ class GitHubActivitySignal:
 
         return min(base, 1.0)
 
-    def to_signal(self) -> Signal:
+    def to_signal(self, retrieved_at: Optional[datetime] = None) -> Signal:
         """Convert to verification gate Signal"""
         confidence = self.calculate_signal_score()
 
@@ -128,16 +130,31 @@ class GitHubActivitySignal:
         signal_id = "_".join(signal_id_parts)
         signal_hash = hashlib.sha256(signal_id.encode()).hexdigest()[:12]
 
+        # Use provided retrieved_at or default to now
+        if retrieved_at is None:
+            retrieved_at = datetime.now(timezone.utc)
+
+        # Build source URL
+        source_url = self.repo_url or f"https://github.com/{self.username}"
+
+        # Create provenance for audit trail
+        provenance = create_provenance(
+            source_url=source_url,
+            response_data=self.raw_data,
+            endpoint=f"/users/{self.username}/events",
+            query_params=None,
+            retrieved_at=retrieved_at,
+        )
+
         return Signal(
             id=f"github_activity_{signal_hash}",
             signal_type="github_activity",
             confidence=confidence,
             source_api="github",
-            source_url=self.repo_url or f"https://github.com/{self.username}",
-            source_response_hash=hashlib.sha256(
-                str(self.raw_data).encode()
-            ).hexdigest()[:16],
-            detected_at=self.created_at or datetime.now(timezone.utc),
+            source_url=source_url,
+            source_response_hash=hash_response(self.raw_data),
+            detected_at=self.created_at or retrieved_at,
+            retrieved_at=retrieved_at,
             verification_status=VerificationStatus.SINGLE_SOURCE,
             verified_by_sources=["github"],
             raw_data={
@@ -153,6 +170,7 @@ class GitHubActivitySignal:
                 "forks": self.forks,
                 "age_days": self.age_days,
                 "commit_count_30d": self.commit_count_30d,
+                **provenance,  # Add provenance block
             }
         )
 
