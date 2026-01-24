@@ -63,7 +63,7 @@ logger = logging.getLogger(__name__)
 # SCHEMA VERSION
 # =============================================================================
 
-CURRENT_SCHEMA_VERSION = 6
+CURRENT_SCHEMA_VERSION = 7
 
 # SQL for creating tables (migrations applied in order)
 MIGRATIONS = {
@@ -297,6 +297,144 @@ MIGRATIONS = {
     CREATE INDEX IF NOT EXISTS idx_exit_pred_deal_quality ON exit_predictions(deal_quality_score DESC);
     CREATE INDEX IF NOT EXISTS idx_exit_pred_recommendation ON exit_predictions(recommendation);
     CREATE INDEX IF NOT EXISTS idx_exit_pred_percentile ON exit_predictions(percentile_rank);
+    """,
+    7: """
+    -- =============================================================================
+    -- CLAIM LEDGER (KG-Lite) - Sprint 2
+    -- =============================================================================
+    -- Truth-maintenance backbone for the knowledge graph.
+    -- Enables: "Why do we think target_customer = X?" with evidence chain.
+
+    -- Controlled vocabulary for predicates
+    CREATE TABLE IF NOT EXISTS predicates (
+        name TEXT PRIMARY KEY,
+        display_name TEXT NOT NULL,
+        data_type TEXT NOT NULL DEFAULT 'text',  -- text, numeric, enum, json
+        units TEXT,
+        decay_rate_days INTEGER,  -- How quickly claims go stale
+        source_priority_weights TEXT,  -- JSON: source -> weight mapping
+        description TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- Seed initial predicates for core claims
+    INSERT OR IGNORE INTO predicates (name, display_name, data_type, description) VALUES
+        ('problem_solved', 'Problem Solved', 'text', 'What problem does this company solve?'),
+        ('target_customer', 'Target Customer', 'text', 'Who is the primary customer?'),
+        ('business_model', 'Business Model', 'enum', 'How does the company make money?'),
+        ('stage', 'Stage', 'enum', 'Company stage: Pre-Seed, Seed, Series A, etc.'),
+        ('traction_metric', 'Traction Metric', 'numeric', 'Key traction number (users, revenue, etc.)'),
+        ('founding_date', 'Founding Date', 'text', 'When was the company founded?'),
+        ('location', 'Location', 'text', 'Primary company location'),
+        ('industry', 'Industry', 'text', 'Industry or sector'),
+        ('funding_raised', 'Funding Raised', 'numeric', 'Total funding raised in USD'),
+        ('employee_count', 'Employee Count', 'numeric', 'Approximate employee count'),
+        ('company_name', 'Company Name', 'text', 'Official company name'),
+        ('website', 'Website', 'text', 'Company website URL'),
+        ('description', 'Description', 'text', 'Company description or tagline');
+
+    -- Raw extractions from any source (assertions before canonicalization)
+    CREATE TABLE IF NOT EXISTS claim_extractions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        source_signal_id INTEGER REFERENCES signals(id) ON DELETE SET NULL,
+        entity_key TEXT NOT NULL,  -- Canonical key for the entity
+
+        -- Extraction details
+        extractor_name TEXT NOT NULL,  -- e.g., 'website_profiler', 'sec_edgar_parser'
+        extractor_version TEXT,
+        predicate_hint TEXT,  -- Which predicate this might map to
+
+        -- Raw extracted content
+        raw_text TEXT NOT NULL,
+        source_snippet TEXT,  -- Verbatim evidence quote
+        start_offset INTEGER,  -- For highlighting in source
+        end_offset INTEGER,
+
+        -- Provenance
+        source_url TEXT,
+        extracted_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_extraction_entity ON claim_extractions(entity_key);
+    CREATE INDEX IF NOT EXISTS idx_extraction_signal ON claim_extractions(source_signal_id);
+    CREATE INDEX IF NOT EXISTS idx_extraction_predicate ON claim_extractions(predicate_hint);
+    CREATE INDEX IF NOT EXISTS idx_extraction_extractor ON claim_extractions(extractor_name);
+
+    -- Canonicalized claims (the "current truth" about an entity)
+    CREATE TABLE IF NOT EXISTS claims (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        entity_key TEXT NOT NULL,
+        predicate TEXT NOT NULL REFERENCES predicates(name),
+
+        -- Value (with type flexibility)
+        value TEXT NOT NULL,
+        value_type TEXT DEFAULT 'text',  -- text, numeric, json
+        value_num REAL,  -- For numeric predicates
+        value_json TEXT,  -- For complex values
+
+        -- Confidence and status
+        confidence REAL NOT NULL DEFAULT 0.5,
+        status TEXT NOT NULL DEFAULT 'active',  -- active, stale, conflicting, retracted
+        status_updated_at TEXT,
+        status_reason TEXT,
+
+        -- Temporal tracking
+        last_supported_at TEXT,  -- Last time evidence was found
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+
+        -- Ensure unique claims per entity/predicate/value combination
+        UNIQUE(entity_key, predicate, value)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_claims_entity ON claims(entity_key);
+    CREATE INDEX IF NOT EXISTS idx_claims_predicate ON claims(predicate);
+    CREATE INDEX IF NOT EXISTS idx_claims_status ON claims(status);
+    CREATE INDEX IF NOT EXISTS idx_claims_confidence ON claims(confidence DESC);
+    CREATE INDEX IF NOT EXISTS idx_claims_entity_predicate ON claims(entity_key, predicate);
+
+    -- Many-to-many evidence linkage (claim <-> extractions)
+    CREATE TABLE IF NOT EXISTS claim_evidence (
+        claim_id INTEGER NOT NULL REFERENCES claims(id) ON DELETE CASCADE,
+        extraction_id INTEGER NOT NULL REFERENCES claim_extractions(id) ON DELETE CASCADE,
+        evidence_weight REAL DEFAULT 1.0,  -- How strongly this extraction supports the claim
+        linked_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (claim_id, extraction_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_evidence_claim ON claim_evidence(claim_id);
+    CREATE INDEX IF NOT EXISTS idx_evidence_extraction ON claim_evidence(extraction_id);
+
+    -- Current claims view: deterministic tie-breaking for conflicting claims
+    -- Returns only the "winning" claim per entity/predicate pair
+    CREATE VIEW IF NOT EXISTS current_claims AS
+    SELECT
+        c.*,
+        (
+            SELECT COUNT(*)
+            FROM claims c2
+            WHERE c2.entity_key = c.entity_key
+              AND c2.predicate = c.predicate
+              AND c2.status = 'active'
+        ) as competing_claims,
+        (
+            SELECT COUNT(*)
+            FROM claim_evidence ce
+            WHERE ce.claim_id = c.id
+        ) as evidence_count
+    FROM claims c
+    WHERE c.status = 'active'
+      AND c.id = (
+          SELECT c3.id
+          FROM claims c3
+          WHERE c3.entity_key = c.entity_key
+            AND c3.predicate = c.predicate
+            AND c3.status = 'active'
+          ORDER BY
+              c3.confidence DESC,
+              c3.last_supported_at DESC,
+              c3.id DESC
+          LIMIT 1
+      );
     """
 }
 
