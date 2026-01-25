@@ -69,6 +69,18 @@ class ApprovalMode(str, Enum):
     FULL_AUTO = "full-auto"  # Auto-approve everything (dangerous)
 
 
+class ReasoningLevel(str, Enum):
+    """Codex reasoning effort levels."""
+    LOW = "low"
+    MEDIUM = "medium"
+    HIGH = "high"
+
+
+# Default model configuration - use GPT-5-2 exclusively with highest reasoning
+DEFAULT_MODEL = "gpt5-2"
+DEFAULT_REASONING_LEVEL = ReasoningLevel.HIGH
+
+
 @dataclass
 class CodexResponse:
     """Response from Codex CLI."""
@@ -117,6 +129,8 @@ class CodexCLI:
         sandbox_mode: SandboxMode = SandboxMode.READ_ONLY,
         approval_mode: ApprovalMode = ApprovalMode.SUGGEST,
         timeout_seconds: int = 300,
+        model: str = DEFAULT_MODEL,
+        reasoning_level: ReasoningLevel = DEFAULT_REASONING_LEVEL,
     ):
         """
         Initialize Codex CLI wrapper.
@@ -125,10 +139,14 @@ class CodexCLI:
             sandbox_mode: Sandbox isolation level (default: read-only)
             approval_mode: Action approval mode (default: suggest only)
             timeout_seconds: Max execution time (default: 5 minutes)
+            model: Model to use (default: gpt5-2)
+            reasoning_level: Reasoning effort level (default: high)
         """
         self.sandbox_mode = sandbox_mode
         self.approval_mode = approval_mode
         self.timeout_seconds = timeout_seconds
+        self.model = model
+        self.reasoning_level = reasoning_level
         self._codex_path: Optional[str] = None
 
     @property
@@ -360,7 +378,12 @@ Be specific and constructive. Focus on facts and evidence."""
         Returns:
             CodexResponse with command output
         """
-        full_command = [self.codex_path] + args
+        # Build base command with model and reasoning flags
+        full_command = [
+            self.codex_path,
+            "--model", self.model,
+            "--reasoning-effort", self.reasoning_level.value,
+        ] + args
         command_str = " ".join(full_command)
 
         start_time = datetime.now()
@@ -477,6 +500,17 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(description="Codex CLI Wrapper")
+    parser.add_argument(
+        "--model",
+        default=DEFAULT_MODEL,
+        help=f"Model to use (default: {DEFAULT_MODEL})"
+    )
+    parser.add_argument(
+        "--reasoning",
+        choices=["low", "medium", "high"],
+        default=DEFAULT_REASONING_LEVEL.value,
+        help=f"Reasoning effort level (default: {DEFAULT_REASONING_LEVEL.value})"
+    )
     subparsers = parser.add_subparsers(dest="command", help="Commands")
 
     # Check command
@@ -492,23 +526,39 @@ def main():
     review_parser.add_argument("file", help="File to review")
     review_parser.add_argument("--focus", help="Focus areas (comma-separated)")
 
+    # Config command - show current configuration
+    config_parser = subparsers.add_parser("config", help="Show current configuration")
+
     args = parser.parse_args()
 
     async def run():
-        codex = CodexCLI()
+        codex = CodexCLI(
+            model=args.model,
+            reasoning_level=ReasoningLevel(args.reasoning),
+        )
 
         if args.command == "check":
             if codex.is_installed():
-                print("✓ Codex CLI is installed")
+                print("Codex CLI is installed")
+                print(f"  Model: {codex.model}")
+                print(f"  Reasoning: {codex.reasoning_level.value}")
                 is_auth, status = await codex.check_auth()
                 if is_auth:
-                    print(f"✓ Authenticated: {status}")
+                    print(f"Authenticated: {status}")
                 else:
-                    print(f"✗ Not authenticated: {status}")
+                    print(f"Not authenticated: {status}")
                     print("  Run: codex login")
             else:
-                print("✗ Codex CLI not installed")
+                print("Codex CLI not installed")
                 print("  Run: npm install -g @openai/codex")
+
+        elif args.command == "config":
+            print("Codex CLI Configuration:")
+            print(f"  Model:     {codex.model}")
+            print(f"  Reasoning: {codex.reasoning_level.value}")
+            print(f"  Sandbox:   {codex.sandbox_mode.value}")
+            print(f"  Approval:  {codex.approval_mode.value}")
+            print(f"  Timeout:   {codex.timeout_seconds}s")
 
         elif args.command == "exec":
             sandbox = SandboxMode(args.sandbox)
