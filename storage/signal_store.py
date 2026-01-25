@@ -63,7 +63,7 @@ logger = logging.getLogger(__name__)
 # SCHEMA VERSION
 # =============================================================================
 
-CURRENT_SCHEMA_VERSION = 8
+CURRENT_SCHEMA_VERSION = 9
 
 # SQL for creating tables (migrations applied in order)
 MIGRATIONS = {
@@ -478,6 +478,250 @@ MIGRATIONS = {
     CREATE INDEX IF NOT EXISTS idx_embeddings_key ON company_embeddings(canonical_key);
     CREATE INDEX IF NOT EXISTS idx_embeddings_hash ON company_embeddings(source_text_hash);
     CREATE INDEX IF NOT EXISTS idx_embeddings_kind ON company_embeddings(embedding_kind);
+    """,
+    9: """
+    -- =============================================================================
+    -- INVESTOR MATCHING (Sprint 5) - Portfolio forensics-based investor matching
+    -- =============================================================================
+    -- Infers investor thesis from observed portfolio behavior, not marketing.
+    -- Enables: "Which investors have backed similar companies?" with evidence trail.
+
+    -- 9.1: Core investor entity
+    CREATE TABLE IF NOT EXISTS investors (
+        id TEXT PRIMARY KEY,                    -- investor:sequoia_capital
+        canonical_key TEXT NOT NULL UNIQUE,     -- Same as id, explicit for FK
+        name TEXT NOT NULL,
+        investor_type TEXT DEFAULT 'vc',        -- vc|angel|accelerator|corporate|family_office
+        website_domain TEXT,
+        hq_country TEXT,
+        hq_city TEXT,
+        founded_year INTEGER,
+        aum_usd REAL,                           -- Assets under management
+        source TEXT NOT NULL,                   -- crunchbase|curated_json|sec_edgar
+        source_ref TEXT,                        -- URL or file path
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_investors_type ON investors(investor_type);
+    CREATE INDEX IF NOT EXISTS idx_investors_source ON investors(source);
+    CREATE INDEX IF NOT EXISTS idx_investors_country ON investors(hq_country);
+
+    -- 9.2: Portfolio edges (investor -> company relationships)
+    -- Links to existing signals/claims via company_key
+    CREATE TABLE IF NOT EXISTS investor_portfolios (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        investor_id TEXT NOT NULL REFERENCES investors(id) ON DELETE CASCADE,
+        company_key TEXT NOT NULL,              -- canonical key: domain:acme.ai
+        relationship_type TEXT NOT NULL,        -- led|participated|followed_on|acquired|advisor
+        round_type TEXT,                        -- pre_seed|seed|series_a|series_b|bridge|unknown
+        round_date TEXT,                        -- ISO date YYYY-MM-DD
+        investment_usd REAL,                    -- Amount if known
+        ownership_pct REAL,                     -- Ownership if known
+        is_lead INTEGER DEFAULT 0,              -- 1 if led round
+        source TEXT NOT NULL,                   -- crunchbase|curated_json|sec_edgar
+        source_ref TEXT,
+        confidence REAL NOT NULL DEFAULT 0.5,   -- 0-1
+        -- FK to existing claim_extractions for evidence trail
+        extraction_id INTEGER REFERENCES claim_extractions(id),
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(investor_id, company_key, round_type, round_date)
+    );
+    CREATE INDEX IF NOT EXISTS idx_investor_portfolios_investor ON investor_portfolios(investor_id);
+    CREATE INDEX IF NOT EXISTS idx_investor_portfolios_company ON investor_portfolios(company_key);
+    CREATE INDEX IF NOT EXISTS idx_investor_portfolios_round ON investor_portfolios(round_type);
+    CREATE INDEX IF NOT EXISTS idx_investor_portfolios_date ON investor_portfolios(round_date);
+
+    -- 9.3: Investor profile claims (inferred from portfolio behavior)
+    -- Reuses existing predicates table pattern
+    CREATE TABLE IF NOT EXISTS investor_profile_claims (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        investor_id TEXT NOT NULL REFERENCES investors(id) ON DELETE CASCADE,
+        predicate TEXT NOT NULL,                -- sector_preference|stage_preference|geo_preference|check_size_range
+        value TEXT NOT NULL,                    -- fintech|seed|US|100000-500000
+        confidence REAL NOT NULL,               -- 0-1
+        lift_score REAL,                        -- Log-odds vs global baseline
+        support_count INTEGER NOT NULL,         -- Portfolio companies supporting this
+        support_evidence TEXT,                  -- JSON array of {company_key, extraction_id}
+        status TEXT DEFAULT 'active',           -- active|stale|retracted
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(investor_id, predicate, value)
+    );
+    CREATE INDEX IF NOT EXISTS idx_investor_claims_investor ON investor_profile_claims(investor_id);
+    CREATE INDEX IF NOT EXISTS idx_investor_claims_predicate ON investor_profile_claims(predicate);
+    CREATE INDEX IF NOT EXISTS idx_investor_claims_status ON investor_profile_claims(status);
+    CREATE INDEX IF NOT EXISTS idx_investor_claims_lift ON investor_profile_claims(lift_score DESC);
+
+    -- 9.4: Cached investor profiles (denormalized for fast matching)
+    CREATE TABLE IF NOT EXISTS investor_profiles (
+        investor_id TEXT PRIMARY KEY REFERENCES investors(id) ON DELETE CASCADE,
+        thesis_embedding BLOB,                  -- float32[768] numpy array
+        embedding_model TEXT DEFAULT 'text-embedding-004',
+        embedding_version INTEGER DEFAULT 1,
+        source_text_hash TEXT,                  -- SHA256 for staleness detection
+        stage_distribution TEXT,                -- JSON: {"seed":0.45,"series_a":0.35}
+        sector_distribution TEXT,               -- JSON: {"fintech":0.28,"health":0.14}
+        geo_distribution TEXT,                  -- JSON: {"US":0.70,"UK":0.18}
+        check_size_p10_usd REAL,
+        check_size_median_usd REAL,
+        check_size_p90_usd REAL,
+        lead_rate REAL,                         -- Fraction of led rounds
+        portfolio_count INTEGER NOT NULL DEFAULT 0,
+        active_claim_count INTEGER NOT NULL DEFAULT 0,
+        is_cold_start INTEGER DEFAULT 1,        -- 1 if portfolio_count < 3
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    -- 9.5: Manual investor preferences (overrides inferred claims)
+    CREATE TABLE IF NOT EXISTS investor_preferences (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        investor_id TEXT NOT NULL REFERENCES investors(id) ON DELETE CASCADE,
+        preference_type TEXT NOT NULL,          -- include|exclude|boost|penalize|hard_no
+        predicate TEXT NOT NULL,                -- sector|stage|geo|min_revenue|max_valuation
+        value TEXT NOT NULL,
+        weight REAL DEFAULT 1.0,                -- Scoring weight
+        reason TEXT,                            -- Analyst note or source
+        source TEXT NOT NULL,                   -- manual|partner_request|policy
+        created_by TEXT,                        -- User who added
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_investor_prefs_investor ON investor_preferences(investor_id);
+    CREATE INDEX IF NOT EXISTS idx_investor_prefs_type ON investor_preferences(preference_type);
+
+    -- 9.6: Global baselines for lift calculation
+    -- Stores P(predicate=value) across global population for normalization
+    CREATE TABLE IF NOT EXISTS global_baselines (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        predicate TEXT NOT NULL,                -- sector|stage|geo|business_model
+        value TEXT NOT NULL,                    -- fintech|seed|US
+        global_probability REAL NOT NULL,       -- P(value) across all companies
+        sample_size INTEGER NOT NULL,           -- N companies in sample
+        sample_source TEXT NOT NULL,            -- crunchbase_2y|portfolio_all|signals_30d
+        computed_at TEXT NOT NULL DEFAULT (datetime('now')),
+        expires_at TEXT,                        -- Optional TTL
+        UNIQUE(predicate, value, sample_source)
+    );
+    CREATE INDEX IF NOT EXISTS idx_global_baselines_predicate ON global_baselines(predicate, value);
+    CREATE INDEX IF NOT EXISTS idx_global_baselines_source ON global_baselines(sample_source);
+
+    -- 9.7: FTS5 index for investor profile search
+    CREATE VIRTUAL TABLE IF NOT EXISTS investor_profile_fts USING fts5(
+        investor_id,
+        investor_name,
+        claim_text,                             -- Concatenated: "sector:fintech stage:seed geo:US"
+        content='',
+        tokenize='unicode61'
+    );
+
+    -- 9.8: Investor match results (cached)
+    CREATE TABLE IF NOT EXISTS investor_matches (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        company_key TEXT NOT NULL,              -- Startup being matched
+        investor_id TEXT NOT NULL REFERENCES investors(id) ON DELETE CASCADE,
+        match_score REAL NOT NULL,              -- Combined score 0-1
+        fts_score REAL,                         -- BM25 component
+        embedding_score REAL,                   -- Cosine similarity component
+        constraint_score REAL,                  -- Preference match component
+        explanation TEXT NOT NULL,              -- JSON array of match reasons
+        evidence TEXT,                          -- JSON array of supporting portfolio examples
+        rank INTEGER,                           -- Position in result list
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(company_key, investor_id)
+    );
+    CREATE INDEX IF NOT EXISTS idx_investor_matches_company ON investor_matches(company_key);
+    CREATE INDEX IF NOT EXISTS idx_investor_matches_score ON investor_matches(match_score DESC);
+    CREATE INDEX IF NOT EXISTS idx_investor_matches_investor ON investor_matches(investor_id);
+
+    -- =============================================================================
+    -- EVALUATION & CALIBRATION (Sprint 6) - Gold set and drift detection
+    -- =============================================================================
+
+    -- 9.9: Gold set for evaluation
+    CREATE TABLE IF NOT EXISTS gold_set_companies (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        canonical_key TEXT NOT NULL UNIQUE,
+        company_name TEXT NOT NULL,
+        category TEXT NOT NULL,                 -- core_sector|long_tail|ambiguous|hard_negative
+        annotator_1 TEXT,
+        annotator_2 TEXT,
+        tie_breaker TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_gold_set_category ON gold_set_companies(category);
+
+    -- 9.10: Gold set labels (human annotations)
+    CREATE TABLE IF NOT EXISTS gold_set_labels (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        company_id INTEGER NOT NULL REFERENCES gold_set_companies(id) ON DELETE CASCADE,
+        predicate TEXT NOT NULL,                -- problem|customer|sector|stage|geo
+        label_type TEXT NOT NULL,               -- exact|partial|incorrect|abstain
+        gold_value TEXT,                        -- Ground truth value
+        annotator TEXT NOT NULL,
+        confidence TEXT DEFAULT 'high',         -- high|medium|low
+        notes TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(company_id, predicate, annotator)
+    );
+    CREATE INDEX IF NOT EXISTS idx_gold_labels_company ON gold_set_labels(company_id);
+    CREATE INDEX IF NOT EXISTS idx_gold_labels_predicate ON gold_set_labels(predicate);
+
+    -- 9.11: Gold set investor labels
+    CREATE TABLE IF NOT EXISTS gold_set_investor_labels (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        company_id INTEGER NOT NULL REFERENCES gold_set_companies(id) ON DELETE CASCADE,
+        investor_id TEXT NOT NULL REFERENCES investors(id) ON DELETE CASCADE,
+        relevance TEXT NOT NULL,                -- relevant|partial|irrelevant
+        annotator TEXT NOT NULL,
+        notes TEXT,
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(company_id, investor_id, annotator)
+    );
+    CREATE INDEX IF NOT EXISTS idx_gold_investor_labels_company ON gold_set_investor_labels(company_id);
+
+    -- 9.12: Evaluation runs
+    CREATE TABLE IF NOT EXISTS evaluation_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id TEXT NOT NULL UNIQUE,
+        run_type TEXT NOT NULL,                 -- extraction|similarity|investor_match
+        model_version TEXT NOT NULL,
+        embedding_version TEXT,
+        gold_set_version TEXT NOT NULL,
+        metrics TEXT NOT NULL,                  -- JSON: {f1, precision, recall, abstention_rate, ...}
+        config TEXT,                            -- JSON: run configuration
+        baseline_run_id INTEGER REFERENCES evaluation_runs(id),
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_eval_runs_type ON evaluation_runs(run_type, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_eval_runs_run_id ON evaluation_runs(run_id);
+
+    -- 9.13: Drift alerts
+    CREATE TABLE IF NOT EXISTS drift_alerts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        alert_type TEXT NOT NULL,               -- extraction_f1_drop|abstention_spike|similarity_recall_drop|confidence_collapse
+        severity TEXT NOT NULL,                 -- red|yellow
+        metric_name TEXT NOT NULL,
+        baseline_value REAL NOT NULL,
+        current_value REAL NOT NULL,
+        threshold REAL NOT NULL,
+        delta REAL,                             -- current - baseline
+        evaluation_run_id INTEGER REFERENCES evaluation_runs(id),
+        acknowledged INTEGER DEFAULT 0,
+        acknowledged_by TEXT,
+        acknowledged_at TEXT,
+        slack_notified INTEGER DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    CREATE INDEX IF NOT EXISTS idx_drift_alerts_unacked ON drift_alerts(acknowledged, severity, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_drift_alerts_type ON drift_alerts(alert_type);
+
+    -- Seed investor-specific predicates
+    INSERT OR IGNORE INTO predicates (name, display_name, data_type, description) VALUES
+        ('sector_preference', 'Sector Preference', 'text', 'Investor preferred sector from portfolio analysis'),
+        ('stage_preference', 'Stage Preference', 'enum', 'Investor preferred stage from portfolio analysis'),
+        ('geo_preference', 'Geography Preference', 'text', 'Investor preferred geography from portfolio analysis'),
+        ('check_size_range', 'Check Size Range', 'text', 'Typical investment amount range'),
+        ('lead_preference', 'Lead Preference', 'enum', 'Whether investor typically leads or follows');
     """
 }
 
@@ -2485,6 +2729,671 @@ class SignalStore:
             WHERE canonical_key = ?
             """,
             (percentile_rank, canonical_key),
+        )
+        await self._db.commit()
+        return cursor.rowcount > 0
+
+    # =========================================================================
+    # INVESTOR MATCHING METHODS (Sprint 5)
+    # =========================================================================
+
+    async def save_investor(
+        self,
+        investor_id: str,
+        name: str,
+        source: str,
+        investor_type: str = "vc",
+        website_domain: Optional[str] = None,
+        hq_country: Optional[str] = None,
+        hq_city: Optional[str] = None,
+        founded_year: Optional[int] = None,
+        aum_usd: Optional[float] = None,
+        source_ref: Optional[str] = None,
+    ) -> str:
+        """
+        Save or update an investor entity.
+
+        Args:
+            investor_id: Canonical key (e.g., "investor:sequoia_capital")
+            name: Display name
+            source: Data source (crunchbase, curated_json, sec_edgar)
+            investor_type: vc, angel, accelerator, corporate, family_office
+            website_domain: Optional website
+            hq_country: Headquarters country
+            hq_city: Headquarters city
+            founded_year: Year founded
+            aum_usd: Assets under management
+            source_ref: Source URL or file path
+
+        Returns:
+            The investor_id
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        now = datetime.now(timezone.utc).isoformat()
+
+        await self._db.execute(
+            """
+            INSERT INTO investors (
+                id, canonical_key, name, investor_type, website_domain,
+                hq_country, hq_city, founded_year, aum_usd, source, source_ref,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                name = excluded.name,
+                investor_type = excluded.investor_type,
+                website_domain = excluded.website_domain,
+                hq_country = excluded.hq_country,
+                hq_city = excluded.hq_city,
+                founded_year = excluded.founded_year,
+                aum_usd = excluded.aum_usd,
+                source = excluded.source,
+                source_ref = excluded.source_ref,
+                updated_at = excluded.updated_at
+            """,
+            (
+                investor_id, investor_id, name, investor_type, website_domain,
+                hq_country, hq_city, founded_year, aum_usd, source, source_ref,
+                now, now
+            ),
+        )
+        await self._db.commit()
+        return investor_id
+
+    async def save_portfolio_entry(
+        self,
+        investor_id: str,
+        company_key: str,
+        relationship_type: str,
+        source: str,
+        round_type: Optional[str] = None,
+        round_date: Optional[str] = None,
+        investment_usd: Optional[float] = None,
+        ownership_pct: Optional[float] = None,
+        is_lead: bool = False,
+        confidence: float = 0.5,
+        source_ref: Optional[str] = None,
+        extraction_id: Optional[int] = None,
+    ) -> int:
+        """
+        Save a portfolio entry (investor -> company relationship).
+
+        Args:
+            investor_id: The investor's canonical key
+            company_key: The company's canonical key
+            relationship_type: led, participated, followed_on, acquired, advisor
+            source: Data source
+            round_type: pre_seed, seed, series_a, etc.
+            round_date: ISO date YYYY-MM-DD
+            investment_usd: Investment amount
+            ownership_pct: Ownership percentage
+            is_lead: Whether investor led the round
+            confidence: Confidence score 0-1
+            source_ref: Source URL or file
+            extraction_id: FK to claim_extractions for evidence
+
+        Returns:
+            The portfolio entry ID
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        now = datetime.now(timezone.utc).isoformat()
+
+        cursor = await self._db.execute(
+            """
+            INSERT INTO investor_portfolios (
+                investor_id, company_key, relationship_type, round_type,
+                round_date, investment_usd, ownership_pct, is_lead,
+                source, source_ref, confidence, extraction_id,
+                created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(investor_id, company_key, round_type, round_date) DO UPDATE SET
+                relationship_type = excluded.relationship_type,
+                investment_usd = excluded.investment_usd,
+                ownership_pct = excluded.ownership_pct,
+                is_lead = excluded.is_lead,
+                confidence = excluded.confidence,
+                source_ref = excluded.source_ref,
+                extraction_id = excluded.extraction_id,
+                updated_at = excluded.updated_at
+            """,
+            (
+                investor_id, company_key, relationship_type, round_type,
+                round_date, investment_usd, ownership_pct, 1 if is_lead else 0,
+                source, source_ref, confidence, extraction_id,
+                now, now
+            ),
+        )
+        await self._db.commit()
+        return cursor.lastrowid or 0
+
+    async def save_investor_profile_claim(
+        self,
+        investor_id: str,
+        predicate: str,
+        value: str,
+        confidence: float,
+        support_count: int,
+        lift_score: Optional[float] = None,
+        support_evidence: Optional[List[Dict[str, Any]]] = None,
+        status: str = "active",
+    ) -> int:
+        """
+        Save an inferred profile claim for an investor.
+
+        Args:
+            investor_id: The investor's canonical key
+            predicate: sector_preference, stage_preference, geo_preference, etc.
+            value: The predicate value
+            confidence: Confidence score 0-1
+            support_count: Number of portfolio companies supporting this
+            lift_score: Log-odds vs global baseline
+            support_evidence: JSON array of {company_key, extraction_id}
+            status: active, stale, retracted
+
+        Returns:
+            The claim ID
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        now = datetime.now(timezone.utc).isoformat()
+        evidence_json = json.dumps(support_evidence) if support_evidence else None
+
+        cursor = await self._db.execute(
+            """
+            INSERT INTO investor_profile_claims (
+                investor_id, predicate, value, confidence, lift_score,
+                support_count, support_evidence, status, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(investor_id, predicate, value) DO UPDATE SET
+                confidence = excluded.confidence,
+                lift_score = excluded.lift_score,
+                support_count = excluded.support_count,
+                support_evidence = excluded.support_evidence,
+                status = excluded.status,
+                updated_at = excluded.updated_at
+            """,
+            (
+                investor_id, predicate, value, confidence, lift_score,
+                support_count, evidence_json, status, now, now
+            ),
+        )
+        await self._db.commit()
+        return cursor.lastrowid or 0
+
+    async def save_global_baseline(
+        self,
+        predicate: str,
+        value: str,
+        global_probability: float,
+        sample_size: int,
+        sample_source: str,
+        expires_at: Optional[str] = None,
+    ) -> int:
+        """
+        Save a global baseline probability for lift calculation.
+
+        Args:
+            predicate: sector, stage, geo, business_model
+            value: The predicate value
+            global_probability: P(value) across all companies
+            sample_size: Number of companies in sample
+            sample_source: crunchbase_2y, portfolio_all, signals_30d
+            expires_at: Optional expiry time
+
+        Returns:
+            The baseline ID
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        now = datetime.now(timezone.utc).isoformat()
+
+        cursor = await self._db.execute(
+            """
+            INSERT INTO global_baselines (
+                predicate, value, global_probability, sample_size,
+                sample_source, computed_at, expires_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(predicate, value, sample_source) DO UPDATE SET
+                global_probability = excluded.global_probability,
+                sample_size = excluded.sample_size,
+                computed_at = excluded.computed_at,
+                expires_at = excluded.expires_at
+            """,
+            (predicate, value, global_probability, sample_size, sample_source, now, expires_at),
+        )
+        await self._db.commit()
+        return cursor.lastrowid or 0
+
+    async def get_global_baseline(
+        self,
+        predicate: str,
+        value: str,
+        sample_source: str = "crunchbase_2y",
+    ) -> Optional[float]:
+        """
+        Get the global baseline probability for a predicate/value pair.
+
+        Returns:
+            The global probability, or None if not found
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        cursor = await self._db.execute(
+            """
+            SELECT global_probability
+            FROM global_baselines
+            WHERE predicate = ? AND value = ? AND sample_source = ?
+            """,
+            (predicate, value, sample_source),
+        )
+        row = await cursor.fetchone()
+        return row[0] if row else None
+
+    async def save_investor_match(
+        self,
+        company_key: str,
+        investor_id: str,
+        match_score: float,
+        explanation: List[str],
+        rank: int,
+        fts_score: Optional[float] = None,
+        embedding_score: Optional[float] = None,
+        constraint_score: Optional[float] = None,
+        evidence: Optional[List[Dict[str, Any]]] = None,
+    ) -> int:
+        """
+        Save an investor match result.
+
+        Args:
+            company_key: The startup's canonical key
+            investor_id: The matched investor
+            match_score: Combined match score 0-1
+            explanation: List of match reasons
+            rank: Position in result list
+            fts_score: BM25 component
+            embedding_score: Cosine similarity component
+            constraint_score: Preference match component
+            evidence: Supporting portfolio examples
+
+        Returns:
+            The match ID
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        now = datetime.now(timezone.utc).isoformat()
+
+        cursor = await self._db.execute(
+            """
+            INSERT INTO investor_matches (
+                company_key, investor_id, match_score, fts_score,
+                embedding_score, constraint_score, explanation, evidence,
+                rank, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(company_key, investor_id) DO UPDATE SET
+                match_score = excluded.match_score,
+                fts_score = excluded.fts_score,
+                embedding_score = excluded.embedding_score,
+                constraint_score = excluded.constraint_score,
+                explanation = excluded.explanation,
+                evidence = excluded.evidence,
+                rank = excluded.rank,
+                created_at = excluded.created_at
+            """,
+            (
+                company_key, investor_id, match_score, fts_score,
+                embedding_score, constraint_score, json.dumps(explanation),
+                json.dumps(evidence) if evidence else None, rank, now
+            ),
+        )
+        await self._db.commit()
+        return cursor.lastrowid or 0
+
+    async def get_investor_matches(
+        self,
+        company_key: str,
+        limit: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """
+        Get investor matches for a company.
+
+        Args:
+            company_key: The company's canonical key
+            limit: Maximum results to return
+
+        Returns:
+            List of match dicts ordered by rank
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        cursor = await self._db.execute(
+            """
+            SELECT
+                im.company_key, im.investor_id, im.match_score,
+                im.fts_score, im.embedding_score, im.constraint_score,
+                im.explanation, im.evidence, im.rank, im.created_at,
+                i.name as investor_name, i.investor_type, i.hq_country
+            FROM investor_matches im
+            JOIN investors i ON im.investor_id = i.id
+            WHERE im.company_key = ?
+            ORDER BY im.rank ASC
+            LIMIT ?
+            """,
+            (company_key, limit),
+        )
+        rows = await cursor.fetchall()
+
+        return [
+            {
+                "company_key": row[0],
+                "investor_id": row[1],
+                "match_score": row[2],
+                "fts_score": row[3],
+                "embedding_score": row[4],
+                "constraint_score": row[5],
+                "explanation": json.loads(row[6]) if row[6] else [],
+                "evidence": json.loads(row[7]) if row[7] else [],
+                "rank": row[8],
+                "created_at": row[9],
+                "investor_name": row[10],
+                "investor_type": row[11],
+                "hq_country": row[12],
+            }
+            for row in rows
+        ]
+
+    async def get_investor_portfolio(
+        self,
+        investor_id: str,
+    ) -> List[Dict[str, Any]]:
+        """
+        Get all portfolio entries for an investor.
+
+        Args:
+            investor_id: The investor's canonical key
+
+        Returns:
+            List of portfolio entry dicts
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        cursor = await self._db.execute(
+            """
+            SELECT
+                id, investor_id, company_key, relationship_type, round_type,
+                round_date, investment_usd, ownership_pct, is_lead, source,
+                source_ref, confidence, extraction_id, created_at, updated_at
+            FROM investor_portfolios
+            WHERE investor_id = ?
+            ORDER BY round_date DESC
+            """,
+            (investor_id,),
+        )
+        rows = await cursor.fetchall()
+
+        return [
+            {
+                "id": row[0],
+                "investor_id": row[1],
+                "company_key": row[2],
+                "relationship_type": row[3],
+                "round_type": row[4],
+                "round_date": row[5],
+                "investment_usd": row[6],
+                "ownership_pct": row[7],
+                "is_lead": bool(row[8]),
+                "source": row[9],
+                "source_ref": row[10],
+                "confidence": row[11],
+                "extraction_id": row[12],
+                "created_at": row[13],
+                "updated_at": row[14],
+            }
+            for row in rows
+        ]
+
+    async def get_investor_profile_claims(
+        self,
+        investor_id: str,
+        status: str = "active",
+    ) -> List[Dict[str, Any]]:
+        """
+        Get profile claims for an investor.
+
+        Args:
+            investor_id: The investor's canonical key
+            status: Filter by status (active, stale, retracted)
+
+        Returns:
+            List of claim dicts
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        cursor = await self._db.execute(
+            """
+            SELECT
+                id, investor_id, predicate, value, confidence, lift_score,
+                support_count, support_evidence, status, created_at, updated_at
+            FROM investor_profile_claims
+            WHERE investor_id = ? AND status = ?
+            ORDER BY lift_score DESC
+            """,
+            (investor_id, status),
+        )
+        rows = await cursor.fetchall()
+
+        return [
+            {
+                "id": row[0],
+                "investor_id": row[1],
+                "predicate": row[2],
+                "value": row[3],
+                "confidence": row[4],
+                "lift_score": row[5],
+                "support_count": row[6],
+                "support_evidence": json.loads(row[7]) if row[7] else [],
+                "status": row[8],
+                "created_at": row[9],
+                "updated_at": row[10],
+            }
+            for row in rows
+        ]
+
+    # =========================================================================
+    # EVALUATION & DRIFT DETECTION METHODS (Sprint 6)
+    # =========================================================================
+
+    async def save_evaluation_run(
+        self,
+        run_id: str,
+        run_type: str,
+        model_version: str,
+        gold_set_version: str,
+        metrics: Dict[str, Any],
+        embedding_version: Optional[str] = None,
+        config: Optional[Dict[str, Any]] = None,
+        baseline_run_id: Optional[int] = None,
+    ) -> int:
+        """
+        Save an evaluation run with metrics.
+
+        Args:
+            run_id: Unique run identifier
+            run_type: extraction, similarity, investor_match
+            model_version: Model version used
+            gold_set_version: Gold set version evaluated against
+            metrics: Dict of metric values (f1, precision, recall, etc.)
+            embedding_version: Optional embedding version
+            config: Optional run configuration
+            baseline_run_id: Optional reference to baseline run
+
+        Returns:
+            The run ID
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        now = datetime.now(timezone.utc).isoformat()
+
+        cursor = await self._db.execute(
+            """
+            INSERT INTO evaluation_runs (
+                run_id, run_type, model_version, embedding_version,
+                gold_set_version, metrics, config, baseline_run_id, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                run_id, run_type, model_version, embedding_version,
+                gold_set_version, json.dumps(metrics),
+                json.dumps(config) if config else None,
+                baseline_run_id, now
+            ),
+        )
+        await self._db.commit()
+        return cursor.lastrowid or 0
+
+    async def save_drift_alert(
+        self,
+        alert_type: str,
+        severity: str,
+        metric_name: str,
+        baseline_value: float,
+        current_value: float,
+        threshold: float,
+        evaluation_run_id: Optional[int] = None,
+    ) -> int:
+        """
+        Save a drift alert.
+
+        Args:
+            alert_type: extraction_f1_drop, abstention_spike, etc.
+            severity: red or yellow
+            metric_name: Name of the drifting metric
+            baseline_value: Expected/historical value
+            current_value: Current measured value
+            threshold: Threshold that was breached
+            evaluation_run_id: Optional link to eval run
+
+        Returns:
+            The alert ID
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        now = datetime.now(timezone.utc).isoformat()
+        delta = current_value - baseline_value
+
+        cursor = await self._db.execute(
+            """
+            INSERT INTO drift_alerts (
+                alert_type, severity, metric_name, baseline_value,
+                current_value, threshold, delta, evaluation_run_id,
+                acknowledged, slack_notified, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?)
+            """,
+            (
+                alert_type, severity, metric_name, baseline_value,
+                current_value, threshold, delta, evaluation_run_id, now
+            ),
+        )
+        await self._db.commit()
+        return cursor.lastrowid or 0
+
+    async def get_unacknowledged_drift_alerts(
+        self,
+        severity: Optional[str] = None,
+        limit: int = 50,
+    ) -> List[Dict[str, Any]]:
+        """
+        Get unacknowledged drift alerts.
+
+        Args:
+            severity: Optional filter by severity (red, yellow)
+            limit: Maximum alerts to return
+
+        Returns:
+            List of alert dicts ordered by severity and time
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        query = """
+            SELECT
+                id, alert_type, severity, metric_name, baseline_value,
+                current_value, threshold, delta, evaluation_run_id,
+                acknowledged, acknowledged_by, acknowledged_at,
+                slack_notified, created_at
+            FROM drift_alerts
+            WHERE acknowledged = 0
+        """
+        params: List[Any] = []
+
+        if severity:
+            query += " AND severity = ?"
+            params.append(severity)
+
+        query += " ORDER BY CASE severity WHEN 'red' THEN 0 ELSE 1 END, created_at DESC LIMIT ?"
+        params.append(limit)
+
+        cursor = await self._db.execute(query, params)
+        rows = await cursor.fetchall()
+
+        return [
+            {
+                "id": row[0],
+                "alert_type": row[1],
+                "severity": row[2],
+                "metric_name": row[3],
+                "baseline_value": row[4],
+                "current_value": row[5],
+                "threshold": row[6],
+                "delta": row[7],
+                "evaluation_run_id": row[8],
+                "acknowledged": bool(row[9]),
+                "acknowledged_by": row[10],
+                "acknowledged_at": row[11],
+                "slack_notified": bool(row[12]),
+                "created_at": row[13],
+            }
+            for row in rows
+        ]
+
+    async def acknowledge_drift_alert(
+        self,
+        alert_id: int,
+        acknowledged_by: str,
+    ) -> bool:
+        """
+        Acknowledge a drift alert.
+
+        Args:
+            alert_id: The alert ID
+            acknowledged_by: User who acknowledged
+
+        Returns:
+            True if updated, False if not found
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        now = datetime.now(timezone.utc).isoformat()
+
+        cursor = await self._db.execute(
+            """
+            UPDATE drift_alerts
+            SET acknowledged = 1, acknowledged_by = ?, acknowledged_at = ?
+            WHERE id = ?
+            """,
+            (acknowledged_by, now, alert_id),
         )
         await self._db.commit()
         return cursor.rowcount > 0
