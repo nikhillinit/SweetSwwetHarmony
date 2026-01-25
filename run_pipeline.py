@@ -1565,6 +1565,145 @@ Examples:
         help="Path to signals database",
     )
 
+    # --- gold-set command group ---
+    goldset_parser = subparsers.add_parser(
+        "gold-set",
+        help="Manage gold set for evaluation",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="""
+Gold set management for evaluation framework.
+
+Examples:
+  # List gold set companies
+  python run_pipeline.py gold-set list
+
+  # Show gold set statistics
+  python run_pipeline.py gold-set stats
+
+  # Export gold set to JSON
+  python run_pipeline.py gold-set export --format json --output gold_set.json
+
+  # Import gold set from JSON
+  python run_pipeline.py gold-set import gold_set.json
+""",
+    )
+    goldset_sub = goldset_parser.add_subparsers(dest="goldset_cmd")
+
+    # gold-set list
+    goldset_list_parser = goldset_sub.add_parser("list", help="List gold set companies")
+    goldset_list_parser.add_argument(
+        "--category",
+        type=str,
+        choices=["core_sector", "long_tail", "ambiguous", "hard_negative"],
+        help="Filter by category",
+    )
+    goldset_list_parser.add_argument(
+        "--limit",
+        type=int,
+        default=50,
+        help="Maximum companies to list",
+    )
+    goldset_list_parser.add_argument(
+        "--db-path",
+        type=str,
+        default=os.getenv("DISCOVERY_DB_PATH", "signals.db"),
+        help="Path to signals database",
+    )
+
+    # gold-set stats
+    goldset_stats_parser = goldset_sub.add_parser("stats", help="Show gold set statistics")
+    goldset_stats_parser.add_argument(
+        "--db-path",
+        type=str,
+        default=os.getenv("DISCOVERY_DB_PATH", "signals.db"),
+        help="Path to signals database",
+    )
+
+    # gold-set export
+    goldset_export_parser = goldset_sub.add_parser("export", help="Export gold set")
+    goldset_export_parser.add_argument(
+        "--format",
+        type=str,
+        choices=["json", "csv"],
+        default="json",
+        help="Export format (default: json)",
+    )
+    goldset_export_parser.add_argument(
+        "--output",
+        type=str,
+        required=True,
+        help="Output file path",
+    )
+    goldset_export_parser.add_argument(
+        "--db-path",
+        type=str,
+        default=os.getenv("DISCOVERY_DB_PATH", "signals.db"),
+        help="Path to signals database",
+    )
+
+    # gold-set import
+    goldset_import_parser = goldset_sub.add_parser("import", help="Import gold set")
+    goldset_import_parser.add_argument(
+        "file",
+        type=str,
+        help="File to import (JSON or CSV)",
+    )
+    goldset_import_parser.add_argument(
+        "--db-path",
+        type=str,
+        default=os.getenv("DISCOVERY_DB_PATH", "signals.db"),
+        help="Path to signals database",
+    )
+
+    # --- evaluate command ---
+    evaluate_parser = subparsers.add_parser(
+        "evaluate",
+        help="Run evaluation against gold set",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="""
+Run evaluation against gold set.
+
+Examples:
+  # Run full evaluation
+  python run_pipeline.py evaluate --type full
+
+  # Run extraction evaluation only
+  python run_pipeline.py evaluate --type extraction
+
+  # Run with drift detection
+  python run_pipeline.py evaluate --type full --check-drift
+""",
+    )
+    evaluate_parser.add_argument(
+        "--type",
+        type=str,
+        choices=["extraction", "similarity", "investor_match", "full"],
+        default="full",
+        help="Evaluation type (default: full)",
+    )
+    evaluate_parser.add_argument(
+        "--gold-set-version",
+        type=str,
+        default="v1",
+        help="Gold set version (default: v1)",
+    )
+    evaluate_parser.add_argument(
+        "--check-drift",
+        action="store_true",
+        help="Check for drift and generate alerts",
+    )
+    evaluate_parser.add_argument(
+        "--notify-slack",
+        action="store_true",
+        help="Send Slack notifications for red alerts",
+    )
+    evaluate_parser.add_argument(
+        "--db-path",
+        type=str,
+        default=os.getenv("DISCOVERY_DB_PATH", "signals.db"),
+        help="Path to signals database",
+    )
+
     return parser
 
 
@@ -1799,6 +1938,217 @@ async def cmd_corroborate(args):
         await store.close()
 
 
+async def cmd_goldset_list(args):
+    """List gold set companies."""
+    from utils.gold_set_manager import GoldSetManager
+
+    store = SignalStore(args.db_path)
+    await store.initialize()
+
+    try:
+        manager = GoldSetManager(store)
+        companies = await manager.list_companies(
+            category=getattr(args, "category", None),
+            limit=getattr(args, "limit", 50),
+        )
+
+        print("\n" + "=" * 70)
+        print("GOLD SET COMPANIES")
+        print("=" * 70)
+        print(f"{'Canonical Key':<40} | {'Name':<20} | Category")
+        print("-" * 70)
+
+        for company in companies:
+            print(f"{company.canonical_key:<40} | {company.company_name[:20]:<20} | {company.category}")
+
+        print("-" * 70)
+        print(f"Total: {len(companies)} companies")
+        print("=" * 70)
+
+    finally:
+        await store.close()
+
+
+async def cmd_goldset_stats(args):
+    """Show gold set statistics."""
+    from utils.gold_set_manager import GoldSetManager
+
+    store = SignalStore(args.db_path)
+    await store.initialize()
+
+    try:
+        manager = GoldSetManager(store)
+        stats = await manager.get_stats()
+
+        print("\n" + "=" * 70)
+        print("GOLD SET STATISTICS")
+        print("=" * 70)
+        print(f"Total companies:  {stats.total_companies}")
+        print(f"Total labels:     {stats.total_labels}")
+        print(f"Investor labels:  {stats.total_investor_labels}")
+        print("-" * 70)
+        print("By category:")
+        for cat, count in sorted(stats.by_category.items()):
+            print(f"  {cat:<20}: {count}")
+        print("-" * 70)
+        print(f"Annotators: {', '.join(stats.annotators) if stats.annotators else 'None'}")
+        print("=" * 70)
+
+    finally:
+        await store.close()
+
+
+async def cmd_goldset_export(args):
+    """Export gold set."""
+    from pathlib import Path
+    from utils.gold_set_manager import GoldSetManager
+
+    store = SignalStore(args.db_path)
+    await store.initialize()
+
+    try:
+        manager = GoldSetManager(store)
+        output_path = Path(args.output)
+
+        if args.format == "json":
+            count = await manager.export_to_json(output_path)
+        else:
+            count = await manager.export_to_csv(output_path)
+
+        print(f"Exported {count} companies to {output_path}")
+
+    finally:
+        await store.close()
+
+
+async def cmd_goldset_import(args):
+    """Import gold set."""
+    from pathlib import Path
+    from utils.gold_set_manager import GoldSetManager
+
+    store = SignalStore(args.db_path)
+    await store.initialize()
+
+    try:
+        manager = GoldSetManager(store)
+        file_path = Path(args.file)
+
+        if file_path.suffix.lower() == ".json":
+            count = await manager.import_from_json(file_path)
+        else:
+            count = await manager.import_from_csv(file_path)
+
+        print(f"Imported {count} companies from {file_path}")
+
+    finally:
+        await store.close()
+
+
+async def cmd_evaluate(args):
+    """Run evaluation against gold set."""
+    from utils.gold_set_manager import GoldSetManager
+    from utils.evaluation_runner import EvaluationRunner
+    from utils.drift_detector import DriftDetector
+
+    store = SignalStore(args.db_path)
+    await store.initialize()
+
+    try:
+        gold_set = GoldSetManager(store)
+        runner = EvaluationRunner(store, gold_set)
+
+        print("\n" + "=" * 70)
+        print(f"EVALUATION - {args.type.upper()}")
+        print("=" * 70)
+        print(f"Gold set version: {args.gold_set_version}")
+        print(f"Check drift: {args.check_drift}")
+        print("-" * 70)
+
+        results = {}
+
+        if args.type == "full":
+            results = await runner.run_full_evaluation(args.gold_set_version)
+        elif args.type == "extraction":
+            results["extraction"] = await runner.run_extraction_evaluation(
+                args.gold_set_version
+            )
+        elif args.type == "similarity":
+            results["similarity"] = await runner.run_similarity_evaluation(
+                args.gold_set_version
+            )
+        elif args.type == "investor_match":
+            results["investor_match"] = await runner.run_investor_match_evaluation(
+                args.gold_set_version
+            )
+
+        # Print results
+        for run_type, result in results.items():
+            print(f"\n{run_type.upper()} METRICS:")
+            print("-" * 40)
+
+            if result.extraction_metrics:
+                m = result.extraction_metrics
+                print(f"  Precision:       {m.precision:.1%}")
+                print(f"  Recall:          {m.recall:.1%}")
+                print(f"  F1:              {m.f1:.1%}")
+                print(f"  Abstention rate: {m.abstention_rate:.1f}%")
+                print(f"  Total samples:   {m.total_samples}")
+
+            if result.similarity_metrics:
+                m = result.similarity_metrics
+                print(f"  Top-1 recall:   {m.top_1_recall:.1f}%")
+                print(f"  Top-5 recall:   {m.top_5_recall:.1f}%")
+                print(f"  Top-10 recall:  {m.top_10_recall:.1f}%")
+                print(f"  MRR:            {m.mean_reciprocal_rank:.3f}")
+                print(f"  Total queries:  {m.total_queries}")
+
+            if result.investor_match_metrics:
+                m = result.investor_match_metrics
+                print(f"  Precision@5:      {m.precision_at_5:.1%}")
+                print(f"  Mean Precision@5: {m.mean_precision_at_5:.1%}")
+                print(f"  Total queries:    {m.total_queries}")
+
+        # Check drift if requested
+        if args.check_drift and results:
+            print("\n" + "-" * 70)
+            print("DRIFT DETECTION")
+            print("-" * 40)
+
+            slack_notifier = None
+            if args.notify_slack:
+                try:
+                    from utils.slack_notifier import SlackNotifier
+                    slack_notifier = SlackNotifier()
+                except Exception:
+                    pass
+
+            detector = DriftDetector(store, slack_notifier=slack_notifier)
+
+            for run_type, result in results.items():
+                drift_result = await detector.check_evaluation_drift(
+                    evaluation_run_id=1,  # Simplified for now
+                    current_metrics=result.to_dict(),
+                    run_type=run_type,
+                )
+
+                if drift_result.alerts:
+                    print(f"\n{run_type.upper()} drift alerts:")
+                    for alert in drift_result.alerts:
+                        severity_marker = "[RED]" if alert.severity == "red" else "[YELLOW]"
+                        print(f"  {severity_marker} {alert.alert_type}: {alert.message}")
+                else:
+                    print(f"\n{run_type.upper()}: No drift detected")
+
+            print(f"\nTotal alerts: {sum(r.red_count + r.yellow_count for r in [drift_result])}")
+
+        print("\n" + "=" * 70)
+        print("Evaluation complete")
+        print("=" * 70)
+
+    finally:
+        await store.close()
+
+
 async def main():
     """Main entry point"""
 
@@ -1867,6 +2217,25 @@ async def main():
             await cmd_import_csv(args)
         elif args.command == "corroborate":
             await cmd_corroborate(args)
+        elif args.command == "gold-set":
+            # Handle gold-set subcommands
+            if hasattr(args, "goldset_cmd") and args.goldset_cmd:
+                if args.goldset_cmd == "list":
+                    await cmd_goldset_list(args)
+                elif args.goldset_cmd == "stats":
+                    await cmd_goldset_stats(args)
+                elif args.goldset_cmd == "export":
+                    await cmd_goldset_export(args)
+                elif args.goldset_cmd == "import":
+                    await cmd_goldset_import(args)
+                else:
+                    print(f"Unknown gold-set command: {args.goldset_cmd}")
+                    sys.exit(1)
+            else:
+                print("Gold-set command requires a subcommand (list, stats, export, import)")
+                sys.exit(1)
+        elif args.command == "evaluate":
+            await cmd_evaluate(args)
         else:
             print(f"Unknown command: {args.command}")
             parser.print_help()
