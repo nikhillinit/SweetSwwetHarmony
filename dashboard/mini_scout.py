@@ -5,12 +5,15 @@ Dark theme design inspired by Press On Ventures.
 Designed for non-technical users with plain language and helpful guidance.
 """
 import asyncio
+import logging
 import streamlit as st
 from datetime import datetime, timedelta
 from typing import Dict, Any, List
 import json
 
 from storage.signal_store import SignalStore
+
+logger = logging.getLogger(__name__)
 
 # User-friendly names for technical data sources
 SOURCE_FRIENDLY_NAMES = {
@@ -478,20 +481,23 @@ def render_stats_bar(store: SignalStore):
 
 def render_search_bar() -> bool:
     """Render clean search input with helpful placeholder."""
-    col1, col2 = st.columns([6, 1])
+    with st.form(key="search_form", clear_on_submit=False):
+        col1, col2 = st.columns([6, 1])
 
-    with col1:
-        query = st.text_input(
-            "Search",
-            value=st.session_state.mini_scout_filters["search_query"],
-            placeholder="Search by company name, keyword, or industry (e.g., 'wellness', 'travel tech')",
-            label_visibility="collapsed",
-            help="Enter any text to search across all company names and descriptions"
-        )
-        st.session_state.mini_scout_filters["search_query"] = query
+        with col1:
+            query = st.text_input(
+                "Search",
+                value=st.session_state.mini_scout_filters.get("search_query", ""),
+                placeholder="Search by company name, keyword, or industry (e.g., 'wellness', 'travel tech')",
+                label_visibility="collapsed",
+                help="Enter any text to search across all company names and descriptions"
+            )
 
-    with col2:
-        search_clicked = st.button("Search", type="primary", use_container_width=True)
+        with col2:
+            search_clicked = st.form_submit_button("Search", type="primary", use_container_width=True)
+
+        if search_clicked:
+            st.session_state.mini_scout_filters["search_query"] = query
 
     return search_clicked
 
@@ -622,6 +628,7 @@ def render_filter_sidebar(store: SignalStore):
 def execute_search(store: SignalStore) -> List[Dict[str, Any]]:
     """Execute search with current filters."""
     filters = st.session_state.mini_scout_filters
+    logger.info(f"execute_search called with query: '{filters.get('search_query')}'")
 
     start_date = None
     if filters["date_range"] != "all":
@@ -630,6 +637,7 @@ def execute_search(store: SignalStore) -> List[Dict[str, Any]]:
 
     if filters["search_query"]:
         results = run_async(store.search_signals_fts(filters["search_query"], limit=500))
+        logger.info(f"FTS search returned {len(results)} results")
         if filters["verticals"]:
             results = [r for r in results if r.get("vertical") in filters["verticals"]]
         if filters["min_confidence"] > 0:
@@ -971,8 +979,17 @@ def render_mini_scout_page(store: SignalStore, inject_css: bool = True):
         render_stats_bar(store)
         search_clicked = render_search_bar()
 
-        # Show helpful hint when no search has been done
-        if not search_clicked and not st.session_state.mini_scout_results:
+        # Get current search query from session state
+        query = st.session_state.mini_scout_filters.get("search_query", "")
+
+        # Execute search if we have a query (either from button click or persisted)
+        if search_clicked or query:
+            with st.spinner("Searching for companies..."):
+                results = execute_search(store)
+                st.session_state.mini_scout_results = results
+            render_results(st.session_state.mini_scout_results)
+        elif not st.session_state.mini_scout_results:
+            # Show helpful hint when no search has been done
             st.markdown("""
             <div style="text-align: center; padding: 3rem 2rem; color: #7a7267;">
                 <div style="font-size: 2.5rem; margin-bottom: 1rem;">🔍</div>
@@ -984,14 +1001,6 @@ def render_mini_scout_page(store: SignalStore, inject_css: bool = True):
                 </p>
             </div>
             """, unsafe_allow_html=True)
-
-        if search_clicked or st.session_state.mini_scout_results:
-            if search_clicked:
-                with st.spinner("Searching for companies..."):
-                    results = execute_search(store)
-                    st.session_state.mini_scout_results = results
-
-            render_results(st.session_state.mini_scout_results)
 
     with tab2:
         render_analytics(store)
