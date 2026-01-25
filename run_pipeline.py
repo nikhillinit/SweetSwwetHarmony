@@ -873,6 +873,60 @@ async def cmd_metrics(args):
 
 
 # =============================================================================
+# EMBEDDINGS BATCH COMMAND
+# =============================================================================
+
+async def cmd_embeddings(args):
+    """Pre-compute company embeddings for similarity search."""
+    import logging
+    from utils.similar_companies_batch import run_batch_job
+
+    # Setup logging
+    level = logging.DEBUG if getattr(args, "verbose", False) else logging.INFO
+    logging.basicConfig(
+        level=level,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    )
+
+    db_path = getattr(args, "db_path", "signals.db")
+    force = getattr(args, "force", False)
+    limit = getattr(args, "limit", None)
+
+    print("\n" + "=" * 50)
+    print("Embeddings Batch Job")
+    print("=" * 50)
+    print(f"Database: {db_path}")
+    print(f"Force recompute: {force}")
+    if limit:
+        print(f"Limit: {limit} companies")
+    print()
+
+    result = await run_batch_job(
+        db_path=db_path,
+        force_recompute=force,
+        limit=limit,
+    )
+
+    # Display results
+    print("\nResults:")
+    print(f"  Total companies:    {result.total_companies}")
+    print(f"  New embeddings:     {result.new_embeddings}")
+    print(f"  Updated embeddings: {result.updated_embeddings}")
+    print(f"  Skipped (cached):   {result.skipped_embeddings}")
+    print(f"  Failed:             {result.failed_embeddings}")
+    print(f"  Duration:           {result.duration_seconds:.1f}s")
+
+    if result.errors:
+        print(f"\nErrors ({len(result.errors)}):")
+        for err in result.errors[:5]:
+            print(f"  - {err}")
+        if len(result.errors) > 5:
+            print(f"  ... and {len(result.errors) - 5} more")
+
+    print()
+
+
+# =============================================================================
 # PIPELINE DASHBOARD COMMANDS
 # =============================================================================
 
@@ -1298,6 +1352,34 @@ Environment variables:
         default=None,
         dest="db_path",
         help="Path to signals database",
+    )
+
+    # Embeddings batch command
+    embeddings_parser = subparsers.add_parser(
+        "embeddings",
+        help="Pre-compute company embeddings for similarity search",
+    )
+    embeddings_parser.add_argument(
+        "--db-path",
+        type=str,
+        default="signals.db",
+        help="Path to SQLite database (default: signals.db)",
+    )
+    embeddings_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Force recompute all embeddings (ignore cache)",
+    )
+    embeddings_parser.add_argument(
+        "--limit",
+        type=int,
+        default=None,
+        help="Maximum companies to process (for testing)",
+    )
+    embeddings_parser.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="Verbose logging",
     )
 
     # Pipeline subcommands
@@ -1748,6 +1830,8 @@ async def main():
             exit_code = await cmd_health(args)
         elif args.command == "metrics":
             await cmd_metrics(args)
+        elif args.command == "embeddings":
+            await cmd_embeddings(args)
         elif args.command == "pipeline":
             # Handle pipeline subcommands
             db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")

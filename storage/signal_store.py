@@ -63,7 +63,7 @@ logger = logging.getLogger(__name__)
 # SCHEMA VERSION
 # =============================================================================
 
-CURRENT_SCHEMA_VERSION = 7
+CURRENT_SCHEMA_VERSION = 8
 
 # SQL for creating tables (migrations applied in order)
 MIGRATIONS = {
@@ -435,6 +435,49 @@ MIGRATIONS = {
               c3.id DESC
           LIMIT 1
       );
+    """,
+    8: """
+    -- =============================================================================
+    -- SIMILAR COMPANIES (Sprint 4) - Embedding-based similarity search
+    -- =============================================================================
+    -- Hybrid FTS+embedding approach: FTS5 for candidate retrieval, embeddings for ranking.
+
+    -- FTS index for company profiles (Stage 1: candidate retrieval)
+    CREATE VIRTUAL TABLE IF NOT EXISTS company_profiles_fts USING fts5(
+        canonical_key UNINDEXED,  -- Join key, not searched
+        company_name,
+        searchable_text,          -- Combined profile text for keyword matching
+        category,                 -- For optional narrowing
+        business_model,           -- For soft boost
+        tokenize='porter unicode61'
+    );
+
+    -- Embedding cache table (Stage 2: semantic ranking)
+    CREATE TABLE IF NOT EXISTS company_embeddings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        canonical_key TEXT NOT NULL,
+        embedding_kind TEXT NOT NULL DEFAULT 'profile_v1',  -- Future-proof for multi-facet
+
+        -- Embedding data
+        embedding BLOB NOT NULL,              -- numpy float32 bytes (768 dims * 4 bytes = 3KB)
+        embedding_model TEXT NOT NULL,        -- e.g., 'text-embedding-004'
+        embedding_version TEXT NOT NULL,      -- e.g., 'v1' (bump on template change)
+
+        -- Staleness detection
+        source_text_hash TEXT NOT NULL,       -- SHA256 of input text
+        source_text_preview TEXT,             -- First 512 chars for debugging
+
+        -- Timestamps
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT,
+
+        -- Ensure one embedding per company/kind/model/version
+        UNIQUE (canonical_key, embedding_kind, embedding_model, embedding_version)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_embeddings_key ON company_embeddings(canonical_key);
+    CREATE INDEX IF NOT EXISTS idx_embeddings_hash ON company_embeddings(source_text_hash);
+    CREATE INDEX IF NOT EXISTS idx_embeddings_kind ON company_embeddings(embedding_kind);
     """
 }
 
