@@ -384,9 +384,10 @@ Multi-LLM strategy iteration for thesis refinement using your ChatGPT Pro subscr
 
 | File | Purpose |
 |------|---------|
-| `integrations/openai_mcp.py` | OpenAI MCP server (prompts + tools) |
+| `integrations/maestro.py` | **Iterative consensus orchestrator** (Claude + Codex) |
 | `integrations/codex_wrapper.py` | Codex CLI wrapper (sandbox execution) |
-| `integrations/strategy_iterator.py` | Multi-LLM consensus orchestrator |
+| `integrations/openai_mcp.py` | OpenAI MCP server (prompts + tools) |
+| `integrations/strategy_iterator.py` | Legacy multi-LLM consensus |
 | `scripts/setup_openai_integration.sh` | Setup and verification script |
 
 ### Setup
@@ -395,66 +396,87 @@ Multi-LLM strategy iteration for thesis refinement using your ChatGPT Pro subscr
 # 1. Run setup script
 ./scripts/setup_openai_integration.sh
 
-# 2. Set API key
-export OPENAI_API_KEY=sk-...
-
-# 3. (Optional) Install Codex CLI for Pro subscription
+# 2. (Required) Install Codex CLI with ChatGPT Pro
 npm install -g @openai/codex
 codex login
 ```
 
+### Maestro Workflow (Iterative Consensus)
+
+The Maestro pattern enables iterative collaboration:
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                                                              │
+│  ┌──────────────┐    task     ┌──────────────┐              │
+│  │ Claude Code  │────────────▶│  Codex CLI   │              │
+│  │ (Orchestrator│             │  (Sandbox)   │              │
+│  │  + Critic)   │◀────────────│              │              │
+│  └──────────────┘   proposal  └──────────────┘              │
+│         │                            ▲                       │
+│         │ critique                   │                       │
+│         └────────────────────────────┘                       │
+│              (iterate until consensus)                       │
+│                                                              │
+└──────────────────────────────────────────────────────────────┘
+```
+
+**Claude's critique focuses on:**
+- **Feasibility**: Will this actually work? What assumptions are fragile?
+- **Efficiency**: Is there a simpler/faster approach?
+- **Sophistication**: What edge cases are missed? How to make it robust?
+
+**Codex is instructed to:**
+- Use existing Codex skills when helpful (`/edit`, `/review`, `/test`)
+- Create new skills for reusable patterns
+- Propose concrete, implementable solutions
+
 ### Usage
 
 ```bash
-# Quick OpenAI consultation
-python -c "
-from integrations.openai_mcp import OpenAIMCPServer
-import asyncio
+# CLI: Iterative collaboration
+python -m integrations.maestro collaborate \
+    "Improve thesis matcher false positive rate" \
+    --context "Currently at 30% FP, mostly B2B tools slipping through" \
+    --max-iterations 5
 
-async def consult():
-    server = OpenAIMCPServer()
-    response = await server.analyze_strategy(
-        context='30% false positive rate on GitHub signals',
-        question='How should we refine thesis keywords?'
-    )
-    print(response.content)
+# CLI: Review with consensus
+python -m integrations.maestro review collectors/github.py \
+    --focus "rate limiting"
 
-asyncio.run(consult())
-"
+# Python: Direct usage
+from integrations import Maestro
 
-# Codex CLI (if installed with ChatGPT Pro)
-python -m integrations.codex_wrapper check
-python -m integrations.codex_wrapper exec "How to improve thesis matching?"
+maestro = Maestro(max_iterations=5)
+result = await maestro.collaborate(
+    task="Reduce false positives in GitHub signals",
+    context="30% FP rate, B2B tools passing thesis filter",
+    context_files=["utils/thesis_matcher.py"]
+)
 
-# Strategy iteration with multi-LLM consensus
-python -m integrations.strategy_iterator thesis \
-    --question "How to reduce false positives in GitHub signals?"
-
-# Collector evaluation
-python -m integrations.strategy_iterator collector wellfound \
-    --notes "API deprecated 2023, scraping violates ToS"
+print(f"State: {result.state}")
+print(f"Iterations: {result.iterations}")
+print(f"Skills used: {result.skills_employed}")
+print(f"Final proposal:\n{result.final_proposal}")
 ```
 
-### MCP Server Prompts
+### When Claude Should Use Maestro
 
-When running `python -m integrations.openai_mcp`:
-
-| Prompt | Description |
-|--------|-------------|
-| `openai-strategy` | Get OpenAI perspective on strategy questions |
-| `openai-code-review` | Get code review for collectors/pipeline |
-| `openai-thesis-iterate` | Iterate on thesis based on signal feedback |
-
-### MCP Server Tools
-
-| Tool | Description |
-|------|-------------|
-| `openai_chat` | Direct chat with OpenAI API |
-| `openai_consensus` | Get consensus between Claude and OpenAI |
+When working on complex tasks, Claude should:
+1. Send the task + context to Codex via Maestro
+2. Receive Codex's proposal
+3. **Critically evaluate** (not blindly accept):
+   - What could fail? (feasibility)
+   - What's overcomplicated? (efficiency)
+   - What's missing? (sophistication)
+4. Send critique back to Codex
+5. Iterate until consensus or identify remaining disagreements
+6. Present final agreed solution to user
 
 ### Benefits
 
-- **No incremental API costs** with ChatGPT Pro subscription
-- **Sandbox isolation** for safe experimentation
-- **Multi-LLM consensus** reduces hallucinations
-- **Specialized prompts** for thesis/collector work
+- **No API costs** - Uses ChatGPT Pro subscription via Codex CLI
+- **Sandbox isolation** - Codex runs in read-only mode
+- **Iterative refinement** - Multiple rounds improve quality
+- **Skill leverage** - Codex uses/creates skills for efficiency
+- **Critical evaluation** - Claude scrutinizes, doesn't blindly accept

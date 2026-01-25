@@ -188,11 +188,13 @@ class Maestro:
 
     @property
     def codex(self):
-        """Lazy-load Codex CLI wrapper."""
+        """Lazy-load Codex CLI wrapper with default model config (gpt5-2, high reasoning)."""
         if self._codex is None:
-            from .codex_wrapper import CodexCLI, SandboxMode
+            from .codex_wrapper import CodexCLI, SandboxMode, DEFAULT_MODEL, DEFAULT_REASONING_LEVEL
             self._codex = CodexCLI(
                 sandbox_mode=SandboxMode(self.sandbox_mode),
+                model=DEFAULT_MODEL,
+                reasoning_level=DEFAULT_REASONING_LEVEL,
             )
         return self._codex
 
