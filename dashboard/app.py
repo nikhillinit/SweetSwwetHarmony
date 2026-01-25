@@ -1939,7 +1939,8 @@ def render_volume_chart(df: pd.DataFrame):
     st.markdown('<p class="analytics-section-title">SIGNAL VOLUME OVER TIME</p>', unsafe_allow_html=True)
 
     # Aggregate by date and category
-    df['date'] = pd.to_datetime(df['detected_at']).dt.date
+    # Use format='ISO8601' to handle varying ISO8601 formats (with/without milliseconds)
+    df['date'] = pd.to_datetime(df['detected_at'], format='ISO8601').dt.date
     daily = df.groupby(['date', 'category']).size().reset_index(name='count')
 
     chart = alt.Chart(daily).mark_area(
