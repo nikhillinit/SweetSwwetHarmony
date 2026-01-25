@@ -146,6 +146,59 @@ def inject_profiler_css():
         padding: 1rem;
         color: #34D399;
     }
+
+    /* Similar companies section */
+    .similar-section {
+        margin-top: 2rem;
+        padding-top: 1.5rem;
+        border-top: 1px solid #2a2520;
+    }
+
+    .similar-card {
+        border: 1px solid #2a2520;
+        border-radius: 4px;
+        padding: 1rem;
+        margin-bottom: 0.75rem;
+        background: #0d0d0d;
+    }
+
+    .similar-card:hover {
+        border-color: #E1D8D1;
+    }
+
+    .similar-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 0.5rem;
+    }
+
+    .similar-name {
+        font-size: 1.1rem;
+        font-weight: 500;
+        color: #E1D8D1;
+    }
+
+    .similar-score {
+        font-size: 0.9rem;
+        font-weight: 600;
+        padding: 0.2rem 0.6rem;
+        border-radius: 2px;
+        background: rgba(16, 185, 129, 0.2);
+        color: #34D399;
+    }
+
+    .similar-reasons {
+        font-size: 0.85rem;
+        color: #9CA3AF;
+        margin-top: 0.5rem;
+    }
+
+    .similar-meta {
+        font-size: 0.75rem;
+        color: #7a7267;
+        margin-top: 0.25rem;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -208,6 +261,72 @@ def render_category_tags(categories: list) -> None:
         <div style="margin-top: 0.5rem;">{tags_html}</div>
     </div>
     """, unsafe_allow_html=True)
+
+
+def render_similar_company_card(company) -> None:
+    """Render a single similar company card."""
+    score_pct = int(company.similarity_score * 100)
+    reasons = ", ".join(company.match_reasons[:3])
+
+    st.markdown(f"""
+    <div class="similar-card">
+        <div class="similar-header">
+            <span class="similar-name">{company.company_name or company.canonical_key}</span>
+            <span class="similar-score">{score_pct}% match</span>
+        </div>
+        <div class="similar-reasons">{reasons}</div>
+        <div class="similar-meta">{company.category} • {company.business_model}</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+
+def render_similar_companies(similar_companies: list) -> None:
+    """Render the similar companies section."""
+    if not similar_companies:
+        st.info("No similar companies found. Try profiling more companies first.")
+        return
+
+    st.markdown(f"""
+    <div class="similar-section">
+        <h3 style="color: #E1D8D1; margin-bottom: 1rem;">Similar Companies ({len(similar_companies)} found)</h3>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Display top results
+    for company in similar_companies[:10]:
+        render_similar_company_card(company)
+
+
+def find_similar_companies(canonical_key: str, db_path: str = "signals.db"):
+    """
+    Find similar companies for the given canonical key.
+
+    Args:
+        canonical_key: The company's canonical key
+        db_path: Path to the database
+
+    Returns:
+        List of SimilarCompany objects
+    """
+    try:
+        from storage.embedding_store import EmbeddingStore
+        from utils.embedding_generator import EmbeddingGenerator
+        from utils.similarity_engine import SimilarityEngine
+
+        async def run_search():
+            async with EmbeddingStore(db_path=db_path) as store:
+                generator = EmbeddingGenerator()
+                engine = SimilarityEngine(
+                    embedding_store=store,
+                    embedding_generator=generator,
+                )
+                return await engine.find_similar(canonical_key, n=20)
+
+        return run_async(run_search())
+
+    except Exception as e:
+        logger.error(f"Similar companies error: {e}")
+        return []
 
 
 def render_profile_result(profile) -> None:
@@ -319,6 +438,20 @@ def render_url_profiler_page(store=None):
                 st.markdown("### Stored Claims")
                 for claim in profile.claims:
                     st.markdown(f"- **{claim.claim.predicate}**: {claim.claim.value}")
+
+            # Find Similar Companies button
+            st.markdown("---")
+            col1, col2 = st.columns([1, 4])
+
+            with col1:
+                if st.button("Find Similar", type="secondary"):
+                    with st.spinner("Finding similar companies..."):
+                        similar = find_similar_companies(profile.canonical_key)
+                        st.session_state["similar_companies"] = similar
+
+            # Display similar companies if available
+            if "similar_companies" in st.session_state:
+                render_similar_companies(st.session_state["similar_companies"])
 
 
 def profile_url(url: str, store=None, force_refresh: bool = False):

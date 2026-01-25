@@ -322,8 +322,104 @@ def inject_custom_css():
         font-weight: 400;
         margin-bottom: 0.5rem;
     }
+
+    /* Similar companies */
+    .similar-card {
+        border: 1px solid #2a2520;
+        border-radius: 4px;
+        padding: 1rem;
+        margin-bottom: 0.75rem;
+        background: #0d0d0d;
+    }
+
+    .similar-card:hover {
+        border-color: #E1D8D1;
+    }
+
+    .similar-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 0.5rem;
+    }
+
+    .similar-name {
+        font-size: 1rem;
+        font-weight: 500;
+        color: #E1D8D1;
+    }
+
+    .similar-score {
+        font-size: 0.8rem;
+        font-weight: 600;
+        padding: 0.2rem 0.5rem;
+        border-radius: 2px;
+        background: rgba(16, 185, 129, 0.2);
+        color: #34D399;
+    }
+
+    .similar-reasons {
+        font-size: 0.8rem;
+        color: #9CA3AF;
+    }
     </style>
     """, unsafe_allow_html=True)
+
+
+def find_similar_companies_for_signal(canonical_key: str, db_path: str = "signals.db"):
+    """
+    Find similar companies for the given canonical key.
+
+    Args:
+        canonical_key: The company's canonical key
+        db_path: Path to the database
+
+    Returns:
+        List of SimilarCompany objects
+    """
+    try:
+        from storage.embedding_store import EmbeddingStore
+        from utils.embedding_generator import EmbeddingGenerator
+        from utils.similarity_engine import SimilarityEngine
+
+        async def run_search():
+            async with EmbeddingStore(db_path=db_path) as store:
+                generator = EmbeddingGenerator()
+                engine = SimilarityEngine(
+                    embedding_store=store,
+                    embedding_generator=generator,
+                )
+                return await engine.find_similar(canonical_key, n=10)
+
+        return run_async(run_search())
+
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Similar companies error: {e}")
+        return []
+
+
+def render_similar_companies_mini(similar_companies: list) -> None:
+    """Render similar companies in a compact format."""
+    if not similar_companies:
+        st.info("No similar companies found. Try running the embedding batch job first.")
+        return
+
+    st.markdown(f"**Found {len(similar_companies)} similar companies:**")
+
+    for company in similar_companies[:5]:  # Show top 5
+        score_pct = int(company.similarity_score * 100)
+        reasons = ", ".join(company.match_reasons[:2])
+
+        st.markdown(f"""
+        <div class="similar-card">
+            <div class="similar-header">
+                <span class="similar-name">{company.company_name or company.canonical_key}</span>
+                <span class="similar-score">{score_pct}%</span>
+            </div>
+            <div class="similar-reasons">{reasons}</div>
+        </div>
+        """, unsafe_allow_html=True)
 
 
 def init_session_state():
@@ -713,6 +809,20 @@ def render_company_detail(company_name: str, store: SignalStore):
         <div style="font-size: 0.8rem; color: #7a7267; margin-top: 0.25rem;">Average match score: {avg_conf:.0%}</div>
     </div>
     """, unsafe_allow_html=True)
+
+    # Find Similar Companies button
+    canonical_key = signals[0].get("canonical_key") if signals else None
+    if canonical_key:
+        col1, col2 = st.columns([1, 4])
+        with col1:
+            if st.button("Find Similar", key=f"similar_{company_name}", help="Find companies similar to this one"):
+                with st.spinner("Finding similar companies..."):
+                    similar = find_similar_companies_for_signal(canonical_key)
+                    st.session_state[f"similar_{company_name}"] = similar
+
+        # Display similar companies if available
+        if f"similar_{company_name}" in st.session_state:
+            render_similar_companies_mini(st.session_state[f"similar_{company_name}"])
 
     st.markdown('<div class="divider"></div>', unsafe_allow_html=True)
     st.markdown("### Discovery Timeline")
