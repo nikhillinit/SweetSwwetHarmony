@@ -124,6 +124,9 @@ class ProspectPayload:
     founding_date: Optional[datetime] = None
     social_proof_score: int = 0
 
+    # Investor matching (Sprint 5)
+    investor_matches: List[Dict[str, Any]] = field(default_factory=list)
+
     def __post_init__(self):
         """Generate canonical key candidates if not provided"""
         if not self.canonical_key_candidates and self.external_refs:
