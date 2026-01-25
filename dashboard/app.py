@@ -122,6 +122,9 @@ st.markdown("""
 <style>
     /* Import Press On brand fonts with preconnect for faster loading */
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@400;500;600&display=swap');
+    /* Import Material Icons for UI elements */
+    @import url('https://fonts.googleapis.com/icon?family=Material+Icons');
+    @import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined');
 
     /* Fallback font definitions */
     @font-face {
@@ -380,6 +383,41 @@ st.markdown("""
 
     .streamlit-expanderHeader:hover {
         border-color: var(--press-dark) !important;
+    }
+
+    /* Hide broken Material Icon text in Streamlit components */
+    /* Target all icon containers and hide their text content */
+    [data-testid="stExpanderToggleIcon"],
+    .st-emotion-cache-1wivap2,
+    [class*="IconContainer"],
+    span[class*="icon"] {
+        font-size: 0 !important;
+        overflow: hidden !important;
+        width: 20px !important;
+        height: 20px !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+    }
+
+    /* Replace with CSS triangle arrows */
+    [data-testid="stExpanderToggleIcon"]::after,
+    .st-emotion-cache-1wivap2::after {
+        content: "▶" !important;
+        font-size: 12px !important;
+        color: var(--press-dark) !important;
+        font-family: sans-serif !important;
+    }
+
+    [aria-expanded="true"] [data-testid="stExpanderToggleIcon"]::after,
+    [aria-expanded="true"] .st-emotion-cache-1wivap2::after {
+        content: "▼" !important;
+    }
+
+    /* Ensure expander header text is visible */
+    .streamlit-expanderHeader p,
+    [data-testid="stExpanderDetails"] {
+        font-size: 1rem !important;
     }
 
     /* Tabs styling - Press On style */
@@ -2006,17 +2044,19 @@ def main():
             st.cache_data.clear()
             st.rerun()
 
-        # Quick help section in sidebar
+        # Quick help section in sidebar (using checkbox to avoid broken expander icons)
         st.markdown("---")
-        with st.expander("💡 Quick Help"):
+        show_help = st.checkbox("💡 Quick Help", value=False)
+        if show_help:
             st.markdown("""
-            **Match Score** shows how well a company fits our investment thesis.
-            - 🟢 **Strong** (70%+): Great fit, prioritize review
-            - 🟡 **Moderate** (40-70%): Worth investigating
-            - 🔴 **Early** (<40%): Needs more signals
-
-            **Need help?** Contact the team for support.
-            """)
+            <div style="background: #f8f8f8; padding: 0.75rem; border-radius: 8px; font-size: 0.85rem;">
+            <strong>Match Score</strong> shows thesis fit:<br>
+            🟢 <strong>Strong</strong> (70%+): Prioritize<br>
+            🟡 <strong>Moderate</strong> (40-70%): Investigate<br>
+            🔴 <strong>Early</strong> (&lt;40%): Needs signals<br><br>
+            <em>Need help? Contact the team.</em>
+            </div>
+            """, unsafe_allow_html=True)
 
     # ==========================================================================
     # PIPELINE VIEW
@@ -2198,7 +2238,7 @@ def main():
         # Show welcome banner before Mini-Scout page renders
         render_welcome_banner("Mini-Scout")
         store = get_store()
-        render_mini_scout_page(store)
+        render_mini_scout_page(store, inject_css=False)
 
     # ==========================================================================
     # URL PROFILER VIEW
@@ -2206,7 +2246,7 @@ def main():
     elif view == "URL Profiler":
         render_welcome_banner("URL Profiler")
         store = get_store()
-        render_url_profiler_page(store)
+        render_url_profiler_page(store, inject_css=False)
 
     # ==========================================================================
     # ANALYTICS VIEW
