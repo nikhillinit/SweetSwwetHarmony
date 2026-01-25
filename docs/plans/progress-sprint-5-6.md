@@ -73,9 +73,11 @@
 1. ~~Review consensus document with stakeholder~~
 2. ~~Implement Migration 9 in signal_store.py~~ ✅ COMPLETE
 3. ~~Create utils/investor_matching.py~~ ✅ COMPLETE
-4. Create utils/investor_profile_batch.py
+4. ~~Create utils/investor_profile_batch.py~~ ✅ COMPLETE
 5. ~~Add feature flag and pipeline integration~~ ✅ COMPLETE
-6. ~~Write test suite~~ ✅ COMPLETE (31 tests)
+6. ~~Write test suite~~ ✅ COMPLETE (47 tests total)
+
+**Sprint 5 COMPLETE** - All investor matching components implemented.
 
 ---
 
@@ -184,3 +186,45 @@ COLD_START_PENALTY = 0.15
 - All 31 investor matching tests: PASSING
 - Pipeline integration tests: PASSING (13 tests)
 - Storage tests: PASSING (54 tests)
+
+---
+
+## Investor Profile Batch Job (2026-01-25)
+
+### Module Created: utils/investor_profile_batch.py
+
+**BatchResult Dataclass:**
+- Tracks: total_investors, profiles_updated, claims_refreshed, baselines_computed, fts_entries_created, cold_start_count
+- Duration calculation and to_dict() for logging
+
+**InvestorProfileBatch Class:**
+- `run()` - Execute full batch job
+- `_compute_global_baselines()` - Compute P(predicate=value) from portfolios and signals
+- `_compute_lift_score()` - Calculate log-odds lift vs global baseline
+- `_refresh_all_profiles()` - Update all investor profiles and claims
+- `_refresh_investor_claims()` - Generate claims for single investor
+- `_update_investor_profile()` - Update cached profile distributions
+- `_rebuild_fts_index()` - Rebuild FTS5 search index
+
+**Configuration:**
+```python
+BASELINE_PREDICATES = ['sector', 'stage', 'geo', 'business_model']
+LIFT_THRESHOLD = 0.1  # Minimum lift to create claim
+COLD_START_THRESHOLD = 3  # Portfolios < 3 = cold start
+```
+
+**CLI Usage:**
+```bash
+python -m utils.investor_profile_batch --db-path signals.db -v
+```
+
+### Test Coverage
+- 16 tests in tests/utils/test_investor_profile_batch.py
+  - 3 BatchResult tests
+  - 5 InvestorProfileBatch unit tests
+  - 6 integration tests with real DB
+  - 2 CLI tests
+
+### Verification
+- All 47 investor tests: PASSING (31 matching + 16 batch)
+- Sprint 5 feature-complete
