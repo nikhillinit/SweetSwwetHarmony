@@ -383,14 +383,16 @@ def render_profile_result(profile) -> None:
     )
 
 
-def render_url_profiler_page(store=None):
+def render_url_profiler_page(store=None, inject_css: bool = True):
     """
     Main URL Profiler page.
 
     Args:
         store: Optional SignalStore for claim storage
+        inject_css: Whether to inject custom CSS. Set False when rendered inside app.py.
     """
-    inject_profiler_css()
+    if inject_css:
+        inject_profiler_css()
 
     st.markdown('<h1 class="main-title">URL Profiler</h1>', unsafe_allow_html=True)
     st.markdown(

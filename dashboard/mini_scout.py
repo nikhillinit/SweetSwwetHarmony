@@ -943,9 +943,15 @@ def render_analytics(store: SignalStore):
             ''', unsafe_allow_html=True)
 
 
-def render_mini_scout_page(store: SignalStore):
-    """Main entry point for Mini-Scout page."""
-    inject_custom_css()
+def render_mini_scout_page(store: SignalStore, inject_css: bool = True):
+    """Main entry point for Mini-Scout page.
+
+    Args:
+        store: SignalStore instance for data access
+        inject_css: Whether to inject custom CSS. Set False when rendered inside app.py.
+    """
+    if inject_css:
+        inject_custom_css()
     init_session_state()
 
     if "selected_company" not in st.session_state:
