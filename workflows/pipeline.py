@@ -47,6 +47,7 @@ from utils.enrichment_boost import EnrichmentBoostCalculator, EnrichmentConfig
 from utils.thesis_filter import ThesisFilter, ThesisFilterConfig, RoutingDecision
 from utils.competitor_detector import CompetitorDetector
 from utils.exit_predictor import ExitPredictor
+from utils.investor_matching import InvestorMatcher, InvestorMatchResult
 from storage.source_asset_store import SourceAssetStore, SourceAsset
 from storage.founder_store import FounderStore
 from storage.entity_resolution import EntityResolutionStore, AssetToLead
@@ -156,6 +157,9 @@ class PipelineConfig:
     # Exit prediction (Phase 4)
     use_exit_predictor: bool = False  # Enable exit prediction scoring
 
+    # Investor matching (Sprint 5)
+    use_investor_matching: bool = False  # Enable investor matching
+
     @classmethod
     def from_env(cls) -> PipelineConfig:
         """Load configuration from environment variables"""
@@ -179,6 +183,7 @@ class PipelineConfig:
             use_thesis_filter=os.getenv("USE_THESIS_FILTER", "true").lower() == "true",
             use_competitor_detection=os.getenv("USE_COMPETITOR_DETECTION", "true").lower() == "true",
             use_exit_predictor=os.getenv("ENABLE_EXIT_PREDICTOR", "false").lower() == "true",
+            use_investor_matching=os.getenv("ENABLE_INVESTOR_MATCHING", "false").lower() == "true",
         )
 
 
@@ -349,6 +354,7 @@ class DiscoveryPipeline:
         self._founder_store: Optional[FounderStore] = None
         self._velocity_tracker: Optional[SignalVelocityTracker] = None
         self._exit_predictor: Optional[ExitPredictor] = None
+        self._investor_matcher: Optional[InvestorMatcher] = None
 
         # Signal consolidation
         self._consolidator: Optional[SignalConsolidator] = (
@@ -459,6 +465,11 @@ class DiscoveryPipeline:
                 signal_store=self._store,
             )
             logger.info("ExitPredictor initialized (exit prediction enabled)")
+
+        # Initialize InvestorMatcher (if investor matching enabled)
+        if self.config.use_investor_matching:
+            self._investor_matcher = InvestorMatcher(self._store)
+            logger.info("InvestorMatcher initialized (investor matching enabled)")
 
         # Initialize SignalHealthMonitor (non-fatal if it fails)
         try:
@@ -1528,6 +1539,41 @@ class DiscoveryPipeline:
             except Exception as e:
                 logger.warning(f"Exit prediction failed for {canonical_key} (non-fatal): {e}")
 
+        # Compute investor matches (if enabled and passes gate)
+        investor_match_result: Optional[InvestorMatchResult] = None
+        if (
+            self._investor_matcher
+            and verification.decision in (PushDecision.AUTO_PUSH, PushDecision.NEEDS_REVIEW)
+        ):
+            try:
+                # Build company claims from consolidated signal
+                company_claims = {}
+                if consolidated:
+                    if consolidated.company_name:
+                        company_claims["company_name"] = consolidated.company_name
+                    if consolidated.description:
+                        company_claims["description"] = consolidated.description
+                    if thesis_result:
+                        company_claims["sector"] = thesis_result.category
+                        company_claims["thesis_fit"] = thesis_result.thesis_fit
+
+                investor_match_result = await self._investor_matcher.match(
+                    company_key=canonical_key,
+                    company_claims=company_claims if company_claims else None,
+                    save_results=True,
+                )
+                if investor_match_result.matches:
+                    top_match = investor_match_result.matches[0]
+                    logger.info(
+                        f"Investor matching for {canonical_key}: "
+                        f"top={top_match.investor_name} (score={top_match.match_score:.2f}), "
+                        f"total={len(investor_match_result.matches)} matches"
+                    )
+                else:
+                    logger.debug(f"No investor matches found for {canonical_key}")
+            except Exception as e:
+                logger.warning(f"Investor matching failed for {canonical_key} (non-fatal): {e}")
+
         # Decide on Notion push
         notion_status = None
 
@@ -1535,7 +1581,8 @@ class DiscoveryPipeline:
             if self._notion and not dry_run:
                 # Queue for Notion
                 notion_result = await self._push_to_notion(
-                    signals, verification, consolidated=consolidated
+                    signals, verification, consolidated=consolidated,
+                    investor_match_result=investor_match_result,
                 )
                 notion_status = notion_result["status"]
 
@@ -1630,6 +1677,7 @@ class DiscoveryPipeline:
         signals: List[StoredSignal],
         verification: VerificationResult,
         consolidated: Optional[ConsolidatedSignal] = None,
+        investor_match_result: Optional[InvestorMatchResult] = None,
     ) -> Dict[str, Any]:
         """
         Queue a company for Notion push via the outbox.
@@ -1638,6 +1686,7 @@ class DiscoveryPipeline:
             signals: List of StoredSignal objects
             verification: VerificationResult from the gate
             consolidated: Optional consolidated signal with merged field values
+            investor_match_result: Optional investor matching results
 
         Returns dict with status and outbox metadata.
         """
@@ -1667,6 +1716,22 @@ class DiscoveryPipeline:
         # Determine stage from signals
         stage = self._infer_stage(signals)
 
+        # Build investor matches summary for payload (top 5)
+        investor_matches_summary = []
+        if investor_match_result and investor_match_result.matches:
+            for match in investor_match_result.matches[:5]:
+                investor_matches_summary.append({
+                    "investor_id": match.investor_id,
+                    "investor_name": match.investor_name,
+                    "investor_type": match.investor_type,
+                    "match_score": round(match.match_score, 3),
+                    "rank": match.rank,
+                    "explanations": [
+                        {"reason": exp.reason, "lift_score": round(exp.lift_score, 2)}
+                        for exp in (match.explanations or [])[:2]  # Top 2 reasons
+                    ],
+                })
+
         # Build payload
         payload = ProspectPayload(
             discovery_id=f"discovery_{primary_signal.id}",
@@ -1683,6 +1748,8 @@ class DiscoveryPipeline:
             # Enrichment fields from consolidated signal
             founding_date=consolidated.founding_date if consolidated else None,
             social_proof_score=sum(consolidated.social_proof.values()) if consolidated and consolidated.social_proof else 0,
+            # Investor matching (Sprint 5)
+            investor_matches=investor_matches_summary,
         )
 
         outbox_payload = {
@@ -1736,6 +1803,7 @@ class DiscoveryPipeline:
             "target_raise": payload.target_raise,
             "external_refs": payload.external_refs,
             "watchlists_matched": payload.watchlists_matched,
+            "investor_matches": payload.investor_matches,
         }
 
     # =========================================================================
