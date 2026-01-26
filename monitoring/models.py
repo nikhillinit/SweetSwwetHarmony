@@ -33,8 +33,14 @@ class Watch:
     consecutive_low_sev_hits: int = 0
     last_low_sev_at: Optional[datetime] = None
 
+    # Failure tracking (v2.4)
+    last_failure_category: Optional[str] = None  # transient, client_error, rate_limited, ssl_error, content_error
+    last_failure_error: Optional[str] = None
+    deactivated_reason: Optional[str] = None  # e.g., "max_failures:transient"
+
     active: bool = True
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: Optional[datetime] = None
 
     def is_due(self, now: Optional[datetime] = None) -> bool:
         """Check if this watch is due for checking."""
@@ -74,8 +80,12 @@ class Watch:
             "consecutive_failures": self.consecutive_failures,
             "backoff_until": self.backoff_until.isoformat() if self.backoff_until else None,
             "cooldown_until": self.cooldown_until.isoformat() if self.cooldown_until else None,
+            "last_failure_category": self.last_failure_category,
+            "last_failure_error": self.last_failure_error,
+            "deactivated_reason": self.deactivated_reason,
             "active": self.active,
             "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
 
 
@@ -99,8 +109,9 @@ class Snapshot:
     # Content
     page_state: Optional[str] = None  # live, coming_soon, blocked, error, unknown
     content_hash: str = ""
+    hasher_version: str = "v1"  # For maintenance diff detection (v2.4)
     text_length: int = 0
-    text_content_preview: Optional[str] = None
+    text_content_preview: Optional[str] = None  # Truncated to 2000 chars max
 
     # Embedding
     embedding_key: Optional[str] = None
@@ -138,6 +149,7 @@ class Snapshot:
             "final_host": self.final_host,
             "page_state": self.page_state,
             "content_hash": self.content_hash,
+            "hasher_version": self.hasher_version,
             "text_length": self.text_length,
             "embedding_key": self.embedding_key,
             "error": self.error,

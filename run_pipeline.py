@@ -1772,6 +1772,17 @@ Examples:
         default=os.getenv("DISCOVERY_DB_PATH", "signals.db"),
         help="Path to signals database",
     )
+    monitor_run_parser.add_argument(
+        "--lock-timeout",
+        type=int,
+        default=30,
+        help="Seconds to wait for advisory lock (default: 30)",
+    )
+    monitor_run_parser.add_argument(
+        "--force-break-lock",
+        action="store_true",
+        help="Force-break existing lock (use if lock is stale)",
+    )
 
     # monitor status
     monitor_status_parser = monitor_sub.add_parser("status", help="Show monitoring status")
@@ -2318,6 +2329,35 @@ async def cmd_monitor_add(args):
 async def cmd_monitor_run(args):
     """Run monitoring checks on due watches."""
     from monitoring.website_monitor import WebsiteMonitor
+    from utils.monitor_lock import MonitorLock, MonitorLockError
+
+    # Advisory lock to prevent concurrent sweeps (v2.4)
+    lock = MonitorLock(args.db_path, ttl_seconds=3600)
+
+    # Handle force-break option
+    if getattr(args, 'force_break_lock', False):
+        if lock.force_break():
+            print("Force-broke existing lock")
+        else:
+            print("No existing lock to break")
+        return
+
+    # Check if already locked
+    if lock.is_locked():
+        holder = lock.get_holder_info()
+        print(f"Monitoring sweep already in progress")
+        if holder:
+            print(f"  PID: {holder.get('pid')}")
+            print(f"  Hostname: {holder.get('hostname')}")
+            print(f"  Started: {holder.get('acquired_at')}")
+        print("\nUse --force-break-lock to force-break the lock if stale.")
+        return
+
+    # Try to acquire lock
+    lock_timeout = getattr(args, 'lock_timeout', 30)
+    if not lock.acquire(timeout_seconds=lock_timeout):
+        print(f"Failed to acquire lock within {lock_timeout}s. Another sweep may be running.")
+        return
 
     store = SignalStore(args.db_path)
     await store.initialize()
@@ -2367,6 +2407,7 @@ async def cmd_monitor_run(args):
 
     finally:
         await store.close()
+        lock.release()  # Release advisory lock
 
 
 async def cmd_monitor_status(args):

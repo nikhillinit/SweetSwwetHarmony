@@ -15,6 +15,15 @@ on:
         type: boolean
         required: false
         default: false
+      lock_timeout:
+        description: 'Seconds to wait for advisory lock'
+        required: false
+        default: '60'
+      force_break_lock:
+        description: 'Force-break existing lock if stale'
+        type: boolean
+        required: false
+        default: false
 
 env:
   PYTHON_VERSION: '3.11'
@@ -47,6 +56,10 @@ jobs:
           path: .
         continue-on-error: true  # OK if no artifact exists yet
 
+      - name: Show config hash
+        run: |
+          python -c "from monitoring.config import get_config_hash; print(f'Config hash: {get_config_hash()}')" || echo "Config not found, using defaults"
+
       - name: Run website monitoring
         env:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
@@ -54,12 +67,21 @@ jobs:
         run: |
           LIMIT="${{ github.event.inputs.limit || '100' }}"
           NO_EMB="${{ github.event.inputs.no_embeddings || 'false' }}"
+          LOCK_TIMEOUT="${{ github.event.inputs.lock_timeout || '60' }}"
+          FORCE_BREAK="${{ github.event.inputs.force_break_lock || 'false' }}"
+
+          ARGS="--limit $LIMIT --lock-timeout $LOCK_TIMEOUT"
 
           if [ "$NO_EMB" = "true" ]; then
-            python run_pipeline.py monitor run --limit "$LIMIT" --no-embeddings -v
-          else
-            python run_pipeline.py monitor run --limit "$LIMIT" -v
+            ARGS="$ARGS --no-embeddings"
           fi
+
+          if [ "$FORCE_BREAK" = "true" ]; then
+            echo "Force-breaking existing lock..."
+            python run_pipeline.py monitor run --force-break-lock
+          fi
+
+          python run_pipeline.py monitor run $ARGS -v
 
       - name: Show monitoring status
         run: |
