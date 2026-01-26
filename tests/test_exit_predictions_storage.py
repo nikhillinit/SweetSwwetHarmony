@@ -56,9 +56,9 @@ class TestMigration6:
             await store.close()
 
     @pytest.mark.asyncio
-    async def test_schema_version_is_6(self, tmp_path):
-        """Current schema version is 6."""
-        assert CURRENT_SCHEMA_VERSION == 6
+    async def test_schema_version_at_least_6(self, tmp_path):
+        """Schema version should be at least 6 (when exit_predictions was added)."""
+        assert CURRENT_SCHEMA_VERSION >= 6
 
 
 class TestStoreExitPrediction:
