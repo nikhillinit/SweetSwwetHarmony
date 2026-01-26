@@ -1704,6 +1704,137 @@ Examples:
         help="Path to signals database",
     )
 
+    # --- monitor command with subcommands ---
+    monitor_parser = subparsers.add_parser(
+        "monitor",
+        help="Website monitoring commands",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="""
+Website monitoring for tracked companies.
+
+Examples:
+  # Add a watch for a URL
+  python run_pipeline.py monitor add https://acme.ai
+
+  # Run monitoring checks
+  python run_pipeline.py monitor run
+
+  # Show monitoring status
+  python run_pipeline.py monitor status
+""",
+    )
+    monitor_sub = monitor_parser.add_subparsers(dest="monitor_cmd", help="Monitor operation")
+
+    # monitor add
+    monitor_add_parser = monitor_sub.add_parser("add", help="Add a new watch")
+    monitor_add_parser.add_argument("url", help="URL to monitor")
+    monitor_add_parser.add_argument(
+        "--canonical-key",
+        type=str,
+        help="Canonical key (auto-generated from URL if not provided)",
+    )
+    monitor_add_parser.add_argument(
+        "--type",
+        type=str,
+        default="website",
+        choices=["website", "portfolio", "linkedin_about"],
+        help="Watch type (default: website)",
+    )
+    monitor_add_parser.add_argument(
+        "--interval",
+        type=int,
+        default=86400,
+        help="Check interval in seconds (default: 86400 = 24h)",
+    )
+    monitor_add_parser.add_argument(
+        "--db-path",
+        type=str,
+        default=os.getenv("DISCOVERY_DB_PATH", "signals.db"),
+        help="Path to signals database",
+    )
+
+    # monitor run
+    monitor_run_parser = monitor_sub.add_parser("run", help="Run monitoring checks")
+    monitor_run_parser.add_argument(
+        "--limit",
+        type=int,
+        default=100,
+        help="Max watches to check (default: 100)",
+    )
+    monitor_run_parser.add_argument(
+        "--no-embeddings",
+        action="store_true",
+        help="Disable semantic drift detection",
+    )
+    monitor_run_parser.add_argument(
+        "--db-path",
+        type=str,
+        default=os.getenv("DISCOVERY_DB_PATH", "signals.db"),
+        help="Path to signals database",
+    )
+
+    # monitor status
+    monitor_status_parser = monitor_sub.add_parser("status", help="Show monitoring status")
+    monitor_status_parser.add_argument(
+        "--db-path",
+        type=str,
+        default=os.getenv("DISCOVERY_DB_PATH", "signals.db"),
+        help="Path to signals database",
+    )
+
+    # monitor list
+    monitor_list_parser = monitor_sub.add_parser("list", help="List active watches")
+    monitor_list_parser.add_argument(
+        "--limit",
+        type=int,
+        default=50,
+        help="Max watches to list (default: 50)",
+    )
+    monitor_list_parser.add_argument(
+        "--db-path",
+        type=str,
+        default=os.getenv("DISCOVERY_DB_PATH", "signals.db"),
+        help="Path to signals database",
+    )
+
+    # --- outbox command ---
+    outbox_parser = subparsers.add_parser(
+        "outbox",
+        help="Outbox queue management",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="""
+Manage the outbox queue for async writes.
+
+Examples:
+  # Drain pending outbox entries
+  python run_pipeline.py outbox drain
+
+  # Drain without Notion (monitoring events only)
+  python run_pipeline.py outbox drain --no-notion
+""",
+    )
+    outbox_sub = outbox_parser.add_subparsers(dest="outbox_cmd", help="Outbox operation")
+
+    # outbox drain
+    outbox_drain_parser = outbox_sub.add_parser("drain", help="Drain pending entries")
+    outbox_drain_parser.add_argument(
+        "--limit",
+        type=int,
+        default=50,
+        help="Max entries to process (default: 50)",
+    )
+    outbox_drain_parser.add_argument(
+        "--no-notion",
+        action="store_true",
+        help="Skip Notion connector (process monitoring events only)",
+    )
+    outbox_drain_parser.add_argument(
+        "--db-path",
+        type=str,
+        default=os.getenv("DISCOVERY_DB_PATH", "signals.db"),
+        help="Path to signals database",
+    )
+
     return parser
 
 
@@ -2149,6 +2280,197 @@ async def cmd_evaluate(args):
         await store.close()
 
 
+# =============================================================================
+# MONITORING COMMANDS
+# =============================================================================
+
+async def cmd_monitor_add(args):
+    """Add a new watch for a URL."""
+    from monitoring.website_monitor import create_watch_for_company
+    from profilers.url_profiler import generate_canonical_key
+
+    store = SignalStore(args.db_path)
+    await store.initialize()
+
+    try:
+        canonical_key = args.canonical_key
+        if not canonical_key:
+            canonical_key = generate_canonical_key(args.url)
+
+        watch = await create_watch_for_company(
+            signal_store=store,
+            canonical_key=canonical_key,
+            url=args.url,
+            watch_type=args.type,
+            interval_seconds=args.interval,
+        )
+
+        print(f"Created watch {watch.id}:")
+        print(f"  URL:           {watch.url}")
+        print(f"  Canonical key: {watch.canonical_key}")
+        print(f"  Type:          {watch.watch_type}")
+        print(f"  Interval:      {watch.interval_seconds}s ({watch.interval_seconds // 3600}h)")
+
+    finally:
+        await store.close()
+
+
+async def cmd_monitor_run(args):
+    """Run monitoring checks on due watches."""
+    from monitoring.website_monitor import WebsiteMonitor
+
+    store = SignalStore(args.db_path)
+    await store.initialize()
+
+    try:
+        # Optional embedding support
+        embedding_store = None
+        embedding_generator = None
+
+        if not args.no_embeddings:
+            try:
+                from storage.embedding_store import EmbeddingStore
+                from utils.embedding_generator import EmbeddingGenerator
+
+                embedding_store = EmbeddingStore(store)
+                embedding_generator = EmbeddingGenerator()
+            except Exception as e:
+                logger.warning(f"Embeddings disabled: {e}")
+
+        monitor = WebsiteMonitor(
+            signal_store=store,
+            embedding_store=embedding_store,
+            embedding_generator=embedding_generator,
+        )
+
+        results = await monitor.run_due_checks(limit=args.limit)
+
+        # Print summary
+        successful = sum(1 for r in results if r.success)
+        skipped = sum(1 for r in results if r.skipped)
+        failed = sum(1 for r in results if r.error)
+        alerts = sum(1 for r in results if r.alert)
+
+        print(f"\nMonitoring run complete:")
+        print(f"  Checked:  {len(results)}")
+        print(f"  Success:  {successful}")
+        print(f"  Skipped:  {skipped} (unchanged)")
+        print(f"  Failed:   {failed}")
+        print(f"  Alerts:   {alerts}")
+
+        # Show high severity diffs
+        high_severity = [r for r in results if r.diff and r.diff.severity_score >= 0.6]
+        if high_severity:
+            print(f"\nHigh severity changes:")
+            for r in high_severity:
+                print(f"  {r.watch.canonical_key}: {r.diff.severity_score:.2f}")
+
+    finally:
+        await store.close()
+
+
+async def cmd_monitor_status(args):
+    """Show monitoring status overview."""
+    from monitoring.monitor_store import MonitorStore
+
+    store = SignalStore(args.db_path)
+    await store.initialize()
+
+    try:
+        monitor_store = MonitorStore(store)
+
+        # Get stats
+        due_watches = await monitor_store.get_due_watches(limit=1000)
+        unacked_alerts = await monitor_store.get_unacked_alerts(limit=100)
+        recent_runs = await monitor_store.get_recent_runs(limit=5)
+
+        print("\n" + "=" * 60)
+        print("MONITORING STATUS")
+        print("=" * 60)
+
+        print(f"\nWatches due: {len(due_watches)}")
+        print(f"Unacked alerts: {len(unacked_alerts)}")
+
+        if recent_runs:
+            print(f"\nRecent runs:")
+            for run in recent_runs[:3]:
+                duration = run.get("duration_seconds", 0) or 0
+                print(f"  {run['started_at'][:16]}: "
+                      f"{run['watches_checked']} checked, "
+                      f"{run['high_severity_events']} high sev "
+                      f"({duration:.1f}s)")
+
+        if unacked_alerts:
+            print(f"\nPending alerts:")
+            for alert in unacked_alerts[:5]:
+                print(f"  [{alert.id}] {alert.alert_reason}: "
+                      f"severity={alert.severity_score:.2f}")
+
+    finally:
+        await store.close()
+
+
+async def cmd_monitor_list(args):
+    """List active watches."""
+    from monitoring.monitor_store import MonitorStore
+
+    store = SignalStore(args.db_path)
+    await store.initialize()
+
+    try:
+        monitor_store = MonitorStore(store)
+
+        # Get all due watches as a proxy for active watches
+        watches = await monitor_store.get_due_watches(limit=args.limit)
+
+        print(f"\nActive watches ({len(watches)}):")
+        print("-" * 80)
+
+        for w in watches:
+            last_check = w.last_checked_at.isoformat()[:16] if w.last_checked_at else "never"
+            print(f"  [{w.id}] {w.canonical_key}")
+            print(f"       URL: {w.url}")
+            print(f"       Last checked: {last_check}")
+            print()
+
+    finally:
+        await store.close()
+
+
+async def cmd_outbox_drain(args):
+    """Drain the outbox queue."""
+    from workflows.notion_outbox_worker import NotionOutboxWorker
+
+    store = SignalStore(args.db_path)
+    await store.initialize()
+
+    try:
+        # Create worker (Notion connector optional for monitoring events)
+        notion = None
+        if not args.no_notion:
+            try:
+                from connectors.notion_connector_v2 import NotionConnector
+                notion = NotionConnector()
+            except Exception as e:
+                logger.warning(f"Notion disabled: {e}")
+
+        worker = NotionOutboxWorker(
+            signal_store=store,
+            notion_connector=notion,
+        )
+
+        stats = await worker.drain(limit=args.limit)
+
+        print(f"\nOutbox drain complete:")
+        print(f"  Processed:       {stats['processed']}")
+        print(f"  Sent:            {stats['sent']}")
+        print(f"  Failed:          {stats['failed']}")
+        print(f"  Profile updates: {stats.get('profile_updates', 0)}")
+
+    finally:
+        await store.close()
+
+
 async def main():
     """Main entry point"""
 
@@ -2236,6 +2558,34 @@ async def main():
                 sys.exit(1)
         elif args.command == "evaluate":
             await cmd_evaluate(args)
+        elif args.command == "monitor":
+            # Handle monitor subcommands
+            if hasattr(args, "monitor_cmd") and args.monitor_cmd:
+                if args.monitor_cmd == "add":
+                    await cmd_monitor_add(args)
+                elif args.monitor_cmd == "run":
+                    await cmd_monitor_run(args)
+                elif args.monitor_cmd == "status":
+                    await cmd_monitor_status(args)
+                elif args.monitor_cmd == "list":
+                    await cmd_monitor_list(args)
+                else:
+                    print(f"Unknown monitor command: {args.monitor_cmd}")
+                    sys.exit(1)
+            else:
+                print("Monitor command requires a subcommand (add, run, status, list)")
+                sys.exit(1)
+        elif args.command == "outbox":
+            # Handle outbox subcommands
+            if hasattr(args, "outbox_cmd") and args.outbox_cmd:
+                if args.outbox_cmd == "drain":
+                    await cmd_outbox_drain(args)
+                else:
+                    print(f"Unknown outbox command: {args.outbox_cmd}")
+                    sys.exit(1)
+            else:
+                print("Outbox command requires a subcommand (drain)")
+                sys.exit(1)
         else:
             print(f"Unknown command: {args.command}")
             parser.print_help()

@@ -44,6 +44,7 @@ from storage.signal_store import SignalStore
 from utils.signal_health import SignalHealthMonitor
 from dashboard.mini_scout import render_mini_scout_page
 from dashboard.url_profiler_page import render_url_profiler_page
+from dashboard.monitoring_page import render_monitoring_page
 
 # =============================================================================
 # CONFIG
@@ -2019,15 +2020,16 @@ def main():
             "Signals": "Newly discovered companies",
             "Mini-Scout": "Search all companies",
             "URL Profiler": "Profile any company by URL",
-            "Analytics": "Deal flow insights & trends"
+            "Analytics": "Deal flow insights & trends",
+            "Monitoring": "Website change tracking"
         }
 
         if has_notion and has_db:
-            view_options = ["Pipeline", "Signals", "Mini-Scout", "URL Profiler", "Analytics"]
+            view_options = ["Pipeline", "Signals", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring"]
         elif has_notion:
-            view_options = ["Pipeline", "Mini-Scout", "URL Profiler", "Analytics"]
+            view_options = ["Pipeline", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring"]
         else:
-            view_options = ["Signals", "Mini-Scout", "URL Profiler", "Analytics"]
+            view_options = ["Signals", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring"]
 
         view = st.radio(
             "View",
@@ -2256,6 +2258,13 @@ def main():
         render_welcome_banner("Analytics")
         store = get_store()
         render_analytics_view(store)
+
+    # ==========================================================================
+    # MONITORING VIEW
+    # ==========================================================================
+    elif view == "Monitoring":
+        render_welcome_banner("Website Monitoring")
+        render_monitoring_page(DB_PATH)
 
     # Footer
     st.markdown("""

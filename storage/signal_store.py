@@ -63,7 +63,7 @@ logger = logging.getLogger(__name__)
 # SCHEMA VERSION
 # =============================================================================
 
-CURRENT_SCHEMA_VERSION = 9
+CURRENT_SCHEMA_VERSION = 10
 
 # SQL for creating tables (migrations applied in order)
 MIGRATIONS = {
@@ -722,6 +722,177 @@ MIGRATIONS = {
         ('geo_preference', 'Geography Preference', 'text', 'Investor preferred geography from portfolio analysis'),
         ('check_size_range', 'Check Size Range', 'text', 'Typical investment amount range'),
         ('lead_preference', 'Lead Preference', 'enum', 'Whether investor typically leads or follows');
+    """,
+    10: """
+    -- =============================================================================
+    -- MONITORING SUBSYSTEM (Sprint 7) - Website change tracking
+    -- =============================================================================
+    -- "Layer on Top" monitoring: watches, snapshots, diffs, alerts
+    -- Enables: "What changed on this company's website since we last checked?"
+
+    -- Add functional_profile predicate (required for ClaimStore FK)
+    INSERT OR IGNORE INTO predicates (name, display_name, data_type, description)
+    VALUES ('functional_profile', 'Functional Profile', 'json', 'LLM-derived functional profile summary');
+
+    -- Watches: what URLs to monitor for changes
+    -- Note: UNIQUE(canonical_key, watch_type, url) allows multiple pages per company
+    CREATE TABLE IF NOT EXISTS watches (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        canonical_key TEXT NOT NULL,
+        url TEXT NOT NULL,
+        watch_type TEXT NOT NULL,  -- 'website', 'portfolio', 'linkedin_about'
+        interval_seconds INTEGER DEFAULT 86400,
+
+        -- Operational state (debounce/cooldown)
+        last_checked_at TEXT,
+        last_snapshot_id INTEGER,
+        consecutive_failures INTEGER DEFAULT 0,
+        backoff_until TEXT,
+        cooldown_until TEXT,
+        consecutive_low_sev_hits INTEGER DEFAULT 0,
+        last_low_sev_at TEXT,
+
+        active INTEGER DEFAULT 1,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(canonical_key, watch_type, url)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_watches_canonical ON watches(canonical_key);
+    CREATE INDEX IF NOT EXISTS idx_watches_active ON watches(active);
+    CREATE INDEX IF NOT EXISTS idx_watches_due ON watches(active, backoff_until, last_checked_at);
+
+    -- Snapshots: immutable fetch history
+    CREATE TABLE IF NOT EXISTS snapshots (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        watch_id INTEGER NOT NULL REFERENCES watches(id),
+        fetched_at TEXT NOT NULL,
+        status_code INTEGER,
+
+        -- URL chain (for redirect detection)
+        requested_url TEXT NOT NULL,
+        final_url TEXT,
+        final_host TEXT,
+
+        -- Content fingerprints
+        page_state TEXT,  -- live|coming_soon|blocked|error|unknown
+        content_hash TEXT NOT NULL,
+        text_length INTEGER NOT NULL DEFAULT 0,
+        text_content_preview TEXT,  -- first 500 chars for debugging
+
+        -- Embedding reference (for semantic drift)
+        embedding_key TEXT,  -- e.g. "snapshot:123"
+
+        -- Error tracking
+        error TEXT,
+
+        metadata_json TEXT  -- headers, timing, etc.
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_snapshots_watch_time ON snapshots(watch_id, fetched_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_snapshots_content ON snapshots(content_hash);
+
+    -- Diffs: computed differences between snapshots
+    CREATE TABLE IF NOT EXISTS diffs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        watch_id INTEGER NOT NULL REFERENCES watches(id),
+        old_snapshot_id INTEGER REFERENCES snapshots(id),
+        new_snapshot_id INTEGER NOT NULL REFERENCES snapshots(id),
+        created_at TEXT NOT NULL,
+
+        -- Severity scoring
+        severity_score REAL NOT NULL,
+        severity_components_json TEXT,
+        semantic_drift REAL,  -- 1 - cosine_similarity (NULL if not computable)
+
+        -- Denormalized flags for fast filtering
+        has_redirect INTEGER DEFAULT 0,
+        has_state_change INTEGER DEFAULT 0,
+        has_text_change INTEGER DEFAULT 0,
+
+        diff_summary_json TEXT  -- {"added_chars": N, "removed_chars": M, "content_delta": 0.3}
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_diffs_watch_time ON diffs(watch_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_diffs_severity ON diffs(severity_score DESC);
+
+    -- Monitoring alerts (separate from drift_alerts which is for model regression)
+    CREATE TABLE IF NOT EXISTS monitoring_alerts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        watch_id INTEGER NOT NULL REFERENCES watches(id),
+        diff_id INTEGER REFERENCES diffs(id),
+        alert_reason TEXT NOT NULL,  -- 'high_severity', 'host_changed', 'status_410', etc.
+        severity_score REAL NOT NULL,
+
+        -- Acknowledgement workflow
+        acknowledged INTEGER DEFAULT 0,
+        acknowledged_by TEXT,
+        acknowledged_at TEXT,
+
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        payload_json TEXT  -- flexible extra context
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_monitoring_alerts_unacked
+    ON monitoring_alerts(acknowledged, created_at DESC);
+
+    CREATE INDEX IF NOT EXISTS idx_monitoring_alerts_watch
+    ON monitoring_alerts(watch_id, created_at DESC);
+
+    -- Canonical key aliases (for redirect/rebrand tracking)
+    CREATE TABLE IF NOT EXISTS canonical_key_aliases (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        old_key TEXT NOT NULL,
+        new_key TEXT NOT NULL,
+        reason TEXT,  -- 'redirect', 'rebrand', 'merge'
+        detected_at TEXT NOT NULL,
+        UNIQUE(old_key, new_key)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_aliases_old ON canonical_key_aliases(old_key);
+    CREATE INDEX IF NOT EXISTS idx_aliases_new ON canonical_key_aliases(new_key);
+
+    -- Monitoring configuration (singleton)
+    CREATE TABLE IF NOT EXISTS monitoring_config (
+        id INTEGER PRIMARY KEY CHECK(id = 1),
+        config_json TEXT NOT NULL
+    );
+
+    -- Insert default config
+    INSERT OR IGNORE INTO monitoring_config (id, config_json) VALUES (1, json('{
+        "action_threshold": 0.20,
+        "profile_threshold": 0.60,
+        "alert_threshold": 0.80,
+        "debounce_window_hours": 72,
+        "debounce_count": 2,
+        "cooldown_hours": 24,
+        "semantic_drift_threshold": 0.85,
+        "weight_content": 0.3,
+        "weight_semantic": 0.4,
+        "weight_state": 0.15,
+        "weight_redirect": 0.15,
+        "max_snapshots_per_watch": 10,
+        "max_diff_age_days": 90
+    }'));
+
+    -- Monitoring runs (metrics)
+    CREATE TABLE IF NOT EXISTS monitoring_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id TEXT NOT NULL UNIQUE,
+        started_at TEXT NOT NULL,
+        completed_at TEXT,
+        duration_seconds REAL,
+
+        watches_checked INTEGER DEFAULT 0,
+        snapshots_taken INTEGER DEFAULT 0,
+        diffs_computed INTEGER DEFAULT 0,
+        high_severity_events INTEGER DEFAULT 0,
+        profile_updates_triggered INTEGER DEFAULT 0,
+
+        errors_json TEXT,
+        created_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_monitoring_runs_started ON monitoring_runs(started_at DESC);
     """
 }
 
@@ -1778,10 +1949,19 @@ class SignalStore:
     async def get_pending_outbox(
         self,
         limit: int = 50,
+        max_attempts: int = 5,
     ) -> List[Dict[str, Any]]:
-        """Get pending outbox entries (status='pending')."""
+        """
+        Get pending outbox entries that are due for processing.
+
+        Respects:
+        - next_attempt_at: Only returns items where next_attempt_at <= now (or NULL)
+        - max_attempts: Excludes items that have exceeded retry limit
+        """
         if not self._db:
             raise RuntimeError("Database not initialized")
+
+        now = datetime.now(timezone.utc).isoformat()
 
         cursor = await self._db.execute(
             """
@@ -1789,10 +1969,12 @@ class SignalStore:
                    next_attempt_at, last_error, created_at, updated_at
             FROM notion_outbox
             WHERE status = 'pending'
+              AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+              AND attempts < ?
             ORDER BY created_at ASC
             LIMIT ?
             """,
-            (limit,)
+            (now, max_attempts, limit)
         )
 
         rows = await cursor.fetchall()
@@ -1838,28 +2020,40 @@ class SignalStore:
         self,
         outbox_id: int,
         error: str,
-        next_attempt_at: Optional[str] = None,
+        backoff_seconds: float = 60.0,
     ) -> None:
-        """Mark an outbox entry as failed with error details."""
+        """
+        Mark an outbox entry as failed with retry scheduling.
+
+        Keeps status='pending' so item will be retried after backoff.
+        Increments attempts counter for retry limiting.
+
+        Args:
+            outbox_id: The outbox entry ID
+            error: Error message to store
+            backoff_seconds: Seconds to wait before next retry attempt
+        """
         if not self._db:
             raise RuntimeError("Database not initialized")
 
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(timezone.utc)
+        next_attempt = (now + timedelta(seconds=backoff_seconds)).isoformat()
 
         async with self.transaction() as conn:
             await conn.execute(
                 """
                 UPDATE notion_outbox
-                SET status = 'failed',
+                SET status = 'pending',
                     last_error = ?,
+                    attempts = attempts + 1,
                     next_attempt_at = ?,
                     updated_at = ?
                 WHERE id = ?
                 """,
-                (error, next_attempt_at, now, outbox_id)
+                (error, next_attempt, now.isoformat(), outbox_id)
             )
 
-        logger.info(f"Marked outbox {outbox_id} as failed: {error}")
+        logger.info(f"Outbox {outbox_id} failed, retry after {backoff_seconds}s: {error}")
 
     # =========================================================================
     # SUPPRESSION CACHE
