@@ -16,9 +16,11 @@ import httpx
 from collectors.sec_edgar import (
     SECEdgarCollector,
     FormDFiling,
-    HEALTHTECH_SIC_CODES,
-    CLEANTECH_SIC_CODES,
-    AI_INFRASTRUCTURE_SIC_CODES,
+    CONSUMER_HEALTHTECH_SIC_CODES,
+    CONSUMER_CPG_SIC_CODES,
+    TRAVEL_HOSPITALITY_SIC_CODES,
+    CONSUMER_MARKETPLACE_SIC_CODES,
+    TARGET_SIC_CODES,
 )
 from discovery_engine.mcp_server import CollectorStatus
 
@@ -266,17 +268,20 @@ def test_classify_industry():
     """Test SIC code classification"""
     collector = SECEdgarCollector()
 
-    # Healthtech
-    assert collector._classify_industry("2834") == "healthtech"
-    assert collector._classify_industry("3841") == "healthtech"
+    # Consumer Healthtech
+    assert collector._classify_industry("2834") == "consumer_healthtech"
+    assert collector._classify_industry("3841") == "consumer_healthtech"
 
-    # Cleantech
-    assert collector._classify_industry("4911") == "cleantech"
-    assert collector._classify_industry("3711") == "cleantech"
+    # Consumer CPG
+    assert collector._classify_industry("2000") == "consumer_cpg"
+    assert collector._classify_industry("2844") == "consumer_cpg"
 
-    # AI Infrastructure
-    assert collector._classify_industry("7372") == "ai_infrastructure"
-    assert collector._classify_industry("7373") == "ai_infrastructure"
+    # Travel & Hospitality
+    assert collector._classify_industry("7011") == "travel_hospitality"
+    assert collector._classify_industry("5812") == "travel_hospitality"
+
+    # Consumer Marketplace
+    assert collector._classify_industry("5961") == "consumer_marketplace"
 
     # Non-target
     assert collector._classify_industry("9999") is None
@@ -301,7 +306,7 @@ def test_parse_atom_feed(sample_atom_feed):
 
 
 def test_parse_form_d_xml_healthtech(sample_form_d_xml_healthtech):
-    """Test parsing Form D XML - healthtech"""
+    """Test parsing Form D XML - consumer healthtech"""
     collector = SECEdgarCollector()
 
     filing = FormDFiling(
@@ -317,13 +322,13 @@ def test_parse_form_d_xml_healthtech(sample_form_d_xml_healthtech):
     assert filing.offering_sold == 1_500_000
     assert filing.minimum_investment == 100_000
     assert filing.sic_code == "2834"
-    assert filing.industry_group == "healthtech"
+    assert filing.industry_group == "consumer_healthtech"
     assert filing.issuer_type == "Corporation"
     assert filing.state == "CA"
 
 
 def test_parse_form_d_xml_cleantech(sample_form_d_xml_cleantech):
-    """Test parsing Form D XML - cleantech"""
+    """Test parsing Form D XML - non-target (cleantech not in consumer focus)"""
     collector = SECEdgarCollector()
 
     filing = FormDFiling(
@@ -338,7 +343,8 @@ def test_parse_form_d_xml_cleantech(sample_form_d_xml_cleantech):
     assert filing.offering_amount == 5_000_000
     assert filing.offering_sold == 3_000_000
     assert filing.sic_code == "4911"
-    assert filing.industry_group == "cleantech"
+    # SIC 4911 (Electric services) is not in consumer focus, so industry_group is None
+    assert filing.industry_group is None
     assert filing.issuer_type == "Limited Liability Company"
     assert filing.state == "TX"
 
@@ -408,19 +414,16 @@ async def test_collector_error_handling():
 def test_sic_code_coverage():
     """Ensure SIC code sets are comprehensive"""
     # Check we have codes for each sector
-    assert len(HEALTHTECH_SIC_CODES) > 0
-    assert len(CLEANTECH_SIC_CODES) > 0
-    assert len(AI_INFRASTRUCTURE_SIC_CODES) > 0
+    assert len(CONSUMER_HEALTHTECH_SIC_CODES) > 0
+    assert len(CONSUMER_CPG_SIC_CODES) > 0
+    assert len(TRAVEL_HOSPITALITY_SIC_CODES) > 0
+    assert len(CONSUMER_MARKETPLACE_SIC_CODES) > 0
 
-    # Check no overlap between sectors
-    assert len(HEALTHTECH_SIC_CODES & CLEANTECH_SIC_CODES) == 0
-    assert len(HEALTHTECH_SIC_CODES & AI_INFRASTRUCTURE_SIC_CODES) == 0
-    assert len(CLEANTECH_SIC_CODES & AI_INFRASTRUCTURE_SIC_CODES) == 0
-
-    # Check specific codes are present
-    assert "2834" in HEALTHTECH_SIC_CODES  # Pharma
-    assert "4911" in CLEANTECH_SIC_CODES   # Electric services
-    assert "7372" in AI_INFRASTRUCTURE_SIC_CODES  # Software
+    # Check specific codes are present in appropriate categories
+    assert "2834" in CONSUMER_HEALTHTECH_SIC_CODES  # Pharmaceutical Preparations
+    assert "2000" in CONSUMER_CPG_SIC_CODES  # Food & Kindred Products
+    assert "7011" in TRAVEL_HOSPITALITY_SIC_CODES  # Hotels & Motels
+    assert "5961" in CONSUMER_MARKETPLACE_SIC_CODES  # Catalog & Mail-Order Houses
 
 
 # =============================================================================

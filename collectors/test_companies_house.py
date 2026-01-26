@@ -2,7 +2,7 @@
 Test suite for Companies House collector
 
 Tests:
-1. SIC code classification (healthtech, cleantech, AI)
+1. SIC code classification (consumer healthtech, CPG, travel, marketplace)
 2. Company profile parsing
 3. Signal generation
 4. Canonical key building
@@ -29,9 +29,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from collectors.companies_house import (
     CompaniesHouseCollector,
     CompanyProfile,
-    HEALTHTECH_SIC_CODES,
-    CLEANTECH_SIC_CODES,
-    AI_INFRASTRUCTURE_SIC_CODES,
+    CONSUMER_HEALTHTECH_SIC_CODES,
+    CONSUMER_CPG_SIC_CODES,
+    TRAVEL_HOSPITALITY_SIC_CODES,
+    CONSUMER_MARKETPLACE_SIC_CODES,
+    TARGET_SIC_CODES,
     SIC_TO_INDUSTRY,
 )
 from verification.verification_gate_v2 import VerificationStatus
@@ -100,30 +102,26 @@ def test_sic_code_classification():
     print("TEST: SIC Code Classification")
     print("=" * 50)
 
-    # Test healthtech SIC codes
-    healthtech_codes = ["86101", "21100", "72110"]
+    # Test consumer healthtech SIC codes
+    healthtech_codes = ["86101", "86210", "93110"]  # Medical practice, dental, sports activities
     for code in healthtech_codes:
-        assert code in HEALTHTECH_SIC_CODES, f"{code} should be in HEALTHTECH_SIC_CODES"
-        assert SIC_TO_INDUSTRY.get(code) == "healthtech", f"{code} should map to 'healthtech'"
-        print(f"[PASS] {code} -> healthtech")
+        assert code in CONSUMER_HEALTHTECH_SIC_CODES, f"{code} should be in CONSUMER_HEALTHTECH_SIC_CODES"
+        assert SIC_TO_INDUSTRY.get(code) == "consumer_healthtech", f"{code} should map to 'consumer_healthtech'"
+        print(f"[PASS] {code} -> consumer_healthtech")
 
-    # Test cleantech SIC codes
-    cleantech_codes = ["35110", "38110", "27110"]
-    for code in cleantech_codes:
-        assert code in CLEANTECH_SIC_CODES, f"{code} should be in CLEANTECH_SIC_CODES"
-        assert SIC_TO_INDUSTRY.get(code) == "cleantech", f"{code} should map to 'cleantech'"
-        print(f"[PASS] {code} -> cleantech")
+    # Test consumer CPG SIC codes
+    cpg_codes = ["10110", "10310", "10520"]  # Meat processing, potato processing, ice cream
+    for code in cpg_codes:
+        assert code in CONSUMER_CPG_SIC_CODES, f"{code} should be in CONSUMER_CPG_SIC_CODES"
+        assert SIC_TO_INDUSTRY.get(code) == "consumer_cpg", f"{code} should map to 'consumer_cpg'"
+        print(f"[PASS] {code} -> consumer_cpg")
 
-    # Test AI/software SIC codes
-    # Note: Some R&D codes like 72190 appear in multiple categories
-    # Test with codes that are uniquely AI/software
-    ai_codes = ["62011", "63110", "62012"]  # Changed from 72190 to 62012
-    for code in ai_codes:
-        assert code in AI_INFRASTRUCTURE_SIC_CODES, f"{code} should be in AI_INFRASTRUCTURE_SIC_CODES"
-        # 72190 is in multiple categories, so check it maps to one of them
-        industry = SIC_TO_INDUSTRY.get(code)
-        assert industry in ["ai_infrastructure", "healthtech", "cleantech"], f"{code} should map to a valid industry"
-        print(f"[PASS] {code} -> {industry}")
+    # Test travel & hospitality SIC codes
+    travel_codes = ["55100", "56101", "79110"]  # Hotels, licensed restaurants, travel agency
+    for code in travel_codes:
+        assert code in TRAVEL_HOSPITALITY_SIC_CODES, f"{code} should be in TRAVEL_HOSPITALITY_SIC_CODES"
+        assert SIC_TO_INDUSTRY.get(code) == "travel_hospitality", f"{code} should map to 'travel_hospitality'"
+        print(f"[PASS] {code} -> travel_hospitality")
 
     print("\n[SUCCESS] All SIC code classifications correct")
 
@@ -154,10 +152,10 @@ def test_company_profile_parsing():
     print(f"[PASS] SIC codes: {profile.sic_codes}")
 
     # Check industry classification (should match first SIC code that's in our lists)
-    # 62012 = Computer programming (AI Infrastructure)
-    # 86900 = Human health (Healthtech)
+    # 62012 = Computer programming (Consumer Marketplace)
+    # 86900 = Human health (Consumer Healthtech)
     # First match wins
-    assert profile.industry_group in ["ai_infrastructure", "healthtech"]
+    assert profile.industry_group in ["consumer_marketplace", "consumer_healthtech"]
     print(f"[PASS] Industry group: {profile.industry_group}")
 
     # Check address parsing
@@ -190,7 +188,7 @@ def test_signal_generation():
         incorporation_date=incorporation_date,
         company_type="ltd",
         sic_codes=["62012", "86900"],
-        industry_group="healthtech",
+        industry_group="consumer_healthtech",
         jurisdiction="england-wales",
         company_url="https://api.company-information.service.gov.uk/company/12345678"
     )
@@ -223,7 +221,7 @@ def test_signal_generation():
 
     # Check raw data
     assert signal.raw_data["company_number"] == "12345678"
-    assert signal.raw_data["industry_group"] == "healthtech"
+    assert signal.raw_data["industry_group"] == "consumer_healthtech"
     assert signal.raw_data["officers_count"] == 2
     print(f"[PASS] Raw data includes: company_number, industry_group, officers_count")
 
