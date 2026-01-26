@@ -403,6 +403,41 @@ class URLProfiler:
             await self._client.aclose()
             self._client = None
 
+    async def fetch_single(self, url: str) -> PageFetchResult:
+        """
+        Lightweight single-page fetch for monitoring.
+
+        Returns PageFetchResult without LLM extraction. This is the public API
+        for the monitoring subsystem to fetch pages efficiently.
+
+        Args:
+            url: Full URL to fetch
+
+        Returns:
+            PageFetchResult with status, content, and hash
+        """
+        # Create client if not in context manager
+        client = self._client
+        close_client = False
+        if client is None:
+            client = httpx.AsyncClient(
+                timeout=self.timeout,
+                follow_redirects=True,
+                headers={"User-Agent": self.user_agent},
+            )
+            close_client = True
+
+        try:
+            # Extract path from URL for metadata
+            from urllib.parse import urlparse
+            parsed = urlparse(url)
+            path = parsed.path or "/"
+
+            return await self._fetch_single_page(client, url, path)
+        finally:
+            if close_client:
+                await client.aclose()
+
     async def profile(self, url: str, force_refresh: bool = False) -> CompanyProfile:
         """
         Profile a company from its URL.
