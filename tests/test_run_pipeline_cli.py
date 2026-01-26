@@ -90,9 +90,11 @@ class TestHealthCommand:
         mock_pipeline.close = AsyncMock()
         mock_pipeline.config = MagicMock()
         mock_pipeline.config.db_path = "signals.db"
+        mock_pipeline.config.notion_api_key = None  # Skip Notion check
         mock_pipeline._store = MagicMock()
         mock_pipeline._store._db = MagicMock()  # DB connected
         mock_pipeline._notion = None
+        mock_pipeline.get_stats = AsyncMock(return_value={"storage": {"active_suppression_entries": 1}})
 
         # Mock health report
         mock_report = HealthReport()
@@ -104,11 +106,13 @@ class TestHealthCommand:
                 mock_monitor.generate_report = AsyncMock(return_value=mock_report)
                 mock_monitor_cls.return_value = mock_monitor
 
-                exit_code = await cmd_health(args)
+                with patch("run_pipeline.check_github_api", AsyncMock(return_value=(True, "OK"))):
+                    with patch("run_pipeline.check_sec_edgar_api", AsyncMock(return_value=(True, "OK"))):
+                        exit_code = await cmd_health(args)
 
-                # Should check database connection
-                mock_pipeline.initialize.assert_called_once()
-                assert exit_code == 0
+                        # Should check database connection
+                        mock_pipeline.initialize.assert_called_once()
+                        assert exit_code == 0
 
     @pytest.mark.asyncio
     async def test_cmd_health_checks_notion_api(self):
@@ -121,9 +125,11 @@ class TestHealthCommand:
         mock_pipeline.close = AsyncMock()
         mock_pipeline.config = MagicMock()
         mock_pipeline.config.db_path = "signals.db"
+        mock_pipeline.config.notion_api_key = "test-key"  # Enable Notion check
         mock_pipeline._store = MagicMock()
         mock_pipeline._store._db = MagicMock()
         mock_pipeline._notion = MagicMock()
+        mock_pipeline.get_stats = AsyncMock(return_value={"storage": {"active_suppression_entries": 1}})
 
         # Mock Notion API check
         mock_pipeline._notion.test_connection = AsyncMock(return_value=True)
@@ -137,10 +143,13 @@ class TestHealthCommand:
                 mock_monitor.generate_report = AsyncMock(return_value=mock_report)
                 mock_monitor_cls.return_value = mock_monitor
 
-                exit_code = await cmd_health(args)
+                with patch("run_pipeline.check_github_api", AsyncMock(return_value=(True, "OK"))):
+                    with patch("run_pipeline.check_sec_edgar_api", AsyncMock(return_value=(True, "OK"))):
+                        with patch("run_pipeline.check_notion_api", AsyncMock(return_value=(True, "OK"))):
+                            exit_code = await cmd_health(args)
 
-                # Should verify Notion connectivity was checked
-                assert exit_code == 0
+                            # Should verify Notion connectivity was checked
+                            assert exit_code == 0
 
     @pytest.mark.asyncio
     async def test_cmd_health_generates_signal_health_report(self):
@@ -153,9 +162,11 @@ class TestHealthCommand:
         mock_pipeline.close = AsyncMock()
         mock_pipeline.config = MagicMock()
         mock_pipeline.config.db_path = "signals.db"
+        mock_pipeline.config.notion_api_key = None  # Skip Notion check
         mock_pipeline._store = MagicMock()
         mock_pipeline._store._db = MagicMock()
         mock_pipeline._notion = None
+        mock_pipeline.get_stats = AsyncMock(return_value={"storage": {"active_suppression_entries": 1}})
 
         mock_report = HealthReport()
         mock_report.overall_status = "HEALTHY"
@@ -167,11 +178,13 @@ class TestHealthCommand:
                 mock_monitor.generate_report = AsyncMock(return_value=mock_report)
                 mock_monitor_cls.return_value = mock_monitor
 
-                exit_code = await cmd_health(args)
+                with patch("run_pipeline.check_github_api", AsyncMock(return_value=(True, "OK"))):
+                    with patch("run_pipeline.check_sec_edgar_api", AsyncMock(return_value=(True, "OK"))):
+                        exit_code = await cmd_health(args)
 
-                # Should call generate_report
-                mock_monitor.generate_report.assert_called_once()
-                assert exit_code == 0
+                        # Should call generate_report
+                        mock_monitor.generate_report.assert_called_once()
+                        assert exit_code == 0
 
     @pytest.mark.asyncio
     async def test_cmd_health_returns_exit_code_0_when_healthy(self):
@@ -184,9 +197,11 @@ class TestHealthCommand:
         mock_pipeline.close = AsyncMock()
         mock_pipeline.config = MagicMock()
         mock_pipeline.config.db_path = "signals.db"
+        mock_pipeline.config.notion_api_key = None  # Skip Notion check
         mock_pipeline._store = MagicMock()
         mock_pipeline._store._db = MagicMock()
         mock_pipeline._notion = None
+        mock_pipeline.get_stats = AsyncMock(return_value={"storage": {"active_suppression_entries": 1}})
 
         mock_report = HealthReport()
         mock_report.overall_status = "HEALTHY"
@@ -197,9 +212,11 @@ class TestHealthCommand:
                 mock_monitor.generate_report = AsyncMock(return_value=mock_report)
                 mock_monitor_cls.return_value = mock_monitor
 
-                exit_code = await cmd_health(args)
+                with patch("run_pipeline.check_github_api", AsyncMock(return_value=(True, "OK"))):
+                    with patch("run_pipeline.check_sec_edgar_api", AsyncMock(return_value=(True, "OK"))):
+                        exit_code = await cmd_health(args)
 
-                assert exit_code == 0
+                        assert exit_code == 0
 
     @pytest.mark.asyncio
     async def test_cmd_health_returns_exit_code_1_when_degraded(self):
@@ -212,9 +229,11 @@ class TestHealthCommand:
         mock_pipeline.close = AsyncMock()
         mock_pipeline.config = MagicMock()
         mock_pipeline.config.db_path = "signals.db"
+        mock_pipeline.config.notion_api_key = None  # Skip Notion check
         mock_pipeline._store = MagicMock()
         mock_pipeline._store._db = MagicMock()
         mock_pipeline._notion = None
+        mock_pipeline.get_stats = AsyncMock(return_value={"storage": {"active_suppression_entries": 1}})
 
         mock_report = HealthReport()
         mock_report.overall_status = "DEGRADED"
@@ -225,9 +244,11 @@ class TestHealthCommand:
                 mock_monitor.generate_report = AsyncMock(return_value=mock_report)
                 mock_monitor_cls.return_value = mock_monitor
 
-                exit_code = await cmd_health(args)
+                with patch("run_pipeline.check_github_api", AsyncMock(return_value=(True, "OK"))):
+                    with patch("run_pipeline.check_sec_edgar_api", AsyncMock(return_value=(True, "OK"))):
+                        exit_code = await cmd_health(args)
 
-                assert exit_code == 1
+                        assert exit_code == 1
 
     @pytest.mark.asyncio
     async def test_cmd_health_returns_exit_code_1_when_critical(self):
@@ -240,9 +261,11 @@ class TestHealthCommand:
         mock_pipeline.close = AsyncMock()
         mock_pipeline.config = MagicMock()
         mock_pipeline.config.db_path = "signals.db"
+        mock_pipeline.config.notion_api_key = None  # Skip Notion check
         mock_pipeline._store = MagicMock()
         mock_pipeline._store._db = MagicMock()
         mock_pipeline._notion = None
+        mock_pipeline.get_stats = AsyncMock(return_value={"storage": {"active_suppression_entries": 1}})
 
         mock_report = HealthReport()
         mock_report.overall_status = "CRITICAL"
@@ -253,9 +276,11 @@ class TestHealthCommand:
                 mock_monitor.generate_report = AsyncMock(return_value=mock_report)
                 mock_monitor_cls.return_value = mock_monitor
 
-                exit_code = await cmd_health(args)
+                with patch("run_pipeline.check_github_api", AsyncMock(return_value=(True, "OK"))):
+                    with patch("run_pipeline.check_sec_edgar_api", AsyncMock(return_value=(True, "OK"))):
+                        exit_code = await cmd_health(args)
 
-                assert exit_code == 1
+                        assert exit_code == 1
 
     @pytest.mark.asyncio
     async def test_cmd_health_handles_database_connection_failure(self):
@@ -268,12 +293,15 @@ class TestHealthCommand:
         mock_pipeline.close = AsyncMock()
         mock_pipeline.config = MagicMock()
         mock_pipeline.config.db_path = "signals.db"
+        mock_pipeline.config.notion_api_key = None  # Skip Notion check
         mock_pipeline._store = MagicMock()
         mock_pipeline._store._db = None  # DB NOT connected
         mock_pipeline._notion = None
 
         with patch("run_pipeline.DiscoveryPipeline", return_value=mock_pipeline):
-            exit_code = await cmd_health(args)
+            with patch("run_pipeline.check_github_api", AsyncMock(return_value=(True, "OK"))):
+                with patch("run_pipeline.check_sec_edgar_api", AsyncMock(return_value=(True, "OK"))):
+                    exit_code = await cmd_health(args)
 
-            # Should return error exit code when DB is down
-            assert exit_code == 1
+                    # Should return error exit code when DB is down
+                    assert exit_code == 1
