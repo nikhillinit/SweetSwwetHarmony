@@ -82,6 +82,7 @@ ALLOWED_COLLECTORS = frozenset({
 class CollectorStatus(str, Enum):
     """Status of a collector run."""
     SUCCESS = "success"
+    PARTIAL_SUCCESS = "partial_success"  # Some signals collected but with errors
     DRY_RUN = "dry_run"
     ERROR = "error"
     NOT_FOUND = "not_found"

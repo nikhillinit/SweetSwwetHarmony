@@ -1,10 +1,13 @@
-name: Daily Website Monitoring
+name: Daily Website Monitoring (Deprecated)
+
+# NOTE: This workflow is deprecated. Use daily-pipeline.yml instead.
+# Schedule disabled to prevent conflicts with unified pipeline.
 
 on:
-  schedule:
-    # Run daily at 8:00 AM UTC (after signal collection)
-    - cron: '0 8 * * *'
-  workflow_dispatch:
+  # schedule:
+  #   # Run daily at 8:00 AM UTC (after signal collection)
+  #   - cron: '0 8 * * *'
+  workflow_dispatch:  # Allow manual trigger for backwards compatibility
     inputs:
       limit:
         description: 'Maximum watches to check'

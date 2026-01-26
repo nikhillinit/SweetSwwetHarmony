@@ -1783,6 +1783,11 @@ Examples:
         action="store_true",
         help="Force-break existing lock (use if lock is stale)",
     )
+    monitor_run_parser.add_argument(
+        "--only-portfolio",
+        action="store_true",
+        help="Only check portfolio watches (watch_type='portfolio')",
+    )
 
     # monitor status
     monitor_status_parser = monitor_sub.add_parser("status", help="Show monitoring status")
@@ -1806,6 +1811,56 @@ Examples:
         type=str,
         default=os.getenv("DISCOVERY_DB_PATH", "signals.db"),
         help="Path to signals database",
+    )
+
+    # monitor sync-portfolio
+    monitor_sync_parser = monitor_sub.add_parser(
+        "sync-portfolio",
+        help="Sync portfolio companies to monitoring watches",
+    )
+    monitor_sync_parser.add_argument(
+        "--portfolio-path",
+        type=str,
+        default="config/portfolio.json",
+        help="Path to portfolio.json (default: config/portfolio.json)",
+    )
+    monitor_sync_parser.add_argument(
+        "--db-path",
+        type=str,
+        default=os.getenv("DISCOVERY_DB_PATH", "signals.db"),
+        help="Path to signals database",
+    )
+    monitor_sync_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Don't make changes, just show what would happen",
+    )
+    monitor_sync_parser.add_argument(
+        "--no-deactivate",
+        action="store_true",
+        help="Don't deactivate portfolio watches not in config",
+    )
+
+    # monitor dispatch (Slack alerts)
+    monitor_dispatch_parser = monitor_sub.add_parser(
+        "dispatch",
+        help="Send Slack alerts for unnotified monitoring alerts",
+    )
+    monitor_dispatch_parser.add_argument(
+        "--run-url",
+        type=str,
+        help="GitHub Actions run URL to include in alerts",
+    )
+    monitor_dispatch_parser.add_argument(
+        "--db-path",
+        type=str,
+        default=os.getenv("DISCOVERY_DB_PATH", "signals.db"),
+        help="Path to signals database",
+    )
+    monitor_dispatch_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Don't send Slack messages, just show what would be sent",
     )
 
     # --- outbox command ---
@@ -2383,7 +2438,10 @@ async def cmd_monitor_run(args):
             embedding_generator=embedding_generator,
         )
 
-        results = await monitor.run_due_checks(limit=args.limit)
+        # Determine watch type filter
+        watch_type = "portfolio" if getattr(args, 'only_portfolio', False) else None
+
+        results = await monitor.run_due_checks(limit=args.limit, watch_type=watch_type)
 
         # Print summary
         successful = sum(1 for r in results if r.success)
@@ -2476,6 +2534,216 @@ async def cmd_monitor_list(args):
 
     finally:
         await store.close()
+
+
+async def cmd_monitor_sync_portfolio(args):
+    """Sync portfolio companies to monitoring watches."""
+    from pathlib import Path
+    from services.portfolio_watch_sync import PortfolioWatchSync
+
+    store = SignalStore(args.db_path)
+    await store.initialize()
+
+    try:
+        sync = PortfolioWatchSync(
+            signal_store=store,
+            portfolio_path=Path(args.portfolio_path),
+        )
+
+        # Sync portfolio
+        stats = await sync.sync_portfolio(
+            dry_run=args.dry_run,
+            deactivate_missing=not args.no_deactivate,
+        )
+
+        # Print results
+        prefix = "[DRY RUN] " if args.dry_run else ""
+        print(f"\n{prefix}Portfolio sync complete:")
+        print(f"  Companies in config: {stats.companies_in_config}")
+        print(f"  Watches created:     {stats.watches_created}")
+        print(f"  Watches updated:     {stats.watches_updated}")
+        print(f"  Watches deactivated: {stats.watches_deactivated}")
+        print(f"  Watches adopted:     {stats.watches_adopted}")
+
+        if stats.errors:
+            print(f"\nErrors ({len(stats.errors)}):")
+            for err in stats.errors[:5]:
+                print(f"  - {err}")
+
+    finally:
+        await store.close()
+
+
+async def cmd_monitor_dispatch(args):
+    """Send Slack alerts for unnotified monitoring alerts."""
+    import os
+    import json
+    import httpx
+    from monitoring.monitor_store import MonitorStore
+
+    store = SignalStore(args.db_path)
+    await store.initialize()
+
+    try:
+        monitor_store = MonitorStore(store)
+
+        # Get unnotified alerts (not acknowledged, not yet sent to Slack)
+        cursor = await store._db.execute(
+            """
+            SELECT
+                a.id, a.watch_id, a.diff_id, a.alert_reason, a.severity_score,
+                a.acknowledged, a.created_at, a.payload_json,
+                w.canonical_key, w.url, w.watch_type
+            FROM monitoring_alerts a
+            JOIN watches w ON a.watch_id = w.id
+            WHERE a.acknowledged = 0
+              AND a.slack_notified = 0
+            ORDER BY w.watch_type = 'portfolio' DESC, a.severity_score DESC, a.created_at ASC
+            LIMIT 50
+            """,
+        )
+        alerts = await cursor.fetchall()
+
+        if not alerts:
+            # Send heartbeat summary
+            due_count_result = await store._db.execute(
+                "SELECT COUNT(*) FROM watches WHERE active = 1 AND watch_type = 'portfolio'"
+            )
+            portfolio_count = (await due_count_result.fetchone())[0]
+
+            error_count_result = await store._db.execute(
+                """
+                SELECT COUNT(*) FROM watches
+                WHERE active = 1 AND consecutive_failures > 0
+                """
+            )
+            error_count = (await error_count_result.fetchone())[0]
+
+            heartbeat_msg = (
+                f"Daily Scan Complete - Portfolio: {portfolio_count} companies checked. "
+                f"Alerts: 0. Errors: {error_count}."
+            )
+
+            if args.dry_run:
+                print(f"\n[DRY RUN] Would send heartbeat: {heartbeat_msg}")
+            else:
+                webhook_url = os.getenv("SLACK_WEBHOOK_URL")
+                if webhook_url:
+                    await _send_slack_message(webhook_url, heartbeat_msg, args.run_url)
+                    print(f"Sent heartbeat: {heartbeat_msg}")
+                else:
+                    print(f"No SLACK_WEBHOOK_URL set. Would send: {heartbeat_msg}")
+
+            return
+
+        # Group alerts by company (canonical_key)
+        grouped = {}
+        for alert in alerts:
+            (alert_id, watch_id, diff_id, reason, severity, acked,
+             created_at, payload_json, canonical_key, url, watch_type) = alert
+
+            if canonical_key not in grouped:
+                grouped[canonical_key] = {
+                    "canonical_key": canonical_key,
+                    "url": url,
+                    "watch_type": watch_type,
+                    "alerts": [],
+                }
+            grouped[canonical_key]["alerts"].append({
+                "id": alert_id,
+                "reason": reason,
+                "severity": severity,
+                "created_at": created_at,
+            })
+
+        # Build digest message (storm protection: cap at 5 detailed entries)
+        portfolio_companies = [g for g in grouped.values() if g["watch_type"] == "portfolio"]
+        other_companies = [g for g in grouped.values() if g["watch_type"] != "portfolio"]
+
+        # Portfolio alerts first
+        ordered = portfolio_companies + other_companies
+
+        message_lines = [f"*Monitoring Alerts* ({len(alerts)} total)"]
+
+        for i, company in enumerate(ordered[:5]):
+            is_portfolio = company["watch_type"] == "portfolio"
+            prefix = "[Portfolio] " if is_portfolio else ""
+            alert_summary = ", ".join([
+                f"{a['reason']} ({a['severity']:.2f})"
+                for a in company["alerts"][:2]
+            ])
+            message_lines.append(
+                f"- {prefix}{company['canonical_key']}: {alert_summary}"
+            )
+
+        if len(ordered) > 5:
+            message_lines.append(f"... and {len(ordered) - 5} more companies")
+
+        message = "\n".join(message_lines)
+
+        if args.dry_run:
+            print(f"\n[DRY RUN] Would send to Slack:\n{message}")
+            print(f"\nAlerts to mark as notified: {[a[0] for a in alerts]}")
+        else:
+            webhook_url = os.getenv("SLACK_WEBHOOK_URL")
+            if webhook_url:
+                await _send_slack_message(webhook_url, message, args.run_url)
+                print(f"Sent Slack digest for {len(grouped)} companies")
+
+                # Mark alerts as notified
+                from datetime import datetime, timezone
+                now = datetime.now(timezone.utc).isoformat()
+                for alert in alerts:
+                    await store._db.execute(
+                        """
+                        UPDATE monitoring_alerts
+                        SET slack_notified = 1, slack_notified_at = ?
+                        WHERE id = ?
+                        """,
+                        (now, alert[0])
+                    )
+                await store._db.commit()
+                print(f"Marked {len(alerts)} alerts as notified")
+            else:
+                print(f"No SLACK_WEBHOOK_URL set. Would send:\n{message}")
+
+    finally:
+        await store.close()
+
+
+async def _send_slack_message(webhook_url: str, message: str, run_url: str = None):
+    """Send a message to Slack via webhook."""
+    import httpx
+
+    blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": message,
+            }
+        }
+    ]
+
+    if run_url:
+        blocks.append({
+            "type": "context",
+            "elements": [
+                {
+                    "type": "mrkdwn",
+                    "text": f"<{run_url}|View Run>"
+                }
+            ]
+        })
+
+    payload = {
+        "blocks": blocks,
+        "text": message,  # Fallback for notifications
+    }
+
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        response = await client.post(webhook_url, json=payload)
+        response.raise_for_status()
 
 
 async def cmd_outbox_drain(args):
@@ -2610,6 +2878,10 @@ async def main():
                     await cmd_monitor_status(args)
                 elif args.monitor_cmd == "list":
                     await cmd_monitor_list(args)
+                elif args.monitor_cmd == "sync-portfolio":
+                    await cmd_monitor_sync_portfolio(args)
+                elif args.monitor_cmd == "dispatch":
+                    await cmd_monitor_dispatch(args)
                 else:
                     print(f"Unknown monitor command: {args.monitor_cmd}")
                     sys.exit(1)

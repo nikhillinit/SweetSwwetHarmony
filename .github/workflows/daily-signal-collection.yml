@@ -1,10 +1,13 @@
-name: Daily Signal Collection
+name: Daily Signal Collection (Deprecated)
+
+# NOTE: This workflow is deprecated. Use daily-pipeline.yml instead.
+# Schedule disabled to prevent conflicts with unified pipeline.
 
 on:
-  schedule:
-    # Run daily at 6:00 AM UTC (1:00 AM EST)
-    - cron: '0 6 * * *'
-  workflow_dispatch:  # Allow manual trigger
+  # schedule:
+  #   # Run daily at 6:00 AM UTC (1:00 AM EST)
+  #   - cron: '0 6 * * *'
+  workflow_dispatch:  # Allow manual trigger for backwards compatibility
     inputs:
       collectors:
         description: 'Comma-separated list of collectors to run'
