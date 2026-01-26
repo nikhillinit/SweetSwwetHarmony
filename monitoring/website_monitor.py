@@ -37,7 +37,10 @@ from monitoring.models import (
 from monitoring.monitor_store import MonitorStore
 from monitoring.diff_engine import DiffEngine, DiffResult
 from monitoring.events import EventType, ProfileUpdateRequestedPayload
+from monitoring.failure_classifier import FailureClassifier, classify_failure
+from monitoring.gating import GatingEngine, GatingConfig
 from utils.page_state import detect_page_state
+from profilers.url_profiler import HASHER_VERSION
 
 logger = logging.getLogger(__name__)
 
@@ -172,28 +175,58 @@ class WebsiteMonitor:
             fetch_result = await profiler.fetch_single(watch.url)
         except Exception as e:
             logger.error(f"Failed to fetch {watch.url}: {e}")
-            await self.store.update_watch_failed(watch.id)
+            # Classify failure and apply backoff (v2.4)
+            failure = classify_failure(
+                status_code=None,
+                error_message=str(e),
+                retry_after=None,
+            )
+            await self.store.update_watch_failed(
+                watch.id,
+                failure_category=failure.category.value,
+                error_message=str(e)[:500],
+                backoff_seconds=failure.backoff.total_seconds(),
+            )
             return MonitoringResult(watch=watch, error=str(e))
 
         # Check for fetch error
         if fetch_result.error:
             logger.warning(f"Fetch error for {watch.url}: {fetch_result.error}")
-            await self.store.update_watch_failed(watch.id)
+            # Classify failure and apply backoff (v2.4)
+            failure = classify_failure(
+                status_code=fetch_result.status_code,
+                error_message=fetch_result.error,
+                retry_after=None,
+            )
+            await self.store.update_watch_failed(
+                watch.id,
+                failure_category=failure.category.value,
+                error_message=fetch_result.error[:500] if fetch_result.error else None,
+                backoff_seconds=failure.backoff.total_seconds(),
+            )
             return MonitoringResult(watch=watch, error=fetch_result.error)
 
         # Create snapshot
         config = await self.get_config()
         snapshot = self._create_snapshot(watch, fetch_result)
 
-        # Check for idempotency - skip if content unchanged
+        # Recent-hash guard (v2.4): Two-step idempotency check
+        # Step 1: Check if content unchanged from old_snapshot
         if old_snapshot and old_snapshot.content_hash == snapshot.content_hash:
-            logger.debug(f"Content unchanged for watch {watch.id}, updating timestamp only")
-            await self.store.update_watch_checked(watch.id)
-            return MonitoringResult(
-                watch=watch,
-                skipped=True,
-                skip_reason="content_unchanged",
+            # Step 2: Also check recent snapshots within window (hasher_version match)
+            is_unchanged, recent = await self.store.check_hash_unchanged(
+                watch,
+                snapshot.content_hash,
+                snapshot.hasher_version,
             )
+            if is_unchanged:
+                logger.debug(f"Content unchanged for watch {watch.id}, updating timestamp only")
+                await self.store.update_watch_checked(watch.id)
+                return MonitoringResult(
+                    watch=watch,
+                    skipped=True,
+                    skip_reason="content_unchanged",
+                )
 
         # Compute diff
         diff_result = await self.diff_engine.compute_diff(
@@ -279,6 +312,9 @@ class WebsiteMonitor:
             parsed = urlparse(fetch_result.url)
             final_host = parsed.netloc.lower()
 
+        # Get hasher_version from fetch result (v2.4)
+        hasher_version = getattr(fetch_result, 'hasher_version', HASHER_VERSION)
+
         return Snapshot(
             watch_id=watch.id,
             fetched_at=fetch_result.fetch_time,
@@ -288,6 +324,7 @@ class WebsiteMonitor:
             final_host=final_host,
             page_state=page_state,
             content_hash=fetch_result.content_hash or "",
+            hasher_version=hasher_version,
             text_length=len(fetch_result.text_content),
             text_content_preview=fetch_result.text_content[:500] if fetch_result.text_content else None,
             error=fetch_result.error,

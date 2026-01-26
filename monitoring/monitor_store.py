@@ -227,8 +227,18 @@ class MonitorStore:
         self,
         watch_id: int,
         backoff_seconds: float = 3600.0,
+        failure_category: Optional[str] = None,
+        error_message: Optional[str] = None,
     ) -> None:
-        """Update watch after a failed check with backoff."""
+        """
+        Update watch after a failed check with backoff.
+
+        Args:
+            watch_id: Watch ID
+            backoff_seconds: Seconds until next retry
+            failure_category: Failure category (v2.4: transient, client_error, etc.)
+            error_message: Error message for logging
+        """
         if not self._db:
             raise RuntimeError("Database not initialized")
 
@@ -240,10 +250,13 @@ class MonitorStore:
             UPDATE watches
             SET last_checked_at = ?,
                 consecutive_failures = consecutive_failures + 1,
-                backoff_until = ?
+                backoff_until = ?,
+                last_failure_category = ?,
+                last_failure_error = ?,
+                updated_at = ?
             WHERE id = ?
             """,
-            (now.isoformat(), backoff_until, watch_id)
+            (now.isoformat(), backoff_until, failure_category, error_message, now.isoformat(), watch_id)
         )
         await self._db.commit()
 
@@ -309,10 +322,10 @@ class MonitorStore:
                 """
                 INSERT INTO snapshots (
                     watch_id, fetched_at, status_code, requested_url, final_url,
-                    final_host, page_state, content_hash, text_length,
+                    final_host, page_state, content_hash, hasher_version, text_length,
                     text_content_preview, embedding_key, error, metadata_json
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     watch.id,
@@ -323,6 +336,7 @@ class MonitorStore:
                     snapshot.final_host,
                     snapshot.page_state,
                     snapshot.content_hash,
+                    snapshot.hasher_version,
                     snapshot.text_length,
                     snapshot.text_content_preview,
                     snapshot.embedding_key,
@@ -385,7 +399,7 @@ class MonitorStore:
         cursor = await self._db.execute(
             """
             SELECT id, watch_id, fetched_at, status_code, requested_url,
-                   final_url, final_host, page_state, content_hash,
+                   final_url, final_host, page_state, content_hash, hasher_version,
                    text_length, text_content_preview, embedding_key, error, metadata_json
             FROM snapshots
             WHERE id = ?
@@ -405,7 +419,7 @@ class MonitorStore:
         cursor = await self._db.execute(
             """
             SELECT id, watch_id, fetched_at, status_code, requested_url,
-                   final_url, final_host, page_state, content_hash,
+                   final_url, final_host, page_state, content_hash, hasher_version,
                    text_length, text_content_preview, embedding_key, error, metadata_json
             FROM snapshots
             WHERE watch_id = ?
@@ -431,7 +445,7 @@ class MonitorStore:
         cursor = await self._db.execute(
             """
             SELECT id, watch_id, fetched_at, status_code, requested_url,
-                   final_url, final_host, page_state, content_hash,
+                   final_url, final_host, page_state, content_hash, hasher_version,
                    text_length, text_content_preview, embedding_key, error, metadata_json
             FROM snapshots
             WHERE watch_id = ?
@@ -455,12 +469,106 @@ class MonitorStore:
             final_host=row[6],
             page_state=row[7],
             content_hash=row[8] or "",
-            text_length=row[9] or 0,
-            text_content_preview=row[10],
-            embedding_key=row[11],
-            error=row[12],
-            metadata=json.loads(row[13]) if row[13] else None,
+            hasher_version=row[9] or "v1",
+            text_length=row[10] or 0,
+            text_content_preview=row[11],
+            embedding_key=row[12],
+            error=row[13],
+            metadata=json.loads(row[14]) if row[14] else None,
         )
+
+    async def find_recent_snapshot_by_hash(
+        self,
+        watch_id: int,
+        content_hash: str,
+        hasher_version: str,
+        window_minutes: int = 5,
+    ) -> Optional[Snapshot]:
+        """
+        Find a recent snapshot with matching hash (for recent-hash guard).
+
+        This implements the crash-recovery fallback from Spec v2.4 Section 10.2.
+        Only used when last_snapshot_id doesn't match - prevents duplicates
+        after partial failures.
+
+        Args:
+            watch_id: Watch ID
+            content_hash: Content hash to match
+            hasher_version: Hasher version to match
+            window_minutes: Time window to search (default 5 minutes)
+
+        Returns:
+            Matching Snapshot or None
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        window_start = (
+            datetime.now(timezone.utc) - timedelta(minutes=window_minutes)
+        ).isoformat()
+
+        cursor = await self._db.execute(
+            """
+            SELECT id, watch_id, fetched_at, status_code, requested_url,
+                   final_url, final_host, page_state, content_hash, hasher_version,
+                   text_length, text_content_preview, embedding_key, error, metadata_json
+            FROM snapshots
+            WHERE watch_id = ?
+              AND content_hash = ?
+              AND hasher_version = ?
+              AND fetched_at >= ?
+            ORDER BY fetched_at DESC
+            LIMIT 1
+            """,
+            (watch_id, content_hash, hasher_version, window_start)
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return None
+        return self._row_to_snapshot(row)
+
+    async def check_hash_unchanged(
+        self,
+        watch: "Watch",
+        content_hash: str,
+        hasher_version: str,
+    ) -> tuple[bool, Optional[Snapshot]]:
+        """
+        Two-step recent-hash guard per Spec v2.4 Section 10.2.
+
+        Step 1: Check if last_snapshot_id points to matching hash
+        Step 2: Fall back to time-window query (crash recovery)
+
+        Args:
+            watch: The watch being checked
+            content_hash: New content hash
+            hasher_version: Hasher version used
+
+        Returns:
+            Tuple of (is_unchanged, existing_snapshot)
+            - (True, snapshot) if content unchanged (reuse this snapshot)
+            - (False, None) if content changed (create new snapshot)
+        """
+        # Step 1: Check last_snapshot_id
+        if watch.last_snapshot_id:
+            last_snapshot = await self.get_snapshot(watch.last_snapshot_id)
+            if last_snapshot:
+                if (last_snapshot.content_hash == content_hash and
+                    last_snapshot.hasher_version == hasher_version):
+                    # Content unchanged - normal path
+                    return (True, last_snapshot)
+
+        # Step 2: Time-window fallback (crash recovery)
+        # This catches the edge case where last_snapshot_id is stale
+        recent = await self.find_recent_snapshot_by_hash(
+            watch.id, content_hash, hasher_version
+        )
+        if recent and recent.id != watch.last_snapshot_id:
+            # Found matching recent snapshot - reuse to prevent duplicate
+            return (True, recent)
+
+        # Content changed - create new snapshot
+        return (False, None)
 
     # =========================================================================
     # DIFFS

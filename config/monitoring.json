@@ -1,0 +1,61 @@
+{
+  "version": "2.4",
+  "description": "Active Inference Monitoring configuration per Spec v2.4",
+
+  "gating": {
+    "alert_threshold": 0.30,
+    "profile_update_threshold": 0.60,
+    "critical_threshold": 0.90,
+    "low_sev_cooldown_threshold": 5,
+    "cooldown_hours": 24,
+    "post_alert_cooldown_minutes": 60
+  },
+
+  "severity_weights": {
+    "content_delta": 0.30,
+    "redirect_change": 0.25,
+    "state_change": 0.35,
+    "semantic_drift": 0.10
+  },
+
+  "failure_handling": {
+    "transient": {
+      "backoff_minutes": [1, 5, 15, 60, 240],
+      "max_failures": 10
+    },
+    "client_error": {
+      "backoff_minutes": [1440],
+      "max_failures": 3
+    },
+    "rate_limited": {
+      "backoff_minutes": [60],
+      "max_failures": 5
+    },
+    "ssl_error": {
+      "backoff_minutes": [1440],
+      "max_failures": 2
+    },
+    "content_error": {
+      "backoff_minutes": [60],
+      "max_failures": 5
+    }
+  },
+
+  "outbox": {
+    "max_attempts": 5,
+    "stale_processing_ttl_minutes": 30,
+    "default_backoff_seconds": 60
+  },
+
+  "retention": {
+    "max_snapshots_per_watch": 10,
+    "max_diff_age_days": 90,
+    "max_events_per_watch": 100
+  },
+
+  "sweep": {
+    "max_watches_per_run": 100,
+    "advisory_lock_timeout_seconds": 30,
+    "recent_hash_window_minutes": 5
+  }
+}

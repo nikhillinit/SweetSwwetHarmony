@@ -41,6 +41,15 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
+# CONSTANTS
+# =============================================================================
+
+# Content hasher version - bump this when changing hash algorithm or text extraction
+# This triggers maintenance diffs (severity 0) instead of false change detection
+HASHER_VERSION = "v1"
+
+
+# =============================================================================
 # DATA CLASSES
 # =============================================================================
 
@@ -76,6 +85,7 @@ class PageFetchResult:
     fetch_time: datetime
     error: Optional[str] = None
     content_hash: Optional[str] = None  # SHA256 of content for change detection
+    hasher_version: str = HASHER_VERSION  # Version for maintenance diff detection
 
     @property
     def success(self) -> bool:

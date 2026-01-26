@@ -63,7 +63,7 @@ logger = logging.getLogger(__name__)
 # SCHEMA VERSION
 # =============================================================================
 
-CURRENT_SCHEMA_VERSION = 10
+CURRENT_SCHEMA_VERSION = 11
 
 # SQL for creating tables (migrations applied in order)
 MIGRATIONS = {
@@ -893,6 +893,54 @@ MIGRATIONS = {
     );
 
     CREATE INDEX IF NOT EXISTS idx_monitoring_runs_started ON monitoring_runs(started_at DESC);
+    """,
+    11: """
+    -- =============================================================================
+    -- MONITORING v2.4 ENHANCEMENTS - Spec hardening
+    -- =============================================================================
+    -- Adds: outbox event routing, hasher_version, failure classification, watch_events
+
+    -- 11.1: Extend notion_outbox for event routing
+    -- Note: SQLite requires adding columns one at a time
+    ALTER TABLE notion_outbox ADD COLUMN event_type TEXT NOT NULL DEFAULT 'notion_push';
+    ALTER TABLE notion_outbox ADD COLUMN max_attempts INTEGER NOT NULL DEFAULT 5;
+
+    -- Index for efficient event-type routing in outbox workers
+    CREATE INDEX IF NOT EXISTS idx_outbox_event_due
+    ON notion_outbox(event_type, status, next_attempt_at, created_at);
+
+    -- 11.2: Add hasher_version to snapshots for maintenance diff detection
+    ALTER TABLE snapshots ADD COLUMN hasher_version TEXT NOT NULL DEFAULT 'v1';
+
+    -- Index for recent-hash guard queries
+    CREATE INDEX IF NOT EXISTS idx_snapshots_hash_version
+    ON snapshots(watch_id, content_hash, hasher_version, fetched_at DESC);
+
+    -- 11.3: Add failure tracking columns to watches
+    ALTER TABLE watches ADD COLUMN last_failure_category TEXT;
+    ALTER TABLE watches ADD COLUMN last_failure_error TEXT;
+    ALTER TABLE watches ADD COLUMN deactivated_reason TEXT;
+    ALTER TABLE watches ADD COLUMN updated_at TEXT;
+
+    -- 11.4: Create watch_events audit log table
+    CREATE TABLE IF NOT EXISTS watch_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        watch_id INTEGER NOT NULL REFERENCES watches(id) ON DELETE CASCADE,
+        occurred_at TEXT NOT NULL,
+        event_type TEXT NOT NULL,  -- fetch_started, fetch_success, fetch_failed, snapshot_recorded, diff_calculated, alert_created, profile_update_enqueued, deactivated
+        event_json TEXT,  -- Additional context: {category, error, snapshot_id, diff_id, severity, etc.}
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_watch_events_watch ON watch_events(watch_id, occurred_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_watch_events_type ON watch_events(event_type, occurred_at DESC);
+
+    -- 11.5: Add config_hash to monitoring_config for run linkage
+    ALTER TABLE monitoring_config ADD COLUMN config_hash TEXT;
+
+    -- 11.6: Add config_hash and status to monitoring_runs
+    ALTER TABLE monitoring_runs ADD COLUMN config_hash TEXT;
+    ALTER TABLE monitoring_runs ADD COLUMN status TEXT DEFAULT 'running';  -- running, completed, failed
     """
 }
 
@@ -1909,10 +1957,18 @@ class SignalStore:
         self,
         idempotency_key: str,
         payload: Dict[str, Any],
+        event_type: str = "notion_push",
     ) -> int:
         """
-        Queue a Notion write in the outbox table.
-        Returns the outbox ID.
+        Queue an event in the outbox table.
+
+        Args:
+            idempotency_key: Unique key to prevent duplicate processing
+            payload: Event payload (will be JSON serialized)
+            event_type: Event type for routing (default: notion_push)
+
+        Returns:
+            The outbox ID
         """
         if not self._db:
             raise RuntimeError("Database not initialized")
@@ -1923,14 +1979,15 @@ class SignalStore:
             await conn.execute(
                 """
                 INSERT INTO notion_outbox (
-                    idempotency_key, payload_json, status,
+                    idempotency_key, payload_json, status, event_type,
                     attempts, created_at, updated_at
                 )
-                VALUES (?, ?, 'pending', 0, ?, ?)
+                VALUES (?, ?, 'pending', ?, 0, ?, ?)
                 """,
                 (
                     idempotency_key,
                     json.dumps(payload),
+                    event_type,
                     now,
                     now,
                 )
@@ -1943,7 +2000,7 @@ class SignalStore:
             row = await cursor.fetchone()
             outbox_id = row[0]
 
-        logger.info(f"Enqueued Notion write: {outbox_id} ({idempotency_key})")
+        logger.info(f"Enqueued {event_type}: {outbox_id} ({idempotency_key})")
         return outbox_id
 
     async def get_pending_outbox(
@@ -2054,6 +2111,193 @@ class SignalStore:
             )
 
         logger.info(f"Outbox {outbox_id} failed, retry after {backoff_seconds}s: {error}")
+
+    async def claim_due_outbox(
+        self,
+        event_type: str = "notion_push",
+        limit: int = 10,
+        stale_processing_ttl_minutes: int = 30,
+    ) -> List[Dict[str, Any]]:
+        """
+        Atomically claim due outbox entries for processing.
+
+        Uses BEGIN IMMEDIATE to prevent concurrent claims. Sets status='processing'
+        in a short transaction, then returns claimed rows for processing outside
+        the transaction.
+
+        This is the v2.4 pattern for exactly-once processing:
+        1. claim_due_outbox() - atomic claim (short txn)
+        2. Process work outside transaction
+        3. mark_outbox_sent() or mark_outbox_failed() - finalize
+
+        Args:
+            event_type: Event type to claim (filters by event_type column)
+            limit: Maximum entries to claim
+            stale_processing_ttl_minutes: Reclaim 'processing' entries older than this
+
+        Returns:
+            List of claimed outbox entries (already set to 'processing')
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        now = datetime.now(timezone.utc)
+        now_iso = now.isoformat()
+        stale_threshold = (now - timedelta(minutes=stale_processing_ttl_minutes)).isoformat()
+
+        claimed = []
+
+        # Use BEGIN IMMEDIATE for write lock
+        await self._db.execute("BEGIN IMMEDIATE")
+        try:
+            # First, reclaim stale 'processing' entries (TTL expired)
+            await self._db.execute(
+                """
+                UPDATE notion_outbox
+                SET status = 'pending',
+                    updated_at = ?
+                WHERE status = 'processing'
+                  AND event_type = ?
+                  AND updated_at < ?
+                """,
+                (now_iso, event_type, stale_threshold)
+            )
+
+            # Select entries to claim
+            cursor = await self._db.execute(
+                """
+                SELECT id, idempotency_key, payload_json, attempts,
+                       next_attempt_at, last_error, created_at, max_attempts
+                FROM notion_outbox
+                WHERE status = 'pending'
+                  AND event_type = ?
+                  AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+                  AND attempts < max_attempts
+                ORDER BY created_at ASC
+                LIMIT ?
+                """,
+                (event_type, now_iso, limit)
+            )
+            rows = await cursor.fetchall()
+
+            if rows:
+                # Claim them by setting status='processing'
+                ids = [row[0] for row in rows]
+                placeholders = ",".join("?" * len(ids))
+                await self._db.execute(
+                    f"""
+                    UPDATE notion_outbox
+                    SET status = 'processing',
+                        updated_at = ?
+                    WHERE id IN ({placeholders})
+                    """,
+                    (now_iso, *ids)
+                )
+
+                # Build result list
+                for row in rows:
+                    claimed.append({
+                        "id": row[0],
+                        "idempotency_key": row[1],
+                        "payload": json.loads(row[2]),
+                        "attempts": row[3],
+                        "next_attempt_at": row[4],
+                        "last_error": row[5],
+                        "created_at": row[6],
+                        "max_attempts": row[7],
+                        "event_type": event_type,
+                    })
+
+            await self._db.commit()
+        except Exception:
+            await self._db.rollback()
+            raise
+
+        if claimed:
+            logger.info(f"Claimed {len(claimed)} {event_type} entries for processing")
+        return claimed
+
+    async def finalize_outbox(
+        self,
+        outbox_id: int,
+        success: bool,
+        error: Optional[str] = None,
+        backoff_seconds: float = 60.0,
+    ) -> None:
+        """
+        Finalize an outbox entry after processing.
+
+        For success: marks as 'sent'
+        For failure: increments attempts, schedules retry (keeps as 'pending'),
+                     or marks as 'failed' if max_attempts reached.
+
+        Args:
+            outbox_id: The outbox entry ID
+            success: Whether processing succeeded
+            error: Error message (for failures)
+            backoff_seconds: Seconds to wait before retry (for failures)
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        now = datetime.now(timezone.utc)
+
+        if success:
+            await self._db.execute(
+                """
+                UPDATE notion_outbox
+                SET status = 'sent',
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                (now.isoformat(), outbox_id)
+            )
+            await self._db.commit()
+            logger.info(f"Outbox {outbox_id} finalized as sent")
+        else:
+            next_attempt = (now + timedelta(seconds=backoff_seconds)).isoformat()
+
+            # Check if max_attempts reached
+            cursor = await self._db.execute(
+                "SELECT attempts, max_attempts FROM notion_outbox WHERE id = ?",
+                (outbox_id,)
+            )
+            row = await cursor.fetchone()
+            if row:
+                attempts, max_attempts = row[0], row[1]
+                new_attempts = attempts + 1
+
+                if new_attempts >= max_attempts:
+                    # Max attempts reached - mark as permanently failed
+                    await self._db.execute(
+                        """
+                        UPDATE notion_outbox
+                        SET status = 'failed',
+                            last_error = ?,
+                            attempts = ?,
+                            updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (error, new_attempts, now.isoformat(), outbox_id)
+                    )
+                    logger.warning(f"Outbox {outbox_id} permanently failed after {new_attempts} attempts: {error}")
+                else:
+                    # Schedule retry
+                    await self._db.execute(
+                        """
+                        UPDATE notion_outbox
+                        SET status = 'pending',
+                            last_error = ?,
+                            attempts = ?,
+                            next_attempt_at = ?,
+                            updated_at = ?
+                        WHERE id = ?
+                        """,
+                        (error, new_attempts, next_attempt, now.isoformat(), outbox_id)
+                    )
+                    logger.info(f"Outbox {outbox_id} failed (attempt {new_attempts}), retry after {backoff_seconds}s")
+
+            await self._db.commit()
 
     # =========================================================================
     # SUPPRESSION CACHE
