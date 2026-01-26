@@ -62,22 +62,27 @@ class RetentionManager:
             "snapshots_pruned": 0,
             "diffs_pruned": 0,
             "alerts_pruned": 0,
+            "orphan_embeddings_pruned": 0,
         }
 
-        # 1. Prune old diffs
+        # 1. Prune old diffs (before snapshots to maintain FK integrity)
         stats["diffs_pruned"] = await self._prune_old_diffs()
 
-        # 2. Prune excess snapshots per watch
+        # 2. Prune excess snapshots per watch (with FK safety)
         stats["snapshots_pruned"] = await self._prune_excess_snapshots()
 
         # 3. Prune old acknowledged alerts
         stats["alerts_pruned"] = await self._prune_old_alerts()
 
+        # 4. Prune orphan embeddings (snapshot_v1 kind with no matching snapshot)
+        stats["orphan_embeddings_pruned"] = await self._prune_orphan_embeddings()
+
         logger.info(
             f"Retention complete: "
             f"{stats['snapshots_pruned']} snapshots, "
             f"{stats['diffs_pruned']} diffs, "
-            f"{stats['alerts_pruned']} alerts"
+            f"{stats['alerts_pruned']} alerts, "
+            f"{stats['orphan_embeddings_pruned']} orphan embeddings"
         )
 
         return stats
@@ -105,7 +110,11 @@ class RetentionManager:
         return count
 
     async def _prune_excess_snapshots(self) -> int:
-        """Delete excess snapshots beyond max_snapshots_per_watch."""
+        """
+        Delete excess snapshots beyond max_snapshots_per_watch.
+
+        IMPORTANT: Deletes referencing diffs FIRST to maintain FK integrity.
+        """
         max_keep = self._config.max_snapshots_per_watch
 
         # Get watches with excess snapshots
@@ -125,25 +134,46 @@ class RetentionManager:
         for watch_id, count in watches_to_prune:
             to_delete = count - max_keep
 
-            # Delete oldest snapshots for this watch
+            # Step 1: Get IDs of snapshots to delete
             cursor = await self._db.execute(
                 """
-                DELETE FROM snapshots
-                WHERE id IN (
-                    SELECT id FROM snapshots
-                    WHERE watch_id = ?
-                    ORDER BY fetched_at ASC
-                    LIMIT ?
-                )
+                SELECT id FROM snapshots
+                WHERE watch_id = ?
+                ORDER BY fetched_at ASC
+                LIMIT ?
                 """,
                 (watch_id, to_delete)
             )
-            total_pruned += cursor.rowcount
+            snapshot_ids_to_delete = [row[0] for row in await cursor.fetchall()]
+
+            if not snapshot_ids_to_delete:
+                continue
+
+            # Step 2: Delete diffs that reference these snapshots (FK integrity)
+            placeholders = ",".join("?" * len(snapshot_ids_to_delete))
+            await self._db.execute(
+                f"""
+                DELETE FROM diffs
+                WHERE old_snapshot_id IN ({placeholders})
+                   OR new_snapshot_id IN ({placeholders})
+                """,
+                snapshot_ids_to_delete + snapshot_ids_to_delete
+            )
+
+            # Step 3: Delete the snapshots
+            await self._db.execute(
+                f"""
+                DELETE FROM snapshots
+                WHERE id IN ({placeholders})
+                """,
+                snapshot_ids_to_delete
+            )
+            total_pruned += len(snapshot_ids_to_delete)
 
         await self._db.commit()
 
         if total_pruned > 0:
-            logger.info(f"Pruned {total_pruned} excess snapshots")
+            logger.info(f"Pruned {total_pruned} excess snapshots (with FK-safe diff deletion)")
 
         return total_pruned
 
@@ -197,6 +227,49 @@ class RetentionManager:
         stats["unacked_alerts"] = row[0]
 
         return stats
+
+    async def _prune_orphan_embeddings(self) -> int:
+        """
+        Delete orphan embeddings where the referenced snapshot no longer exists.
+
+        Targets embeddings with embedding_kind='snapshot_v1' where the
+        canonical_key (which stores the snapshot's embedding_key) points
+        to a non-existent snapshot.
+
+        Returns:
+            Count of deleted embeddings
+        """
+        # Check if company_embeddings table exists
+        cursor = await self._db.execute(
+            """
+            SELECT name FROM sqlite_master
+            WHERE type='table' AND name='company_embeddings'
+            """
+        )
+        if not await cursor.fetchone():
+            logger.debug("company_embeddings table does not exist, skipping orphan prune")
+            return 0
+
+        # Delete embeddings where:
+        # - embedding_kind = 'snapshot_v1'
+        # - canonical_key NOT IN (SELECT embedding_key FROM snapshots WHERE embedding_key IS NOT NULL)
+        cursor = await self._db.execute(
+            """
+            DELETE FROM company_embeddings
+            WHERE embedding_kind = 'snapshot_v1'
+              AND canonical_key NOT IN (
+                  SELECT embedding_key FROM snapshots
+                  WHERE embedding_key IS NOT NULL
+              )
+            """
+        )
+        await self._db.commit()
+
+        count = cursor.rowcount
+        if count > 0:
+            logger.info(f"Pruned {count} orphan snapshot embeddings")
+
+        return count
 
 
 async def run_retention(

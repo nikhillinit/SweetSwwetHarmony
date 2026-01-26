@@ -63,7 +63,7 @@ logger = logging.getLogger(__name__)
 # SCHEMA VERSION
 # =============================================================================
 
-CURRENT_SCHEMA_VERSION = 11
+CURRENT_SCHEMA_VERSION = 12
 
 # SQL for creating tables (migrations applied in order)
 MIGRATIONS = {
@@ -941,6 +941,20 @@ MIGRATIONS = {
     -- 11.6: Add config_hash and status to monitoring_runs
     ALTER TABLE monitoring_runs ADD COLUMN config_hash TEXT;
     ALTER TABLE monitoring_runs ADD COLUMN status TEXT DEFAULT 'running';  -- running, completed, failed
+    """,
+    12: """
+    -- =============================================================================
+    -- MONITORING v3.1 - Slack Notification Tracking
+    -- =============================================================================
+    -- Adds slack_notified columns to monitoring_alerts for dispatch deduplication
+
+    -- 12.1: Add Slack notification tracking to monitoring_alerts
+    ALTER TABLE monitoring_alerts ADD COLUMN slack_notified INTEGER DEFAULT 0;
+    ALTER TABLE monitoring_alerts ADD COLUMN slack_notified_at TEXT;
+
+    -- Index for efficient unnotified alert queries
+    CREATE INDEX IF NOT EXISTS idx_monitoring_alerts_slack
+    ON monitoring_alerts(slack_notified, acknowledged, created_at DESC);
     """
 }
 

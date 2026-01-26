@@ -142,7 +142,11 @@ class MonitorStore:
             return None
         return self._row_to_watch(row)
 
-    async def get_due_watches(self, limit: int = 100) -> List[Watch]:
+    async def get_due_watches(
+        self,
+        limit: int = 100,
+        watch_type: Optional[str] = None,
+    ) -> List[Watch]:
         """
         Get watches that are due for checking.
 
@@ -150,14 +154,18 @@ class MonitorStore:
         - active flag
         - backoff_until
         - interval_seconds since last_checked_at
+
+        Args:
+            limit: Maximum number of watches to return
+            watch_type: Optional filter for watch type (e.g., 'portfolio')
         """
         if not self._db:
             raise RuntimeError("Database not initialized")
 
         now = datetime.now(timezone.utc).isoformat()
 
-        cursor = await self._db.execute(
-            """
+        # Build query with optional watch_type filter
+        query = """
             SELECT id, canonical_key, url, watch_type, interval_seconds,
                    last_checked_at, last_snapshot_id, consecutive_failures,
                    backoff_until, cooldown_until, consecutive_low_sev_hits,
@@ -170,11 +178,20 @@ class MonitorStore:
                   last_checked_at IS NULL
                   OR datetime(last_checked_at, '+' || interval_seconds || ' seconds') <= ?
               )
+        """
+        params = [now, now, now]
+
+        if watch_type:
+            query += " AND watch_type = ?"
+            params.append(watch_type)
+
+        query += """
             ORDER BY last_checked_at ASC NULLS FIRST
             LIMIT ?
-            """,
-            (now, now, now, limit)
-        )
+        """
+        params.append(limit)
+
+        cursor = await self._db.execute(query, params)
         rows = await cursor.fetchall()
         return [self._row_to_watch(row) for row in rows]
 

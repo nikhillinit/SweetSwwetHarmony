@@ -356,25 +356,31 @@ class WebsiteMonitor:
 
         logger.info(f"Enqueued profile update for {watch.canonical_key}: {trigger}")
 
-    async def run_due_checks(self, limit: int = 100) -> List[MonitoringResult]:
+    async def run_due_checks(
+        self,
+        limit: int = 100,
+        watch_type: Optional[str] = None,
+    ) -> List[MonitoringResult]:
         """
         Run checks on all due watches.
 
         Args:
             limit: Maximum number of watches to check
+            watch_type: Optional filter for watch type (e.g., 'portfolio')
 
         Returns:
             List of MonitoringResults
         """
         run_id = str(uuid.uuid4())[:8]
-        logger.info(f"Starting monitoring run {run_id}")
+        type_filter = f" ({watch_type})" if watch_type else ""
+        logger.info(f"Starting monitoring run {run_id}{type_filter}")
 
         # Record run start
         await self.store.start_monitoring_run(run_id)
 
-        # Get due watches
-        watches = await self.store.get_due_watches(limit=limit)
-        logger.info(f"Found {len(watches)} due watches")
+        # Get due watches (with optional type filter)
+        watches = await self.store.get_due_watches(limit=limit, watch_type=watch_type)
+        logger.info(f"Found {len(watches)} due watches{type_filter}")
 
         results = []
         high_severity_count = 0
