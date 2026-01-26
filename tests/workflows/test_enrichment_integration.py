@@ -102,6 +102,7 @@ class TestPipelineEnrichmentBoostIntegration:
             use_consolidation=True,
             use_founder_scoring=False,  # Disable to isolate test
             use_velocity_tracking=False,  # Disable to isolate test
+            use_thesis_filter=False,  # Disable to isolate test
         )
         pipeline = DiscoveryPipeline(config=config)
         pipeline._store = store
@@ -189,6 +190,7 @@ class TestPipelineEnrichmentBoostIntegration:
             use_consolidation=True,
             use_founder_scoring=False,
             use_velocity_tracking=False,
+            use_thesis_filter=False,
         )
         pipeline = DiscoveryPipeline(config=config)
         pipeline._store = store
@@ -264,6 +266,7 @@ class TestPipelineEnrichmentBoostIntegration:
             use_consolidation=True,
             use_founder_scoring=False,
             use_velocity_tracking=False,
+            use_thesis_filter=False,
         )
         pipeline = DiscoveryPipeline(config=config)
         pipeline._store = store
@@ -339,6 +342,7 @@ class TestPipelineEnrichmentBoostIntegration:
             use_consolidation=True,
             use_founder_scoring=False,
             use_velocity_tracking=False,
+            use_thesis_filter=False,
         )
         pipeline = DiscoveryPipeline(config=config)
         pipeline._store = store
@@ -419,6 +423,7 @@ class TestPipelineEnrichmentBoostIntegration:
             use_consolidation=True,
             use_founder_scoring=False,
             use_velocity_tracking=False,
+            use_thesis_filter=False,
         )
         pipeline = DiscoveryPipeline(config=config)
         pipeline._store = store
@@ -518,6 +523,7 @@ class TestEnrichmentMetrics:
             use_consolidation=True,
             use_founder_scoring=False,
             use_velocity_tracking=False,
+            use_thesis_filter=False,
         )
         pipeline = DiscoveryPipeline(config=config)
         pipeline._store = store
@@ -619,6 +625,7 @@ class TestEnrichmentMetrics:
             use_consolidation=True,
             use_founder_scoring=False,
             use_velocity_tracking=False,
+            use_thesis_filter=False,
         )
         pipeline = DiscoveryPipeline(config=config)
         pipeline._store = store

@@ -79,7 +79,7 @@ class TestPipelineConsolidationIntegration:
         store.mark_pushed = AsyncMock()
         store.enqueue_notion_write = AsyncMock(return_value="outbox-123")
 
-        config = PipelineConfig(use_consolidation=True)
+        config = PipelineConfig(use_consolidation=True, use_thesis_filter=False)
         pipeline = DiscoveryPipeline(config=config)
         pipeline._store = store
         pipeline._notion = None  # No Notion, so dry-run behavior
@@ -134,7 +134,7 @@ class TestPipelineConsolidationIntegration:
 
         notion = AsyncMock()
 
-        config = PipelineConfig(use_consolidation=True)
+        config = PipelineConfig(use_consolidation=True, use_thesis_filter=False)
         pipeline = DiscoveryPipeline(config=config)
         pipeline._store = store
         pipeline._notion = notion
@@ -144,7 +144,7 @@ class TestPipelineConsolidationIntegration:
         # Track what consolidated data is passed to _push_to_notion
         captured_consolidated = None
 
-        async def capture_push(signals, verification, consolidated=None):
+        async def capture_push(signals, verification, consolidated=None, **kwargs):
             nonlocal captured_consolidated
             captured_consolidated = consolidated
             return {"status": "queued", "outbox_id": "test", "idempotency_key": "key"}
@@ -254,7 +254,7 @@ class TestPipelineConsolidationIntegration:
         store.check_suppression.return_value = None
         store.mark_pushed = AsyncMock()
 
-        config = PipelineConfig(use_consolidation=True)
+        config = PipelineConfig(use_consolidation=True, use_thesis_filter=False)
         pipeline = DiscoveryPipeline(config=config)
         pipeline._store = store
         pipeline._notion = None
@@ -375,7 +375,7 @@ class TestConsolidationMetrics:
         store.mark_queued = AsyncMock()
         store.mark_rejected = AsyncMock()
 
-        config = PipelineConfig(use_consolidation=True)
+        config = PipelineConfig(use_consolidation=True, use_thesis_filter=False)
         pipeline = DiscoveryPipeline(config=config)
         pipeline._store = store
         pipeline._gate = MagicMock()
