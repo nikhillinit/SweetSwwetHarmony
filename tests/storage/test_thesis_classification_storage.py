@@ -17,9 +17,9 @@ class TestThesisClassificationSchema:
         await store.close()
 
     @pytest.mark.asyncio
-    async def test_schema_version_is_5(self, store):
-        """Schema version should be 5 after migration."""
-        assert CURRENT_SCHEMA_VERSION == 5
+    async def test_schema_version_at_least_5(self, store):
+        """Schema version should be at least 5 (when thesis_classifications was added)."""
+        assert CURRENT_SCHEMA_VERSION >= 5
 
     @pytest.mark.asyncio
     async def test_thesis_classifications_table_exists(self, store):
