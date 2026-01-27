@@ -104,6 +104,16 @@ CONSUMER_TOPICS = {
     "ecommerce", "retail-tech", "retailtech",
 }
 
+# Tech/infrastructure topics (for TECH mode - B2B/developer tools)
+TECH_TOPICS = {
+    "ai", "ml", "llm", "developer-tools", "infrastructure",
+    "machine-learning", "deep-learning", "devops", "api",
+}
+
+# Topics for GitHub search queries (subset that work well with search)
+CONSUMER_SEARCH_TOPICS = ["food", "fitness", "wellness", "travel", "ecommerce", "marketplace", "consumer"]
+TECH_SEARCH_TOPICS = ["ai", "ml", "llm", "developer-tools", "infrastructure"]
+
 # Minimum thresholds
 MIN_STARS = 100
 MIN_RECENT_STARS = 20  # Stars gained in lookback period
@@ -394,16 +404,22 @@ class GitHubCollector(BaseCollector):
         cutoff_str = cutoff_date.strftime("%Y-%m-%d")
 
         # Build search query
-        # Example: "stars:>100 pushed:>2024-01-01 topic:ai OR topic:ml"
+        # Example: "stars:>100 pushed:>2024-01-01 (topic:ai OR topic:ml)"
+        # NOTE: Parentheses are REQUIRED for OR queries to work correctly
         query_parts = [
             f"stars:>{MIN_STARS}",
             f"pushed:>{cutoff_str}",
         ]
 
-        # Add topic filters (GitHub search supports OR)
-        topic_filters = ["ai", "ml", "llm", "developer-tools", "infrastructure"]
+        # Add topic filters based on topic_mode
+        # Use parentheses to group OR'd topics (required by GitHub search syntax)
+        if self.topic_mode == TopicMode.CONSUMER:
+            topic_filters = CONSUMER_SEARCH_TOPICS
+        else:
+            topic_filters = TECH_SEARCH_TOPICS
+
         topic_query = " OR ".join(f"topic:{t}" for t in topic_filters)
-        query = " ".join(query_parts) + f" {topic_query}"
+        query = " ".join(query_parts) + f" ({topic_query})"
 
         logger.info(f"GitHub search query: {query}")
 
