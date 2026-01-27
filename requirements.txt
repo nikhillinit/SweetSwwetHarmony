@@ -40,6 +40,7 @@ python-multipart>=0.0.6
 
 # Email Distribution
 jinja2>=3.1.0
+resend>=2.0.0
 
 # Dashboard
 streamlit>=1.30.0
