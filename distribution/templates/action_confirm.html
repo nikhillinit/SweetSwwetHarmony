@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="robots" content="noindex, nofollow">
+    <title>Confirm Action | Press On Ventures</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+            background: #F9FAFB;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 480px;
+            width: 100%;
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #292929 0%, #3d3d3d 100%);
+            color: white;
+            padding: 32px 24px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 18px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+        }
+
+        .content {
+            padding: 32px 24px;
+            text-align: center;
+        }
+
+        .company-name {
+            font-size: 28px;
+            font-weight: 700;
+            color: #292929;
+            margin-bottom: 8px;
+            line-height: 1.2;
+        }
+
+        .canonical-key {
+            font-size: 14px;
+            color: #9CA3AF;
+            margin-bottom: 24px;
+            font-family: monospace;
+        }
+
+        .action-badge {
+            display: inline-block;
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 16px;
+        }
+
+        .description {
+            color: #6B7280;
+            font-size: 16px;
+            line-height: 1.6;
+            margin-bottom: 32px;
+        }
+
+        .btn {
+            display: inline-block;
+            padding: 14px 40px;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 16px;
+            text-decoration: none;
+            cursor: pointer;
+            border: none;
+            transition: all 0.2s ease;
+        }
+
+        .btn-primary {
+            color: white;
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+        }
+
+        .btn-primary:active {
+            transform: translateY(0);
+        }
+
+        .footer {
+            padding: 16px 24px;
+            background: #F9FAFB;
+            text-align: center;
+            border-top: 1px solid #E5E7EB;
+        }
+
+        .footer p {
+            color: #9CA3AF;
+            font-size: 12px;
+        }
+
+        .loading {
+            display: none;
+            margin-top: 16px;
+        }
+
+        .loading.active {
+            display: block;
+        }
+
+        .spinner {
+            width: 24px;
+            height: 24px;
+            border: 3px solid #E5E7EB;
+            border-top-color: #292929;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 8px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .loading-text {
+            color: #6B7280;
+            font-size: 14px;
+        }
+
+        /* Hide button when loading */
+        form.submitting .btn {
+            display: none;
+        }
+
+        form.submitting .loading {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>PRESS ON VENTURES</h1>
+        </div>
+
+        <div class="content">
+            <h2 class="company-name">{{ company_name }}</h2>
+            <p class="canonical-key">{{ canonical_key }}</p>
+
+            <span class="action-badge" style="background: {{ action_color }}20; color: {{ action_color }};">
+                {{ action_label }}
+            </span>
+
+            <p class="description">{{ action_description }}</p>
+
+            <form method="POST" action="/api/v1/actions/execute" id="action-form">
+                <input type="hidden" name="token" value="{{ token }}">
+                <button type="submit" class="btn btn-primary" style="background: {{ action_color }};">
+                    Confirm {{ action_label }}
+                </button>
+                <div class="loading">
+                    <div class="spinner"></div>
+                    <p class="loading-text">Processing...</p>
+                </div>
+            </form>
+        </div>
+
+        <div class="footer">
+            <p>This link can only be used once and expires in 7 days.</p>
+        </div>
+    </div>
+
+    <script>
+        // Show loading state on form submit
+        document.getElementById('action-form').addEventListener('submit', function(e) {
+            this.classList.add('submitting');
+        });
+
+        // Optional: Auto-submit after delay (uncomment to enable)
+        // setTimeout(function() {
+        //     document.getElementById('action-form').submit();
+        // }, 2000);
+    </script>
+</body>
+</html>

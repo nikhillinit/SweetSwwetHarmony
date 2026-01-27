@@ -20,7 +20,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routers import actions, companies
+from api.routers import actions, companies, public
 from storage.signal_store import SignalStore
 
 
@@ -79,6 +79,7 @@ app.add_middleware(
 
 app.include_router(actions.router, prefix="/api/v1")
 app.include_router(companies.router, prefix="/api/v1")
+app.include_router(public.router, prefix="/api/v1")
 
 
 # =============================================================================

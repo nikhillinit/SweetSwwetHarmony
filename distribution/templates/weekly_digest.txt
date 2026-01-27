@@ -1,0 +1,36 @@
+PRESS ON VENTURES - Weekly Deal Digest
+{{ digest_date }}
+======================================
+
+Hi{% if recipient_name %} {{ recipient_name }}{% endif %},
+
+Here are {{ companies|length }} new companies discovered this week that match your investment thesis.
+
+{% for company in companies %}
+----------------------------------------
+{{ company.name }}{% if company.website %} ({{ company.website }}){% endif %}
+
+{{ company.one_liner|default('No description available.') }}
+
+Match Score: {{ company.confidence_pct }}%
+{% if company.sources %}Sources: {{ company.sources }}{% endif %}
+
+Actions:
+- Track: {{ company.track_url }}
+- Pass: {{ company.pass_url }}
+- View Details: {{ company.details_url }}
+
+{% endfor %}
+{% if not companies %}
+No new companies matching your thesis this week.
+We'll keep looking and let you know when we find something.
+{% endif %}
+{% if stats %}
+----------------------------------------
+This Week: {{ stats.new_signals }} signals from {{ stats.source_count }} sources
+{% endif %}
+======================================
+
+You're receiving this because you're part of the Press On Ventures deal team.
+
+Unsubscribe: {{ unsubscribe_url|default('[unsubscribe link]') }}

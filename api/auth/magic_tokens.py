@@ -76,22 +76,21 @@ async def create_action_token(
     return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
 
-async def consume_token(
-    store: SignalStore,
-    token: str,
-) -> TokenPayload:
+def peek_token(token: str) -> TokenPayload:
     """
-    Validate and consume a magic link token (one-time use).
+    Validate a token WITHOUT consuming it (for confirmation pages).
+
+    This only checks JWT validity and expiration, NOT nonce consumption.
+    Use this for GET requests that show confirmation UI.
 
     Args:
-        store: SignalStore instance
         token: The JWT token to validate
 
     Returns:
         TokenPayload with canonical_key and action
 
     Raises:
-        TokenError: If token is invalid, expired, or already used
+        TokenError: If token is invalid or expired
     """
     try:
         # Decode JWT
@@ -109,17 +108,40 @@ async def consume_token(
     if not all([canonical_key, action, nonce]):
         raise TokenError("Token missing required fields")
 
-    # Atomically consume nonce (prevents replay)
-    token_nonce = await store.consume_token_nonce(nonce)
-
-    if not token_nonce:
-        raise TokenError("Token has already been used or is invalid")
-
     return TokenPayload(
         canonical_key=canonical_key,
         action=action,
         nonce=nonce,
     )
+
+
+async def consume_token(
+    store: SignalStore,
+    token: str,
+) -> TokenPayload:
+    """
+    Validate and consume a magic link token (one-time use).
+
+    Args:
+        store: SignalStore instance
+        token: The JWT token to validate
+
+    Returns:
+        TokenPayload with canonical_key and action
+
+    Raises:
+        TokenError: If token is invalid, expired, or already used
+    """
+    # First peek to validate JWT structure
+    payload = peek_token(token)
+
+    # Then atomically consume nonce (prevents replay)
+    token_nonce = await store.consume_token_nonce(payload.nonce)
+
+    if not token_nonce:
+        raise TokenError("Token has already been used or is invalid")
+
+    return payload
 
 
 def create_magic_link_url(

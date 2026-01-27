@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml" xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="x-apple-disable-message-reformatting">
+    <title>Weekly Deal Digest | Press On Ventures</title>
+    <!--[if mso]>
+    <noscript>
+        <xml>
+            <o:OfficeDocumentSettings>
+                <o:PixelsPerInch>96</o:PixelsPerInch>
+            </o:OfficeDocumentSettings>
+        </xml>
+    </noscript>
+    <![endif]-->
+    <style>
+        /* Reset */
+        body, table, td, a { -webkit-text-size-adjust: 100%; -ms-text-size-adjust: 100%; }
+        table, td { mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
+        img { -ms-interpolation-mode: bicubic; border: 0; height: auto; line-height: 100%; outline: none; text-decoration: none; }
+        body { height: 100% !important; margin: 0 !important; padding: 0 !important; width: 100% !important; }
+        a[x-apple-data-detectors] { color: inherit !important; text-decoration: none !important; font-size: inherit !important; font-family: inherit !important; font-weight: inherit !important; line-height: inherit !important; }
+        @media only screen and (max-width: 620px) {
+            .mobile-padding { padding: 16px !important; }
+            .mobile-stack { display: block !important; width: 100% !important; }
+        }
+    </style>
+</head>
+<body style="margin: 0; padding: 0; background-color: #F9FAFB; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;">
+
+    <!-- Preheader (hidden preview text) -->
+    <div style="display: none; max-height: 0px; overflow: hidden;">
+        {{ companies|length }} new companies discovered this week - Review and take action
+        &nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;&nbsp;&zwnj;
+    </div>
+
+    <!-- Email Container -->
+    <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #F9FAFB;">
+        <tr>
+            <td align="center" style="padding: 24px 16px;">
+
+                <!-- Main Content Card -->
+                <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="600" style="max-width: 600px; background-color: #ffffff; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);">
+
+                    <!-- Header -->
+                    <tr>
+                        <td style="background: linear-gradient(135deg, #292929 0%, #3d3d3d 100%); padding: 32px 40px; text-align: center;">
+                            <h1 style="margin: 0; color: #ffffff; font-size: 18px; font-weight: 600; letter-spacing: 1px;">
+                                PRESS ON VENTURES
+                            </h1>
+                            <p style="margin: 8px 0 0 0; color: #E0D8D1; font-size: 14px;">
+                                Weekly Deal Digest
+                            </p>
+                        </td>
+                    </tr>
+
+                    <!-- Greeting -->
+                    <tr>
+                        <td class="mobile-padding" style="padding: 32px 40px 16px 40px;">
+                            <p style="margin: 0; color: #292929; font-size: 16px; line-height: 1.5;">
+                                Hi{% if recipient_name %} {{ recipient_name }}{% endif %},
+                            </p>
+                            <p style="margin: 12px 0 0 0; color: #6B7280; font-size: 15px; line-height: 1.6;">
+                                Here are <strong style="color: #292929;">{{ companies|length }} new companies</strong> discovered this week that match your investment thesis.
+                            </p>
+                        </td>
+                    </tr>
+
+                    <!-- Company Cards -->
+                    {% for company in companies %}
+                    <tr>
+                        <td class="mobile-padding" style="padding: 8px 40px;">
+                            <!-- Company Card -->
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #F9FAFB; border-radius: 8px; border: 1px solid #E5E7EB;">
+                                <tr>
+                                    <td style="padding: 20px;">
+                                        <!-- Company Header -->
+                                        <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%">
+                                            <tr>
+                                                <td>
+                                                    <h3 style="margin: 0; color: #292929; font-size: 18px; font-weight: 600;">
+                                                        {{ company.name }}
+                                                    </h3>
+                                                    {% if company.website %}
+                                                    <a href="{{ company.website }}" style="color: #3B82F6; font-size: 13px; text-decoration: none;">
+                                                        {{ company.website }}
+                                                    </a>
+                                                    {% endif %}
+                                                </td>
+                                                <td align="right" valign="top">
+                                                    <!-- Confidence Badge -->
+                                                    <span style="display: inline-block; padding: 4px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; color: #ffffff; background-color: {{ company.confidence_color }};">
+                                                        {{ company.confidence_pct }}%
+                                                    </span>
+                                                </td>
+                                            </tr>
+                                        </table>
+
+                                        <!-- One-liner -->
+                                        <p style="margin: 12px 0; color: #374151; font-size: 14px; line-height: 1.5;">
+                                            {{ company.one_liner|default('No description available.', true) }}
+                                        </p>
+
+                                        <!-- Signal Sources -->
+                                        {% if company.sources %}
+                                        <p style="margin: 0 0 16px 0; color: #9CA3AF; font-size: 12px;">
+                                            Sources: {{ company.sources }}
+                                        </p>
+                                        {% endif %}
+
+                                        <!-- Action Buttons -->
+                                        <table role="presentation" cellspacing="0" cellpadding="0" border="0">
+                                            <tr>
+                                                <!-- Track Button -->
+                                                <td style="padding-right: 8px;">
+                                                    <a href="{{ company.track_url }}" style="display: inline-block; padding: 10px 20px; background-color: #10B981; color: #ffffff; font-size: 14px; font-weight: 600; text-decoration: none; border-radius: 6px;">
+                                                        Track
+                                                    </a>
+                                                </td>
+                                                <!-- Pass Button -->
+                                                <td style="padding-right: 8px;">
+                                                    <a href="{{ company.pass_url }}" style="display: inline-block; padding: 10px 20px; background-color: #6B7280; color: #ffffff; font-size: 14px; font-weight: 600; text-decoration: none; border-radius: 6px;">
+                                                        Pass
+                                                    </a>
+                                                </td>
+                                                <!-- View Details Link -->
+                                                <td>
+                                                    <a href="{{ company.details_url }}" style="display: inline-block; padding: 10px 16px; color: #3B82F6; font-size: 14px; font-weight: 500; text-decoration: none;">
+                                                        View Details &rarr;
+                                                    </a>
+                                                </td>
+                                            </tr>
+                                        </table>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                    {% endfor %}
+
+                    <!-- Empty State (if no companies) -->
+                    {% if not companies %}
+                    <tr>
+                        <td class="mobile-padding" style="padding: 32px 40px; text-align: center;">
+                            <p style="margin: 0; color: #6B7280; font-size: 15px;">
+                                No new companies matching your thesis this week.
+                            </p>
+                            <p style="margin: 12px 0 0 0; color: #9CA3AF; font-size: 14px;">
+                                We'll keep looking and let you know when we find something.
+                            </p>
+                        </td>
+                    </tr>
+                    {% endif %}
+
+                    <!-- Stats Summary -->
+                    {% if stats %}
+                    <tr>
+                        <td class="mobile-padding" style="padding: 24px 40px;">
+                            <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="100%" style="background-color: #F3F4F6; border-radius: 8px;">
+                                <tr>
+                                    <td style="padding: 16px; text-align: center;">
+                                        <span style="color: #6B7280; font-size: 13px;">This Week: </span>
+                                        <strong style="color: #292929;">{{ stats.new_signals }}</strong>
+                                        <span style="color: #6B7280; font-size: 13px;"> signals from </span>
+                                        <strong style="color: #292929;">{{ stats.source_count }}</strong>
+                                        <span style="color: #6B7280; font-size: 13px;"> sources</span>
+                                    </td>
+                                </tr>
+                            </table>
+                        </td>
+                    </tr>
+                    {% endif %}
+
+                    <!-- Footer -->
+                    <tr>
+                        <td style="padding: 24px 40px; border-top: 1px solid #E5E7EB; text-align: center;">
+                            <p style="margin: 0; color: #9CA3AF; font-size: 12px; line-height: 1.6;">
+                                You're receiving this because you're part of the Press On Ventures deal team.
+                            </p>
+                            <p style="margin: 8px 0 0 0; color: #9CA3AF; font-size: 12px;">
+                                <a href="{{ unsubscribe_url|default('#', true) }}" style="color: #9CA3AF; text-decoration: underline;">Unsubscribe</a>
+                                &nbsp;&middot;&nbsp;
+                                <a href="{{ preferences_url|default('#', true) }}" style="color: #9CA3AF; text-decoration: underline;">Email Preferences</a>
+                            </p>
+                            <p style="margin: 16px 0 0 0; color: #D1D5DB; font-size: 11px;">
+                                {{ digest_date }}
+                            </p>
+                        </td>
+                    </tr>
+
+                </table>
+                <!-- End Main Content -->
+
+            </td>
+        </tr>
+    </table>
+
+</body>
+</html>
