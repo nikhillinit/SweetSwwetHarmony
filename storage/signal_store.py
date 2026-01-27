@@ -63,7 +63,7 @@ logger = logging.getLogger(__name__)
 # SCHEMA VERSION
 # =============================================================================
 
-CURRENT_SCHEMA_VERSION = 12
+CURRENT_SCHEMA_VERSION = 13
 
 # SQL for creating tables (migrations applied in order)
 MIGRATIONS = {
@@ -955,6 +955,59 @@ MIGRATIONS = {
     -- Index for efficient unnotified alert queries
     CREATE INDEX IF NOT EXISTS idx_monitoring_alerts_slack
     ON monitoring_alerts(slack_notified, acknowledged, created_at DESC);
+    """,
+    13: """
+    -- =============================================================================
+    -- UX OVERHAUL - Company State & Inbox Management
+    -- =============================================================================
+    -- Adds company_state for inbox workflow, company_actions for audit log,
+    -- and token_nonces for magic link security.
+    -- NOTE: notion_outbox already exists (Migration 3) - not recreated here.
+
+    -- 13.1: Company State (The Inbox Truth)
+    -- Tracks company status through inbox workflow: inbox -> tracking -> passed/pipeline_requested
+    CREATE TABLE IF NOT EXISTS company_state (
+        canonical_key TEXT PRIMARY KEY,
+        status TEXT NOT NULL DEFAULT 'inbox',  -- inbox, tracking, passed, pipeline_requested, funded
+        owner TEXT,  -- GP who claimed the company
+        last_action_at TEXT DEFAULT (datetime('now')),
+        pass_reason TEXT,  -- Why company was passed
+        notion_page_id TEXT,  -- Link to Notion if pushed
+        snoozed_until TEXT  -- For snooze functionality
+    );
+    CREATE INDEX IF NOT EXISTS idx_company_state_status ON company_state(status);
+    CREATE INDEX IF NOT EXISTS idx_company_state_owner ON company_state(owner);
+    CREATE INDEX IF NOT EXISTS idx_company_state_snoozed ON company_state(snoozed_until);
+
+    -- 13.2: Company Actions (Audit Log)
+    -- Every action taken on a company is logged here for full audit trail
+    CREATE TABLE IF NOT EXISTS company_actions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        occurred_at TEXT DEFAULT (datetime('now')),
+        canonical_key TEXT NOT NULL,
+        action TEXT NOT NULL,  -- track, pass, pipeline, snooze, unsnooze, note
+        actor TEXT,  -- Who took the action
+        metadata_json TEXT  -- Extra context (pass_reason, note text, etc.)
+    );
+    CREATE INDEX IF NOT EXISTS idx_company_actions_key ON company_actions(canonical_key);
+    CREATE INDEX IF NOT EXISTS idx_company_actions_occurred ON company_actions(occurred_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_company_actions_actor ON company_actions(actor);
+
+    -- 13.3: Magic Link Token Nonces
+    -- One-time-use tokens for email action links (security)
+    CREATE TABLE IF NOT EXISTS token_nonces (
+        nonce TEXT PRIMARY KEY,
+        canonical_key TEXT NOT NULL,
+        action TEXT NOT NULL,  -- track, pass, view
+        created_at TEXT DEFAULT (datetime('now')),
+        expires_at TEXT,  -- Token expiration
+        used INTEGER DEFAULT 0  -- 1 = consumed
+    );
+    CREATE INDEX IF NOT EXISTS idx_token_nonces_key ON token_nonces(canonical_key);
+    CREATE INDEX IF NOT EXISTS idx_token_nonces_expires ON token_nonces(expires_at);
+
+    -- 13.4: Add created_by column to notion_outbox for audit
+    ALTER TABLE notion_outbox ADD COLUMN created_by TEXT;
     """
 }
 
@@ -993,6 +1046,56 @@ class SuppressionEntry:
     cached_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     expires_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc) + timedelta(days=7))
     metadata: Optional[Dict[str, Any]] = None
+
+
+@dataclass
+class CompanyState:
+    """Company state in the inbox workflow"""
+    canonical_key: str
+    status: str  # inbox, tracking, passed, pipeline_requested, funded
+    owner: Optional[str] = None
+    last_action_at: Optional[datetime] = None
+    pass_reason: Optional[str] = None
+    notion_page_id: Optional[str] = None
+    snoozed_until: Optional[datetime] = None
+
+
+@dataclass
+class CompanyAction:
+    """Audit log entry for company actions"""
+    id: int
+    canonical_key: str
+    action: str  # track, pass, pipeline, snooze, unsnooze, note
+    occurred_at: datetime
+    actor: Optional[str] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+
+@dataclass
+class TokenNonce:
+    """Magic link token for secure actions"""
+    nonce: str
+    canonical_key: str
+    action: str
+    created_at: datetime
+    expires_at: Optional[datetime] = None
+    used: bool = False
+
+
+@dataclass
+class InboxCompany:
+    """Company summary for inbox view"""
+    canonical_key: str
+    company_name: Optional[str]
+    status: str
+    max_confidence: float
+    signal_count: int
+    sources: str  # Comma-separated source list
+    first_seen: datetime
+    last_seen: datetime
+    owner: Optional[str] = None
+    thesis_fit_score: Optional[float] = None
+    vertical: Optional[str] = None
 
 
 # =============================================================================
@@ -3849,6 +3952,362 @@ class SignalStore:
         )
         await self._db.commit()
         return cursor.rowcount > 0
+
+    # =========================================================================
+    # COMPANY STATE METHODS (Migration 13)
+    # =========================================================================
+
+    async def upsert_company_state(
+        self,
+        canonical_key: str,
+        status: str,
+        owner: Optional[str] = None,
+        pass_reason: Optional[str] = None,
+        notion_page_id: Optional[str] = None,
+        snoozed_until: Optional[datetime] = None,
+    ) -> None:
+        """
+        Insert or update company state.
+
+        Args:
+            canonical_key: The company's canonical key
+            status: New status (inbox, tracking, passed, pipeline_requested, funded)
+            owner: GP who owns this company
+            pass_reason: Reason for passing (if status='passed')
+            notion_page_id: Notion page ID if pushed
+            snoozed_until: Snooze end datetime
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        now = datetime.now(timezone.utc).isoformat()
+        snoozed_str = snoozed_until.isoformat() if snoozed_until else None
+
+        await self._db.execute(
+            """
+            INSERT INTO company_state (canonical_key, status, owner, last_action_at, pass_reason, notion_page_id, snoozed_until)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(canonical_key) DO UPDATE SET
+                status = excluded.status,
+                owner = COALESCE(excluded.owner, company_state.owner),
+                last_action_at = excluded.last_action_at,
+                pass_reason = COALESCE(excluded.pass_reason, company_state.pass_reason),
+                notion_page_id = COALESCE(excluded.notion_page_id, company_state.notion_page_id),
+                snoozed_until = excluded.snoozed_until
+            """,
+            (canonical_key, status, owner, now, pass_reason, notion_page_id, snoozed_str),
+        )
+        await self._db.commit()
+
+    async def get_company_state(self, canonical_key: str) -> Optional[CompanyState]:
+        """
+        Get company state by canonical key.
+
+        Args:
+            canonical_key: The company's canonical key
+
+        Returns:
+            CompanyState or None if not found
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        cursor = await self._db.execute(
+            """
+            SELECT canonical_key, status, owner, last_action_at, pass_reason, notion_page_id, snoozed_until
+            FROM company_state
+            WHERE canonical_key = ?
+            """,
+            (canonical_key,),
+        )
+        row = await cursor.fetchone()
+
+        if not row:
+            return None
+
+        return CompanyState(
+            canonical_key=row[0],
+            status=row[1],
+            owner=row[2],
+            last_action_at=datetime.fromisoformat(row[3]) if row[3] else None,
+            pass_reason=row[4],
+            notion_page_id=row[5],
+            snoozed_until=datetime.fromisoformat(row[6]) if row[6] else None,
+        )
+
+    async def get_inbox_companies(
+        self,
+        status: str = "inbox",
+        min_confidence: float = 0.0,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> List[InboxCompany]:
+        """
+        Get companies for inbox view with aggregated signal data.
+
+        Args:
+            status: Filter by status (inbox, tracking, passed)
+            min_confidence: Minimum confidence score
+            limit: Max results
+            offset: Pagination offset
+
+        Returns:
+            List of InboxCompany objects
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        # Complex query joining signals with company_state
+        cursor = await self._db.execute(
+            """
+            SELECT
+                s.canonical_key,
+                MAX(s.company_name) as company_name,
+                COALESCE(cs.status, 'inbox') as status,
+                MAX(s.confidence) as max_confidence,
+                COUNT(DISTINCT s.id) as signal_count,
+                GROUP_CONCAT(DISTINCT s.source_api) as sources,
+                MIN(s.created_at) as first_seen,
+                MAX(s.created_at) as last_seen,
+                cs.owner,
+                MAX(tc.thesis_fit_score) as thesis_fit_score,
+                MAX(tc.category) as vertical
+            FROM signals s
+            LEFT JOIN company_state cs ON s.canonical_key = cs.canonical_key
+            LEFT JOIN thesis_classifications tc ON s.canonical_key = tc.canonical_key
+            WHERE COALESCE(cs.status, 'inbox') = ?
+              AND s.confidence >= ?
+            GROUP BY s.canonical_key
+            ORDER BY max_confidence DESC, signal_count DESC
+            LIMIT ? OFFSET ?
+            """,
+            (status, min_confidence, limit, offset),
+        )
+        rows = await cursor.fetchall()
+
+        return [
+            InboxCompany(
+                canonical_key=row[0],
+                company_name=row[1],
+                status=row[2],
+                max_confidence=row[3],
+                signal_count=row[4],
+                sources=row[5] or "",
+                first_seen=datetime.fromisoformat(row[6]) if row[6] else datetime.now(timezone.utc),
+                last_seen=datetime.fromisoformat(row[7]) if row[7] else datetime.now(timezone.utc),
+                owner=row[8],
+                thesis_fit_score=row[9],
+                vertical=row[10],
+            )
+            for row in rows
+        ]
+
+    async def log_company_action(
+        self,
+        canonical_key: str,
+        action: str,
+        actor: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> int:
+        """
+        Log an action taken on a company.
+
+        Args:
+            canonical_key: The company's canonical key
+            action: Action type (track, pass, pipeline, snooze, unsnooze, note)
+            actor: Who performed the action
+            metadata: Extra context (pass_reason, note text, etc.)
+
+        Returns:
+            The action ID
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        now = datetime.now(timezone.utc).isoformat()
+        metadata_json = json.dumps(metadata) if metadata else None
+
+        cursor = await self._db.execute(
+            """
+            INSERT INTO company_actions (occurred_at, canonical_key, action, actor, metadata_json)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (now, canonical_key, action, actor, metadata_json),
+        )
+        await self._db.commit()
+        return cursor.lastrowid
+
+    async def get_company_actions(
+        self,
+        canonical_key: str,
+        limit: int = 50,
+    ) -> List[CompanyAction]:
+        """
+        Get action history for a company.
+
+        Args:
+            canonical_key: The company's canonical key
+            limit: Max results
+
+        Returns:
+            List of CompanyAction objects (most recent first)
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        cursor = await self._db.execute(
+            """
+            SELECT id, canonical_key, action, occurred_at, actor, metadata_json
+            FROM company_actions
+            WHERE canonical_key = ?
+            ORDER BY occurred_at DESC
+            LIMIT ?
+            """,
+            (canonical_key, limit),
+        )
+        rows = await cursor.fetchall()
+
+        return [
+            CompanyAction(
+                id=row[0],
+                canonical_key=row[1],
+                action=row[2],
+                occurred_at=datetime.fromisoformat(row[3]) if row[3] else datetime.now(timezone.utc),
+                actor=row[4],
+                metadata=json.loads(row[5]) if row[5] else None,
+            )
+            for row in rows
+        ]
+
+    async def reserve_token_nonce(
+        self,
+        nonce: str,
+        canonical_key: str,
+        action: str,
+        expires_in_days: int = 7,
+    ) -> None:
+        """
+        Reserve a nonce for a magic link token.
+
+        Args:
+            nonce: The unique nonce value
+            canonical_key: Company this token is for
+            action: Action this token permits (track, pass, view)
+            expires_in_days: Token validity period
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        now = datetime.now(timezone.utc)
+        expires_at = (now + timedelta(days=expires_in_days)).isoformat()
+
+        await self._db.execute(
+            """
+            INSERT INTO token_nonces (nonce, canonical_key, action, created_at, expires_at, used)
+            VALUES (?, ?, ?, ?, ?, 0)
+            """,
+            (nonce, canonical_key, action, now.isoformat(), expires_at),
+        )
+        await self._db.commit()
+
+    async def consume_token_nonce(self, nonce: str) -> Optional[TokenNonce]:
+        """
+        Atomically consume a token nonce (one-time use).
+
+        Args:
+            nonce: The nonce to consume
+
+        Returns:
+            TokenNonce if valid and unused, None if invalid/expired/used
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        now = datetime.now(timezone.utc).isoformat()
+
+        # Atomically mark as used and return if successful
+        cursor = await self._db.execute(
+            """
+            UPDATE token_nonces
+            SET used = 1
+            WHERE nonce = ?
+              AND used = 0
+              AND (expires_at IS NULL OR expires_at > ?)
+            RETURNING nonce, canonical_key, action, created_at, expires_at, used
+            """,
+            (nonce, now),
+        )
+        row = await cursor.fetchone()
+        await self._db.commit()
+
+        if not row:
+            return None
+
+        return TokenNonce(
+            nonce=row[0],
+            canonical_key=row[1],
+            action=row[2],
+            created_at=datetime.fromisoformat(row[3]) if row[3] else datetime.now(timezone.utc),
+            expires_at=datetime.fromisoformat(row[4]) if row[4] else None,
+            used=bool(row[5]),
+        )
+
+    async def get_company_by_key(self, canonical_key: str) -> Optional[Dict[str, Any]]:
+        """
+        Get aggregated company data by canonical key.
+
+        Args:
+            canonical_key: The company's canonical key
+
+        Returns:
+            Dict with company data or None
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        cursor = await self._db.execute(
+            """
+            SELECT
+                s.canonical_key,
+                MAX(s.company_name) as company_name,
+                MAX(s.confidence) as max_confidence,
+                COUNT(DISTINCT s.id) as signal_count,
+                GROUP_CONCAT(DISTINCT s.source_api) as sources,
+                MIN(s.created_at) as first_seen,
+                MAX(s.created_at) as last_seen,
+                MAX(tc.thesis_fit_score) as thesis_fit_score,
+                MAX(tc.category) as vertical,
+                MAX(tc.rationale) as one_liner
+            FROM signals s
+            LEFT JOIN thesis_classifications tc ON s.canonical_key = tc.canonical_key
+            WHERE s.canonical_key = ?
+            GROUP BY s.canonical_key
+            """,
+            (canonical_key,),
+        )
+        row = await cursor.fetchone()
+
+        if not row:
+            return None
+
+        # Extract website from canonical key if domain-based
+        website = None
+        if canonical_key.startswith("domain:"):
+            website = f"https://{canonical_key[7:]}"
+
+        return {
+            "canonical_key": row[0],
+            "company_name": row[1],
+            "max_confidence": row[2],
+            "signal_count": row[3],
+            "sources": row[4],
+            "first_seen": row[5],
+            "last_seen": row[6],
+            "thesis_fit_score": row[7],
+            "vertical": row[8],
+            "one_liner": row[9],
+            "website": website,
+        }
 
 
 # =============================================================================
