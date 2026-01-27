@@ -1,3 +1,14 @@
 {
-  "companies": []
+  "companies": [
+    {"name": "SnapFix", "website": "https://snapfix.com"},
+    {"name": "Recess", "website": "https://therecess.app"},
+    {"name": "Skylark", "website": "https://www.skylark.com"},
+    {"name": "Telly", "website": "https://www.freetelly.com"},
+    {"name": "Feno", "website": "https://feno.co"},
+    {"name": "Rhythm Science", "website": "https://www.rhythm360.io"},
+    {"name": "SipMargs", "website": "https://www.sipmargs.com"},
+    {"name": "Jacob Bars", "website": "https://eatjacob.com"},
+    {"name": "10Beauty", "website": "https://www.10beauty.co"},
+    {"name": "Cofertility", "website": "https://www.cofertility.com"}
+  ]
 }

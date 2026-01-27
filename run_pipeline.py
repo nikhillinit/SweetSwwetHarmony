@@ -2427,10 +2427,10 @@ async def cmd_monitor_run(args):
                 from storage.embedding_store import EmbeddingStore
                 from utils.embedding_generator import EmbeddingGenerator
 
-                embedding_store = EmbeddingStore(store)
+                embedding_store = EmbeddingStore(args.db_path)
                 embedding_generator = EmbeddingGenerator()
             except Exception as e:
-                logger.warning(f"Embeddings disabled: {e}")
+                print(f"Warning: Embeddings disabled: {e}")
 
         monitor = WebsiteMonitor(
             signal_store=store,
