@@ -45,6 +45,7 @@ from utils.signal_health import SignalHealthMonitor
 from dashboard.mini_scout import render_mini_scout_page
 from dashboard.url_profiler_page import render_url_profiler_page
 from dashboard.monitoring_page import render_monitoring_page
+from dashboard.inbox_page import render_inbox_page
 
 # =============================================================================
 # CONFIG
@@ -2016,6 +2017,7 @@ def main():
 
         view_options = []
         view_descriptions = {
+            "Inbox": "Review and act on new deals",
             "Pipeline": "Your deal flow organized by stage",
             "Signals": "Newly discovered companies",
             "Mini-Scout": "Search all companies",
@@ -2025,11 +2027,11 @@ def main():
         }
 
         if has_notion and has_db:
-            view_options = ["Pipeline", "Signals", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring"]
+            view_options = ["Inbox", "Pipeline", "Signals", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring"]
         elif has_notion:
-            view_options = ["Pipeline", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring"]
+            view_options = ["Inbox", "Pipeline", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring"]
         else:
-            view_options = ["Signals", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring"]
+            view_options = ["Inbox", "Signals", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring"]
 
         view = st.radio(
             "View",
@@ -2062,9 +2064,15 @@ def main():
             """, unsafe_allow_html=True)
 
     # ==========================================================================
+    # INBOX VIEW (NEW)
+    # ==========================================================================
+    if view == "Inbox":
+        render_inbox_page()
+
+    # ==========================================================================
     # PIPELINE VIEW
     # ==========================================================================
-    if view == "Pipeline":
+    elif view == "Pipeline":
         render_hero("Deal Pipeline", "All the companies you're evaluating, organized by stage")
 
         # Welcome banner for first-time users
