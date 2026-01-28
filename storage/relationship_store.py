@@ -62,6 +62,29 @@ class DomainStrength:
     first_contact_at: datetime
 
 
+@dataclass
+class LPRelationship:
+    """LP relationship data from Notion."""
+    target_domain: str
+    source: str
+    lp_status: str
+    lp_name: str
+    notion_score: float
+
+
+@dataclass
+class CombinedRelationship:
+    """Combined Gmail + LP relationship data."""
+    target_domain: str
+    gmail_score: Optional[float]
+    notion_score: Optional[float]
+    lp_status: Optional[str]
+    lp_name: Optional[str]
+    intro_count: int
+    reply_count: int
+    total_messages: int
+
+
 # =============================================================================
 # RELATIONSHIP STORE
 # =============================================================================
@@ -77,7 +100,7 @@ class RelationshipStore:
     DEFAULT_DB_PATH = "private_graph.db"
 
     # Schema version
-    SCHEMA_VERSION = 1
+    SCHEMA_VERSION = 2  # v2: Added source, lp_status, lp_name, notion_score columns
 
     # Strength formula weights
     INTRO_WEIGHT = 0.50
@@ -129,7 +152,7 @@ class RelationshipStore:
     async def _create_schema(self) -> None:
         """Create database schema."""
         async with self.transaction() as conn:
-            # Domain relationships table
+            # Domain relationships table (v2: added LP fields)
             await conn.execute("""
                 CREATE TABLE IF NOT EXISTS domain_relationships (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -140,11 +163,36 @@ class RelationshipStore:
                     total_messages INTEGER NOT NULL DEFAULT 0,
                     last_contact_at TEXT,
                     first_contact_at TEXT,
+                    source TEXT DEFAULT 'gmail',
+                    lp_status TEXT,
+                    lp_name TEXT,
+                    notion_score REAL,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     UNIQUE(me_email_hash, target_domain)
                 )
             """)
+
+            # Migration: add columns if they don't exist (for existing databases)
+            try:
+                await conn.execute("ALTER TABLE domain_relationships ADD COLUMN source TEXT DEFAULT 'gmail'")
+            except Exception:
+                pass  # Column already exists
+
+            try:
+                await conn.execute("ALTER TABLE domain_relationships ADD COLUMN lp_status TEXT")
+            except Exception:
+                pass
+
+            try:
+                await conn.execute("ALTER TABLE domain_relationships ADD COLUMN lp_name TEXT")
+            except Exception:
+                pass
+
+            try:
+                await conn.execute("ALTER TABLE domain_relationships ADD COLUMN notion_score REAL")
+            except Exception:
+                pass
 
             await conn.execute("""
                 CREATE INDEX IF NOT EXISTS idx_rel_email_domain
@@ -446,3 +494,188 @@ class RelationshipStore:
                 ))
 
         return relationships
+
+    # =========================================================================
+    # LP RELATIONSHIP METHODS (Phase 4)
+    # =========================================================================
+
+    async def upsert_lp_relationship(
+        self,
+        me_email: str,
+        target_domain: str,
+        lp_status: str,
+        lp_name: str,
+        notion_score: float,
+    ) -> None:
+        """
+        Upsert LP relationship from Notion.
+
+        Preserves existing Gmail data if present.
+
+        Args:
+            me_email: User's email (will be hashed)
+            target_domain: LP firm domain
+            lp_status: LP status (Docs Signed, Verbal Confirm, etc.)
+            lp_name: LP contact name
+            notion_score: Score from Notion tier (0.25-0.95)
+        """
+        me_email_hash = self._hash_email(me_email)
+        now = datetime.now(timezone.utc)
+
+        async with self.transaction() as conn:
+            # Check if edge exists
+            cursor = await conn.execute(
+                "SELECT id FROM domain_relationships WHERE me_email_hash = ? AND target_domain = ?",
+                (me_email_hash, target_domain)
+            )
+            row = await cursor.fetchone()
+
+            if row:
+                # Update existing edge with LP data (preserve Gmail data)
+                await conn.execute(
+                    """
+                    UPDATE domain_relationships
+                    SET source = CASE
+                            WHEN intro_count > 0 THEN 'gmail+notion_lp'
+                            ELSE 'notion_lp'
+                        END,
+                        lp_status = ?,
+                        lp_name = ?,
+                        notion_score = ?,
+                        updated_at = ?
+                    WHERE me_email_hash = ? AND target_domain = ?
+                    """,
+                    (
+                        lp_status,
+                        lp_name,
+                        notion_score,
+                        now.isoformat(),
+                        me_email_hash,
+                        target_domain,
+                    )
+                )
+            else:
+                # Insert new LP-only edge
+                await conn.execute(
+                    """
+                    INSERT INTO domain_relationships (
+                        me_email_hash, target_domain,
+                        intro_count, reply_count, total_messages,
+                        source, lp_status, lp_name, notion_score,
+                        created_at, updated_at
+                    ) VALUES (?, ?, 0, 0, 0, 'notion_lp', ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        me_email_hash,
+                        target_domain,
+                        lp_status,
+                        lp_name,
+                        notion_score,
+                        now.isoformat(),
+                        now.isoformat(),
+                    )
+                )
+
+            await conn.commit()
+
+        logger.debug(f"Upserted LP relationship: {target_domain} ({lp_status})")
+
+    async def get_lp_relationship(
+        self,
+        me_email: str,
+        target_domain: str,
+    ) -> Optional[LPRelationship]:
+        """
+        Get LP relationship for a domain.
+
+        Args:
+            me_email: User's email (will be hashed)
+            target_domain: Target domain
+
+        Returns:
+            LPRelationship or None if not found or no LP data
+        """
+        me_email_hash = self._hash_email(me_email)
+
+        async with self.transaction() as conn:
+            cursor = await conn.execute(
+                """
+                SELECT source, lp_status, lp_name, notion_score
+                FROM domain_relationships
+                WHERE me_email_hash = ? AND target_domain = ? AND lp_status IS NOT NULL
+                """,
+                (me_email_hash, target_domain)
+            )
+            row = await cursor.fetchone()
+
+        if not row:
+            return None
+
+        return LPRelationship(
+            target_domain=target_domain,
+            source=row[0] or "notion_lp",
+            lp_status=row[1],
+            lp_name=row[2] or "",
+            notion_score=row[3] or 0.0,
+        )
+
+    async def get_combined_relationship(
+        self,
+        me_email: str,
+        target_domain: str,
+    ) -> Optional[CombinedRelationship]:
+        """
+        Get combined Gmail + LP relationship data.
+
+        Args:
+            me_email: User's email (will be hashed)
+            target_domain: Target domain
+
+        Returns:
+            CombinedRelationship or None if not found
+        """
+        me_email_hash = self._hash_email(me_email)
+
+        async with self.transaction() as conn:
+            cursor = await conn.execute(
+                """
+                SELECT intro_count, reply_count, total_messages,
+                       last_contact_at, lp_status, lp_name, notion_score
+                FROM domain_relationships
+                WHERE me_email_hash = ? AND target_domain = ?
+                """,
+                (me_email_hash, target_domain)
+            )
+            row = await cursor.fetchone()
+
+        if not row:
+            return None
+
+        intro_count = row[0]
+        reply_count = row[1]
+        total_messages = row[2]
+        last_contact_at_str = row[3]
+        lp_status = row[4]
+        lp_name = row[5]
+        notion_score = row[6]
+
+        # Calculate Gmail score if Gmail data exists
+        gmail_score = None
+        if total_messages > 0 and last_contact_at_str:
+            last_contact_at = datetime.fromisoformat(last_contact_at_str)
+            reply_rate = reply_count / total_messages if total_messages > 0 else 0.0
+            recency_score = self._calculate_recency_score(last_contact_at)
+            gmail_score = self._calculate_strength_score(
+                intro_count, reply_rate, recency_score
+            )
+
+        return CombinedRelationship(
+            target_domain=target_domain,
+            gmail_score=gmail_score,
+            notion_score=notion_score,
+            lp_status=lp_status,
+            lp_name=lp_name,
+            intro_count=intro_count,
+            reply_count=reply_count,
+            total_messages=total_messages,
+        )

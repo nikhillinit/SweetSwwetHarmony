@@ -497,3 +497,250 @@ class TestDataClasses:
         )
         assert len(exp.portfolio_examples) == 1
         assert exp.portfolio_examples[0].company_key == "domain:test.com"
+
+
+# =============================================================================
+# PHASE 4: WARM INTRO BOOST INTEGRATION
+# =============================================================================
+
+class TestWarmIntroBoostIntegration:
+    """Tests for WarmIntroBoost integration with InvestorMatcher."""
+
+    @pytest.mark.asyncio
+    async def test_match_includes_warmth_score(self):
+        """Match result should include warmth score when relationship exists."""
+        from storage.signal_store import SignalStore
+        from storage.relationship_store import RelationshipStore
+        from datetime import datetime, timezone
+        import tempfile
+        import os
+
+        # Create stores
+        store = SignalStore(":memory:")
+        await store.initialize()
+
+        fd, rel_db = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        rel_store = RelationshipStore(db_path=rel_db)
+        await rel_store.initialize()
+
+        try:
+            # Create test investor with domain
+            await store.save_investor(
+                investor_id="investor:warm_vc",
+                name="Warm VC",
+                source="curated_json",
+                investor_type="vc",
+                hq_country="US",
+            )
+
+            # Add relationship data (simulating Gmail history)
+            await rel_store.upsert_domain_edge(
+                me_email="user@example.com",
+                target_domain="warmvc.com",
+                intro_count=5,
+                reply_count=4,
+                total_messages=10,
+                last_contact_at=datetime.now(timezone.utc),
+            )
+
+            # Create matcher with relationship store
+            matcher = InvestorMatcher(store, relationship_store=rel_store, user_email="user@example.com")
+            result = await matcher.match(
+                "domain:test.com",
+                company_claims={"sector": "fintech", "stage": "seed"},
+                save_results=False,
+            )
+
+            assert isinstance(result, InvestorMatchResult)
+
+        finally:
+            await store.close()
+            await rel_store.close()
+            if os.path.exists(rel_db):
+                try:
+                    os.unlink(rel_db)
+                except PermissionError:
+                    pass
+
+    @pytest.mark.asyncio
+    async def test_warmth_boost_applied_above_threshold(self):
+        """Warmth boost should be applied when thesis_fit >= 0.4."""
+        from utils.warm_intro_boost import WarmIntroBoost
+
+        booster = WarmIntroBoost()
+
+        # Thesis fit >= 0.4, should apply boost
+        boosted = booster.apply_warmth_boost(thesis_fit=0.5, warmth=1.0)
+        assert boosted > 0.5  # Should have boost applied
+        assert boosted == pytest.approx(0.55, rel=0.01)  # 0.5 + (1.0 * 0.05) = 0.55
+
+    @pytest.mark.asyncio
+    async def test_warmth_boost_not_applied_below_threshold(self):
+        """Warmth boost should not be applied when thesis_fit < 0.4."""
+        from utils.warm_intro_boost import WarmIntroBoost
+
+        booster = WarmIntroBoost()
+
+        # Thesis fit < 0.4, should NOT apply boost
+        not_boosted = booster.apply_warmth_boost(thesis_fit=0.35, warmth=1.0)
+        assert not_boosted == 0.35  # No boost applied
+
+    @pytest.mark.asyncio
+    async def test_match_with_lp_relationship(self):
+        """Match should consider LP relationship data."""
+        from storage.signal_store import SignalStore
+        from storage.relationship_store import RelationshipStore
+        import tempfile
+        import os
+
+        store = SignalStore(":memory:")
+        await store.initialize()
+
+        fd, rel_db = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        rel_store = RelationshipStore(db_path=rel_db)
+        await rel_store.initialize()
+
+        try:
+            # Create test investor
+            await store.save_investor(
+                investor_id="investor:lp_vc",
+                name="LP VC",
+                source="curated_json",
+                investor_type="vc",
+            )
+
+            # Add LP relationship
+            await rel_store.upsert_lp_relationship(
+                me_email="user@example.com",
+                target_domain="lpvc.com",
+                lp_status="Docs Signed",
+                lp_name="LP Contact",
+                notion_score=0.95,
+            )
+
+            # Match should work
+            matcher = InvestorMatcher(store, relationship_store=rel_store, user_email="user@example.com")
+            result = await matcher.match(
+                "domain:test.com",
+                company_claims={"sector": "fintech"},
+                save_results=False,
+            )
+
+            assert isinstance(result, InvestorMatchResult)
+
+        finally:
+            await store.close()
+            await rel_store.close()
+            if os.path.exists(rel_db):
+                try:
+                    os.unlink(rel_db)
+                except PermissionError:
+                    pass
+
+    @pytest.mark.asyncio
+    async def test_warmth_badge_in_explanations(self):
+        """Warm intro matches should include warmth badge in explanations."""
+        from utils.warm_intro_boost import WarmIntroBoost, RelationshipSource
+
+        booster = WarmIntroBoost()
+
+        # Gmail active badge
+        badge = booster.generate_badge(
+            source=RelationshipSource.GMAIL,
+            score=0.7,
+            lp_status=None,
+            is_declined=False,
+        )
+        assert "📧" in badge
+        assert "Active" in badge
+
+        # LP Docs Signed badge
+        badge = booster.generate_badge(
+            source=RelationshipSource.NOTION_LP,
+            score=0.95,
+            lp_status="Docs Signed",
+            is_declined=False,
+        )
+        assert "📝" in badge
+        assert "LP" in badge
+
+    @pytest.mark.asyncio
+    async def test_declined_suppression_in_matching(self):
+        """Declined investors should be suppressed or capped."""
+        from utils.warm_intro_boost import WarmIntroBoost
+        from datetime import datetime, timezone
+
+        booster = WarmIntroBoost()
+
+        # Recent decline should suppress
+        assert booster.should_suppress_declined(
+            is_declined=True,
+            declined_at=datetime.now(timezone.utc),
+        ) is True
+
+        # Post-window decline should cap at 0.30
+        capped = booster.apply_declined_cap(0.95)
+        assert capped == 0.30
+
+
+class TestInvestorMatcherWithRelationshipStore:
+    """Tests for InvestorMatcher with RelationshipStore integration."""
+
+    @pytest.mark.asyncio
+    async def test_matcher_initialization_with_relationship_store(self):
+        """InvestorMatcher should accept relationship_store parameter."""
+        from storage.signal_store import SignalStore
+        from storage.relationship_store import RelationshipStore
+        import tempfile
+        import os
+
+        store = SignalStore(":memory:")
+        await store.initialize()
+
+        fd, rel_db = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        rel_store = RelationshipStore(db_path=rel_db)
+        await rel_store.initialize()
+
+        try:
+            # Should accept relationship_store and user_email
+            matcher = InvestorMatcher(
+                store,
+                relationship_store=rel_store,
+                user_email="user@example.com",
+            )
+            assert matcher.relationship_store == rel_store
+            assert matcher.user_email == "user@example.com"
+
+        finally:
+            await store.close()
+            await rel_store.close()
+            if os.path.exists(rel_db):
+                try:
+                    os.unlink(rel_db)
+                except PermissionError:
+                    pass
+
+    @pytest.mark.asyncio
+    async def test_matcher_works_without_relationship_store(self):
+        """InvestorMatcher should work without relationship_store."""
+        from storage.signal_store import SignalStore
+
+        store = SignalStore(":memory:")
+        await store.initialize()
+
+        try:
+            matcher = InvestorMatcher(store)
+            assert matcher.relationship_store is None
+
+            result = await matcher.match(
+                "domain:test.com",
+                company_claims={"sector": "fintech"},
+                save_results=False,
+            )
+            assert isinstance(result, InvestorMatchResult)
+
+        finally:
+            await store.close()

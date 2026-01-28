@@ -37,6 +37,7 @@ import numpy as np
 
 if TYPE_CHECKING:
     from storage.signal_store import SignalStore
+    from storage.relationship_store import RelationshipStore
 
 logger = logging.getLogger(__name__)
 
@@ -313,6 +314,7 @@ class InvestorMatcher:
     2. Embedding similarity for semantic matching
     3. Distribution matching for stage/sector fit
     4. Preference constraints for compliance
+    5. Warmth boost from relationship data (Phase 4)
     """
 
     def __init__(
@@ -320,6 +322,8 @@ class InvestorMatcher:
         store: "SignalStore",
         weights: Optional[Dict[str, float]] = None,
         candidate_k: int = FTS_CANDIDATE_K,
+        relationship_store: Optional["RelationshipStore"] = None,
+        user_email: Optional[str] = None,
     ):
         """
         Initialize matcher.
@@ -328,10 +332,14 @@ class InvestorMatcher:
             store: SignalStore instance with investor tables
             weights: Optional custom scoring weights
             candidate_k: Number of FTS candidates to retrieve
+            relationship_store: Optional RelationshipStore for warmth boost
+            user_email: User email for relationship lookup
         """
         self.store = store
         self.weights = weights or DEFAULT_WEIGHTS
         self.candidate_k = candidate_k
+        self.relationship_store = relationship_store
+        self.user_email = user_email
 
     async def match(
         self,
