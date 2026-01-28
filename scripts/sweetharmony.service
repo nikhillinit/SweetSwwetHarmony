@@ -1,0 +1,57 @@
+# SweetSweetHarmony Command Center - Systemd Service
+#
+# Installation:
+#   sudo cp scripts/sweetharmony.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable sweetharmony
+#   sudo systemctl start sweetharmony
+#
+# Logs:
+#   sudo journalctl -u sweetharmony -f
+#
+# Status:
+#   sudo systemctl status sweetharmony
+
+[Unit]
+Description=SweetSweetHarmony Command Center
+Documentation=https://github.com/pressonventures/discovery-engine
+After=network.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=sweetharmony
+Group=sweetharmony
+WorkingDirectory=/opt/sweetharmony
+
+# Environment
+Environment="PATH=/opt/sweetharmony/.venv/bin:/usr/local/bin:/usr/bin:/bin"
+EnvironmentFile=/opt/sweetharmony/.env
+
+# API Server (FastAPI)
+ExecStart=/opt/sweetharmony/.venv/bin/uvicorn api.main:app --host 0.0.0.0 --port 8000
+
+# Restart policy
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/opt/sweetharmony/data /opt/sweetharmony/logs
+
+# Resource limits
+MemoryMax=2G
+CPUQuota=80%
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sweetharmony
+
+[Install]
+WantedBy=multi-user.target

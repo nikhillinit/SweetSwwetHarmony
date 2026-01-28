@@ -1,0 +1,54 @@
+# SweetSweetHarmony Dashboard - Systemd Service
+#
+# Runs the Streamlit dashboard alongside the API server.
+# Install after sweetharmony.service.
+#
+# Installation:
+#   sudo cp scripts/sweetharmony-dashboard.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable sweetharmony-dashboard
+#   sudo systemctl start sweetharmony-dashboard
+
+[Unit]
+Description=SweetSweetHarmony Streamlit Dashboard
+Documentation=https://github.com/pressonventures/discovery-engine
+After=sweetharmony.service
+Requires=sweetharmony.service
+
+[Service]
+Type=simple
+User=sweetharmony
+Group=sweetharmony
+WorkingDirectory=/opt/sweetharmony
+
+# Environment
+Environment="PATH=/opt/sweetharmony/.venv/bin:/usr/local/bin:/usr/bin:/bin"
+EnvironmentFile=/opt/sweetharmony/.env
+
+# Streamlit Dashboard
+ExecStart=/opt/sweetharmony/.venv/bin/streamlit run dashboard/app.py --server.port 8501 --server.headless true --server.address 0.0.0.0
+
+# Restart policy
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+# Security hardening
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/opt/sweetharmony/data /opt/sweetharmony/logs
+
+# Resource limits
+MemoryMax=1G
+CPUQuota=50%
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=sweetharmony-dashboard
+
+[Install]
+WantedBy=multi-user.target

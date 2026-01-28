@@ -1,0 +1,51 @@
+# SweetSweetHarmony Caddy Configuration for Tailscale
+#
+# For use with Tailscale mesh VPN where HTTPS is handled by Tailscale.
+# This provides local reverse proxy without external certificate management.
+#
+# Usage:
+#   1. Join your machine to a Tailscale network
+#   2. Enable HTTPS: tailscale cert harmony
+#   3. Copy: sudo cp scripts/Caddyfile.tailscale /etc/caddy/Caddyfile
+#   4. Reload: sudo systemctl reload caddy
+#
+# Access via: https://harmony.tailnet-xxxx.ts.net
+
+# Tailscale hostname (replace with your actual hostname)
+harmony.tailnet-xxxx.ts.net {
+    # Use Tailscale-provided certificates
+    tls /var/lib/tailscale/certs/harmony.tailnet-xxxx.ts.net.crt /var/lib/tailscale/certs/harmony.tailnet-xxxx.ts.net.key
+
+    # API backend
+    handle /api/* {
+        reverse_proxy localhost:8000
+    }
+    handle /health {
+        reverse_proxy localhost:8000
+    }
+
+    # Dashboard
+    handle {
+        reverse_proxy localhost:8501
+    }
+
+    # Compression
+    encode gzip
+
+    # Basic security headers
+    header {
+        X-Content-Type-Options nosniff
+        X-Frame-Options SAMEORIGIN
+        -Server
+    }
+}
+
+# Local development (no TLS)
+:8080 {
+    handle /api/* {
+        reverse_proxy localhost:8000
+    }
+    handle {
+        reverse_proxy localhost:8501
+    }
+}

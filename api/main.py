@@ -1,10 +1,12 @@
 """
-Discovery Engine API
+Discovery Engine API - Command Center
 
 FastAPI service layer providing REST endpoints for:
+- Authentication (JWT-based)
 - Company inbox management
+- Entity management with stage tracking
+- Background jobs and health monitoring
 - Action execution (Track, Pass, Pipeline)
-- Magic link authentication
 
 Usage:
     # Development
@@ -14,13 +16,16 @@ Usage:
     uvicorn api.main:app --host 0.0.0.0 --port 8000 --workers 4
 """
 
+import asyncio
 import os
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routers import actions, companies, public
+from api.routers import actions, companies, public, auth, health, jobs, entities
+from api.auth.jwt_auth import seed_default_users
 from storage.signal_store import SignalStore
 
 
@@ -34,13 +39,23 @@ async def lifespan(app: FastAPI):
     Manage application lifespan.
 
     - Initialize database on startup
+    - Seed default users for development
     - Clean up resources on shutdown
     """
     # Startup
     store = SignalStore()
     await store.initialize()
     app.state.store = store
+
+    # Write lock for single-writer pattern (SQLite concurrency)
+    app.state.write_lock = asyncio.Lock()
+
+    # Seed default users in development
+    if os.getenv("API_DEBUG", "false").lower() == "true":
+        seed_default_users()
+
     yield
+
     # Shutdown
     await store.close()
 
@@ -77,6 +92,10 @@ app.add_middleware(
 # ROUTERS
 # =============================================================================
 
+app.include_router(auth.router, prefix="/api/v1")
+app.include_router(health.router, prefix="/api/v1")
+app.include_router(jobs.router, prefix="/api/v1")
+app.include_router(entities.router, prefix="/api/v1")
 app.include_router(actions.router, prefix="/api/v1")
 app.include_router(companies.router, prefix="/api/v1")
 app.include_router(public.router, prefix="/api/v1")
