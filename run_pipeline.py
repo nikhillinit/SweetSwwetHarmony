@@ -1077,6 +1077,83 @@ async def cmd_sync_lps(args):
         print(f"  {rel.domain:<30} {rel.score:.2f}  {rel.badge}")
 
 
+async def cmd_relationship_health(args):
+    """Check relationship data health and staleness."""
+    from utils.relationship_health import RelationshipHealthMonitor
+    from storage.relationship_store import RelationshipStore
+
+    db_path = getattr(args, "db_path", None) or "private_graph.db"
+    user_email = getattr(args, "user_email", None) or os.environ.get("USER_EMAIL", "")
+    output_json = getattr(args, "output_json", False)
+
+    if not user_email:
+        print("Error: --user-email required or set USER_EMAIL env var")
+        return
+
+    store = RelationshipStore(db_path=db_path)
+    await store.initialize()
+
+    try:
+        # Configure thresholds
+        email_stale_days = getattr(args, "email_stale_days", 7)
+        lp_stale_days = getattr(args, "lp_stale_days", 3)
+
+        monitor = RelationshipHealthMonitor(
+            email_stale_days=email_stale_days,
+            lp_stale_days=lp_stale_days,
+        )
+
+        report = await monitor.generate_report(store, user_email)
+
+        if output_json:
+            import json
+            print(json.dumps(report.to_dict(), indent=2))
+        else:
+            print()
+            print("=" * 70)
+            print("RELATIONSHIP HEALTH REPORT")
+            print("=" * 70)
+            print()
+            print(f"Overall Status: {report.overall_status}")
+            print()
+
+            print("Relationship Counts:")
+            print("-" * 40)
+            print(f"  Total:    {report.relationship_count}")
+            print(f"  Gmail:    {report.gmail_relationship_count}")
+            print(f"  LP:       {report.lp_relationship_count}")
+            print(f"  Combined: {report.combined_relationship_count}")
+            print()
+
+            print("Email Scan Health:")
+            print("-" * 40)
+            eh = report.email_health
+            print(f"  Status:      {eh.status}")
+            if eh.days_since_scan is not None:
+                print(f"  Days since:  {eh.days_since_scan}")
+            print(f"  Records:     {eh.record_count}")
+            print()
+
+            print("LP Sync Health:")
+            print("-" * 40)
+            lh = report.lp_health
+            print(f"  Status:      {lh.status}")
+            if lh.days_since_sync is not None:
+                print(f"  Days since:  {lh.days_since_sync}")
+            print(f"  Records:     {lh.record_count}")
+            print()
+
+            if report.alerts:
+                print("Alerts:")
+                print("-" * 40)
+                for alert in report.alerts:
+                    print(f"  [{alert.severity}] {alert.description}")
+                print()
+
+    finally:
+        await store.close()
+
+
 # =============================================================================
 # PIPELINE DASHBOARD COMMANDS
 # =============================================================================
@@ -2131,6 +2208,61 @@ Examples:
         help="Preview what would be synced without storing",
     )
 
+    # --- relationship-health command ---
+    rel_health_parser = subparsers.add_parser(
+        "relationship-health",
+        help="Check relationship data health and staleness",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="""
+Check relationship data health and staleness.
+
+Monitors:
+- Email scan freshness (days since last MBOX import)
+- LP sync freshness (days since last Notion sync)
+- Relationship counts by source
+
+Examples:
+  # Basic health check
+  python run_pipeline.py relationship-health --user-email user@example.com
+
+  # Custom thresholds
+  python run_pipeline.py relationship-health --user-email user@example.com \\
+      --email-stale-days 14 --lp-stale-days 7
+
+  # JSON output
+  python run_pipeline.py relationship-health --user-email user@example.com --json
+""",
+    )
+    rel_health_parser.add_argument(
+        "--user-email",
+        type=str,
+        help="User email address (or set USER_EMAIL env var)",
+    )
+    rel_health_parser.add_argument(
+        "--db-path",
+        type=str,
+        default="private_graph.db",
+        help="Path to private graph database (default: private_graph.db)",
+    )
+    rel_health_parser.add_argument(
+        "--email-stale-days",
+        type=int,
+        default=7,
+        help="Days until email data is considered stale (default: 7)",
+    )
+    rel_health_parser.add_argument(
+        "--lp-stale-days",
+        type=int,
+        default=3,
+        help="Days until LP data is considered stale (default: 3)",
+    )
+    rel_health_parser.add_argument(
+        "--json",
+        dest="output_json",
+        action="store_true",
+        help="Output as JSON",
+    )
+
     return parser
 
 
@@ -3078,6 +3210,8 @@ async def main():
             await cmd_import_emails(args)
         elif args.command == "sync-lps":
             await cmd_sync_lps(args)
+        elif args.command == "relationship-health":
+            await cmd_relationship_health(args)
         elif args.command == "import-csv":
             await cmd_import_csv(args)
         elif args.command == "corroborate":
