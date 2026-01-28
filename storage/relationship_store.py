@@ -471,8 +471,12 @@ class RelationshipStore:
             intro_count = row[1]
             reply_count = row[2]
             total_messages = row[3]
+
+            # Handle NULL dates (LP-only relationships may not have contact dates)
+            if row[4] is None:
+                continue  # Skip LP-only relationships (no Gmail data)
             last_contact_at = datetime.fromisoformat(row[4])
-            first_contact_at = datetime.fromisoformat(row[5])
+            first_contact_at = datetime.fromisoformat(row[5]) if row[5] else last_contact_at
 
             reply_rate = reply_count / total_messages if total_messages > 0 else 0.0
             recency_score = self._calculate_recency_score(last_contact_at)
