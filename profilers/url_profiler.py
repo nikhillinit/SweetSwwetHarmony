@@ -448,13 +448,15 @@ class URLProfiler:
             if close_client:
                 await client.aclose()
 
-    async def profile(self, url: str, force_refresh: bool = False) -> CompanyProfile:
+    async def profile(self, url: str, force_refresh: bool = False, persist: bool = True) -> CompanyProfile:
         """
         Profile a company from its URL.
 
         Args:
             url: Company website URL
             force_refresh: If True, re-fetch even if cached
+            persist: If True, save claims to claim store (default: True)
+                    Set to False for ephemeral profiling (e.g., curated discovery)
 
         Returns:
             CompanyProfile with extracted claims and evidence
@@ -493,9 +495,9 @@ class URLProfiler:
         # Extract structured information
         extraction_result = await self._extract_profile(successful_pages)
 
-        # Save to claim store
+        # Save to claim store (if persistence enabled)
         claims = []
-        if self.claim_store and extraction_result:
+        if persist and self.claim_store and extraction_result:
             claims = await self._save_to_claim_store(canonical_key, extraction_result)
 
         return CompanyProfile(
