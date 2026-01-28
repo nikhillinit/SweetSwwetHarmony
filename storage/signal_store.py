@@ -63,7 +63,7 @@ logger = logging.getLogger(__name__)
 # SCHEMA VERSION
 # =============================================================================
 
-CURRENT_SCHEMA_VERSION = 14
+CURRENT_SCHEMA_VERSION = 15
 
 # SQL for creating tables (migrations applied in order)
 MIGRATIONS = {
@@ -1025,6 +1025,49 @@ MIGRATIONS = {
         ('valuation_post_money_usd', 'Post-Money Valuation', 'numeric', 'USD', 'Post-money valuation'),
         ('round_size_usd', 'Round Size', 'numeric', 'USD', 'Current round size'),
         ('cap_table_snapshot', 'Cap Table', 'json', NULL, 'Cap table snapshot as JSON');
+    """,
+    15: """
+    -- =============================================================================
+    -- PHASE 2: DISCOVERY CACHE - Curated Discovery Support
+    -- =============================================================================
+    -- Adds discovery cache tables for problem-based search with 24hr TTL.
+    -- Enables cache-first re-runnable discovery and thesis audit trail.
+
+    -- 15.1: Discovery runs tracking
+    CREATE TABLE IF NOT EXISTS discovery_runs (
+        run_id TEXT PRIMARY KEY,
+        query TEXT NOT NULL,
+        source TEXT NOT NULL,  -- 'tavily', 'manual', etc.
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        expires_at TEXT,
+        metadata TEXT  -- JSON
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_discovery_runs_query ON discovery_runs(query);
+    CREATE INDEX IF NOT EXISTS idx_discovery_runs_expires_at ON discovery_runs(expires_at);
+
+    -- 15.2: Discovery candidates with thesis audit columns
+    CREATE TABLE IF NOT EXISTS discovery_candidates (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id TEXT NOT NULL REFERENCES discovery_runs(run_id),
+        url TEXT NOT NULL,
+        canonical_key TEXT,
+        -- Thesis audit trail (for ALL candidates)
+        keyword_score REAL,
+        keyword_category TEXT,
+        negative_keywords TEXT,  -- JSON array
+        llm_score REAL,
+        llm_category TEXT,
+        llm_rationale TEXT,
+        routing TEXT,  -- qualified, held, rejected
+        rejection_reason TEXT,
+        -- Metadata
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_disc_cand_run ON discovery_candidates(run_id);
+    CREATE INDEX IF NOT EXISTS idx_disc_cand_routing ON discovery_candidates(routing);
+    CREATE INDEX IF NOT EXISTS idx_disc_cand_canonical_key ON discovery_candidates(canonical_key);
     """
 }
 

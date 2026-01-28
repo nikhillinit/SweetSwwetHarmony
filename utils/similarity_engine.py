@@ -278,6 +278,81 @@ class SimilarityEngine:
 
         return results
 
+    async def search_by_text(
+        self,
+        query_text: str,
+        n: Optional[int] = None,
+        category_filter: Optional[str] = None,
+    ) -> List[SimilarCompany]:
+        """
+        Find N most similar companies based on problem/market description text.
+
+        This method enables problem-based discovery by searching the embedding
+        space using semantic text queries instead of existing company profiles.
+
+        Args:
+            query_text: Natural language description of problem/market
+                        (e.g., "robotic noses for scent detection")
+            n: Number of results (default: self.n_results)
+            category_filter: Optional category to filter by
+
+        Returns:
+            List of SimilarCompany sorted by similarity
+
+        Example:
+            >>> results = await engine.search_by_text(
+            ...     "AI-powered fitness coaching apps",
+            ...     n=20,
+            ...     category_filter="Consumer Health Tech"
+            ... )
+        """
+        n = n or self.n_results
+
+        # Step 1: Extract keywords from query text for FTS
+        keywords = self.keyword_extractor.extract(query_text, max_keywords=10)
+        if not keywords:
+            logger.warning(f"No keywords extracted from query text: {query_text}")
+            return []
+
+        fts_query = self.keyword_extractor.build_fts_query(keywords, operator="OR")
+
+        # Step 2: Generate query embedding from text
+        query_embedding = await self.embedding_generator.embed(query_text)
+        if query_embedding is None:
+            logger.warning(f"Could not generate embedding for query text")
+            return []
+
+        # Step 3: Stage 1 - FTS candidate retrieval
+        candidates = await self._retrieve_candidates(
+            fts_query=fts_query,
+            category=category_filter,
+            thin_profile=False,  # Text queries are explicit, not thin
+            exclude_key=None,
+        )
+
+        if not candidates:
+            logger.info(f"No candidates found for query: {query_text}")
+            return []
+
+        # Step 4: Stage 2 - Embedding rerank
+        # Create a minimal query profile for reranking
+        query_profile = {
+            "company_name": query_text,
+            "category_hints": [category_filter] if category_filter else [],
+            "business_model": "",
+        }
+
+        results = await self._rerank_candidates(
+            query_embedding=query_embedding,
+            query_profile=query_profile,
+            candidates=candidates,
+            keywords=keywords,
+            thin_profile=False,
+            n=n,
+        )
+
+        return results
+
     async def _get_profile(self, canonical_key: str) -> Optional[Dict[str, Any]]:
         """
         Get company profile from storage.

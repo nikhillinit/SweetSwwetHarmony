@@ -53,3 +53,6 @@ google-generativeai>=0.3.0
 # PDF Profiler (Phase 1)
 pymupdf>=1.23.0
 pdfplumber>=0.11.0
+
+# Curated Discovery (Phase 2)
+tavily-python>=0.3.0
