@@ -63,7 +63,7 @@ logger = logging.getLogger(__name__)
 # SCHEMA VERSION
 # =============================================================================
 
-CURRENT_SCHEMA_VERSION = 15
+CURRENT_SCHEMA_VERSION = 16
 
 # SQL for creating tables (migrations applied in order)
 MIGRATIONS = {
@@ -1068,6 +1068,210 @@ MIGRATIONS = {
     CREATE INDEX IF NOT EXISTS idx_disc_cand_run ON discovery_candidates(run_id);
     CREATE INDEX IF NOT EXISTS idx_disc_cand_routing ON discovery_candidates(routing);
     CREATE INDEX IF NOT EXISTS idx_disc_cand_canonical_key ON discovery_candidates(canonical_key);
+    """,
+    16: """
+    -- =============================================================================
+    -- COMMAND CENTER PHASE 0 - Core Infrastructure for Dashboard
+    -- =============================================================================
+    -- Adds: entity_snapshots (metadata), entity_alerts, entity_stages, jobs
+    -- For content storage, see blob_store.py (content-addressable blob storage)
+
+    -- 16.1: Entity Snapshots (metadata only, content in blob store)
+    -- Immutable history of entity state captures
+    CREATE TABLE IF NOT EXISTS entity_snapshots (
+        id TEXT PRIMARY KEY,  -- UUID
+        entity_key TEXT NOT NULL,  -- canonical key
+        source TEXT NOT NULL,  -- collector name or 'manual'
+        url TEXT,  -- source URL if applicable
+
+        -- Content fingerprint (actual content in blob store)
+        content_hash TEXT NOT NULL,  -- SHA256, references blob store
+        content_size INTEGER NOT NULL DEFAULT 0,
+
+        -- Extracted structured data
+        extracted_json TEXT,  -- JSON of key-value pairs
+        diff_summary TEXT,  -- "what changed" text from previous snapshot
+        significance_score REAL DEFAULT 0.0,  -- 0-1, how material is the change
+
+        -- Retention
+        retention_tier TEXT DEFAULT 'hot',  -- hot, warm, cold
+        captured_at TEXT NOT NULL,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_entity_snapshots_key ON entity_snapshots(entity_key);
+    CREATE INDEX IF NOT EXISTS idx_entity_snapshots_hash ON entity_snapshots(content_hash);
+    CREATE INDEX IF NOT EXISTS idx_entity_snapshots_captured ON entity_snapshots(captured_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_entity_snapshots_tier ON entity_snapshots(retention_tier);
+
+    -- 16.2: Entity Alerts (changes requiring review)
+    CREATE TABLE IF NOT EXISTS entity_alerts (
+        id TEXT PRIMARY KEY,  -- UUID
+        entity_key TEXT NOT NULL,
+        snapshot_id TEXT REFERENCES entity_snapshots(id),
+
+        -- Alert details
+        alert_type TEXT NOT NULL,  -- 'field_change', 'new_signal', 'anomaly', 'stale_data'
+        severity TEXT NOT NULL,  -- 'low', 'medium', 'high', 'critical'
+        summary TEXT NOT NULL,  -- Human-readable summary
+
+        -- Review workflow
+        status TEXT NOT NULL DEFAULT 'pending',  -- 'pending', 'accepted', 'rejected', 'snoozed'
+        reviewed_by TEXT,
+        reviewed_at TEXT,
+        snooze_until TEXT,
+
+        -- Metadata
+        metadata_json TEXT,  -- Additional context
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_entity_alerts_key ON entity_alerts(entity_key);
+    CREATE INDEX IF NOT EXISTS idx_entity_alerts_status ON entity_alerts(status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_entity_alerts_severity ON entity_alerts(severity, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_entity_alerts_snooze ON entity_alerts(snooze_until);
+
+    -- 16.3: Entity Stages (unified stage management)
+    -- Consolidates stage tracking with audit trail
+    CREATE TABLE IF NOT EXISTS entity_stages (
+        id TEXT PRIMARY KEY,  -- UUID
+        entity_key TEXT NOT NULL,
+        stage TEXT NOT NULL,  -- Inbox, Tracking, Review, Meeting, Diligence, IC, Won, Lost, Passed
+        owner TEXT,  -- Assigned GP
+        notes TEXT,  -- Markdown notes
+        next_step TEXT,  -- Next action item
+        due_date TEXT,  -- ISO date
+
+        -- Optimistic locking
+        _version INTEGER DEFAULT 1,
+
+        -- Notion sync
+        notion_synced INTEGER DEFAULT 0,
+        notion_page_id TEXT,
+
+        -- Audit
+        changed_by TEXT,
+        changed_at TEXT NOT NULL,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- One active stage per entity
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_entity_stages_key ON entity_stages(entity_key);
+    CREATE INDEX IF NOT EXISTS idx_entity_stages_stage ON entity_stages(stage);
+    CREATE INDEX IF NOT EXISTS idx_entity_stages_owner ON entity_stages(owner);
+    CREATE INDEX IF NOT EXISTS idx_entity_stages_due ON entity_stages(due_date);
+
+    -- 16.4: Entity Stage History (audit trail)
+    CREATE TABLE IF NOT EXISTS entity_stage_history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        entity_key TEXT NOT NULL,
+        old_stage TEXT,
+        new_stage TEXT NOT NULL,
+        old_owner TEXT,
+        new_owner TEXT,
+        reason TEXT,  -- Why the change was made
+        changed_by TEXT,
+        changed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_entity_stage_history_key ON entity_stage_history(entity_key);
+    CREATE INDEX IF NOT EXISTS idx_entity_stage_history_time ON entity_stage_history(changed_at DESC);
+
+    -- 16.5: Jobs (long-running background operations)
+    CREATE TABLE IF NOT EXISTS jobs (
+        id TEXT PRIMARY KEY,  -- UUID
+        job_type TEXT NOT NULL,  -- 'collect', 'process', 'sync', 'backup', 'import'
+        status TEXT NOT NULL DEFAULT 'pending',  -- 'pending', 'running', 'completed', 'failed', 'cancelled'
+
+        -- Configuration
+        params_json TEXT,  -- Job parameters
+
+        -- Progress
+        progress_pct INTEGER DEFAULT 0,
+        progress_message TEXT,
+
+        -- Results
+        result_json TEXT,  -- Job output
+        error_message TEXT,
+
+        -- Timing
+        started_at TEXT,
+        completed_at TEXT,
+
+        -- Audit
+        created_by TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_jobs_type ON jobs(job_type, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_jobs_created ON jobs(created_at DESC);
+
+    -- 16.6: Job Logs (streaming output)
+    CREATE TABLE IF NOT EXISTS job_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+        level TEXT NOT NULL,  -- 'debug', 'info', 'warning', 'error'
+        message TEXT NOT NULL,
+        logged_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_job_logs_job ON job_logs(job_id, logged_at);
+
+    -- 16.7: Saved Searches
+    CREATE TABLE IF NOT EXISTS saved_searches (
+        id TEXT PRIMARY KEY,  -- UUID
+        name TEXT NOT NULL,
+        query TEXT NOT NULL,  -- Search query
+        filters_json TEXT,  -- Applied filters
+
+        -- Tracking
+        last_run_at TEXT,
+        last_result_count INTEGER,
+
+        -- Audit
+        created_by TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_saved_searches_name ON saved_searches(name);
+
+    -- 16.8: Collections (manual groupings)
+    CREATE TABLE IF NOT EXISTS collections (
+        id TEXT PRIMARY KEY,  -- UUID
+        name TEXT NOT NULL,
+        description TEXT,
+        created_by TEXT,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_collections_name ON collections(name);
+
+    -- 16.9: Collection Members
+    CREATE TABLE IF NOT EXISTS collection_members (
+        collection_id TEXT NOT NULL REFERENCES collections(id) ON DELETE CASCADE,
+        entity_key TEXT NOT NULL,
+        added_by TEXT,
+        added_at TEXT DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (collection_id, entity_key)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_collection_members_entity ON collection_members(entity_key);
+
+    -- 16.10: User Sessions (for dashboard auth)
+    CREATE TABLE IF NOT EXISTS user_sessions (
+        id TEXT PRIMARY KEY,  -- Session ID
+        user_id TEXT NOT NULL,
+        user_email TEXT NOT NULL,
+        user_role TEXT NOT NULL DEFAULT 'readonly',  -- 'gp', 'analyst', 'readonly'
+        ip_address TEXT,
+        user_agent TEXT,
+        expires_at TEXT NOT NULL,
+        created_at TEXT DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_sessions_user ON user_sessions(user_id);
+    CREATE INDEX IF NOT EXISTS idx_sessions_expires ON user_sessions(expires_at);
     """
 }
 
@@ -1156,6 +1360,121 @@ class InboxCompany:
     owner: Optional[str] = None
     thesis_fit_score: Optional[float] = None
     vertical: Optional[str] = None
+
+
+@dataclass
+class EntitySnapshot:
+    """Immutable snapshot of entity state (metadata only, content in blob store)."""
+    id: str  # UUID
+    entity_key: str
+    source: str
+    url: Optional[str]
+    content_hash: str  # SHA256, references blob store
+    content_size: int
+    extracted_json: Optional[Dict[str, Any]] = None
+    diff_summary: Optional[str] = None
+    significance_score: float = 0.0
+    retention_tier: str = "hot"
+    captured_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+
+
+@dataclass
+class EntityAlert:
+    """Alert for entity changes requiring review."""
+    id: str  # UUID
+    entity_key: str
+    snapshot_id: Optional[str]
+    alert_type: str  # 'field_change', 'new_signal', 'anomaly', 'stale_data'
+    severity: str  # 'low', 'medium', 'high', 'critical'
+    summary: str
+    status: str = "pending"  # 'pending', 'accepted', 'rejected', 'snoozed'
+    reviewed_by: Optional[str] = None
+    reviewed_at: Optional[datetime] = None
+    snooze_until: Optional[datetime] = None
+    metadata: Optional[Dict[str, Any]] = None
+    created_at: Optional[datetime] = None
+
+
+@dataclass
+class EntityStage:
+    """Entity stage in the pipeline workflow."""
+    id: str  # UUID
+    entity_key: str
+    stage: str  # Inbox, Tracking, Review, Meeting, Diligence, IC, Won, Lost, Passed
+    owner: Optional[str] = None
+    notes: Optional[str] = None
+    next_step: Optional[str] = None
+    due_date: Optional[str] = None
+    version: int = 1
+    notion_synced: bool = False
+    notion_page_id: Optional[str] = None
+    changed_by: Optional[str] = None
+    changed_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+
+
+@dataclass
+class Job:
+    """Background job for long-running operations."""
+    id: str  # UUID
+    job_type: str  # 'collect', 'process', 'sync', 'backup', 'import'
+    status: str = "pending"  # 'pending', 'running', 'completed', 'failed', 'cancelled'
+    params: Optional[Dict[str, Any]] = None
+    progress_pct: int = 0
+    progress_message: Optional[str] = None
+    result: Optional[Dict[str, Any]] = None
+    error_message: Optional[str] = None
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+    created_by: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+
+@dataclass
+class JobLog:
+    """Log entry for a job."""
+    id: int
+    job_id: str
+    level: str  # 'debug', 'info', 'warning', 'error'
+    message: str
+    logged_at: Optional[datetime] = None
+
+
+@dataclass
+class SavedSearch:
+    """Saved search query."""
+    id: str  # UUID
+    name: str
+    query: str
+    filters: Optional[Dict[str, Any]] = None
+    last_run_at: Optional[datetime] = None
+    last_result_count: Optional[int] = None
+    created_by: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+
+@dataclass
+class Collection:
+    """Manual grouping of entities."""
+    id: str  # UUID
+    name: str
+    description: Optional[str] = None
+    created_by: Optional[str] = None
+    created_at: Optional[datetime] = None
+
+
+@dataclass
+class UserSession:
+    """User session for dashboard auth."""
+    id: str  # Session ID
+    user_id: str
+    user_email: str
+    user_role: str = "readonly"  # 'gp', 'analyst', 'readonly'
+    ip_address: Optional[str] = None
+    user_agent: Optional[str] = None
+    expires_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
 
 
 # =============================================================================

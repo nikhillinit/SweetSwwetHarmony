@@ -1,0 +1,70 @@
+# SweetSweetHarmony Caddy Configuration
+#
+# Provides HTTPS termination with automatic Let's Encrypt certificates.
+#
+# Installation:
+#   1. Install Caddy: https://caddyserver.com/docs/install
+#   2. Copy this file: sudo cp scripts/Caddyfile /etc/caddy/Caddyfile
+#   3. Update domain name below
+#   4. Reload: sudo systemctl reload caddy
+#
+# For local/Tailscale setup (no public domain):
+#   Use the tailscale-local.Caddyfile variant instead
+
+# Production: Replace with your actual domain
+harmony.example.com {
+    # API backend (FastAPI)
+    handle /api/* {
+        reverse_proxy localhost:8000
+    }
+    handle /health {
+        reverse_proxy localhost:8000
+    }
+    handle /docs {
+        reverse_proxy localhost:8000
+    }
+    handle /openapi.json {
+        reverse_proxy localhost:8000
+    }
+
+    # Dashboard (Streamlit)
+    handle {
+        reverse_proxy localhost:8501
+    }
+
+    # Compression
+    encode gzip zstd
+
+    # Security headers
+    header {
+        X-Content-Type-Options nosniff
+        X-Frame-Options DENY
+        Referrer-Policy strict-origin-when-cross-origin
+        -Server
+    }
+
+    # Rate limiting for auth endpoints
+    @auth_endpoints {
+        path /api/v1/auth/*
+    }
+    rate_limit @auth_endpoints {
+        zone auth_zone {
+            key {remote_host}
+            events 10
+            window 1m
+        }
+    }
+
+    # Logging
+    log {
+        output file /var/log/caddy/access.log {
+            roll_size 100mb
+            roll_keep 5
+        }
+    }
+}
+
+# HTTP to HTTPS redirect
+http://harmony.example.com {
+    redir https://{host}{uri} permanent
+}
