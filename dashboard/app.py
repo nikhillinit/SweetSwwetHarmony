@@ -46,6 +46,15 @@ from dashboard.mini_scout import render_mini_scout_page
 from dashboard.url_profiler_page import render_url_profiler_page
 from dashboard.monitoring_page import render_monitoring_page
 from dashboard.inbox_page import render_inbox_page
+from dashboard.api_client import (
+    APIClient,
+    is_authenticated,
+    get_current_user,
+    clear_auth,
+    check_api_connection,
+)
+from dashboard.pages.login import render_login_page
+from dashboard.pages.health import render_health_page
 
 # =============================================================================
 # CONFIG
@@ -1983,6 +1992,14 @@ def main():
     if "first_visit" not in st.session_state:
         st.session_state.first_visit = True
 
+    # Check if API is available and handle auth
+    api_available = check_api_connection()
+
+    # If API is available, require authentication
+    if api_available and not is_authenticated():
+        render_login_page()
+        return
+
     # Check data sources
     has_notion = bool(NOTION_API_KEY and NOTION_DATABASE_ID)
     has_db = Path(DB_PATH).exists()
@@ -2005,10 +2022,27 @@ def main():
                 ◆ Discovery Engine
             </div>
             <div style="font-family: 'Poppins', sans-serif; font-size: 0.8rem; color: #525252; margin-top: 0.25rem;">
-                Press On Ventures Deal Sourcing
+                Press On Ventures Command Center
             </div>
         </div>
         """, unsafe_allow_html=True)
+
+        # Show logged-in user if authenticated
+        current_user = get_current_user()
+        if current_user:
+            st.markdown(f"""
+            <div style="padding: 0.75rem 0; border-bottom: 1px solid #E0D8D1; margin-bottom: 0.5rem;">
+                <div style="font-size: 0.7rem; color: #737373; text-transform: uppercase; letter-spacing: 0.05em;">
+                    Signed in as
+                </div>
+                <div style="font-family: 'Inter', sans-serif; font-weight: 500; color: #292929; margin-top: 0.25rem;">
+                    {current_user.get('name', current_user.get('email', 'User'))}
+                </div>
+                <div style="font-size: 0.75rem; color: #6B7280;">
+                    {current_user.get('role', '').upper()}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
 
         st.markdown("<br>", unsafe_allow_html=True)
 
@@ -2017,6 +2051,7 @@ def main():
 
         view_options = []
         view_descriptions = {
+            "Health": "System status and monitoring",
             "Inbox": "Review and act on new deals",
             "Pipeline": "Your deal flow organized by stage",
             "Signals": "Newly discovered companies",
@@ -2026,12 +2061,13 @@ def main():
             "Monitoring": "Website change tracking"
         }
 
+        # Add Health view at the start, then existing views
         if has_notion and has_db:
-            view_options = ["Inbox", "Pipeline", "Signals", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring"]
+            view_options = ["Health", "Inbox", "Pipeline", "Signals", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring"]
         elif has_notion:
-            view_options = ["Inbox", "Pipeline", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring"]
+            view_options = ["Health", "Inbox", "Pipeline", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring"]
         else:
-            view_options = ["Inbox", "Signals", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring"]
+            view_options = ["Health", "Inbox", "Signals", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring"]
 
         view = st.radio(
             "View",
@@ -2049,6 +2085,13 @@ def main():
             st.cache_data.clear()
             st.rerun()
 
+        # Logout button (if authenticated)
+        if current_user:
+            st.markdown("---")
+            if st.button("Sign Out", use_container_width=True):
+                clear_auth()
+                st.rerun()
+
         # Quick help section in sidebar (using checkbox to avoid broken expander icons)
         st.markdown("---")
         show_help = st.checkbox("💡 Quick Help", value=False)
@@ -2064,9 +2107,15 @@ def main():
             """, unsafe_allow_html=True)
 
     # ==========================================================================
-    # INBOX VIEW (NEW)
+    # HEALTH VIEW (Command Center)
     # ==========================================================================
-    if view == "Inbox":
+    if view == "Health":
+        render_health_page()
+
+    # ==========================================================================
+    # INBOX VIEW
+    # ==========================================================================
+    elif view == "Inbox":
         render_inbox_page()
 
     # ==========================================================================
