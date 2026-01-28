@@ -663,7 +663,6 @@ class TestRelationshipStoreIntegration:
     """Test integration with RelationshipStore."""
 
     @pytest.mark.asyncio
-    @pytest.mark.skip(reason="upsert_lp_relationship will be added in Phase 4")
     async def test_save_to_relationship_store(self, mock_notion_transport, sample_lp_pages):
         """Can save LP relationships to RelationshipStore."""
         import tempfile
@@ -693,19 +692,26 @@ class TestRelationshipStoreIntegration:
             # Save relationships
             for rel in relationships:
                 await store.upsert_lp_relationship(
+                    me_email="user@example.com",
                     target_domain=rel.domain,
                     lp_status=rel.status.value,
-                    lp_score=rel.score,
-                    lp_names=[rel.attribution],
-                    notion_lp_ids=rel.notion_lp_ids,
+                    lp_name=rel.attribution,
+                    notion_score=rel.score,
                 )
 
             # Verify stored
-            # (This assumes we add upsert_lp_relationship to RelationshipStore)
+            for rel in relationships:
+                lp_rel = await store.get_lp_relationship("user@example.com", rel.domain)
+                assert lp_rel is not None
+                assert lp_rel.lp_status == rel.status.value
+                assert lp_rel.notion_score == rel.score
 
             await store.close()
         finally:
-            os.unlink(db_path)
+            try:
+                os.unlink(db_path)
+            except PermissionError:
+                pass  # Windows file locking
 
 
 # =============================================================================

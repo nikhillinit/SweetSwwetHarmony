@@ -308,9 +308,14 @@ class TestDatabaseIsolation:
 
         assert row is None  # Table should NOT exist in signals.db
 
-        # Cleanup
+        # Cleanup: close connections before deleting
+        await signal_store.close()
+        await relationship_store.close()
         if os.path.exists(signals_db):
-            os.unlink(signals_db)
+            try:
+                os.unlink(signals_db)
+            except PermissionError:
+                pass  # Windows file locking
 
 
 class TestStrengthScoreFormula:
@@ -380,3 +385,250 @@ class TestStrengthScoreFormula:
 
         # Should be lower than recent contact with same intro_count
         assert strength.recency_score < 0.1  # Very stale
+
+
+# =============================================================================
+# PHASE 4: LP RELATIONSHIP SUPPORT
+# =============================================================================
+
+class TestLPRelationshipSchema:
+    """Tests for LP relationship schema additions (Phase 4)."""
+
+    @pytest.mark.asyncio
+    async def test_schema_version_2_adds_lp_fields(self, temp_db):
+        """Schema v2 should add source, lp_status, lp_name columns."""
+        from storage.relationship_store import RelationshipStore
+
+        store = RelationshipStore(db_path=temp_db)
+        await store.initialize()
+
+        async with store.transaction() as conn:
+            cursor = await conn.execute("PRAGMA table_info(domain_relationships)")
+            columns = await cursor.fetchall()
+
+        column_names = {col[1] for col in columns}
+
+        # Phase 4 additions
+        lp_columns = {"source", "lp_status", "lp_name"}
+        assert lp_columns.issubset(column_names), f"Missing LP columns: {lp_columns - column_names}"
+
+
+class TestLPRelationshipUpsert:
+    """Tests for upsert_lp_relationship() method."""
+
+    @pytest.mark.asyncio
+    async def test_upsert_lp_relationship_creates_new(self, temp_db):
+        """upsert_lp_relationship() should create new LP relationship."""
+        from storage.relationship_store import RelationshipStore
+
+        store = RelationshipStore(db_path=temp_db)
+        await store.initialize()
+
+        await store.upsert_lp_relationship(
+            me_email="user@example.com",
+            target_domain="lp-firm.com",
+            lp_status="Docs Signed",
+            lp_name="John Smith",
+            notion_score=0.95,
+        )
+
+        # Verify LP relationship exists
+        lp_rel = await store.get_lp_relationship("user@example.com", "lp-firm.com")
+        assert lp_rel is not None
+        assert lp_rel.lp_status == "Docs Signed"
+        assert lp_rel.lp_name == "John Smith"
+        assert lp_rel.source == "notion_lp"
+
+    @pytest.mark.asyncio
+    async def test_upsert_lp_relationship_updates_existing(self, temp_db):
+        """upsert_lp_relationship() should update existing LP."""
+        from storage.relationship_store import RelationshipStore
+
+        store = RelationshipStore(db_path=temp_db)
+        await store.initialize()
+
+        # Initial LP
+        await store.upsert_lp_relationship(
+            me_email="user@example.com",
+            target_domain="lp-firm.com",
+            lp_status="In Database",
+            lp_name="Jane Doe",
+            notion_score=0.25,
+        )
+
+        # Update LP status
+        await store.upsert_lp_relationship(
+            me_email="user@example.com",
+            target_domain="lp-firm.com",
+            lp_status="Docs Signed",  # Status upgrade
+            lp_name="Jane Doe",
+            notion_score=0.95,  # Score upgrade
+        )
+
+        lp_rel = await store.get_lp_relationship("user@example.com", "lp-firm.com")
+        assert lp_rel.lp_status == "Docs Signed"
+        assert lp_rel.notion_score == pytest.approx(0.95)
+
+    @pytest.mark.asyncio
+    async def test_lp_relationship_preserves_gmail_data(self, temp_db):
+        """LP relationship should preserve existing Gmail data."""
+        from storage.relationship_store import RelationshipStore
+
+        store = RelationshipStore(db_path=temp_db)
+        await store.initialize()
+
+        # First: Gmail relationship
+        await store.upsert_domain_edge(
+            me_email="user@example.com",
+            target_domain="combined.com",
+            intro_count=5,
+            reply_count=3,
+            total_messages=10,
+            last_contact_at=datetime.now(timezone.utc),
+        )
+
+        # Then: LP relationship on same domain
+        await store.upsert_lp_relationship(
+            me_email="user@example.com",
+            target_domain="combined.com",
+            lp_status="Verbal Confirm",
+            lp_name="Combined Contact",
+            notion_score=0.70,
+        )
+
+        # Gmail data should still be there
+        strength = await store.get_domain_strength("user@example.com", "combined.com")
+        assert strength.intro_count == 5
+        assert strength.reply_count == 3
+
+        # LP data should also be there
+        lp_rel = await store.get_lp_relationship("user@example.com", "combined.com")
+        assert lp_rel.lp_status == "Verbal Confirm"
+
+
+class TestLPRelationshipQuery:
+    """Tests for get_lp_relationship() method."""
+
+    @pytest.mark.asyncio
+    async def test_get_lp_relationship_returns_none_if_not_found(self, temp_db):
+        """Should return None for non-existent LP relationship."""
+        from storage.relationship_store import RelationshipStore
+
+        store = RelationshipStore(db_path=temp_db)
+        await store.initialize()
+
+        lp_rel = await store.get_lp_relationship("user@example.com", "nonexistent.com")
+        assert lp_rel is None
+
+    @pytest.mark.asyncio
+    async def test_get_lp_relationship_returns_data(self, temp_db):
+        """Should return LPRelationship with all fields."""
+        from storage.relationship_store import RelationshipStore
+
+        store = RelationshipStore(db_path=temp_db)
+        await store.initialize()
+
+        await store.upsert_lp_relationship(
+            me_email="user@example.com",
+            target_domain="lp-fund.com",
+            lp_status="Engagement Sent",
+            lp_name="Fund Manager",
+            notion_score=0.40,
+        )
+
+        lp_rel = await store.get_lp_relationship("user@example.com", "lp-fund.com")
+
+        assert lp_rel is not None
+        assert lp_rel.target_domain == "lp-fund.com"
+        assert lp_rel.lp_status == "Engagement Sent"
+        assert lp_rel.lp_name == "Fund Manager"
+        assert lp_rel.source == "notion_lp"
+        assert lp_rel.notion_score == pytest.approx(0.40)
+
+
+class TestCombinedRelationshipQuery:
+    """Tests for get_combined_relationship() with Gmail + LP data."""
+
+    @pytest.mark.asyncio
+    async def test_get_combined_relationship_gmail_only(self, temp_db):
+        """Should return Gmail data when no LP exists."""
+        from storage.relationship_store import RelationshipStore
+
+        store = RelationshipStore(db_path=temp_db)
+        await store.initialize()
+
+        await store.upsert_domain_edge(
+            me_email="user@example.com",
+            target_domain="gmail-only.com",
+            intro_count=3,
+            reply_count=2,
+            total_messages=8,
+            last_contact_at=datetime.now(timezone.utc),
+        )
+
+        combined = await store.get_combined_relationship("user@example.com", "gmail-only.com")
+
+        assert combined is not None
+        assert combined.gmail_score is not None
+        assert combined.gmail_score > 0
+        assert combined.notion_score is None
+        assert combined.lp_status is None
+
+    @pytest.mark.asyncio
+    async def test_get_combined_relationship_lp_only(self, temp_db):
+        """Should return LP data when no Gmail exists."""
+        from storage.relationship_store import RelationshipStore
+
+        store = RelationshipStore(db_path=temp_db)
+        await store.initialize()
+
+        await store.upsert_lp_relationship(
+            me_email="user@example.com",
+            target_domain="lp-only.com",
+            lp_status="Docs Signed",
+            lp_name="LP Contact",
+            notion_score=0.95,
+        )
+
+        combined = await store.get_combined_relationship("user@example.com", "lp-only.com")
+
+        assert combined is not None
+        assert combined.gmail_score is None
+        assert combined.notion_score == pytest.approx(0.95)
+        assert combined.lp_status == "Docs Signed"
+
+    @pytest.mark.asyncio
+    async def test_get_combined_relationship_both_sources(self, temp_db):
+        """Should return merged data from both Gmail and LP."""
+        from storage.relationship_store import RelationshipStore
+
+        store = RelationshipStore(db_path=temp_db)
+        await store.initialize()
+
+        # Gmail data
+        await store.upsert_domain_edge(
+            me_email="user@example.com",
+            target_domain="both.com",
+            intro_count=5,
+            reply_count=4,
+            total_messages=10,
+            last_contact_at=datetime.now(timezone.utc),
+        )
+
+        # LP data
+        await store.upsert_lp_relationship(
+            me_email="user@example.com",
+            target_domain="both.com",
+            lp_status="Verbal Confirm",
+            lp_name="Combined Person",
+            notion_score=0.70,
+        )
+
+        combined = await store.get_combined_relationship("user@example.com", "both.com")
+
+        assert combined is not None
+        assert combined.gmail_score is not None
+        assert combined.gmail_score > 0
+        assert combined.notion_score == pytest.approx(0.70)
+        assert combined.lp_status == "Verbal Confirm"
+        assert combined.lp_name == "Combined Person"
