@@ -277,3 +277,289 @@ class TestSimilarityEngineIntegration:
                 food2_idx = keys.index("domain:food2.com") if "domain:food2.com" in keys else 999
                 travel_idx = keys.index("domain:travel.com") if "domain:travel.com" in keys else 999
                 assert food2_idx < travel_idx
+
+
+class TestSearchByText:
+    """Tests for search_by_text() method - problem-based discovery."""
+
+    @pytest.mark.asyncio
+    async def test_search_by_text_basic_flow(self):
+        """search_by_text() should accept query text and return similar companies."""
+        from utils.similarity_engine import SimilarityEngine
+
+        # Mock dependencies
+        candidate_emb = np.random.randn(768).astype(np.float32)
+        mock_store = Mock()
+        mock_store.search_profiles = AsyncMock(return_value=[
+            {
+                "canonical_key": "domain:acme.ai",
+                "company_name": "Acme Inc",
+                "category": "Consumer CPG",
+                "business_model": "B2C_marketplace",
+                "embedding": candidate_emb,
+            }
+        ])
+        mock_store.get_embeddings_batch = AsyncMock(return_value={
+            "domain:acme.ai": candidate_emb
+        })
+
+        mock_generator = Mock()
+        query_embedding = np.random.randn(768).astype(np.float32)
+        mock_generator.embed = AsyncMock(return_value=query_embedding)
+
+        engine = SimilarityEngine(
+            embedding_store=mock_store,
+            embedding_generator=mock_generator,
+        )
+
+        # Execute search
+        results = await engine.search_by_text("robotic noses for scent detection", n=20)
+
+        # Assertions
+        assert isinstance(results, list)
+        mock_generator.embed.assert_called_once()
+        mock_store.search_profiles.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_search_by_text_extracts_keywords(self):
+        """search_by_text() should extract keywords from query text."""
+        from utils.similarity_engine import SimilarityEngine
+        from utils.keyword_extractor import KeywordExtractor
+
+        # Mock dependencies
+        mock_store = Mock()
+        mock_store.search_profiles = AsyncMock(return_value=[])
+
+        mock_generator = Mock()
+        mock_generator.embed = AsyncMock(return_value=np.random.randn(768).astype(np.float32))
+
+        # Real keyword extractor to verify extraction
+        real_extractor = KeywordExtractor()
+
+        engine = SimilarityEngine(
+            embedding_store=mock_store,
+            embedding_generator=mock_generator,
+            keyword_extractor=real_extractor,
+        )
+
+        # Execute search
+        await engine.search_by_text("consumer health technology wearables", n=10)
+
+        # Verify search_profiles was called with FTS query
+        assert mock_store.search_profiles.called
+        call_args = mock_store.search_profiles.call_args
+        fts_query = call_args[0][0] if call_args[0] else call_args.kwargs.get("fts_query")
+        assert fts_query is not None
+        # Should contain some of the input words
+        assert any(word in fts_query.lower() for word in ["consumer", "health", "technology", "wearables"])
+
+    @pytest.mark.asyncio
+    async def test_search_by_text_generates_query_embedding(self):
+        """search_by_text() should generate embedding for query text."""
+        from utils.similarity_engine import SimilarityEngine
+
+        mock_store = Mock()
+        mock_store.search_profiles = AsyncMock(return_value=[])
+
+        mock_generator = Mock()
+        mock_generator.embed = AsyncMock(return_value=np.random.randn(768).astype(np.float32))
+
+        engine = SimilarityEngine(
+            embedding_store=mock_store,
+            embedding_generator=mock_generator,
+        )
+
+        query_text = "AI-powered fitness coaching apps"
+        await engine.search_by_text(query_text, n=10)
+
+        # Verify embed was called with query text
+        mock_generator.embed.assert_called_once()
+        call_args = mock_generator.embed.call_args[0][0]
+        assert query_text in call_args or "fitness" in call_args.lower()
+
+    @pytest.mark.asyncio
+    async def test_search_by_text_respects_category_filter(self):
+        """search_by_text() should pass category_filter to FTS search."""
+        from utils.similarity_engine import SimilarityEngine
+
+        # Create at least min_category_count (50) candidates to ensure category path is taken
+        candidates = []
+        embeddings_map = {}
+        for i in range(60):
+            emb = np.random.randn(768).astype(np.float32)
+            key = f"domain:food{i}.com"
+            candidates.append({
+                "canonical_key": key,
+                "company_name": f"Food Co {i}",
+                "category": "Consumer CPG",
+                "business_model": "B2C_marketplace",
+                "embedding": emb,
+            })
+            embeddings_map[key] = emb
+
+        mock_store = Mock()
+        mock_store.search_profiles = AsyncMock(return_value=candidates)
+        mock_store.get_embeddings_batch = AsyncMock(return_value=embeddings_map)
+
+        mock_generator = Mock()
+        mock_generator.embed = AsyncMock(return_value=np.random.randn(768).astype(np.float32))
+
+        engine = SimilarityEngine(
+            embedding_store=mock_store,
+            embedding_generator=mock_generator,
+        )
+
+        await engine.search_by_text("food delivery", n=10, category_filter="Consumer CPG")
+
+        # Verify category was passed (should be in first call since we have enough candidates)
+        call_kwargs = mock_store.search_profiles.call_args.kwargs
+        assert call_kwargs.get("category") == "Consumer CPG"
+
+    @pytest.mark.asyncio
+    async def test_search_by_text_respects_n_limit(self):
+        """search_by_text() should respect n parameter."""
+        from utils.similarity_engine import SimilarityEngine
+
+        # Create 50 mock candidates
+        candidates = []
+        embeddings_map = {}
+        for i in range(50):
+            emb = np.random.randn(768).astype(np.float32)
+            key = f"domain:company{i}.com"
+            candidates.append({
+                "canonical_key": key,
+                "company_name": f"Company {i}",
+                "category": "Consumer CPG",
+                "business_model": "B2C_marketplace",
+                "embedding": emb,
+            })
+            embeddings_map[key] = emb
+
+        mock_store = Mock()
+        mock_store.search_profiles = AsyncMock(return_value=candidates)
+        mock_store.get_embeddings_batch = AsyncMock(return_value=embeddings_map)
+
+        mock_generator = Mock()
+        mock_generator.embed = AsyncMock(return_value=np.random.randn(768).astype(np.float32))
+
+        engine = SimilarityEngine(
+            embedding_store=mock_store,
+            embedding_generator=mock_generator,
+        )
+
+        results = await engine.search_by_text("consumer apps", n=10)
+
+        # Should return at most 10 results
+        assert len(results) <= 10
+
+    @pytest.mark.asyncio
+    async def test_search_by_text_reranks_with_embeddings(self):
+        """search_by_text() should rerank FTS candidates by semantic similarity."""
+        from utils.similarity_engine import SimilarityEngine
+
+        # Create candidates with different embeddings
+        query_emb = np.random.randn(768).astype(np.float32)
+        query_emb = query_emb / np.linalg.norm(query_emb)  # Normalize
+
+        similar_emb = query_emb + np.random.randn(768).astype(np.float32) * 0.1
+        similar_emb = similar_emb / np.linalg.norm(similar_emb)
+
+        different_emb = np.random.randn(768).astype(np.float32)
+        different_emb = different_emb / np.linalg.norm(different_emb)
+
+        candidates = [
+            {
+                "canonical_key": "domain:different.com",
+                "company_name": "Different Co",
+                "category": "Consumer CPG",
+                "business_model": "B2C_marketplace",
+                "embedding": different_emb,
+            },
+            {
+                "canonical_key": "domain:similar.com",
+                "company_name": "Similar Co",
+                "category": "Consumer CPG",
+                "business_model": "B2C_marketplace",
+                "embedding": similar_emb,
+            },
+        ]
+
+        mock_store = Mock()
+        mock_store.search_profiles = AsyncMock(return_value=candidates)
+        mock_store.get_embeddings_batch = AsyncMock(return_value={
+            "domain:different.com": different_emb,
+            "domain:similar.com": similar_emb,
+        })
+
+        mock_generator = Mock()
+        mock_generator.embed = AsyncMock(return_value=query_emb)
+
+        engine = SimilarityEngine(
+            embedding_store=mock_store,
+            embedding_generator=mock_generator,
+        )
+
+        results = await engine.search_by_text("test query", n=10)
+
+        # Similar company should rank higher
+        if len(results) >= 2:
+            assert results[0].canonical_key == "domain:similar.com"
+
+    @pytest.mark.asyncio
+    async def test_search_by_text_returns_similar_company_objects(self):
+        """search_by_text() should return List[SimilarCompany]."""
+        from utils.similarity_engine import SimilarityEngine, SimilarCompany
+
+        candidate_emb = np.random.randn(768).astype(np.float32)
+        mock_store = Mock()
+        mock_store.search_profiles = AsyncMock(return_value=[
+            {
+                "canonical_key": "domain:test.com",
+                "company_name": "Test Inc",
+                "category": "Consumer Health Tech",
+                "business_model": "B2C_marketplace",
+                "embedding": candidate_emb,
+            }
+        ])
+        mock_store.get_embeddings_batch = AsyncMock(return_value={
+            "domain:test.com": candidate_emb
+        })
+
+        mock_generator = Mock()
+        mock_generator.embed = AsyncMock(return_value=np.random.randn(768).astype(np.float32))
+
+        engine = SimilarityEngine(
+            embedding_store=mock_store,
+            embedding_generator=mock_generator,
+        )
+
+        results = await engine.search_by_text("health apps", n=5)
+
+        # Verify return type
+        assert isinstance(results, list)
+        if results:
+            assert isinstance(results[0], SimilarCompany)
+            assert hasattr(results[0], "canonical_key")
+            assert hasattr(results[0], "similarity_score")
+            assert hasattr(results[0], "match_reasons")
+
+    @pytest.mark.asyncio
+    async def test_search_by_text_handles_empty_results(self):
+        """search_by_text() should handle no candidates gracefully."""
+        from utils.similarity_engine import SimilarityEngine
+
+        mock_store = Mock()
+        mock_store.search_profiles = AsyncMock(return_value=[])
+
+        mock_generator = Mock()
+        mock_generator.embed = AsyncMock(return_value=np.random.randn(768).astype(np.float32))
+
+        engine = SimilarityEngine(
+            embedding_store=mock_store,
+            embedding_generator=mock_generator,
+        )
+
+        results = await engine.search_by_text("nonexistent niche", n=10)
+
+        assert isinstance(results, list)
+        assert len(results) == 0
