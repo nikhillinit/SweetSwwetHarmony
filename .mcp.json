@@ -1,25 +1,12 @@
 {
-    "mcpServers":  {
-                       "discovery-engine":  {
-                                                "args":  [
-                                                             "/c",
-                                                             "C:\\dev\\Harmonic\\run_discovery_engine.bat"
-                                                         ],
-                                                "command":  "cmd"
-                                            },
-                       "filesystem":  {
-                                          "args":  [
-                                                       "/c",
-                                                       "npx",
-                                                       "-y",
-                                                       "@anthropic/mcp-server-filesystem",
-                                                       "--allow-dir",
-                                                       "."
-                                                   ],
-                                          "env":  {
-
-                                                  },
-                                          "command":  "cmd"
-                                      }
-                   }
+  "mcpServers": {
+    "discovery-engine": {
+      "command": "cmd",
+      "args": ["/c", "C:\\dev\\Harmonic\\run_discovery_engine.bat"]
+    },
+    "filesystem": {
+      "command": "cmd",
+      "args": ["/c", "npx", "-y", "@modelcontextprotocol/server-filesystem", "C:\\dev\\Harmonic"]
+    }
+  }
 }
