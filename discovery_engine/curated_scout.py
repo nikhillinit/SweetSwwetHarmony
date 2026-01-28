@@ -405,11 +405,22 @@ class CuratedScout:
         for candidate in qualified_candidates:
             try:
                 canonical_key = candidate["canonical_key"]
+                domain = canonical_key.replace("domain:", "") if canonical_key.startswith("domain:") else canonical_key
 
-                # Enrich with orchestrator (will create signals)
-                enrichment_result = await self.signal_orchestrator.enrich(canonical_key)
+                # TODO: Full integration - use SignalOrchestrator.enrich_domains()
+                # enriched = await self.signal_orchestrator.enrich_domains([domain])
+                # For now, return placeholder count
+                logger.info(f"Would enrich {canonical_key} (integration pending)")
 
-                signals_persisted += enrichment_result.get("signal_count", 0)
+                # TODO: After signal creation, save thesis classification:
+                # if signal_id:
+                #     await self.thesis_filter.save_classification(
+                #         signal_id=signal_id,
+                #         canonical_key=canonical_key,
+                #         classification=candidate["classification"]
+                #     )
+
+                signals_persisted += 1  # Placeholder count
 
             except Exception as e:
                 logger.error(f"Failed to enrich {candidate['canonical_key']}: {e}")

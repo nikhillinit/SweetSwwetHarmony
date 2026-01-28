@@ -9,12 +9,17 @@ Routes signals to QUALIFIED, HELD, or REJECTED based on thesis fit.
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from utils.thesis_matcher import ThesisMatcher
+
+if TYPE_CHECKING:
+    from storage.signal_store import SignalStore
 
 logger = logging.getLogger(__name__)
 
@@ -82,14 +87,20 @@ class ThesisFilter:
             # Proceed to verification gate
     """
 
-    def __init__(self, config: Optional[ThesisFilterConfig] = None):
+    def __init__(
+        self,
+        config: Optional[ThesisFilterConfig] = None,
+        signal_store: Optional["SignalStore"] = None,
+    ):
         """
         Initialize thesis filter.
 
         Args:
             config: Filter configuration (uses defaults if not provided)
+            signal_store: Optional signal store for persisting classifications
         """
         self.config = config or ThesisFilterConfig()
+        self.signal_store = signal_store
         self._keyword_matcher = ThesisMatcher()
         self._llm_classifier = None  # Lazy load
 
@@ -226,3 +237,76 @@ class ThesisFilter:
             adjustment = self.config.negative_keyword_penalty
 
         return adjustment
+
+    async def save_classification(
+        self,
+        signal_id: int,
+        canonical_key: str,
+        classification: ThesisFilterResult,
+        model: str = "gemini-1.5-flash",
+        prompt_version: str = "v1",
+    ) -> None:
+        """
+        Save thesis classification to thesis_classifications table.
+
+        This method provides the integration point for CuratedScout to store
+        thesis classifications for qualified candidates with real signal_ids.
+
+        Args:
+            signal_id: Signal ID from signals table
+            canonical_key: Canonical key for the company
+            classification: Classification result from classify()
+            model: Model used for LLM classification
+            prompt_version: Prompt version identifier
+
+        Example:
+            >>> classification = await filter.classify(text)
+            >>> await filter.save_classification(
+            ...     signal_id=123,
+            ...     canonical_key="domain:acme.ai",
+            ...     classification=classification
+            ... )
+        """
+        if not self.signal_store:
+            logger.warning("No signal_store available - skipping classification save")
+            return
+
+        now = datetime.now(timezone.utc)
+
+        async with self.signal_store.transaction() as conn:
+            await conn.execute(
+                """
+                INSERT INTO thesis_classifications (
+                    signal_id, canonical_key,
+                    keyword_score, keyword_category, negative_keywords,
+                    thesis_match, thesis_fit_score, category,
+                    stage_estimate, confidence, rationale, key_signals,
+                    prompt_version, model,
+                    classified_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    signal_id,
+                    canonical_key,
+                    classification.keyword_score,
+                    classification.keyword_category,
+                    json.dumps(classification.negative_keywords),
+                    # LLM fields (may be None if skipped)
+                    classification.llm_score is not None and classification.llm_score > 0.5,
+                    classification.llm_score,
+                    classification.llm_category,
+                    None,  # stage_estimate (not in current result)
+                    None,  # confidence (not in current result)
+                    classification.llm_rationale,
+                    json.dumps(classification.keyword_matches) if classification.keyword_matches else None,
+                    prompt_version,
+                    model,
+                    now.isoformat(),
+                )
+            )
+            await conn.commit()
+
+        logger.debug(
+            f"Saved thesis classification for signal_id={signal_id}, "
+            f"canonical_key={canonical_key}, routing={classification.routing}"
+        )
