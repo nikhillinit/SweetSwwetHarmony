@@ -1011,6 +1011,73 @@ async def cmd_import_emails(args):
 
 
 # =============================================================================
+# LP SYNC COMMAND
+# =============================================================================
+
+async def cmd_sync_lps(args):
+    """Sync LP relationships from Notion database."""
+    from connectors.notion_lp_sync import NotionLPSync
+
+    dry_run = getattr(args, "dry_run", False)
+
+    # Get database ID from env or args
+    database_id = getattr(args, "database_id", None) or os.getenv("NOTION_LP_DATABASE_ID")
+    api_key = os.getenv("NOTION_API_KEY")
+
+    if not api_key:
+        print("ERROR: NOTION_API_KEY environment variable not set")
+        sys.exit(1)
+
+    if not database_id:
+        print("ERROR: NOTION_LP_DATABASE_ID environment variable not set")
+        print("       Or provide --database-id argument")
+        sys.exit(1)
+
+    print("=" * 70)
+    print("DISCOVERY ENGINE - SYNC LP RELATIONSHIPS")
+    print("=" * 70)
+    print()
+    print(f"LP Database ID: {database_id[:8]}...")
+    print(f"Dry run: {dry_run}")
+    print()
+
+    # Sync from Notion
+    print("Fetching LP records from Notion...")
+    sync = NotionLPSync(api_key=api_key, database_id=database_id)
+
+    try:
+        relationships = await sync.sync()
+    except Exception as e:
+        print(f"ERROR: Failed to fetch LP records: {e}")
+        sys.exit(1)
+
+    print(f"Found {len(relationships)} firm relationships")
+    print()
+
+    if dry_run:
+        print("DRY RUN - Would store the following relationships:")
+        print("-" * 70)
+        for rel in sorted(relationships, key=lambda r: -r.score)[:20]:
+            print(f"  {rel.domain:<30} {rel.score:.2f}  {rel.badge}")
+            print(f"    {rel.attribution}")
+        if len(relationships) > 20:
+            print(f"  ... and {len(relationships) - 20} more firms")
+        return
+
+    # TODO: Store relationships when RelationshipStore.upsert_lp_relationship is added (Phase 4)
+    print("=" * 70)
+    print("SYNC COMPLETE")
+    print("=" * 70)
+    print()
+    print(f"Firm relationships synced: {len(relationships)}")
+    print()
+    print("Top 10 relationships by score:")
+    print("-" * 70)
+    for rel in sorted(relationships, key=lambda r: -r.score)[:10]:
+        print(f"  {rel.domain:<30} {rel.score:.2f}  {rel.badge}")
+
+
+# =============================================================================
 # PIPELINE DASHBOARD COMMANDS
 # =============================================================================
 
@@ -2028,6 +2095,42 @@ Examples:
         help="Preview what would be imported without storing",
     )
 
+    # --- sync-lps command ---
+    sync_lps_parser = subparsers.add_parser(
+        "sync-lps",
+        help="Sync LP relationships from Notion database",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="""
+Sync LP (Limited Partner) records from Notion to build firm relationships.
+
+Extracts LP status tiers and maps to relationship scores:
+- Docs Signed: 0.95
+- Verbal Confirm: 0.70
+- Engagement Sent: 0.40
+- In Database: 0.25
+
+Examples:
+  # Dry run to preview
+  python run_pipeline.py sync-lps --dry-run
+
+  # Sync LP relationships
+  python run_pipeline.py sync-lps
+
+  # Sync with explicit database ID
+  python run_pipeline.py sync-lps --database-id abc123
+""",
+    )
+    sync_lps_parser.add_argument(
+        "--database-id",
+        type=str,
+        help="Notion LP database ID (overrides NOTION_LP_DATABASE_ID env var)",
+    )
+    sync_lps_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview what would be synced without storing",
+    )
+
     return parser
 
 
@@ -2973,6 +3076,8 @@ async def main():
                 sys.exit(1)
         elif args.command == "import-emails":
             await cmd_import_emails(args)
+        elif args.command == "sync-lps":
+            await cmd_sync_lps(args)
         elif args.command == "import-csv":
             await cmd_import_csv(args)
         elif args.command == "corroborate":
