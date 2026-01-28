@@ -631,3 +631,152 @@ class TestSchemaVersion:
 
         for version, sql in MIGRATIONS.items():
             assert sql.strip(), f"Migration v{version} has empty SQL"
+
+
+# =============================================================================
+# MIGRATION 14 TESTS - Finance Predicates
+# =============================================================================
+
+class TestMigration14FinancePredicates:
+    """Tests for migration 14 - Finance predicates for PDF profiler."""
+
+    @pytest.mark.asyncio
+    async def test_migration_14_creates_finance_predicates(self, fresh_db: tuple[SignalStore, str]):
+        """Migration 14 should insert 7 finance predicates."""
+        store, path = fresh_db
+
+        # Query predicates table
+        cursor = await store._db.execute(
+            """SELECT name, display_name, data_type, units, description
+               FROM predicates
+               WHERE name IN (
+                   'burn_rate_usd_monthly', 'runway_months', 'cash_on_hand_usd',
+                   'valuation_pre_money_usd', 'valuation_post_money_usd',
+                   'round_size_usd', 'cap_table_snapshot'
+               )
+               ORDER BY name"""
+        )
+        predicates = await cursor.fetchall()
+
+        # Should have exactly 7 finance predicates
+        assert len(predicates) == 7, "Should have 7 finance predicates"
+
+        # Verify each predicate has display_name
+        for row in predicates:
+            name, display_name, data_type, units, description = row
+            assert display_name is not None, f"Predicate {name} missing display_name"
+            assert display_name != "", f"Predicate {name} has empty display_name"
+            assert description is not None, f"Predicate {name} missing description"
+
+    @pytest.mark.asyncio
+    async def test_migration_14_burn_rate_predicate(self, fresh_db: tuple[SignalStore, str]):
+        """Verify burn_rate_usd_monthly predicate structure."""
+        store, path = fresh_db
+
+        cursor = await store._db.execute(
+            """SELECT display_name, data_type, units FROM predicates
+               WHERE name = 'burn_rate_usd_monthly'"""
+        )
+        row = await cursor.fetchone()
+
+        assert row is not None, "burn_rate_usd_monthly predicate should exist"
+        display_name, data_type, units = row
+        assert display_name == "Monthly Burn Rate"
+        assert data_type == "numeric"
+        assert units == "USD/month"
+
+    @pytest.mark.asyncio
+    async def test_migration_14_runway_predicate(self, fresh_db: tuple[SignalStore, str]):
+        """Verify runway_months predicate structure."""
+        store, path = fresh_db
+
+        cursor = await store._db.execute(
+            """SELECT display_name, data_type, units FROM predicates
+               WHERE name = 'runway_months'"""
+        )
+        row = await cursor.fetchone()
+
+        assert row is not None, "runway_months predicate should exist"
+        display_name, data_type, units = row
+        assert display_name == "Runway"
+        assert data_type == "numeric"
+        assert units == "months"
+
+    @pytest.mark.asyncio
+    async def test_migration_14_cash_on_hand_predicate(self, fresh_db: tuple[SignalStore, str]):
+        """Verify cash_on_hand_usd predicate structure."""
+        store, path = fresh_db
+
+        cursor = await store._db.execute(
+            """SELECT display_name, data_type, units FROM predicates
+               WHERE name = 'cash_on_hand_usd'"""
+        )
+        row = await cursor.fetchone()
+
+        assert row is not None, "cash_on_hand_usd predicate should exist"
+        display_name, data_type, units = row
+        assert display_name == "Cash on Hand"
+        assert data_type == "numeric"
+        assert units == "USD"
+
+    @pytest.mark.asyncio
+    async def test_migration_14_valuation_predicates(self, fresh_db: tuple[SignalStore, str]):
+        """Verify pre/post money valuation predicates."""
+        store, path = fresh_db
+
+        cursor = await store._db.execute(
+            """SELECT name, display_name, data_type, units FROM predicates
+               WHERE name IN ('valuation_pre_money_usd', 'valuation_post_money_usd')
+               ORDER BY name"""
+        )
+        rows = await cursor.fetchall()
+
+        assert len(rows) == 2, "Should have both pre/post money valuation predicates"
+
+        # Check pre-money
+        pre_money = next((r for r in rows if r[0] == "valuation_pre_money_usd"), None)
+        assert pre_money is not None
+        assert pre_money[1] == "Pre-Money Valuation"
+        assert pre_money[2] == "numeric"
+        assert pre_money[3] == "USD"
+
+        # Check post-money
+        post_money = next((r for r in rows if r[0] == "valuation_post_money_usd"), None)
+        assert post_money is not None
+        assert post_money[1] == "Post-Money Valuation"
+        assert post_money[2] == "numeric"
+        assert post_money[3] == "USD"
+
+    @pytest.mark.asyncio
+    async def test_migration_14_round_size_predicate(self, fresh_db: tuple[SignalStore, str]):
+        """Verify round_size_usd predicate structure."""
+        store, path = fresh_db
+
+        cursor = await store._db.execute(
+            """SELECT display_name, data_type, units FROM predicates
+               WHERE name = 'round_size_usd'"""
+        )
+        row = await cursor.fetchone()
+
+        assert row is not None, "round_size_usd predicate should exist"
+        display_name, data_type, units = row
+        assert display_name == "Round Size"
+        assert data_type == "numeric"
+        assert units == "USD"
+
+    @pytest.mark.asyncio
+    async def test_migration_14_cap_table_predicate(self, fresh_db: tuple[SignalStore, str]):
+        """Verify cap_table_snapshot predicate structure."""
+        store, path = fresh_db
+
+        cursor = await store._db.execute(
+            """SELECT display_name, data_type, units FROM predicates
+               WHERE name = 'cap_table_snapshot'"""
+        )
+        row = await cursor.fetchone()
+
+        assert row is not None, "cap_table_snapshot predicate should exist"
+        display_name, data_type, units = row
+        assert display_name == "Cap Table"
+        assert data_type == "json"
+        assert units is None, "JSON predicate should have NULL units"

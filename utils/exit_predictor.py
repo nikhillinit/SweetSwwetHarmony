@@ -104,10 +104,12 @@ class ExitPredictor:
         founder_store: Optional["FounderStore"] = None,
         velocity_tracker: Optional["SignalVelocityTracker"] = None,
         signal_store: Optional["SignalStore"] = None,
+        claim_store: Optional["ClaimStore"] = None,
     ):
         self._founder_store = founder_store
         self._velocity_tracker = velocity_tracker
         self._signal_store = signal_store
+        self._claim_store = claim_store
 
     def _compute_traction_score(self, social_proof: Dict[str, int]) -> float:
         """
@@ -147,6 +149,94 @@ class ExitPredictor:
 
         # Log scale: log10(10_000_001) / 7 ≈ 1.0
         return min(1.0, math.log10(total_funding + 1) / 7)
+
+    async def compute_funding_score_from_claims(
+        self, canonical_key: str
+    ) -> float:
+        """
+        Compute funding score from ClaimStore finance claims.
+
+        Reads finance metrics extracted by PDFProfiler and computes
+        a funding score based on valuation, cash, runway, etc.
+
+        Args:
+            canonical_key: Entity canonical key (e.g., "domain:acme.ai")
+
+        Returns:
+            Funding score (0.0-1.0), defaults to 0.3 if no claims available
+        """
+        if not self._claim_store:
+            return 0.3  # Default when no claim_store
+
+        try:
+            # Get all extractions for this entity
+            extractions = await self._claim_store.get_extractions_by_entity(
+                canonical_key
+            )
+
+            if not extractions:
+                return 0.3  # Default for no data
+
+            # Parse finance metrics from claims
+            metrics = {}
+            for extraction in extractions:
+                predicate = extraction.get("predicate_hint", "")
+                raw_value = extraction.get("raw_text", "")
+
+                # Parse numeric values
+                try:
+                    if predicate in [
+                        "burn_rate_usd_monthly",
+                        "cash_on_hand_usd",
+                        "valuation_pre_money_usd",
+                        "valuation_post_money_usd",
+                        "round_size_usd",
+                    ]:
+                        metrics[predicate] = float(raw_value)
+                    elif predicate == "runway_months":
+                        metrics[predicate] = int(raw_value)
+                except (ValueError, TypeError):
+                    continue
+
+            if not metrics:
+                return 0.3  # No valid metrics found
+
+            # Compute funding score based on available metrics
+            # Priority: valuation > cash > round_size
+            total_funding = 0.0
+
+            # Use pre-money valuation if available
+            if "valuation_pre_money_usd" in metrics:
+                total_funding = metrics["valuation_pre_money_usd"]
+            # Or post-money valuation
+            elif "valuation_post_money_usd" in metrics:
+                total_funding = metrics["valuation_post_money_usd"]
+            # Or estimate from round size
+            elif "round_size_usd" in metrics:
+                # Rough estimate: round is ~20% of post-money
+                total_funding = metrics["round_size_usd"] * 5
+            # Or use cash on hand as minimum bound
+            elif "cash_on_hand_usd" in metrics:
+                total_funding = metrics["cash_on_hand_usd"]
+
+            if total_funding <= 0:
+                return 0.3
+
+            # Apply same log scale as _compute_funding_score
+            # Log scale: log10(10_000_001) / 7 ≈ 1.0
+            base_score = min(1.0, math.log10(total_funding + 1) / 7)
+
+            # Optional: Penalize low runway if burn rate is high
+            if "runway_months" in metrics and metrics["runway_months"] < 12:
+                # Runway < 12 months is risky, reduce score slightly
+                runway_penalty = (12 - metrics["runway_months"]) * 0.02
+                base_score = max(0.3, base_score - runway_penalty)
+
+            return base_score
+
+        except Exception:
+            # Gracefully handle any errors
+            return 0.3
 
     def _compute_age_score(self, founding_date: Optional[datetime]) -> float:
         """

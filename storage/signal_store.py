@@ -63,7 +63,7 @@ logger = logging.getLogger(__name__)
 # SCHEMA VERSION
 # =============================================================================
 
-CURRENT_SCHEMA_VERSION = 13
+CURRENT_SCHEMA_VERSION = 14
 
 # SQL for creating tables (migrations applied in order)
 MIGRATIONS = {
@@ -1008,6 +1008,23 @@ MIGRATIONS = {
 
     -- 13.4: Add created_by column to notion_outbox for audit
     ALTER TABLE notion_outbox ADD COLUMN created_by TEXT;
+    """,
+    14: """
+    -- =============================================================================
+    -- PHASE 1: FINANCE PREDICATES - PDF Profiler Support
+    -- =============================================================================
+    -- Adds finance-specific predicates to the claims ledger for PDF extraction.
+    -- Includes display_name for all predicates.
+
+    -- 14.1: Finance predicates for Data Room Profiler
+    INSERT OR IGNORE INTO predicates (name, display_name, data_type, units, description) VALUES
+        ('burn_rate_usd_monthly', 'Monthly Burn Rate', 'numeric', 'USD/month', 'Monthly cash burn rate'),
+        ('runway_months', 'Runway', 'numeric', 'months', 'Months of runway remaining'),
+        ('cash_on_hand_usd', 'Cash on Hand', 'numeric', 'USD', 'Current cash balance'),
+        ('valuation_pre_money_usd', 'Pre-Money Valuation', 'numeric', 'USD', 'Pre-money valuation'),
+        ('valuation_post_money_usd', 'Post-Money Valuation', 'numeric', 'USD', 'Post-money valuation'),
+        ('round_size_usd', 'Round Size', 'numeric', 'USD', 'Current round size'),
+        ('cap_table_snapshot', 'Cap Table', 'json', NULL, 'Cap table snapshot as JSON');
     """
 }
 
