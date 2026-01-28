@@ -927,6 +927,90 @@ async def cmd_embeddings(args):
 
 
 # =============================================================================
+# EMAIL IMPORT COMMAND
+# =============================================================================
+
+async def cmd_import_emails(args):
+    """Import emails from MBOX file into relationship graph."""
+    from connectors.local_email_scanner import LocalEmailScanner
+    from storage.relationship_store import RelationshipStore
+
+    mbox_path = args.mbox
+    my_email = args.email
+    db_path = getattr(args, "db_path", None) or "private_graph.db"
+    dry_run = getattr(args, "dry_run", False)
+
+    print("=" * 70)
+    print("DISCOVERY ENGINE - IMPORT EMAILS")
+    print("=" * 70)
+    print()
+    print(f"MBOX file: {mbox_path}")
+    print(f"My email: {my_email}")
+    print(f"Database: {db_path}")
+    print(f"Dry run: {dry_run}")
+    print()
+
+    # Scan MBOX
+    print("Scanning MBOX file...")
+    scanner = LocalEmailScanner(my_email=my_email)
+
+    try:
+        tracker = scanner.scan_mbox(mbox_path)
+    except FileNotFoundError:
+        print(f"ERROR: MBOX file not found: {mbox_path}")
+        sys.exit(1)
+
+    contacts = tracker.get_all_contacts()
+    print(f"Found {len(contacts)} unique domains")
+    print()
+
+    if dry_run:
+        print("DRY RUN - Would store the following relationships:")
+        print("-" * 70)
+        for domain, contact in sorted(contacts.items(), key=lambda x: -x[1]['total_messages'])[:20]:
+            print(f"  {domain:<30} {contact['total_messages']:>4} msgs, {contact['intro_count']:>2} intros, {contact['reply_count']:>2} replies")
+        if len(contacts) > 20:
+            print(f"  ... and {len(contacts) - 20} more domains")
+        return
+
+    # Store relationships
+    print("Storing relationships...")
+    store = RelationshipStore(db_path)
+    await store.initialize()
+
+    try:
+        stored = 0
+        for domain, contact in contacts.items():
+            await store.upsert_domain_edge(
+                me_email=my_email,
+                target_domain=domain,
+                intro_count=contact['intro_count'],
+                reply_count=contact['reply_count'],
+                total_messages=contact['total_messages'],
+                last_contact_at=contact['last_contact'],
+                first_contact_at=contact['first_contact'],
+            )
+            stored += 1
+
+        print()
+        print("=" * 70)
+        print("IMPORT COMPLETE")
+        print("=" * 70)
+        print()
+        print(f"Relationships stored: {stored}")
+        print()
+        print("Top 10 relationships by message count:")
+        print("-" * 70)
+        for domain, contact in sorted(contacts.items(), key=lambda x: -x[1]['total_messages'])[:10]:
+            strength = await store.get_domain_strength(my_email, domain)
+            score = strength.strength_score if strength else 0.0
+            print(f"  {domain:<30} {contact['total_messages']:>4} msgs, score: {score:.2f}")
+
+    finally:
+        await store.close()
+
+
+# =============================================================================
 # PIPELINE DASHBOARD COMMANDS
 # =============================================================================
 
@@ -1901,6 +1985,49 @@ Examples:
         help="Path to signals database",
     )
 
+    # --- import-emails command ---
+    import_emails_parser = subparsers.add_parser(
+        "import-emails",
+        help="Import emails from MBOX file into relationship graph",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="""
+Import Gmail Takeout MBOX file into the relationship graph.
+
+Extracts email headers and builds domain-level relationship strength scores
+based on intro count, reply rate, and recency.
+
+Examples:
+  # Dry run to preview
+  python run_pipeline.py import-emails --mbox ~/takeout.mbox --email me@startup.com --dry-run
+
+  # Import to database
+  python run_pipeline.py import-emails --mbox ~/takeout.mbox --email me@startup.com
+""",
+    )
+    import_emails_parser.add_argument(
+        "--mbox",
+        type=str,
+        required=True,
+        help="Path to MBOX file (Gmail Takeout export)",
+    )
+    import_emails_parser.add_argument(
+        "--email",
+        type=str,
+        required=True,
+        help="Your email address (to determine sent vs received)",
+    )
+    import_emails_parser.add_argument(
+        "--db-path",
+        type=str,
+        default="private_graph.db",
+        help="Path to relationship database (default: private_graph.db)",
+    )
+    import_emails_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview what would be imported without storing",
+    )
+
     return parser
 
 
@@ -2844,6 +2971,8 @@ async def main():
             else:
                 print("Schema command requires a subcommand (validate, repair, docs)")
                 sys.exit(1)
+        elif args.command == "import-emails":
+            await cmd_import_emails(args)
         elif args.command == "import-csv":
             await cmd_import_csv(args)
         elif args.command == "corroborate":
