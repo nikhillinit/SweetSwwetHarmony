@@ -18,6 +18,7 @@ Available Collectors:
                  hacker_news, arxiv, job_postings, github_activity, linkedin,
                  crunchbase, uspto, opencorporates
   - Community:   telegram, discord (requires API credentials)
+  - News:        news_api (requires GNEWS_API_KEY), rss_feeds (no API key needed)
 
 Examples:
   # Run full pipeline with specific collectors (dry run)
@@ -28,6 +29,9 @@ Examples:
 
   # Run community collectors (requires TELEGRAM_API_ID/HASH or DISCORD_BOT_TOKEN)
   python run_pipeline.py collect --collectors telegram,discord
+
+  # Run news collectors (news_api requires GNEWS_API_KEY)
+  python run_pipeline.py collect --collectors news_api,rss_feeds
 
   # Process all pending signals and push to Notion
   python run_pipeline.py process
@@ -1362,6 +1366,9 @@ Environment variables:
   NOTION_DATABASE_ID         - Notion database ID
   GITHUB_TOKEN               - GitHub API token
   COMPANIES_HOUSE_API_KEY    - UK Companies House API key
+  GNEWS_API_KEY              - GNews API key (for news_api collector)
+  RSS_FEEDS                  - Custom RSS feeds (comma-separated URLs)
+  RSS_CATEGORIES             - RSS feed categories (comma-separated: startup,health_tech,cpg)
   PARALLEL_COLLECTORS        - Run collectors in parallel (default: true)
   BATCH_SIZE                 - Processing batch size (default: 50)
   STRICT_MODE                - Require 2+ sources for auto-push (default: false)

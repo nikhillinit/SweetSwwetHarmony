@@ -74,6 +74,11 @@ SIGNAL_WEIGHTS = {
     "community_mention": 0.12,  # General community buzz (Reddit, forums)
     "telegram_mention": 0.10,  # Telegram channel mentions
     "discord_mention": 0.10,  # Discord server mentions
+    # News signal types (Phase F: News Intelligence)
+    "news_mention": 0.12,  # General news coverage
+    "funding_announcement": 0.25,  # Funding news (high weight - strong signal)
+    "product_launch": 0.15,  # Product launch announcements
+    "press_release": 0.10,  # Press releases (moderate weight)
 }
 
 # Decay half-lives (days)
@@ -93,6 +98,11 @@ HALF_LIVES = {
     "community_mention": 30,  # Community buzz decays in ~30 days
     "telegram_mention": 21,  # Telegram mentions decay faster
     "discord_mention": 21,  # Discord mentions decay faster
+    # News signals - funding has longer relevance
+    "news_mention": 30,  # General news decays in ~30 days
+    "funding_announcement": 90,  # Funding news stays relevant longer
+    "product_launch": 45,  # Product launches moderate decay
+    "press_release": 30,  # Press releases decay moderately
 }
 
 # Negative signals and their multipliers
