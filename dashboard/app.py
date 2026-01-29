@@ -53,8 +53,8 @@ from dashboard.api_client import (
     clear_auth,
     check_api_connection,
 )
-from dashboard.pages.login import render_login_page
-from dashboard.pages.health import render_health_page
+from dashboard.views.login import render_login_page
+from dashboard.views.health import render_health_page
 
 # =============================================================================
 # CONFIG
@@ -1188,6 +1188,63 @@ st.markdown("""
         animation: shimmer 1.5s infinite;
         border-radius: 8px;
         height: 200px;
+    }
+
+    /* ================================================================
+       GLOBAL BUTTON FIX - Force white text on all buttons
+       ================================================================ */
+
+    /* ALL buttons - white text on dark background */
+    .stButton > button,
+    button[kind="primary"],
+    button[kind="secondary"],
+    .stFormSubmitButton > button,
+    [data-testid="baseButton-primary"],
+    [data-testid="baseButton-secondary"],
+    [data-testid="stFormSubmitButton"] > button {
+        background-color: #292929 !important;
+        color: #FFFFFF !important;
+        border: 1px solid #292929 !important;
+        font-weight: 500 !important;
+    }
+
+    .stButton > button:hover,
+    button[kind="primary"]:hover,
+    button[kind="secondary"]:hover,
+    .stFormSubmitButton > button:hover {
+        background-color: #404040 !important;
+        color: #FFFFFF !important;
+        border-color: #404040 !important;
+    }
+
+    .stButton > button:active,
+    .stButton > button:focus {
+        color: #FFFFFF !important;
+    }
+
+    /* Ensure button text/children are white */
+    .stButton > button *,
+    .stButton > button p,
+    .stButton > button span,
+    .stFormSubmitButton > button *,
+    .stFormSubmitButton > button p,
+    .stFormSubmitButton > button span {
+        color: #FFFFFF !important;
+    }
+
+    /* Fix form input text visibility */
+    .stTextInput > div > div > input,
+    input[type="text"],
+    input[type="password"],
+    input[type="email"] {
+        color: #1F2937 !important;
+        background-color: #FFFFFF !important;
+    }
+
+    /* Fix placeholder text */
+    .stTextInput > div > div > input::placeholder,
+    input::placeholder {
+        color: #9CA3AF !important;
     }
 </style>
 """, unsafe_allow_html=True)

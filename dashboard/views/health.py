@@ -522,6 +522,69 @@ def render_alerts_section(alerts: List[Dict[str, Any]]):
 
 def render_health_page():
     """Main entry point for health dashboard page."""
+
+    # Fix button and text contrast issues
+    st.markdown("""
+    <style>
+    /* Fix button text - ensure white text on dark buttons */
+    .stButton > button {
+        color: #FFFFFF !important;
+        background-color: #292929 !important;
+        border: none !important;
+    }
+    .stButton > button:hover {
+        color: #FFFFFF !important;
+        background-color: #404040 !important;
+    }
+    .stButton > button:active {
+        color: #FFFFFF !important;
+    }
+    /* Fix primary buttons */
+    .stButton > button[kind="primary"] {
+        color: #FFFFFF !important;
+        background-color: #292929 !important;
+    }
+    /* Ensure all button text is visible */
+    .stButton button p, .stButton button span {
+        color: #FFFFFF !important;
+    }
+
+    /* Fix main content text colors */
+    .main .block-container h1,
+    .main .block-container h2,
+    .main .block-container h3 {
+        color: #1F2937 !important;
+    }
+    .main .block-container p,
+    .main .block-container span,
+    .main .block-container label {
+        color: #374151 !important;
+    }
+    .main [data-testid="stMetricValue"] {
+        color: #1F2937 !important;
+    }
+    .main [data-testid="stMetricLabel"] {
+        color: #6B7280 !important;
+    }
+    .main [data-testid="stCaptionContainer"] {
+        color: #6B7280 !important;
+    }
+
+    /* Fix tab styling */
+    .stTabs [data-baseweb="tab"] {
+        color: #374151 !important;
+    }
+    .stTabs [aria-selected="true"] {
+        color: #1F2937 !important;
+    }
+
+    /* Fix expander text */
+    .streamlit-expanderHeader {
+        color: #374151 !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
     st.markdown("# System Health")
     st.caption("Monitor system components, collectors, and background jobs")
 

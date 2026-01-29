@@ -12,9 +12,30 @@ from dashboard.api_client import APIClient, check_api_connection
 def render_login_page():
     """Render the login page."""
 
-    # Custom CSS for login page
+    # Custom CSS for login page - fix sidebar contrast
     st.markdown("""
     <style>
+    /* Fix sidebar text contrast - force readable colors */
+    [data-testid="stSidebar"] {
+        background-color: #1E1E1E !important;
+    }
+    [data-testid="stSidebar"] * {
+        color: #FFFFFF !important;
+    }
+    [data-testid="stSidebar"] p,
+    [data-testid="stSidebar"] span,
+    [data-testid="stSidebar"] label,
+    [data-testid="stSidebar"] .stMarkdown,
+    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] {
+        color: #E5E5E5 !important;
+    }
+    [data-testid="stSidebar"] h1,
+    [data-testid="stSidebar"] h2,
+    [data-testid="stSidebar"] h3 {
+        color: #FFFFFF !important;
+    }
+
+    /* Login form styling */
     .login-container {
         max-width: 400px;
         margin: 4rem auto;
@@ -45,6 +66,33 @@ def render_login_page():
         margin-top: 1.5rem;
         font-size: 0.75rem;
         color: #9CA3AF;
+    }
+
+    /* Fix input field text - visible and left-aligned */
+    .stTextInput input {
+        color: #1F2937 !important;
+        background-color: #FFFFFF !important;
+        text-align: left !important;
+        direction: ltr !important;
+    }
+    .stTextInput input::placeholder {
+        color: #9CA3AF !important;
+        text-align: left !important;
+    }
+    /* Ensure input container is left-aligned */
+    .stTextInput > div > div {
+        text-align: left !important;
+    }
+    /* Fix label visibility */
+    .stTextInput label {
+        color: #374151 !important;
+    }
+    /* Main content area text should be dark */
+    .main .block-container {
+        color: #1F2937 !important;
+    }
+    .main p, .main span, .main label {
+        color: #374151 !important;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -114,6 +162,7 @@ def render_login_page():
         st.markdown("""
         <div class="login-footer">
             <p>Development credentials:</p>
-            <p>gp@example.com / analyst@example.com</p>
+            <p><strong>gp@example.com</strong> or <strong>analyst@example.com</strong></p>
+            <p>Password: <strong>changeme123</strong></p>
         </div>
         """, unsafe_allow_html=True)

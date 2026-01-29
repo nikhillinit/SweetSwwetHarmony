@@ -194,52 +194,13 @@ async def get_detailed_health(
     # 3. Relationship health
     relationships = None
     if RELATIONSHIP_HEALTH_AVAILABLE:
-        try:
-            rel_monitor = RelationshipHealthMonitor()
-            rel_health = await rel_monitor.check_health()
-
-            email_status = "fresh"
-            email_staleness = rel_health.get("email_staleness_days", 0)
-            if email_staleness and email_staleness > 30:
-                email_status = "stale"
-                alerts.append({
-                    "type": "email_stale",
-                    "severity": "medium",
-                    "message": f"Email scan is {email_staleness} days old",
-                })
-
-            lp_status = "fresh"
-            lp_staleness = rel_health.get("lp_staleness_days", 0)
-            if lp_staleness and lp_staleness > 7:
-                lp_status = "stale"
-                alerts.append({
-                    "type": "lp_sync_stale",
-                    "severity": "low",
-                    "message": f"LP sync is {lp_staleness} days old",
-                })
-
-            relationships = RelationshipHealth(
-                email_scan_status=email_status,
-                email_last_scan=rel_health.get("email_last_scan"),
-                email_staleness_days=email_staleness,
-                lp_sync_status=lp_status,
-                lp_last_sync=rel_health.get("lp_last_sync"),
-                lp_staleness_days=lp_staleness,
-                total_relationships=rel_health.get("total_relationships", 0),
-                warm_intro_paths=rel_health.get("warm_intro_paths", 0),
-            )
-
-            components.append(ComponentHealth(
-                name="relationships",
-                status="healthy" if email_status == "fresh" and lp_status == "fresh" else "degraded",
-                message=f"{relationships.total_relationships} relationships tracked",
-            ))
-        except Exception as e:
-            components.append(ComponentHealth(
-                name="relationships",
-                status="unknown",
-                message=f"Failed to check: {e}",
-            ))
+        # RelationshipHealthMonitor requires store and user_email for full checks
+        # For now, just mark as available but not configured
+        components.append(ComponentHealth(
+            name="relationships",
+            status="unknown",
+            message="Relationship monitoring available (requires configuration)",
+        ))
 
     # 4. External API health (check tokens exist)
     api_checks = [
@@ -417,18 +378,16 @@ async def get_relationship_health():
             "message": "Relationship health monitor not installed",
         }
 
-    try:
-        monitor = RelationshipHealthMonitor()
-        health = await monitor.check_health()
-        return {
-            "status": "available",
-            **health,
-        }
-    except Exception as e:
-        return {
-            "status": "error",
-            "message": str(e),
-        }
+    # RelationshipHealthMonitor requires store and user_email parameters
+    # Return a status indicating it's available but needs configuration
+    return {
+        "status": "available",
+        "message": "Relationship monitoring available (requires store and user configuration)",
+        "email_scan_status": "unknown",
+        "lp_sync_status": "unknown",
+        "total_relationships": 0,
+        "warm_intro_paths": 0,
+    }
 
 
 @router.get("/jobs")
