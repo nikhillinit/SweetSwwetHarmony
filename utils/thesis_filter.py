@@ -56,6 +56,8 @@ class ThesisFilterResult:
     llm_rationale: Optional[str] = None
     llm_skipped: bool = False
     confidence_adjustment: float = 0.0
+    rejection_reason: Optional[str] = None
+    thesis_fit: Optional[float] = None  # Combined thesis fit score
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert result to dictionary."""
@@ -71,6 +73,10 @@ class ThesisFilterResult:
             "llm_skipped": self.llm_skipped,
             "confidence_adjustment": self.confidence_adjustment,
         }
+
+
+# Alias for backward compatibility with tests
+ThesisClassification = ThesisFilterResult
 
 
 class ThesisFilter:
