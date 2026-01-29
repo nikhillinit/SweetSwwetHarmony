@@ -1042,6 +1042,30 @@ class DiscoveryPipeline:
                     bot_token=discord_token,
                     server_ids=discord_servers if discord_servers else None,
                 )
+            elif collector_name == "news_api":
+                from collectors.news_api import NewsAPICollector
+                gnews_key = os.getenv("GNEWS_API_KEY")
+                if not gnews_key:
+                    metrics.status = "skipped"
+                    return CollectorResult(
+                        collector=collector_name,
+                        status=CollectorStatus.SKIPPED,
+                        error_message="No GNEWS_API_KEY configured",
+                        dry_run=dry_run,
+                    )
+                collector = NewsAPICollector(**common_args, api_key=gnews_key)
+            elif collector_name == "rss_feeds":
+                from collectors.rss_feeds import RSSFeedCollector
+                # RSS feeds don't require API key - use default feeds or custom from env
+                rss_feeds = os.getenv("RSS_FEEDS", "").split(",")
+                rss_feeds = [f.strip() for f in rss_feeds if f.strip()]
+                rss_categories = os.getenv("RSS_CATEGORIES", "").split(",")
+                rss_categories = [c.strip() for c in rss_categories if c.strip()]
+                collector = RSSFeedCollector(
+                    **common_args,
+                    feeds=rss_feeds if rss_feeds else None,
+                    categories=rss_categories if rss_categories else None,
+                )
             else:
                 metrics.status = "error"
                 metrics.error_messages = [f"Unknown collector: {collector_name}"]
