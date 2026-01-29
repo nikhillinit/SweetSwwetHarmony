@@ -63,7 +63,7 @@ logger = logging.getLogger(__name__)
 # SCHEMA VERSION
 # =============================================================================
 
-CURRENT_SCHEMA_VERSION = 16
+CURRENT_SCHEMA_VERSION = 17
 
 # SQL for creating tables (migrations applied in order)
 MIGRATIONS = {
@@ -1272,6 +1272,23 @@ MIGRATIONS = {
 
     CREATE INDEX IF NOT EXISTS idx_sessions_user ON user_sessions(user_id);
     CREATE INDEX IF NOT EXISTS idx_sessions_expires ON user_sessions(expires_at);
+    """,
+    17: """
+    -- =============================================================================
+    -- EVALUATION HARNESS - Chain-of-Thought Reasoning Storage
+    -- =============================================================================
+    -- Add reasoning_trace column to thesis_classifications for evaluation harness
+    -- Stores chain-of-thought reasoning from LLM classifications
+
+    ALTER TABLE thesis_classifications ADD COLUMN reasoning_trace TEXT;
+    -- JSON object containing:
+    -- - cot_enabled: boolean
+    -- - reasoning_steps: array of reasoning steps
+    -- - self_critique: optional critique response
+    -- - evaluation_model: model used if different from classifier
+
+    ALTER TABLE thesis_classifications ADD COLUMN cot_enabled INTEGER DEFAULT 0;
+    -- Whether chain-of-thought was used for this classification
     """
 }
 
@@ -3262,6 +3279,8 @@ class SignalStore:
         latency_ms: Optional[int] = None,
         competitor_flag: bool = False,
         competitor_match: Optional[Dict] = None,
+        cot_enabled: bool = False,
+        reasoning_trace: Optional[Dict] = None,
     ) -> int:
         """
         Save a thesis classification result.
@@ -3286,6 +3305,8 @@ class SignalStore:
             latency_ms: API call latency in milliseconds
             competitor_flag: Whether a competitor was detected
             competitor_match: Details of matched portfolio company
+            cot_enabled: Whether chain-of-thought reasoning was used
+            reasoning_trace: Chain-of-thought reasoning trace (JSON)
 
         Returns:
             The inserted row ID
@@ -3305,8 +3326,9 @@ class SignalStore:
                     stage_estimate, confidence, rationale, key_signals,
                     prompt_version, model, input_tokens, output_tokens, latency_ms,
                     competitor_flag, competitor_match,
+                    cot_enabled, reasoning_trace,
                     classified_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     signal_id,
@@ -3328,6 +3350,8 @@ class SignalStore:
                     latency_ms,
                     competitor_flag,
                     json.dumps(competitor_match) if competitor_match else None,
+                    1 if cot_enabled else 0,
+                    json.dumps(reasoning_trace) if reasoning_trace else None,
                     now,
                 ),
             )

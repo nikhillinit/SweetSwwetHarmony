@@ -1,0 +1,471 @@
+## Critical review of the “comments to your critique” (what still doesn’t line up with this repo)
+
+You fixed several real issues (Poppler removal, explicitly separating private graph data, and acknowledging “high‑confidence wrongness”). But the revised writeup still has a few **repo‑incorrect assumptions** and a couple of **new risks / hidden engineering traps**.
+
+### 1) **PrivacyController is conceptually good—but currently “paper armor”**
+
+* In the repo as‑is, there is **no central enforcement layer** (no middleware, no shared “data type” routing, no consent store).
+* If you add a `PrivacyController` but don’t **wire it into the actual choke points** (PDF profiling, URL profiling persistence, Notion push, any future sync), it creates a **false sense of safety**.
+* “Encryption for private fields” is a **big lift** in SQLite without SQLCipher (and adds ops complexity). For a small fund team, the “lowest-debt” privacy control is **separation of stores + safe defaults**.
+
+### 2) **Your ClaimStore integration snippet is not repo-correct**
+
+In this repo, `ClaimStore.save_extraction()` is:
+
+```py
+save_extraction(
+  entity_key, extractor_name, extractor_version,
+  predicate_hint, raw_text, source_url,
+  source_snippet=None, start_offset=None, end_offset=None
+)
+```
+
+Not:
+
+* `content=...`
+* `metadata=...`
+* `extraction_ids=[...]` on `save_claim` is correct, but **`is_private=` is not supported**.
+
+So the PDF profiler spec must follow the **exact ClaimStore API** to avoid a mismatch.
+
+### 3) **“SQL migrations/*.sql” is not how this repo migrates**
+
+This repo uses `storage/signal_store.py`’s `MIGRATIONS` dict + `CURRENT_SCHEMA_VERSION`.
+So your `migrations/002_finance_predicates.sql` plan won’t be discoverable by the existing CLI/schema tooling.
+
+### 4) **TTL cache “auto deletes after 30 days” is not automatic**
+
+SQLite will not expire rows by itself.
+If you want TTL, you need:
+
+* a `expires_at` column **and**
+* an explicit cleanup call (on command start, on a cron, or in `run_pipeline.py` maintenance commands).
+
+### 5) **WarmIntroEnhancer uses fields the repo does not expose**
+
+Investor matching results do **not** include `partner_email`. They include `investor_id`, `investor_name`, and (from the `investors` table) things like `website_domain`. So warm intro logic must key off **domain / investor_id**, not partner email.
+
+### 6) **Curated discovery cannot rely on a single “curated_discovery” signal and expect the gate to push**
+
+`verification_gate_v2` gives unknown signal types a low default weight (0.05). A single new signal type will almost always route to **HOLD**, not “Source/Tracking”.
+To be effective *and* repo-aligned, curated discovery should:
+
+* use “curated discovery” as a **seed**
+* then immediately run the existing multi-source enrichment/verification pattern (e.g., `SignalOrchestrator` collectors) to generate known signal types.
+
+---
+
+# Pragmatic Intelligence Upgrade v1.1 (Repo‑Correct Implementation Spec)
+
+**Philosophy:** maximize fund utility while minimizing engineering debt by:
+
+* reusing the repo’s existing **SignalStore / ClaimStore / URLProfiler / SimilarityEngine / ThesisFilter / VerificationGate**
+* adding only small, composable modules
+* enforcing privacy via **store separation + safe defaults**, not heavyweight encryption frameworks
+
+---
+
+## 0. Summary of Changes to Your v1.0 Blueprint
+
+### What stays
+
+* Data room profiling (PDF → structured claims)
+* Local “who can intro me?” graph (mailbox headers)
+* Curated discovery funnel + filter-first persistence
+* Confidence scoring + human review via thresholds
+
+### What changes to be repo-correct
+
+* Migrations live in `storage/signal_store.py` (not standalone SQL files)
+* PDF profiler writes **ClaimStore extractions + claims** using the existing API
+* “Review flags” are implemented via **confidence thresholds** and queryable predicates (no new claim columns required)
+* Warm intro boost keys off **investor.website_domain / investor_id** (not partner emails)
+* Curated discovery uses **existing verification gate inputs** (orchestrator collectors), not a single new signal type
+
+---
+
+## 1. System Architecture Overview
+
+| Module             | New / Edited Files                                                                                                                                                                                                                | Purpose                                                  | Data Safety Default                                           |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------- |
+| Data Room Profiler | **NEW** `profilers/pdf_profiler.py`<br>**EDIT** `storage/signal_store.py` (predicates migration)<br>**EDIT** `requirements.txt`                                                                                                   | Extract deck + financial metrics into ClaimStore         | **No PDF bytes stored**; **vision off by default**            |
+| Network Scout      | **NEW** `storage/relationship_store.py`<br>**NEW** `connectors/local_email_scanner.py`                                                                                                                                            | Build a private intro graph from local mailbox headers   | **Separate DB** (`private_graph.db`), never touched by Notion |
+| Curated Discovery  | **NEW** `discovery_engine/curated_scout.py`<br>**EDIT** `utils/similarity_engine.py` (text search)<br>**OPTIONAL EDIT** `profilers/url_profiler.py` (persist flag)<br>**EDIT** `storage/signal_store.py` (discovery cache tables) | “Problem search” + controlled ingestion of new companies | Persist only winners + TTL cache for audit                    |
+
+---
+
+## 2. Feature Spec: Data Room Profiler (Repo‑Correct)
+
+### 2.1 Files
+
+* **NEW:** `profilers/pdf_profiler.py`
+* **EDIT:** `storage/signal_store.py` (add finance predicates via new migration version)
+* **EDIT:** `requirements.txt`
+
+### 2.2 Dependencies (Debt-minimized, no Poppler)
+
+Add to `requirements.txt`:
+
+* `pymupdf>=1.23.0`  *(PDF text + render images without system deps)*
+* `pdfplumber>=0.11.0` *(optional but recommended for table fidelity; pure-Python)*
+* keep/standardize: `google-genai>=0.3.0`
+* remove: `google-generativeai` *(repo code uses `from google import genai` already)*
+
+### 2.3 Public API Design (matches repo patterns)
+
+```py
+# profilers/pdf_profiler.py
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional
+
+from storage.claim_store import ClaimStore, ClaimWithEvidence
+
+@dataclass
+class PDFProfileResult:
+    entity_key: str
+    pdf_path: str
+    claims_saved: List[ClaimWithEvidence]
+    pages_processed: int
+    used_vision: bool
+    errors: List[str]
+
+class PDFProfiler:
+    def __init__(
+        self,
+        claim_store: ClaimStore,
+        model: str = "gemini-2.0-flash",
+        extractor_version: str = "v1.0.0",
+        allow_cloud_vision: bool = False,
+    ):
+        self.claim_store = claim_store
+        self.model = model
+        self.extractor_version = extractor_version
+        self.allow_cloud_vision = allow_cloud_vision
+
+    async def profile(self, pdf_path: str, entity_key: str) -> PDFProfileResult:
+        ...
+```
+
+### 2.4 Evidence + ClaimStore writes (repo‑correct)
+
+For each extracted claim:
+
+1. Create an extraction:
+
+```py
+extraction_id = await claim_store.save_extraction(
+    entity_key=entity_key,
+    extractor_name="pdf_profiler",
+    extractor_version=self.extractor_version,
+    predicate_hint=predicate,
+    raw_text=raw_value_text_or_json_string,
+    source_url=f"file://{abs_pdf_path}#page={page_num}",
+    source_snippet=evidence_snippet,
+    start_offset=start_offset,
+    end_offset=end_offset,
+)
+```
+
+2. Save the claim:
+
+```py
+saved = await claim_store.save_claim(
+    entity_key=entity_key,
+    predicate=predicate,
+    value=value_string,
+    confidence=confidence,
+    extraction_ids=[extraction_id],
+    value_type="numeric" | "text" | "json",
+    value_num=value_num_if_numeric,
+    value_json=json_string_if_json,
+)
+```
+
+### 2.5 Financial predicates (repo migration style)
+
+**EDIT:** `storage/signal_store.py`
+
+* increment `CURRENT_SCHEMA_VERSION` (currently 13 → **14**)
+* add `MIGRATIONS[14]` with `INSERT OR IGNORE INTO predicates ...`
+
+Proposed predicate names (keep your naming, but repo-format columns):
+
+* `burn_rate_usd_monthly` (data_type: `numeric`, units: `USD/month`)
+* `runway_months` (`numeric`, units: `months`)
+* `cash_on_hand_usd` (`numeric`, units: `USD`)
+* `valuation_pre_money_usd` (`numeric`, units: `USD`)
+* `valuation_post_money_usd` (`numeric`, units: `USD`)
+* `round_size_usd` (`numeric`, units: `USD`)
+* `cap_table_snapshot` (`json`, units: NULL)
+
+**Important repo detail:** because `ClaimStore.save_claim()` upserts on `(entity_key, predicate, value)` and does **not update `value_json` on conflict**, for JSON claims you should set:
+
+* `value = f"sha256:{hash_of_canonical_json}"`
+* `value_json = canonical_json_string`
+
+That prevents overwriting and preserves change history.
+
+### 2.6 “Needs review” workflow (without schema changes)
+
+Instead of adding `needs_review` columns:
+
+* define thresholds in `PDFProfiler`:
+
+  * `FINANCE_AUTO_ACCEPT_CONFIDENCE = 0.85`
+* store the claim with its confidence
+* review is “query-based”:
+
+  * “show all finance predicates where confidence < 0.85”
+
+This is consistent with existing ClaimStore capability and keeps debt low.
+
+### 2.7 Privacy defaults (repo-friendly + practical)
+
+* **Never store PDF bytes** in SQLite.
+* **Vision is OFF by default**:
+
+  * only enable by `PDFProfiler(allow_cloud_vision=True)` or env var e.g. `ALLOW_CLOUD_VISION=true`
+* If vision is disabled, only use:
+
+  * PyMuPDF text
+  * pdfplumber tables
+  * regex/heuristics (no external calls)
+
+### 2.8 Acceptance Criteria
+
+* [ ] `PDFProfiler.profile()` saves **at least one** extraction + claim for a PDF that contains “Problem/Customer” text.
+* [ ] For a financial PDF containing a simple cap table, `cap_table_snapshot` is written with `value_type="json"` and stable `value="sha256:..."`.
+* [ ] Running with vision disabled results in **zero** calls to Gemini multimodal APIs (enforced by code path).
+* [ ] A “low-confidence finance” query (confidence < 0.85) returns expected rows via ClaimStore/DB query.
+
+---
+
+## 3. Feature Spec: Network Scout (Repo‑Correct + Privacy‑Preserving)
+
+### 3.1 Files
+
+* **NEW:** `storage/relationship_store.py`
+* **NEW:** `connectors/local_email_scanner.py`
+
+### 3.2 RelationshipStore (separate DB, async like repo stores)
+
+```py
+# storage/relationship_store.py
+import aiosqlite
+from dataclasses import dataclass
+from typing import Optional, List, Dict, Any
+
+@dataclass
+class DomainStrength:
+    domain: str
+    strength: float
+    intro_count: int
+    reply_rate: float
+    last_interaction_at: Optional[str]
+    top_topics: List[str]
+
+class RelationshipStore:
+    def __init__(self, db_path: str = "private_graph.db"):
+        self.db_path = db_path
+        self._db: Optional[aiosqlite.Connection] = None
+
+    async def initialize(self) -> None:
+        ...
+
+    async def upsert_domain_edge(
+        self,
+        me_email: str,
+        target_domain: str,
+        intro_count: int,
+        reply_rate: float,
+        last_interaction_at: Optional[str],
+        top_topics: List[str],
+        strength: float,
+    ) -> None:
+        ...
+
+    async def get_domain_strength(
+        self,
+        me_email: str,
+        target_domain: str,
+    ) -> Optional[DomainStrength]:
+        ...
+```
+
+### 3.3 Local scanner (headers-only)
+
+* Input: `.mbox` (Gmail Takeout compatible) or directory of `.eml`
+* Parse headers only:
+
+  * `From`, `To`, `Cc`, `Subject`, `Date`, `Message-ID`, `In-Reply-To`
+* Heuristics:
+
+  * intro detection: subject contains `intro|introducing|connecting|cc'ing|ccing`
+  * reply: presence of `In-Reply-To` or subject starts with `Re:`
+  * topic extraction: reuse `utils.keyword_extractor.KeywordExtractor` on subject lines
+
+### 3.4 Scoring (make it deterministic + explainable)
+
+Replace the vague `recency_decay` variable with a concrete function:
+
+* `days_since_last = (now - last_interaction).days`
+* `recency_score = max(0.0, 1.0 - min(days_since_last, 365) / 365)`
+
+Then:
+
+```
+strength = clamp01(
+  0.50 * sigmoid(intro_count) +
+  0.35 * reply_rate +
+  0.15 * recency_score
+)
+```
+
+### 3.5 Integration with Investor Matching (repo-correct keys)
+
+* Investor matching results include investor identity and the `investors` table contains `website_domain`.
+* Warm intro boost should use:
+
+  * `investor.website_domain` (or a normalized domain field)
+  * **not** `partner_email`.
+
+**Minimal‑debt approach:** do not modify the schema; just add an optional booster in code:
+
+* **NEW:** `utils/warm_intro_boost.py` (or integrate into `utils/investor_matching.py` behind a flag)
+
+Acceptance criterion is “adds explanation + score nudge”, not “hard rewrite scoring”.
+
+### 3.6 Acceptance Criteria
+
+* [ ] Scanning a small `.mbox` produces rows in `private_graph.db` and never touches `signals.db`.
+* [ ] `RelationshipStore.get_domain_strength()` returns deterministic outputs for a test fixture mailbox.
+* [ ] Optional investor match boosting uses `website_domain` and adds an explanation string like: `"Warm intro available (strength 0.72)"`.
+
+---
+
+## 4. Feature Spec: Curated Discovery + Problem Search (Repo‑Correct)
+
+### 4.1 Files
+
+* **NEW:** `discovery_engine/curated_scout.py`
+* **EDIT:** `utils/similarity_engine.py` (add text-first search)
+* **OPTIONAL EDIT:** `profilers/url_profiler.py` (add `persist: bool = True`)
+* **EDIT:** `storage/signal_store.py` (TTL discovery cache tables + schema version bump if not already used by finance migration)
+* **EDIT:** `requirements.txt` (add `tavily-python`)
+
+### 4.2 Free‑text “Problem Search” (fix the missing capability cleanly)
+
+Add to `SimilarityEngine`:
+
+```py
+async def search_by_text(
+    self,
+    query_text: str,
+    n: int = 20,
+    category_filter: Optional[str] = None,
+) -> SimilaritySearchResult:
+    """
+    Like find_similar(), but query starts as free text not canonical_key.
+    Uses:
+      - KeywordExtractor -> FTS candidates
+      - EmbeddingGenerator.embed(query_text) -> query embedding
+      - EmbeddingStore.get_embeddings_batch -> rerank
+    """
+```
+
+This is the smallest change that unlocks:
+
+* “robotic noses” → similar companies in your current universe
+* works with existing `EmbeddingStore` and `EmbeddingGenerator`
+
+### 4.3 Curated Scout pipeline (don’t fight the verification gate; feed it)
+
+Curated discovery should output *verified* candidates that can actually route through `VerificationGate`.
+
+**Pipeline:**
+
+1. **Discover URLs** (Tavily)
+2. **Ephemeral profile** each URL (URLProfiler, no persistence)
+3. **Thesis filter** using `utils.thesis_filter.ThesisFilter`
+4. For survivors, **enrich domain** using existing collectors via `discovery_engine/signal_orchestrator.SignalOrchestrator`
+5. Persist:
+
+   * store the orchestrator’s signals into `SignalStore.save_signal(...)`
+   * optionally persist URL profile claims (only for winners)
+
+This makes the output compatible with the existing push logic.
+
+### 4.4 URLProfiler persistence tiers (repo-correct minimal edit)
+
+**OPTIONAL but recommended:** update signature:
+
+```py
+async def profile(self, url: str, force_refresh: bool = False, persist: bool = True) -> CompanyProfile:
+    ...
+    if persist and self.claim_store and extraction_result:
+        claims = await self._save_to_claim_store(...)
+```
+
+Default stays `persist=True` so existing code paths do not change.
+
+### 4.5 TTL discovery cache (repo migration style)
+
+Add tables in `storage/signal_store.py` migration (same migration 14 if you want a single bump, or 15 if you prefer separation):
+
+* `discovery_runs(run_id TEXT PRIMARY KEY, query TEXT, source TEXT, created_at TEXT, expires_at TEXT, metadata TEXT)`
+* `discovery_candidates(id INTEGER PK, run_id TEXT FK, url TEXT, canonical_key TEXT, thesis_score REAL, decision TEXT, rejection_reason TEXT, created_at TEXT)`
+
+And a cleanup method called by curated scout (or `scripts/db_maintenance.py`):
+
+* `purge_expired_discovery_cache(now=...)`
+
+### 4.6 Acceptance Criteria
+
+* [ ] `SimilarityEngine.search_by_text("robotic noses")` returns results without needing a canonical key.
+* [ ] Curated scout persists **≤ 10%** of profiled URLs as signals (filter-first).
+* [ ] Survivors have ≥2 signal types (e.g., whois + hiring) so they can actually route to “Tracking/Source” under the gate.
+* [ ] Discovery cache entries older than TTL are removed by an explicit purge call.
+
+---
+
+## 5. Implementation Roadmap (Small-Team, Thin Slices)
+
+### Phase 1 — PDFProfiler + Finance Predicates
+
+* [ ] Update `requirements.txt` (google-genai, pymupdf, pdfplumber)
+* [ ] Add `MIGRATIONS[14]` + bump `CURRENT_SCHEMA_VERSION`
+* [ ] Implement `profilers/pdf_profiler.py`
+* [ ] Add tests: `tests/profilers/test_pdf_profiler.py` (fixtures: small synthetic PDFs)
+
+### Phase 2 — Problem Search + CuratedScout
+
+* [ ] Add `SimilarityEngine.search_by_text(...)`
+* [ ] Add `discovery_engine/curated_scout.py`
+* [ ] Add optional URLProfiler `persist` flag
+* [ ] Add discovery cache tables + purge hook
+
+### Phase 3 — Network Scout + Warm Intro Boost
+
+* [ ] Add `storage/relationship_store.py` (private DB)
+* [ ] Add `connectors/local_email_scanner.py` CLI
+* [ ] Add optional warm-intro boost integration keyed on investor `website_domain`
+
+---
+
+## 6. Key Remaining Risks (with repo-aligned mitigations)
+
+1. **NDA leakage via cloud vision**
+
+* Mitigation: `allow_cloud_vision=False` by default; require explicit opt-in.
+
+2. **Graph data accidentally pushed to Notion**
+
+* Mitigation: store relationships in `private_graph.db` only; don’t create SignalStore rows for it.
+
+3. **Curated discovery never surfaces because the gate holds it**
+
+* Mitigation: survivors go through existing multi-source enrichment (SignalOrchestrator) to produce known signal types.
+
+---

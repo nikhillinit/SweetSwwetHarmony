@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 # PROMPT CONFIGURATION
 # =============================================================================
 
-CLASSIFIER_PROMPT_VERSION = "v1.2.0-gemini"
+CLASSIFIER_PROMPT_VERSION = "v1.3.0-gemini-cot"
 
 CLASSIFIER_SYSTEM_PROMPT = """You are a venture capital analyst evaluating early-stage consumer startups.
 
@@ -76,6 +76,16 @@ Valid confidence: high, medium, low
 - 0.00-0.29: No match, clearly outside thesis
 """
 
+CHAIN_OF_THOUGHT_PROMPT = """Before providing your classification, think through these questions step by step:
+
+1. **Consumer vs B2B**: Who is the end customer? Individual consumers or businesses?
+2. **Category Fit**: Does this match CPG, Health Tech, Travel/Hospitality, or Marketplace?
+3. **Excluded Categories**: Is this crypto, services, developer tools, or hardware-only?
+4. **Stage Assessment**: Does this appear to be pre-seed to Series A stage?
+5. **Thesis Strength**: How strongly does this align with our investment thesis?
+
+Provide your reasoning for each step, then give your final classification."""
+
 
 # =============================================================================
 # DATA CLASSES
@@ -98,6 +108,9 @@ class ThesisClassification:
     output_tokens: Optional[int] = None
     latency_ms: Optional[int] = None
     raw_response: Optional[Dict[str, Any]] = None
+    # Chain-of-thought reasoning support
+    cot_enabled: bool = False
+    reasoning_trace: Optional[Dict[str, Any]] = None
 
 
 # =============================================================================
@@ -129,6 +142,7 @@ class LLMClassifier:
         api_key: Optional[str] = None,
         temperature: float = 0.2,
         max_tokens: int = 400,
+        cot_enabled: Optional[bool] = None,
     ):
         """
         Initialize Gemini classifier.
@@ -138,12 +152,18 @@ class LLMClassifier:
             api_key: Google API key (defaults to GOOGLE_API_KEY or GEMINI_API_KEY)
             temperature: Sampling temperature (lower = more deterministic)
             max_tokens: Max response tokens
+            cot_enabled: Enable chain-of-thought reasoning (default: from ENABLE_COT_REASONING env)
         """
         self.model_name = model
         self.api_key = api_key or os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
         self.temperature = temperature
         self.max_tokens = max_tokens
         self._client = None
+        # Chain-of-thought: enabled via param or env var
+        if cot_enabled is None:
+            self.cot_enabled = os.environ.get("ENABLE_COT_REASONING", "").lower() in ("true", "1", "yes")
+        else:
+            self.cot_enabled = cot_enabled
 
     @property
     def client(self):
@@ -183,7 +203,22 @@ class LLMClassifier:
         if context and len(context) > 500:
             context = context[:500] + "..."
 
-        user_prompt = f"""{CLASSIFIER_SYSTEM_PROMPT}
+        # Build prompt with optional chain-of-thought
+        if self.cot_enabled:
+            user_prompt = f"""{CLASSIFIER_SYSTEM_PROMPT}
+
+{CHAIN_OF_THOUGHT_PROMPT}
+
+Evaluate this signal:
+
+Title: {title}
+URL: {url}
+Source: {source}
+Context: {context if context else 'N/A'}
+
+First provide your step-by-step reasoning, then output your JSON classification."""
+        else:
+            user_prompt = f"""{CLASSIFIER_SYSTEM_PROMPT}
 
 Evaluate this signal:
 
@@ -262,6 +297,15 @@ Respond with JSON classification only."""
         except Exception:
             pass
 
+        # Build reasoning trace if CoT enabled
+        reasoning_trace = None
+        if self.cot_enabled:
+            reasoning_trace = {
+                "cot_enabled": True,
+                "raw_response_text": response_text[:2000] if response_text else None,
+                "reasoning_steps": result.get("reasoning_steps", []),
+            }
+
         return ThesisClassification(
             thesis_match=result.get("thesis_match", False),
             thesis_fit_score=float(result.get("thesis_fit_score", 0.0)),
@@ -277,6 +321,8 @@ Respond with JSON classification only."""
             output_tokens=output_tokens,
             latency_ms=latency_ms,
             raw_response=result,
+            cot_enabled=self.cot_enabled,
+            reasoning_trace=reasoning_trace,
         )
 
     def classify_sync(

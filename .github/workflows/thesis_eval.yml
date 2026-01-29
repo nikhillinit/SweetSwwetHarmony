@@ -1,0 +1,212 @@
+name: Thesis Classification Evaluation
+
+on:
+  # Run weekly on Sundays at 2 AM UTC
+  schedule:
+    - cron: '0 2 * * 0'
+
+  # Allow manual trigger
+  workflow_dispatch:
+    inputs:
+      model:
+        description: 'Model to evaluate'
+        required: false
+        default: 'google/gemini-1.5-flash'
+        type: choice
+        options:
+          - google/gemini-1.5-flash
+          - google/gemini-1.5-pro
+          - google/gemini-2.0-flash
+          - openai/gpt-4o-mini
+          - openai/gpt-4o
+      solver:
+        description: 'Solver variant to use'
+        required: false
+        default: 'thesis_with_cot'
+        type: choice
+        options:
+          - thesis_classification
+          - thesis_with_cot
+          - thesis_with_self_critique
+          - thesis_verbose_cot
+
+env:
+  PYTHON_VERSION: '3.11'
+  # Minimum acceptable accuracy threshold
+  ACCURACY_THRESHOLD: 0.75
+
+jobs:
+  evaluate:
+    name: Run Thesis Evaluation
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install inspect-ai inspect-flow
+
+      - name: Check dataset exists
+        id: check-dataset
+        run: |
+          if [ -f "datasets/thesis_ground_truth.jsonl" ]; then
+            echo "dataset_exists=true" >> $GITHUB_OUTPUT
+            echo "Dataset found"
+          else
+            echo "dataset_exists=false" >> $GITHUB_OUTPUT
+            echo "Dataset not found - will use sample data"
+          fi
+
+      - name: Run evaluation (with dataset)
+        if: steps.check-dataset.outputs.dataset_exists == 'true'
+        env:
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          MODEL="${{ github.event.inputs.model || 'google/gemini-1.5-flash' }}"
+          SOLVER="${{ github.event.inputs.solver || 'thesis_with_cot' }}"
+
+          echo "Running evaluation with model=$MODEL, solver=$SOLVER"
+
+          inspect eval tests/evaluation/thesis_eval.py:$SOLVER \
+            --model "$MODEL" \
+            --log-dir logs/thesis_eval
+
+      - name: Run evaluation (sample data)
+        if: steps.check-dataset.outputs.dataset_exists == 'false'
+        env:
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          MODEL="${{ github.event.inputs.model || 'google/gemini-1.5-flash' }}"
+
+          echo "Running evaluation with sample data, model=$MODEL"
+
+          inspect eval tests/evaluation/thesis_eval.py:thesis_sample_data \
+            --model "$MODEL" \
+            --log-dir logs/thesis_eval
+
+      - name: Parse evaluation results
+        id: parse-results
+        run: |
+          # Find the most recent log file
+          LOG_FILE=$(ls -t logs/thesis_eval/*.json 2>/dev/null | head -1)
+
+          if [ -z "$LOG_FILE" ]; then
+            echo "No evaluation log found"
+            echo "accuracy=0" >> $GITHUB_OUTPUT
+            exit 0
+          fi
+
+          # Extract accuracy from log (using jq)
+          ACCURACY=$(python -c "
+          import json
+          with open('$LOG_FILE') as f:
+              data = json.load(f)
+          metrics = data.get('results', {}).get('scores', [])
+          for m in metrics:
+              if m.get('name') == 'accuracy':
+                  print(f\"{m.get('value', 0):.4f}\")
+                  break
+          else:
+              print('0')
+          " 2>/dev/null || echo "0")
+
+          echo "accuracy=$ACCURACY" >> $GITHUB_OUTPUT
+          echo "Accuracy: $ACCURACY"
+
+      - name: Check accuracy threshold
+        run: |
+          ACCURACY="${{ steps.parse-results.outputs.accuracy }}"
+          THRESHOLD="${{ env.ACCURACY_THRESHOLD }}"
+
+          echo "Evaluation accuracy: $ACCURACY"
+          echo "Threshold: $THRESHOLD"
+
+          if (( $(echo "$ACCURACY < $THRESHOLD" | bc -l) )); then
+            echo "::warning::Accuracy ($ACCURACY) is below threshold ($THRESHOLD)"
+          else
+            echo "Accuracy ($ACCURACY) meets threshold ($THRESHOLD)"
+          fi
+
+      - name: Upload evaluation logs
+        uses: actions/upload-artifact@v4
+        with:
+          name: thesis-eval-logs
+          path: logs/thesis_eval/
+          retention-days: 30
+
+      - name: Create summary
+        run: |
+          echo "## Thesis Classification Evaluation Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Model | ${{ github.event.inputs.model || 'google/gemini-1.5-flash' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Solver | ${{ github.event.inputs.solver || 'thesis_with_cot' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Accuracy | ${{ steps.parse-results.outputs.accuracy }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Threshold | ${{ env.ACCURACY_THRESHOLD }} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "View full results in the uploaded artifacts." >> $GITHUB_STEP_SUMMARY
+
+  notify-on-failure:
+    name: Notify on Low Accuracy
+    runs-on: ubuntu-latest
+    needs: evaluate
+    if: failure() || (needs.evaluate.outputs.accuracy < env.ACCURACY_THRESHOLD)
+
+    steps:
+      - name: Create issue for low accuracy
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const accuracy = '${{ needs.evaluate.outputs.accuracy }}' || 'unknown';
+            const threshold = '${{ env.ACCURACY_THRESHOLD }}';
+
+            const title = `Thesis Evaluation: Accuracy below threshold`;
+            const body = `
+            ## Thesis Classification Accuracy Alert
+
+            The weekly thesis classification evaluation detected accuracy below threshold.
+
+            | Metric | Value |
+            |--------|-------|
+            | Current Accuracy | ${accuracy} |
+            | Threshold | ${threshold} |
+            | Run Date | ${new Date().toISOString()} |
+
+            ### Actions Required
+            1. Review recent changes to thesis_matcher.py or llm_classifier.py
+            2. Check the evaluation logs in the workflow artifacts
+            3. Consider retraining or adjusting classification thresholds
+
+            [View Workflow Run](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID})
+            `;
+
+            // Check if similar issue already exists
+            const issues = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              labels: 'thesis-eval-alert'
+            });
+
+            if (issues.data.length === 0) {
+              await github.rest.issues.create({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                title: title,
+                body: body,
+                labels: ['thesis-eval-alert', 'automated']
+              });
+            }
