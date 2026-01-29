@@ -237,7 +237,7 @@ class NewsAPICollector(BaseCollector):
         api_key: Optional[str] = None,
         keywords: Optional[List[str]] = None,
         max_results: int = 100,
-        lookback_days: int = 7,
+        lookback_days: int = 30,
         language: str = "en",
         country: str = "us",
     ):
@@ -249,7 +249,7 @@ class NewsAPICollector(BaseCollector):
             api_key: GNews API key (or set GNEWS_API_KEY env var)
             keywords: Custom keywords to search (default: thesis-aligned)
             max_results: Maximum results per keyword (default: 100)
-            lookback_days: How far back to search (default: 7 days)
+            lookback_days: How far back to search (default: 30 days)
             language: Article language (default: en)
             country: Article country (default: us)
         """
