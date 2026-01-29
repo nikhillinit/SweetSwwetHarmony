@@ -1002,6 +1002,46 @@ class DiscoveryPipeline:
                     store=common_args.get("store"),
                     api_key=oc_key,
                 )
+            elif collector_name == "telegram":
+                from collectors.telegram import TelegramCollector
+                telegram_api_id = os.getenv("TELEGRAM_API_ID")
+                telegram_api_hash = os.getenv("TELEGRAM_API_HASH")
+                if not telegram_api_id or not telegram_api_hash:
+                    metrics.status = "skipped"
+                    return CollectorResult(
+                        collector=collector_name,
+                        status=CollectorStatus.SKIPPED,
+                        error_message="No TELEGRAM_API_ID or TELEGRAM_API_HASH configured",
+                        dry_run=dry_run,
+                    )
+                # Get target channels from env
+                telegram_channels = os.getenv("TELEGRAM_CHANNELS", "").split(",")
+                telegram_channels = [c.strip() for c in telegram_channels if c.strip()]
+                collector = TelegramCollector(
+                    **common_args,
+                    api_id=telegram_api_id,
+                    api_hash=telegram_api_hash,
+                    channels=telegram_channels if telegram_channels else None,
+                )
+            elif collector_name == "discord":
+                from collectors.discord import DiscordCollector
+                discord_token = os.getenv("DISCORD_BOT_TOKEN")
+                if not discord_token:
+                    metrics.status = "skipped"
+                    return CollectorResult(
+                        collector=collector_name,
+                        status=CollectorStatus.SKIPPED,
+                        error_message="No DISCORD_BOT_TOKEN configured",
+                        dry_run=dry_run,
+                    )
+                # Get target servers from env
+                discord_servers = os.getenv("DISCORD_SERVER_IDS", "").split(",")
+                discord_servers = [int(s.strip()) for s in discord_servers if s.strip()]
+                collector = DiscordCollector(
+                    **common_args,
+                    bot_token=discord_token,
+                    server_ids=discord_servers if discord_servers else None,
+                )
             else:
                 metrics.status = "error"
                 metrics.error_messages = [f"Unknown collector: {collector_name}"]

@@ -70,6 +70,10 @@ SIGNAL_WEIGHTS = {
     "funding_event": 0.20,
     "hiring_signal": 0.30,  # High weight - active hiring is strong signal
     "github_activity": 0.18,  # Medium-high weight - founder activity
+    # Community signal types (Phase A-C: Community Signals)
+    "community_mention": 0.12,  # General community buzz (Reddit, forums)
+    "telegram_mention": 0.10,  # Telegram channel mentions
+    "discord_mention": 0.10,  # Discord server mentions
 }
 
 # Decay half-lives (days)
@@ -85,6 +89,10 @@ HALF_LIVES = {
     "funding_event": 180,
     "hiring_signal": 45,  # Slower decay - hiring signals stay relevant longer
     "github_activity": 30,  # Medium decay - activity signals fade moderately
+    # Community signals decay quickly - buzz fades fast
+    "community_mention": 30,  # Community buzz decays in ~30 days
+    "telegram_mention": 21,  # Telegram mentions decay faster
+    "discord_mention": 21,  # Discord mentions decay faster
 }
 
 # Negative signals and their multipliers
@@ -168,6 +176,7 @@ class ConfidenceBreakdown:
     velocity_boost: float = 0.0  # Boost from signal velocity/momentum
     momentum_score: float = 0.0  # Raw momentum score (0-1)
     enrichment_boost: float = 0.0  # Boost from enrichment data (Phase 2)
+    community_sentiment_boost: float = 0.0  # Boost/penalty from community sentiment (-0.15 to +0.15)
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -180,6 +189,7 @@ class ConfidenceBreakdown:
             "velocity_boost": round(self.velocity_boost, 3),
             "momentum_score": round(self.momentum_score, 3),
             "enrichment_boost": round(self.enrichment_boost, 3),
+            "community_sentiment_boost": round(self.community_sentiment_boost, 3),
             "signals_contributing": self.signals_contributing,
             "sources_checked": self.sources_checked,
             "sources": self.sources,
@@ -219,6 +229,7 @@ class VerificationGate:
     FOUNDER_BOOST_WEIGHT = 0.15  # Max boost from founder score
     VELOCITY_BOOST_WEIGHT = 0.20  # Max boost from velocity
     ENRICHMENT_BOOST_WEIGHT = 0.05  # Max boost from enrichment data
+    COMMUNITY_SENTIMENT_BOOST_WEIGHT = 0.15  # Max boost/penalty from community sentiment
 
     def __init__(
         self,
@@ -249,6 +260,7 @@ class VerificationGate:
         velocity_boost: float = 0.0,
         momentum_score: float = 0.0,
         enrichment_boost: float = 0.0,
+        community_sentiment_boost: float = 0.0,
     ) -> VerificationResult:
         """
         Main entry point: evaluate signals and decide on push action.
@@ -259,6 +271,7 @@ class VerificationGate:
             velocity_boost: Confidence boost from signal velocity (0-0.35).
             momentum_score: Raw momentum score (0-1) for tracking.
             enrichment_boost: Confidence boost from enrichment data (0-0.05).
+            community_sentiment_boost: Boost/penalty from community sentiment (-0.15 to +0.15).
         """
         if not signals:
             return VerificationResult(
@@ -295,6 +308,7 @@ class VerificationGate:
             velocity_boost=velocity_boost,
             momentum_score=momentum_score,
             enrichment_boost=enrichment_boost,
+            community_sentiment_boost=community_sentiment_boost,
         )
 
         # Determine verification status
@@ -336,6 +350,7 @@ class VerificationGate:
         velocity_boost: float = 0.0,
         momentum_score: float = 0.0,
         enrichment_boost: float = 0.0,
+        community_sentiment_boost: float = 0.0,
     ) -> ConfidenceBreakdown:
         """
         Calculate confidence score with anti-inflation protection.
@@ -347,6 +362,7 @@ class VerificationGate:
         - Founder score boost (up to 0.15)
         - Velocity boost (up to 0.20)
         - Enrichment boost (up to 0.05)
+        - Community sentiment boost/penalty (up to ±0.15)
         """
         # Group signals by source
         by_source = defaultdict(list)
@@ -464,8 +480,27 @@ class VerificationGate:
                 "effect": "boost"
             })
 
-        # Final score with all boosts
-        final_score = min(intermediate_score + founder_boost + velocity_boost_applied + enrichment_boost_applied, 1.0)
+        # Community sentiment boost/penalty (Phase A-C: Community Signals)
+        community_sentiment_boost_applied = 0.0
+        if community_sentiment_boost != 0.0:
+            # Cap at ±COMMUNITY_SENTIMENT_BOOST_WEIGHT
+            community_sentiment_boost_applied = max(
+                -self.COMMUNITY_SENTIMENT_BOOST_WEIGHT,
+                min(community_sentiment_boost, self.COMMUNITY_SENTIMENT_BOOST_WEIGHT)
+            )
+            signal_details.append({
+                "type": "community_sentiment",
+                "source": "community_collectors",
+                "sentiment_boost": round(community_sentiment_boost, 3),
+                "contribution": round(community_sentiment_boost_applied, 4),
+                "effect": "boost" if community_sentiment_boost_applied >= 0 else "penalty"
+            })
+
+        # Final score with all boosts (can't go below 0)
+        final_score = max(0.0, min(
+            intermediate_score + founder_boost + velocity_boost_applied + enrichment_boost_applied + community_sentiment_boost_applied,
+            1.0
+        ))
 
         return ConfidenceBreakdown(
             overall=final_score,
@@ -477,6 +512,7 @@ class VerificationGate:
             velocity_boost=velocity_boost_applied,
             momentum_score=momentum_score,
             enrichment_boost=enrichment_boost_applied,
+            community_sentiment_boost=community_sentiment_boost_applied,
             signals_contributing=distinct_types,
             sources_checked=sources_checked,
             sources=list(by_source.keys()),

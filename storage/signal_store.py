@@ -63,7 +63,7 @@ logger = logging.getLogger(__name__)
 # SCHEMA VERSION
 # =============================================================================
 
-CURRENT_SCHEMA_VERSION = 17
+CURRENT_SCHEMA_VERSION = 18
 
 # SQL for creating tables (migrations applied in order)
 MIGRATIONS = {
@@ -1289,6 +1289,92 @@ MIGRATIONS = {
 
     ALTER TABLE thesis_classifications ADD COLUMN cot_enabled INTEGER DEFAULT 0;
     -- Whether chain-of-thought was used for this classification
+    """,
+    18: """
+    -- =============================================================================
+    -- COMMUNITY SENTIMENT TRACKING (Phase A: Community Signals)
+    -- =============================================================================
+    -- Stores aggregated sentiment data from community sources (Reddit, Telegram, Discord).
+    -- Enables: confidence boosts/penalties based on community buzz.
+
+    -- Community sentiment aggregates per canonical key + source
+    CREATE TABLE IF NOT EXISTS community_sentiment (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        canonical_key TEXT NOT NULL,
+        source TEXT NOT NULL,              -- 'reddit', 'telegram', 'discord'
+
+        -- Sentiment metrics
+        mention_count INTEGER NOT NULL DEFAULT 0,
+        unique_authors INTEGER NOT NULL DEFAULT 0,
+        avg_sentiment_score REAL,          -- -1.0 to 1.0
+        sentiment_label TEXT,              -- 'positive', 'negative', 'neutral'
+
+        -- Distribution
+        positive_ratio REAL,               -- 0.0 to 1.0
+        negative_ratio REAL,
+        neutral_ratio REAL,
+
+        -- Confidence impact
+        confidence_boost REAL DEFAULT 0.0, -- -0.15 to +0.10
+
+        -- Keywords detected (for audit)
+        top_keywords TEXT,                 -- JSON array of most common keywords
+
+        -- Time window
+        window_start TEXT,                 -- ISO 8601
+        window_end TEXT,                   -- ISO 8601
+
+        -- Timestamps
+        analyzed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT,
+
+        -- One row per canonical_key + source (upsert pattern)
+        UNIQUE(canonical_key, source)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_community_sent_key ON community_sentiment(canonical_key);
+    CREATE INDEX IF NOT EXISTS idx_community_sent_source ON community_sentiment(source);
+    CREATE INDEX IF NOT EXISTS idx_community_sent_boost ON community_sentiment(confidence_boost);
+    CREATE INDEX IF NOT EXISTS idx_community_sent_label ON community_sentiment(sentiment_label);
+
+    -- Individual community mentions (for audit trail)
+    CREATE TABLE IF NOT EXISTS community_mentions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        canonical_key TEXT,                -- May be NULL if company not yet identified
+        source TEXT NOT NULL,              -- 'reddit', 'telegram', 'discord'
+        source_id TEXT NOT NULL,           -- Platform-specific ID
+
+        -- Content metadata (NO body text per compliance)
+        title TEXT,                        -- Post/message title (if any)
+        url TEXT,                          -- Link to source
+        author TEXT,                       -- Username (may be anonymized)
+
+        -- Sentiment
+        sentiment_score REAL,              -- -1.0 to 1.0
+        sentiment_label TEXT,              -- 'positive', 'negative', 'neutral'
+        sentiment_method TEXT,             -- 'heuristic' or 'ollama'
+        keywords_found TEXT,               -- JSON array
+
+        -- Context
+        subreddit TEXT,                    -- For Reddit
+        channel_name TEXT,                 -- For Telegram/Discord
+        engagement_score INTEGER,          -- Upvotes, reactions, etc.
+
+        -- Timestamps
+        posted_at TEXT,                    -- When originally posted
+        detected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+        -- Dedupe
+        UNIQUE(source, source_id)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_mentions_key ON community_mentions(canonical_key);
+    CREATE INDEX IF NOT EXISTS idx_mentions_source ON community_mentions(source);
+    CREATE INDEX IF NOT EXISTS idx_mentions_detected ON community_mentions(detected_at);
+    CREATE INDEX IF NOT EXISTS idx_mentions_posted ON community_mentions(posted_at);
+    CREATE INDEX IF NOT EXISTS idx_mentions_sentiment ON community_mentions(sentiment_label);
     """
 }
 
@@ -4711,6 +4797,412 @@ class SignalStore:
             "one_liner": row[9],
             "website": website,
         }
+
+    # =========================================================================
+    # COMMUNITY SENTIMENT STORAGE
+    # =========================================================================
+
+    async def save_community_mention(
+        self,
+        source: str,
+        source_id: str,
+        canonical_key: Optional[str] = None,
+        title: Optional[str] = None,
+        url: Optional[str] = None,
+        author: Optional[str] = None,
+        sentiment_score: Optional[float] = None,
+        sentiment_label: Optional[str] = None,
+        sentiment_method: Optional[str] = None,
+        keywords_found: Optional[List[str]] = None,
+        subreddit: Optional[str] = None,
+        channel_name: Optional[str] = None,
+        engagement_score: Optional[int] = None,
+        posted_at: Optional[datetime] = None,
+    ) -> int:
+        """
+        Save a community mention (Reddit, Telegram, Discord post).
+
+        Args:
+            source: Platform name ('reddit', 'telegram', 'discord')
+            source_id: Platform-specific post/message ID
+            canonical_key: Company canonical key (if identified)
+            title: Post/message title
+            url: Link to source
+            author: Username (may be anonymized)
+            sentiment_score: Sentiment score (-1.0 to 1.0)
+            sentiment_label: 'positive', 'negative', 'neutral'
+            sentiment_method: 'heuristic' or 'ollama'
+            keywords_found: List of sentiment keywords detected
+            subreddit: Reddit subreddit name
+            channel_name: Telegram/Discord channel name
+            engagement_score: Upvotes/reactions/etc.
+            posted_at: Original post timestamp
+
+        Returns:
+            Inserted row ID
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        now = datetime.now(timezone.utc).isoformat()
+        posted_at_str = posted_at.isoformat() if posted_at else None
+
+        cursor = await self._db.execute(
+            """
+            INSERT OR REPLACE INTO community_mentions (
+                source, source_id, canonical_key,
+                title, url, author,
+                sentiment_score, sentiment_label, sentiment_method,
+                keywords_found,
+                subreddit, channel_name, engagement_score,
+                posted_at, detected_at, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                source,
+                source_id,
+                canonical_key,
+                title,
+                url,
+                author,
+                sentiment_score,
+                sentiment_label,
+                sentiment_method,
+                json.dumps(keywords_found) if keywords_found else None,
+                subreddit,
+                channel_name,
+                engagement_score,
+                posted_at_str,
+                now,
+                now,
+            ),
+        )
+        await self._db.commit()
+        return cursor.lastrowid
+
+    async def save_community_sentiment(
+        self,
+        canonical_key: str,
+        source: str,
+        mention_count: int,
+        unique_authors: int,
+        avg_sentiment_score: float,
+        sentiment_label: str,
+        positive_ratio: float,
+        negative_ratio: float,
+        neutral_ratio: float,
+        confidence_boost: float,
+        top_keywords: Optional[List[str]] = None,
+        window_start: Optional[datetime] = None,
+        window_end: Optional[datetime] = None,
+    ) -> int:
+        """
+        Save aggregated community sentiment for a company.
+
+        Uses upsert pattern: updates if exists, inserts if not.
+
+        Args:
+            canonical_key: Company canonical key
+            source: Platform name ('reddit', 'telegram', 'discord')
+            mention_count: Total number of mentions
+            unique_authors: Number of unique authors
+            avg_sentiment_score: Average sentiment (-1.0 to 1.0)
+            sentiment_label: Overall label ('positive', 'negative', 'neutral')
+            positive_ratio: Ratio of positive mentions (0.0 to 1.0)
+            negative_ratio: Ratio of negative mentions
+            neutral_ratio: Ratio of neutral mentions
+            confidence_boost: Calculated confidence boost (-0.15 to +0.10)
+            top_keywords: Most common sentiment keywords
+            window_start: Start of analysis time window
+            window_end: End of analysis time window
+
+        Returns:
+            Inserted/updated row ID
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        now = datetime.now(timezone.utc).isoformat()
+        window_start_str = window_start.isoformat() if window_start else None
+        window_end_str = window_end.isoformat() if window_end else None
+
+        cursor = await self._db.execute(
+            """
+            INSERT INTO community_sentiment (
+                canonical_key, source,
+                mention_count, unique_authors,
+                avg_sentiment_score, sentiment_label,
+                positive_ratio, negative_ratio, neutral_ratio,
+                confidence_boost, top_keywords,
+                window_start, window_end,
+                analyzed_at, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(canonical_key, source) DO UPDATE SET
+                mention_count = excluded.mention_count,
+                unique_authors = excluded.unique_authors,
+                avg_sentiment_score = excluded.avg_sentiment_score,
+                sentiment_label = excluded.sentiment_label,
+                positive_ratio = excluded.positive_ratio,
+                negative_ratio = excluded.negative_ratio,
+                neutral_ratio = excluded.neutral_ratio,
+                confidence_boost = excluded.confidence_boost,
+                top_keywords = excluded.top_keywords,
+                window_start = excluded.window_start,
+                window_end = excluded.window_end,
+                analyzed_at = excluded.analyzed_at,
+                updated_at = excluded.updated_at
+            """,
+            (
+                canonical_key,
+                source,
+                mention_count,
+                unique_authors,
+                avg_sentiment_score,
+                sentiment_label,
+                positive_ratio,
+                negative_ratio,
+                neutral_ratio,
+                confidence_boost,
+                json.dumps(top_keywords) if top_keywords else None,
+                window_start_str,
+                window_end_str,
+                now,
+                now,
+                now,
+            ),
+        )
+        await self._db.commit()
+        return cursor.lastrowid
+
+    async def get_community_sentiment(
+        self,
+        canonical_key: str,
+        source: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get community sentiment for a company.
+
+        Args:
+            canonical_key: Company canonical key
+            source: Optional specific source (returns all if None)
+
+        Returns:
+            Dictionary with sentiment data or None if not found
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        if source:
+            cursor = await self._db.execute(
+                """
+                SELECT canonical_key, source,
+                       mention_count, unique_authors,
+                       avg_sentiment_score, sentiment_label,
+                       positive_ratio, negative_ratio, neutral_ratio,
+                       confidence_boost, top_keywords,
+                       window_start, window_end,
+                       analyzed_at
+                FROM community_sentiment
+                WHERE canonical_key = ? AND source = ?
+                """,
+                (canonical_key, source),
+            )
+        else:
+            cursor = await self._db.execute(
+                """
+                SELECT canonical_key, source,
+                       mention_count, unique_authors,
+                       avg_sentiment_score, sentiment_label,
+                       positive_ratio, negative_ratio, neutral_ratio,
+                       confidence_boost, top_keywords,
+                       window_start, window_end,
+                       analyzed_at
+                FROM community_sentiment
+                WHERE canonical_key = ?
+                ORDER BY analyzed_at DESC
+                """,
+                (canonical_key,),
+            )
+
+        row = await cursor.fetchone()
+        if not row:
+            return None
+
+        return {
+            "canonical_key": row[0],
+            "source": row[1],
+            "mention_count": row[2],
+            "unique_authors": row[3],
+            "avg_sentiment_score": row[4],
+            "sentiment_label": row[5],
+            "positive_ratio": row[6],
+            "negative_ratio": row[7],
+            "neutral_ratio": row[8],
+            "confidence_boost": row[9],
+            "top_keywords": json.loads(row[10]) if row[10] else [],
+            "window_start": row[11],
+            "window_end": row[12],
+            "analyzed_at": row[13],
+        }
+
+    async def get_all_community_sentiment(
+        self,
+        canonical_key: str,
+    ) -> List[Dict[str, Any]]:
+        """
+        Get community sentiment from all sources for a company.
+
+        Args:
+            canonical_key: Company canonical key
+
+        Returns:
+            List of sentiment dictionaries from each source
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        cursor = await self._db.execute(
+            """
+            SELECT canonical_key, source,
+                   mention_count, unique_authors,
+                   avg_sentiment_score, sentiment_label,
+                   positive_ratio, negative_ratio, neutral_ratio,
+                   confidence_boost, top_keywords,
+                   window_start, window_end,
+                   analyzed_at
+            FROM community_sentiment
+            WHERE canonical_key = ?
+            ORDER BY source
+            """,
+            (canonical_key,),
+        )
+
+        rows = await cursor.fetchall()
+        return [
+            {
+                "canonical_key": row[0],
+                "source": row[1],
+                "mention_count": row[2],
+                "unique_authors": row[3],
+                "avg_sentiment_score": row[4],
+                "sentiment_label": row[5],
+                "positive_ratio": row[6],
+                "negative_ratio": row[7],
+                "neutral_ratio": row[8],
+                "confidence_boost": row[9],
+                "top_keywords": json.loads(row[10]) if row[10] else [],
+                "window_start": row[11],
+                "window_end": row[12],
+                "analyzed_at": row[13],
+            }
+            for row in rows
+        ]
+
+    async def get_aggregate_community_boost(
+        self,
+        canonical_key: str,
+    ) -> float:
+        """
+        Get total confidence boost from all community sources.
+
+        Args:
+            canonical_key: Company canonical key
+
+        Returns:
+            Sum of confidence boosts (capped at +0.10 / -0.15)
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        cursor = await self._db.execute(
+            """
+            SELECT COALESCE(SUM(confidence_boost), 0.0)
+            FROM community_sentiment
+            WHERE canonical_key = ?
+            """,
+            (canonical_key,),
+        )
+        row = await cursor.fetchone()
+        total_boost = row[0] if row else 0.0
+
+        # Cap the total boost
+        return max(-0.15, min(0.10, total_boost))
+
+    async def get_community_mentions(
+        self,
+        canonical_key: str,
+        source: Optional[str] = None,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """
+        Get individual community mentions for a company.
+
+        Args:
+            canonical_key: Company canonical key
+            source: Optional specific source
+            limit: Maximum number of mentions to return
+
+        Returns:
+            List of mention dictionaries
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        if source:
+            cursor = await self._db.execute(
+                """
+                SELECT id, canonical_key, source, source_id,
+                       title, url, author,
+                       sentiment_score, sentiment_label, sentiment_method,
+                       keywords_found,
+                       subreddit, channel_name, engagement_score,
+                       posted_at, detected_at
+                FROM community_mentions
+                WHERE canonical_key = ? AND source = ?
+                ORDER BY detected_at DESC
+                LIMIT ?
+                """,
+                (canonical_key, source, limit),
+            )
+        else:
+            cursor = await self._db.execute(
+                """
+                SELECT id, canonical_key, source, source_id,
+                       title, url, author,
+                       sentiment_score, sentiment_label, sentiment_method,
+                       keywords_found,
+                       subreddit, channel_name, engagement_score,
+                       posted_at, detected_at
+                FROM community_mentions
+                WHERE canonical_key = ?
+                ORDER BY detected_at DESC
+                LIMIT ?
+                """,
+                (canonical_key, limit),
+            )
+
+        rows = await cursor.fetchall()
+        return [
+            {
+                "id": row[0],
+                "canonical_key": row[1],
+                "source": row[2],
+                "source_id": row[3],
+                "title": row[4],
+                "url": row[5],
+                "author": row[6],
+                "sentiment_score": row[7],
+                "sentiment_label": row[8],
+                "sentiment_method": row[9],
+                "keywords_found": json.loads(row[10]) if row[10] else [],
+                "subreddit": row[11],
+                "channel_name": row[12],
+                "engagement_score": row[13],
+                "posted_at": row[14],
+                "detected_at": row[15],
+            }
+            for row in rows
+        ]
 
 
 # =============================================================================
