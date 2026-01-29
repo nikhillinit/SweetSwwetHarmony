@@ -50,8 +50,8 @@ async def lifespan(app: FastAPI):
     # Write lock for single-writer pattern (SQLite concurrency)
     app.state.write_lock = asyncio.Lock()
 
-    # Seed default users in development
-    if os.getenv("API_DEBUG", "false").lower() == "true":
+    # Seed default users (always seed unless PRODUCTION=true)
+    if os.getenv("PRODUCTION", "false").lower() != "true":
         seed_default_users()
 
     yield
