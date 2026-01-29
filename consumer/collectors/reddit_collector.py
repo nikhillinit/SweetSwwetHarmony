@@ -14,6 +14,12 @@ Subreddits:
 
 Uses Reddit's public JSON API (no auth required for basic access).
 Rate limit: 60 requests/minute for unauthenticated.
+
+Features:
+- Consumer keyword filtering
+- Launch post detection
+- Sentiment analysis (title only - compliance safe)
+- Integration with community sentiment storage
 """
 
 from __future__ import annotations
@@ -22,11 +28,14 @@ import asyncio
 import logging
 import re
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 import aiohttp
 
 from .base import ConsumerCollector, Signal
+
+if TYPE_CHECKING:
+    from utils.community_sentiment import CommunitySentimentAnalyzer, SentimentResult
 
 logger = logging.getLogger(__name__)
 
@@ -85,9 +94,15 @@ class RedditCollector(ConsumerCollector):
     IMPORTANT: Stores links only, processes-and-discards body content.
     This is a compliance requirement.
 
+    Features:
+    - Consumer keyword filtering (CPG, Health Tech, Travel, Marketplaces)
+    - Launch post detection (self-promotion indicators)
+    - Sentiment analysis on TITLES ONLY (compliance-safe)
+    - Integration with community sentiment storage
+
     Usage:
         async with consumer_store("db.sqlite") as store:
-            collector = RedditCollector(store)
+            collector = RedditCollector(store, enable_sentiment=True)
             result = await collector.run()
     """
 
@@ -98,6 +113,7 @@ class RedditCollector(ConsumerCollector):
         store=None,
         subreddits: Optional[List[str]] = None,
         posts_per_subreddit: int = 25,
+        enable_sentiment: bool = True,
     ):
         """
         Initialize Reddit collector.
@@ -106,11 +122,58 @@ class RedditCollector(ConsumerCollector):
             store: ConsumerStore instance
             subreddits: List of subreddits to monitor
             posts_per_subreddit: Max posts to fetch per subreddit
+            enable_sentiment: Whether to analyze sentiment (titles only)
         """
         super().__init__(store)
         self.subreddits = subreddits or TARGET_SUBREDDITS
         self.posts_per_subreddit = posts_per_subreddit
+        self.enable_sentiment = enable_sentiment
         self._session: Optional[aiohttp.ClientSession] = None
+        self._sentiment_analyzer: Optional["CommunitySentimentAnalyzer"] = None
+
+        # Lazy-load sentiment analyzer
+        if self.enable_sentiment:
+            self._init_sentiment_analyzer()
+
+    def _init_sentiment_analyzer(self) -> None:
+        """Initialize sentiment analyzer (lazy load to avoid import overhead)."""
+        try:
+            from utils.community_sentiment import CommunitySentimentAnalyzer, SentimentConfig
+
+            # Use heuristic only for speed (no Ollama dependency)
+            config = SentimentConfig(use_ollama_if_available=False)
+            self._sentiment_analyzer = CommunitySentimentAnalyzer(config)
+            logger.debug("Reddit collector: Sentiment analysis enabled")
+        except ImportError:
+            logger.warning("Sentiment analyzer not available, skipping sentiment analysis")
+            self.enable_sentiment = False
+
+    def _analyze_title_sentiment(self, title: str) -> Optional[Dict[str, Any]]:
+        """
+        Analyze sentiment of post title.
+
+        COMPLIANCE: Only analyzes titles, NOT body content.
+
+        Args:
+            title: Post title text
+
+        Returns:
+            Dict with sentiment data or None if analysis disabled
+        """
+        if not self.enable_sentiment or not self._sentiment_analyzer:
+            return None
+
+        try:
+            result = self._sentiment_analyzer.analyze_sync(title)
+            return {
+                "sentiment_score": result.score,
+                "sentiment_label": result.label,
+                "sentiment_method": result.method,
+                "sentiment_keywords": result.keywords_found,
+            }
+        except Exception as e:
+            logger.debug(f"Sentiment analysis failed: {e}")
+            return None
 
     async def collect(self) -> List[Signal]:
         """
@@ -206,6 +269,7 @@ class RedditCollector(ConsumerCollector):
         Convert Reddit post to Signal.
 
         CRITICAL: We store links only. No selftext/body content.
+        Sentiment analysis is performed on TITLE ONLY (compliance-safe).
         """
         post_id = post.get("id", "")
         title = post.get("title", "")
@@ -224,8 +288,29 @@ class RedditCollector(ConsumerCollector):
         # Extract company name from title (simple heuristic)
         company_name = self._extract_company_name(title)
 
+        # Analyze sentiment (TITLE ONLY - compliance requirement)
+        sentiment_data = self._analyze_title_sentiment(title)
+
         # Build minimal context (NO body text)
         context = f"Posted in r/{subreddit} by u/{author} ({score} upvotes)"
+
+        # Build metadata dict
+        raw_metadata: Dict[str, Any] = {
+            "subreddit": subreddit,
+            "author": author,
+            "score": score,
+            "num_comments": post.get("num_comments", 0),
+            "created_utc": created_utc,
+            "is_self": post.get("is_self", False),
+            # IMPORTANT: Do NOT include selftext
+        }
+
+        # Add sentiment data if available
+        if sentiment_data:
+            raw_metadata["sentiment_score"] = sentiment_data["sentiment_score"]
+            raw_metadata["sentiment_label"] = sentiment_data["sentiment_label"]
+            raw_metadata["sentiment_method"] = sentiment_data["sentiment_method"]
+            raw_metadata["sentiment_keywords"] = sentiment_data["sentiment_keywords"]
 
         return Signal(
             source_api="reddit",
@@ -234,15 +319,7 @@ class RedditCollector(ConsumerCollector):
             title=title[:200],  # Truncate long titles
             url=signal_url,
             source_context=context,  # NO body content
-            raw_metadata={
-                "subreddit": subreddit,
-                "author": author,
-                "score": score,
-                "num_comments": post.get("num_comments", 0),
-                "created_utc": created_utc,
-                "is_self": post.get("is_self", False),
-                # IMPORTANT: Do NOT include selftext
-            },
+            raw_metadata=raw_metadata,
             extracted_company_name=company_name,
             detected_at=datetime.fromtimestamp(created_utc, tz=timezone.utc) if created_utc else datetime.now(timezone.utc),
         )
@@ -272,3 +349,55 @@ class RedditCollector(ConsumerCollector):
             return " ".join(words)
 
         return None
+
+    def get_sentiment_summary(self, signals: List[Signal]) -> Dict[str, Any]:
+        """
+        Get aggregated sentiment summary from collected signals.
+
+        Args:
+            signals: List of Signal objects with sentiment data
+
+        Returns:
+            Dict with sentiment summary statistics
+        """
+        if not signals:
+            return {
+                "total": 0,
+                "with_sentiment": 0,
+                "positive": 0,
+                "negative": 0,
+                "neutral": 0,
+                "avg_score": 0.0,
+            }
+
+        with_sentiment = 0
+        positive = 0
+        negative = 0
+        neutral = 0
+        total_score = 0.0
+
+        for signal in signals:
+            if signal.raw_metadata and "sentiment_label" in signal.raw_metadata:
+                with_sentiment += 1
+                label = signal.raw_metadata["sentiment_label"]
+                score = signal.raw_metadata.get("sentiment_score", 0.0)
+
+                if label == "positive":
+                    positive += 1
+                elif label == "negative":
+                    negative += 1
+                else:
+                    neutral += 1
+
+                total_score += score
+
+        avg_score = total_score / with_sentiment if with_sentiment > 0 else 0.0
+
+        return {
+            "total": len(signals),
+            "with_sentiment": with_sentiment,
+            "positive": positive,
+            "negative": negative,
+            "neutral": neutral,
+            "avg_score": round(avg_score, 3),
+        }

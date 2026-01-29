@@ -13,12 +13,21 @@ Commands:
   pipeline   - Pipeline dashboard commands (status, qualified, push)
   import-csv - Import signals from CSV files (OpenVC, etc.)
 
+Available Collectors:
+  - Traditional: github, sec_edgar, companies_house, domain_whois, product_hunt,
+                 hacker_news, arxiv, job_postings, github_activity, linkedin,
+                 crunchbase, uspto, opencorporates
+  - Community:   telegram, discord (requires API credentials)
+
 Examples:
   # Run full pipeline with specific collectors (dry run)
   python run_pipeline.py full --collectors github,sec_edgar --dry-run
 
   # Run collectors only (persist to DB)
   python run_pipeline.py collect --collectors companies_house
+
+  # Run community collectors (requires TELEGRAM_API_ID/HASH or DISCORD_BOT_TOKEN)
+  python run_pipeline.py collect --collectors telegram,discord
 
   # Process all pending signals and push to Notion
   python run_pipeline.py process
