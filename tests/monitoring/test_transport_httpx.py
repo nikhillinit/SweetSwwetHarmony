@@ -1,0 +1,436 @@
+"""Tests for HttpxTransport with conditional request support.
+
+Tests cover:
+- Basic fetch functionality
+- Conditional request headers (ETag, Last-Modified)
+- 304 Not Modified response handling
+- Error handling (timeout, network errors)
+- Content size limits
+"""
+
+import pytest
+from datetime import datetime, timezone
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import httpx
+
+from monitoring.content_pipeline.transport_httpx import HttpxTransport
+from monitoring.content_pipeline.models import FetchArtifact
+
+
+class TestBasicFetch:
+    """Test basic HTTP fetch functionality."""
+
+    @pytest.mark.asyncio
+    async def test_fetch_returns_fetch_artifact(self):
+        """fetch() should return a FetchArtifact on success."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = "<html><body>Hello</body></html>"
+        mock_response.headers = {"content-type": "text/html"}
+        mock_response.encoding = "utf-8"
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.get = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
+
+            transport = HttpxTransport()
+            result = await transport.fetch("https://example.com")
+
+            assert isinstance(result, FetchArtifact)
+            assert result.url == "https://example.com"
+            assert result.status_code == 200
+            assert result.content == "<html><body>Hello</body></html>"
+
+    @pytest.mark.asyncio
+    async def test_fetch_extracts_headers(self):
+        """fetch() should extract and lowercase header names."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = "content"
+        mock_response.headers = {
+            "Content-Type": "text/html",
+            "X-Custom-Header": "value",
+        }
+        mock_response.encoding = "utf-8"
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.get = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
+
+            transport = HttpxTransport()
+            result = await transport.fetch("https://example.com")
+
+            # Headers should be lowercase
+            assert "content-type" in result.headers
+            assert "x-custom-header" in result.headers
+
+    @pytest.mark.asyncio
+    async def test_fetch_records_timing(self):
+        """fetch() should record fetch_time_ms."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = "content"
+        mock_response.headers = {}
+        mock_response.encoding = "utf-8"
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.get = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
+
+            transport = HttpxTransport()
+            result = await transport.fetch("https://example.com")
+
+            assert result.fetch_time_ms >= 0
+            assert result.transport_used == "httpx"
+
+
+class TestConditionalRequests:
+    """Test conditional request header support."""
+
+    @pytest.mark.asyncio
+    async def test_fetch_sends_if_none_match_header(self):
+        """fetch() with etag should send If-None-Match header."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = "content"
+        mock_response.headers = {}
+        mock_response.encoding = "utf-8"
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.get = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
+
+            transport = HttpxTransport()
+            await transport.fetch("https://example.com", etag='"abc123"')
+
+            # Verify If-None-Match was sent
+            call_args = mock_client.get.call_args
+            headers = call_args.kwargs.get("headers", {})
+            assert headers.get("If-None-Match") == '"abc123"'
+
+    @pytest.mark.asyncio
+    async def test_fetch_sends_if_modified_since_header(self):
+        """fetch() with last_modified should send If-Modified-Since header."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = "content"
+        mock_response.headers = {}
+        mock_response.encoding = "utf-8"
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.get = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
+
+            transport = HttpxTransport()
+            await transport.fetch(
+                "https://example.com",
+                last_modified="Wed, 21 Oct 2025 07:28:00 GMT",
+            )
+
+            # Verify If-Modified-Since was sent
+            call_args = mock_client.get.call_args
+            headers = call_args.kwargs.get("headers", {})
+            assert headers.get("If-Modified-Since") == "Wed, 21 Oct 2025 07:28:00 GMT"
+
+    @pytest.mark.asyncio
+    async def test_fetch_sends_both_conditional_headers(self):
+        """fetch() with both etag and last_modified sends both headers."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = "content"
+        mock_response.headers = {}
+        mock_response.encoding = "utf-8"
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.get = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
+
+            transport = HttpxTransport()
+            await transport.fetch(
+                "https://example.com",
+                etag='"xyz789"',
+                last_modified="Thu, 22 Oct 2025 08:00:00 GMT",
+            )
+
+            call_args = mock_client.get.call_args
+            headers = call_args.kwargs.get("headers", {})
+            assert headers.get("If-None-Match") == '"xyz789"'
+            assert headers.get("If-Modified-Since") == "Thu, 22 Oct 2025 08:00:00 GMT"
+
+    @pytest.mark.asyncio
+    async def test_fetch_extracts_etag_from_response(self):
+        """fetch() should extract ETag from response headers."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = "content"
+        mock_response.headers = {"ETag": '"new-etag-value"'}
+        mock_response.encoding = "utf-8"
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.get = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
+
+            transport = HttpxTransport()
+            result = await transport.fetch("https://example.com")
+
+            assert result.etag == '"new-etag-value"'
+
+    @pytest.mark.asyncio
+    async def test_fetch_extracts_last_modified_from_response(self):
+        """fetch() should extract Last-Modified from response headers."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = "content"
+        mock_response.headers = {"Last-Modified": "Fri, 23 Oct 2025 09:00:00 GMT"}
+        mock_response.encoding = "utf-8"
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.get = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
+
+            transport = HttpxTransport()
+            result = await transport.fetch("https://example.com")
+
+            assert result.last_modified == "Fri, 23 Oct 2025 09:00:00 GMT"
+
+
+class TestNotModifiedResponse:
+    """Test 304 Not Modified response handling."""
+
+    @pytest.mark.asyncio
+    async def test_fetch_handles_304_response(self):
+        """fetch() should handle 304 Not Modified correctly."""
+        mock_response = MagicMock()
+        mock_response.status_code = 304
+        mock_response.text = ""  # 304 has no body
+        mock_response.headers = {}
+        mock_response.encoding = "utf-8"
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.get = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
+
+            transport = HttpxTransport()
+            result = await transport.fetch("https://example.com", etag='"existing"')
+
+            assert result.status_code == 304
+            assert result.content == ""
+            assert result.is_not_modified is True
+
+    @pytest.mark.asyncio
+    async def test_fetch_304_preserves_etag_from_response(self):
+        """304 response may include new ETag, which should be captured."""
+        mock_response = MagicMock()
+        mock_response.status_code = 304
+        mock_response.text = ""
+        mock_response.headers = {"ETag": '"updated-etag"'}
+        mock_response.encoding = "utf-8"
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.get = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
+
+            transport = HttpxTransport()
+            result = await transport.fetch("https://example.com", etag='"old-etag"')
+
+            # Should capture updated etag from 304 response
+            assert result.etag == '"updated-etag"'
+
+    @pytest.mark.asyncio
+    async def test_200_response_is_not_marked_as_not_modified(self):
+        """200 response should have is_not_modified=False."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = "content"
+        mock_response.headers = {}
+        mock_response.encoding = "utf-8"
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.get = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
+
+            transport = HttpxTransport()
+            result = await transport.fetch("https://example.com")
+
+            assert result.is_not_modified is False
+
+
+class TestErrorHandling:
+    """Test error handling scenarios."""
+
+    @pytest.mark.asyncio
+    async def test_fetch_handles_timeout(self):
+        """fetch() should handle timeout errors gracefully."""
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.get = AsyncMock(side_effect=httpx.TimeoutException("Timeout"))
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
+
+            transport = HttpxTransport()
+
+            with pytest.raises(httpx.TimeoutException):
+                await transport.fetch("https://example.com", timeout=1.0)
+
+    @pytest.mark.asyncio
+    async def test_fetch_handles_connection_error(self):
+        """fetch() should propagate connection errors."""
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.get = AsyncMock(
+                side_effect=httpx.ConnectError("Connection refused")
+            )
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
+
+            transport = HttpxTransport()
+
+            with pytest.raises(httpx.ConnectError):
+                await transport.fetch("https://example.com")
+
+    @pytest.mark.asyncio
+    async def test_fetch_handles_http_status_errors(self):
+        """fetch() should return FetchArtifact for HTTP errors (4xx, 5xx)."""
+        mock_response = MagicMock()
+        mock_response.status_code = 404
+        mock_response.text = "Not Found"
+        mock_response.headers = {}
+        mock_response.encoding = "utf-8"
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.get = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
+
+            transport = HttpxTransport()
+            result = await transport.fetch("https://example.com")
+
+            assert result.status_code == 404
+            assert result.content == "Not Found"
+
+
+class TestContentSizeLimits:
+    """Test content size limiting functionality."""
+
+    @pytest.mark.asyncio
+    async def test_fetch_respects_max_size(self):
+        """fetch() should truncate content exceeding max_size."""
+        large_content = "x" * 10000
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = large_content
+        mock_response.headers = {}
+        mock_response.encoding = "utf-8"
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.get = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
+
+            transport = HttpxTransport()
+            result = await transport.fetch("https://example.com", max_size=1000)
+
+            assert len(result.content) <= 1000
+
+    @pytest.mark.asyncio
+    async def test_fetch_default_max_size_is_5mb(self):
+        """fetch() default max_size should be 5MB."""
+        transport = HttpxTransport()
+        # 5MB = 5 * 1024 * 1024 = 5242880
+        assert transport.default_max_size == 5_242_880
+
+
+class TestCustomTimeout:
+    """Test custom timeout configuration."""
+
+    @pytest.mark.asyncio
+    async def test_fetch_uses_custom_timeout(self):
+        """fetch() should pass custom timeout to httpx."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = "content"
+        mock_response.headers = {}
+        mock_response.encoding = "utf-8"
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.get = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
+
+            transport = HttpxTransport()
+            await transport.fetch("https://example.com", timeout=15.0)
+
+            # Verify timeout was passed
+            call_args = mock_client.get.call_args
+            assert call_args.kwargs.get("timeout") == 15.0
+
+
+class TestUserAgent:
+    """Test User-Agent header configuration."""
+
+    @pytest.mark.asyncio
+    async def test_fetch_sends_user_agent(self):
+        """fetch() should send a reasonable User-Agent header."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = "content"
+        mock_response.headers = {}
+        mock_response.encoding = "utf-8"
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            mock_client = AsyncMock()
+            mock_client.get = AsyncMock(return_value=mock_response)
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mock_client_class.return_value = mock_client
+
+            transport = HttpxTransport()
+            await transport.fetch("https://example.com")
+
+            # Verify User-Agent was sent
+            call_args = mock_client.get.call_args
+            headers = call_args.kwargs.get("headers", {})
+            assert "User-Agent" in headers
+            assert "DiscoveryEngine" in headers["User-Agent"]
