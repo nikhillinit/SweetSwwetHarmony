@@ -16,6 +16,24 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class FallbackConfig:
+    """
+    Configuration for selector fallback behavior.
+
+    Controls how SelectorExtractor handles selector failures
+    and provides quality signals for extracted content.
+
+    Attributes:
+        fallback_on_empty: If True, try next selector when current returns empty content
+        min_chars: Minimum characters required; if content shorter, try next selector
+        always_include_body: If True, add 'body' as ultimate fallback selector
+    """
+    fallback_on_empty: bool = True
+    min_chars: int = 0
+    always_include_body: bool = True
+
+
+@dataclass
 class ExtractorConfig:
     """
     Configuration for content extraction.

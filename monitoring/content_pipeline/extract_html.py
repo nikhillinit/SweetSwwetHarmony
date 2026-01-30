@@ -10,15 +10,19 @@ Features:
 - Selector fallback (try selectors in order)
 - Element removal (remove noise before extraction)
 - Whitespace normalization
+- Configurable fallback chains with FallbackConfig
 """
 
 import re
 import time
-from typing import List, Optional
+from typing import List, Optional, TYPE_CHECKING
 
 from parsel import Selector
 
 from monitoring.content_pipeline.models import ExtractedContent, RepresentationType
+
+if TYPE_CHECKING:
+    from monitoring.content_pipeline.config import FallbackConfig
 
 
 # XPath selector prefix
@@ -38,17 +42,19 @@ class SelectorExtractor:
         html: Optional[str],
         selectors: List[str],
         remove_selectors: Optional[List[str]] = None,
+        fallback_config: Optional["FallbackConfig"] = None,
     ) -> ExtractedContent:
         """
-        Extract content using CSS selectors.
+        Extract content using CSS selectors with configurable fallback behavior.
 
         Args:
             html: Raw HTML content
             selectors: List of CSS selectors to try (in order)
             remove_selectors: Optional selectors for elements to remove (noise)
+            fallback_config: Optional FallbackConfig for controlling fallback behavior
 
         Returns:
-            ExtractedContent with extracted text
+            ExtractedContent with extracted text and metadata about fallback behavior
         """
         start_time = time.perf_counter()
 
@@ -67,7 +73,117 @@ class SelectorExtractor:
         if remove_selectors:
             sel = self._remove_elements(sel, remove_selectors)
 
-        # Try selectors in order
+        # If no fallback_config, use legacy behavior
+        if fallback_config is None:
+            return self._extract_legacy(sel, selectors, start_time)
+
+        # Build selector list with body fallback if configured
+        effective_selectors = list(selectors)
+        if fallback_config.always_include_body and "body" not in effective_selectors:
+            effective_selectors.append("body")
+
+        selectors_tried: List[str] = []
+        fallback_triggered = False
+
+        # Try selectors in order with fallback chain logic
+        for idx, selector in enumerate(effective_selectors):
+            selectors_tried.append(selector)
+
+            # Check if element exists
+            element_exists = self._selector_matches(sel, selector)
+
+            if not element_exists:
+                # Selector doesn't match - try next
+                fallback_triggered = True if idx > 0 else fallback_triggered
+                continue
+
+            # Element exists - try to extract content
+            content, _ = self._try_selector(sel, selector)
+
+            # Handle empty content based on fallback_on_empty
+            if not content or not content.strip():
+                if not fallback_config.fallback_on_empty:
+                    # Stop here even if empty
+                    extraction_time = int((time.perf_counter() - start_time) * 1000)
+                    return ExtractedContent(
+                        representation_type=RepresentationType.TEXT,
+                        content="",
+                        extractor_name="parsel_v1",
+                        extraction_time_ms=extraction_time,
+                        confidence=0.5,
+                        metadata={
+                            "selector_used": selector,
+                            "selector_index": idx,
+                            "selectors_tried": selectors_tried,
+                            "fallback_triggered": fallback_triggered,
+                        },
+                    )
+                # fallback_on_empty=True, try next selector
+                fallback_triggered = True
+                continue
+
+            # Normalize whitespace
+            content = self._normalize_whitespace(content)
+
+            # Check min_chars threshold
+            if len(content) < fallback_config.min_chars:
+                # Content too short - try next selector
+                fallback_triggered = True
+                continue
+
+            # Success! Calculate confidence
+            extraction_time = int((time.perf_counter() - start_time) * 1000)
+            confidence = self._calculate_confidence(
+                content=content,
+                selector_used=selector,
+                is_body_fallback=(selector == "body" and selector not in selectors),
+            )
+
+            return ExtractedContent(
+                representation_type=RepresentationType.TEXT,
+                content=content,
+                extractor_name="parsel_v1",
+                extraction_time_ms=extraction_time,
+                confidence=confidence,
+                metadata={
+                    "selector_used": selector,
+                    "selector_index": idx,
+                    "selectors_tried": selectors_tried,
+                    "fallback_triggered": idx > 0 or fallback_triggered,
+                },
+            )
+
+        # No selector produced adequate content
+        extraction_time = int((time.perf_counter() - start_time) * 1000)
+        return ExtractedContent(
+            representation_type=RepresentationType.TEXT,
+            content="",
+            extractor_name="parsel_v1",
+            extraction_time_ms=extraction_time,
+            confidence=0.0,
+            metadata={
+                "selector_used": None,
+                "selectors_tried": selectors_tried,
+                "fallback_triggered": True,
+            },
+        )
+
+    def _extract_legacy(
+        self, sel: Selector, selectors: List[str], start_time: float
+    ) -> ExtractedContent:
+        """
+        Legacy extraction behavior (no FallbackConfig).
+
+        Preserves backward compatibility with original extract() behavior.
+
+        Args:
+            sel: Parsel Selector object
+            selectors: List of CSS/XPath selectors to try
+            start_time: Extraction start time for timing
+
+        Returns:
+            ExtractedContent with extracted text
+        """
         for idx, selector in enumerate(selectors):
             content, used_selector = self._try_selector(sel, selector)
             if content:
@@ -88,6 +204,57 @@ class SelectorExtractor:
 
         # No selector matched
         return self._empty_result(start_time)
+
+    def _selector_matches(self, sel: Selector, selector: str) -> bool:
+        """
+        Check if a selector matches any elements in the document.
+
+        Args:
+            sel: Parsel Selector object
+            selector: CSS or XPath selector
+
+        Returns:
+            True if selector matches at least one element
+        """
+        try:
+            if selector.startswith(XPATH_PREFIX):
+                xpath = selector[len(XPATH_PREFIX):]
+                matches = sel.xpath(xpath)
+            else:
+                matches = sel.css(selector)
+            return len(matches) > 0
+        except Exception:
+            return False
+
+    def _calculate_confidence(
+        self, content: str, selector_used: str, is_body_fallback: bool
+    ) -> float:
+        """
+        Calculate confidence score based on extraction quality.
+
+        Confidence levels:
+        - 1.0: Good match (adequate content, not a body fallback)
+        - 0.7: Body fallback (had to fall back to body selector)
+        - 0.5: Very short content (< 100 chars after all selectors tried)
+
+        Args:
+            content: Extracted text content
+            selector_used: The selector that produced the content
+            is_body_fallback: Whether we fell back to body selector
+
+        Returns:
+            Confidence score between 0.0 and 1.0
+        """
+        # Very short content always gets low confidence
+        if len(content) < 100:
+            return 0.5
+
+        # Body fallback gets medium confidence
+        if is_body_fallback:
+            return 0.7
+
+        # Good match
+        return 1.0
 
     def _try_selector(
         self, sel: Selector, selector: str
