@@ -9,6 +9,10 @@ Components:
 - TransportConfig: HTTP transport settings (fallback strategies)
 - ConfigParser: JSON parsing for watch config_json
 - PresetRegistry: Loads and manages watch_presets.yaml
+- FetchArtifact: Result of HTTP fetch before extraction
+- PipelineResult: Final output from content pipeline
+- ExtractedContent: Single extracted content representation
+- RepresentationType: Types of content representations
 """
 
 from monitoring.content_pipeline.config import (
@@ -22,12 +26,12 @@ from monitoring.content_pipeline.presets import (
     get_preset,
     load_presets,
 )
-
-# TODO (Task 0.5): Uncomment when FetchArtifact/PipelineResult are implemented
-# from monitoring.content_pipeline.models import (
-#     FetchArtifact,
-#     PipelineResult,
-# )
+from monitoring.content_pipeline.models import (
+    FetchArtifact,
+    PipelineResult,
+    ExtractedContent,
+    RepresentationType,
+)
 
 __all__ = [
     # Config classes
@@ -39,7 +43,9 @@ __all__ = [
     "PresetRegistry",
     "get_preset",
     "load_presets",
-    # TODO (Task 0.5): Add when implemented
-    # "FetchArtifact",
-    # "PipelineResult",
+    # Pipeline models
+    "FetchArtifact",
+    "PipelineResult",
+    "ExtractedContent",
+    "RepresentationType",
 ]
