@@ -3648,7 +3648,7 @@ class SignalStore:
                    classified_at
             FROM thesis_classifications
             WHERE canonical_key = ?
-            ORDER BY classified_at DESC
+            ORDER BY classified_at DESC, id DESC
             LIMIT 1
             """,
             (canonical_key,),
