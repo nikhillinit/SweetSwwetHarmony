@@ -1375,6 +1375,55 @@ MIGRATIONS = {
     CREATE INDEX IF NOT EXISTS idx_mentions_detected ON community_mentions(detected_at);
     CREATE INDEX IF NOT EXISTS idx_mentions_posted ON community_mentions(posted_at);
     CREATE INDEX IF NOT EXISTS idx_mentions_sentiment ON community_mentions(sentiment_label);
+    """,
+    19: """
+    -- =============================================================================
+    -- PHASE G: SYNTHESIS ENHANCEMENT - Entity Resolution & LLM Arbitration
+    -- =============================================================================
+    -- Implements stable entity identity via alias store and LLM conflict resolution.
+    -- Enables: audit-grade provenance, deterministic entity merging, cost-controlled LLM.
+
+    -- Entity aliases: maps strong keys to stable entity IDs (no ID rotation)
+    CREATE TABLE IF NOT EXISTS entity_aliases (
+        strong_key TEXT PRIMARY KEY,          -- e.g., "domain:acme.com", "reg:companies_house:12345"
+        entity_id TEXT NOT NULL,              -- Stable entity identifier (sha256[:16] of canonical key)
+        created_at TEXT NOT NULL,             -- ISO 8601
+        source_signal_id INTEGER,             -- Signal that first introduced this key
+        source_key TEXT                       -- Source API that provided this key
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_entity_aliases_entity_id
+        ON entity_aliases(entity_id);
+
+    -- Entity migrations: tracks when entity IDs are merged
+    CREATE TABLE IF NOT EXISTS entity_migrations (
+        from_entity_id TEXT NOT NULL,         -- Entity ID being retired
+        to_entity_id TEXT NOT NULL,           -- Entity ID that absorbs it
+        merged_at TEXT NOT NULL,              -- ISO 8601
+        merge_reason TEXT,                    -- e.g., "alias_collision_merge", "manual_merge"
+        PRIMARY KEY (from_entity_id, to_entity_id, merged_at)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_entity_migrations_to
+        ON entity_migrations(to_entity_id);
+    CREATE INDEX IF NOT EXISTS idx_entity_migrations_from
+        ON entity_migrations(from_entity_id);
+
+    -- LLM decisions: cache for conflict arbitration (policy-versioned)
+    CREATE TABLE IF NOT EXISTS llm_decisions (
+        cache_key TEXT PRIMARY KEY,           -- sha256 of policy_version|field_name|conflict_type|candidates_signature
+        policy_version TEXT NOT NULL,         -- e.g., "g_v1.0" - cache invalidates on policy change
+        field_name TEXT NOT NULL,             -- Field this decision applies to
+        conflict_type TEXT NOT NULL,          -- VALUE_MISMATCH, AUTHORITY_TIE, etc.
+        prompt_hash TEXT NOT NULL,            -- sha256 of prompt (privacy: don't store raw prompt)
+        decision_json TEXT NOT NULL,          -- JSON: {chosen_index, decision_reason, decision_rule}
+        created_at TEXT NOT NULL              -- ISO 8601
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_llm_decisions_policy
+        ON llm_decisions(policy_version);
+    CREATE INDEX IF NOT EXISTS idx_llm_decisions_field
+        ON llm_decisions(field_name);
     """
 }
 
