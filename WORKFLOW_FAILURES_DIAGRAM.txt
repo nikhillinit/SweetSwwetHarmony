@@ -1,0 +1,154 @@
+┌──────────────────────────────────────────────────────────────────────────┐
+│                    WORKFLOW FAILURE VISUAL SUMMARY                       │
+│                    nikhillinit/SweetSwwetHarmony                        │
+│                    Analysis Date: 2026-01-30                            │
+└──────────────────────────────────────────────────────────────────────────┘
+
+╔════════════════════════════════════════════════════════════════════════╗
+║                          OVERALL STATUS                                ║
+║  Total Workflows: 4 │ Active: 2 │ Deprecated: 2 │ Failure Rate: 100% ║
+╚════════════════════════════════════════════════════════════════════════╝
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ ACTIVE WORKFLOWS (CRITICAL - NEED IMMEDIATE FIX)                        │
+└─────────────────────────────────────────────────────────────────────────┘
+
+🔴 HIGH PRIORITY: daily-pipeline.yml
+   ├─ Status: ACTIVE (should run daily at 6 AM UTC)
+   ├─ Failures: 35 consecutive
+   ├─ Last Run: 2026-01-30T16:55:06Z
+   ├─ Jobs Executed: 0 ❌
+   ├─ Root Cause: YAML parsing issue (on: → boolean)
+   ├─ Impact:
+   │  ├─ ❌ No automated signal discovery
+   │  ├─ ❌ No portfolio monitoring
+   │  ├─ ❌ No suppression sync
+   │  └─ ❌ No Notion push
+   └─ Fix: Quote 'on:' key + add trigger guards
+
+🔴 HIGH PRIORITY: thesis_eval.yml
+   ├─ Status: ACTIVE (should run weekly on Sundays at 2 AM UTC)
+   ├─ Failures: 15 consecutive
+   ├─ Last Run: 2026-01-30T16:55:06Z
+   ├─ Jobs Executed: 0 ❌
+   ├─ Root Cause: YAML parsing issue (on: → boolean)
+   ├─ Impact:
+   │  ├─ ❌ No thesis evaluation metrics
+   │  ├─ ❌ No accuracy tracking
+   │  └─ ❌ Quality monitoring disabled
+   └─ Fix: Quote 'on:' key + add trigger guards
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ DEPRECATED WORKFLOWS (SHOULD BE REMOVED)                                │
+└─────────────────────────────────────────────────────────────────────────┘
+
+🟡 MEDIUM PRIORITY: daily-signal-collection.yml
+   ├─ Status: DEPRECATED (replaced by daily-pipeline.yml)
+   ├─ Failures: 107 consecutive ⚠️  HIGHEST COUNT
+   ├─ Last Run: 2026-01-30T16:55:06Z
+   ├─ Jobs Executed: 0 ❌
+   ├─ Root Cause: YAML parsing issue + commented schedule
+   ├─ Issues:
+   │  ├─ Creates GitHub issues on failure (spam risk)
+   │  └─ Wasting most CI resources
+   └─ Fix: REMOVE or archive this workflow
+
+⚪ LOW PRIORITY: daily-monitoring.yml
+   ├─ Status: DEPRECATED (replaced by daily-pipeline.yml)
+   ├─ Failures: 37 consecutive
+   ├─ Last Run: 2026-01-30T16:55:06Z
+   ├─ Jobs Executed: 0 ❌
+   ├─ Root Cause: YAML parsing issue + commented schedule
+   └─ Fix: REMOVE or archive this workflow
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ ROOT CAUSE ANALYSIS                                                     │
+└─────────────────────────────────────────────────────────────────────────┘
+
+PRIMARY ISSUE: YAML Parsing Problem
+┌────────────────────────────────────────────────────────────────┐
+│ Current Syntax:           │ What Happens:                      │
+│                          │                                    │
+│  on:                     │  YAML parsers interpret 'on'       │
+│    schedule:             │  as boolean True, not string key   │
+│      - cron: '0 6 * * *' │                                    │
+│                          │  Result: Parsing fails → 0 jobs    │
+└────────────────────────────────────────────────────────────────┘
+
+SECONDARY ISSUE: Unexpected Trigger Events
+┌────────────────────────────────────────────────────────────────┐
+│ Expected: schedule, workflow_dispatch only                     │
+│ Actual:   Triggered on every push event                       │
+│ Result:   Workflows run when they shouldn't                   │
+└────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ FAILURE PATTERN                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+
+All workflows show identical failure signature:
+  ✓ Status: completed
+  ✗ Conclusion: failure
+  ✗ Jobs executed: 0
+  ✗ Event: push (despite no push trigger configured)
+  → This indicates parsing/validation failure before job execution
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ IMPACT SUMMARY                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
+
+Business Impact:
+  ❌ Discovery Engine: NOT OPERATIONAL
+  ❌ Portfolio Monitoring: NOT OPERATIONAL
+  ❌ Quality Metrics: NOT OPERATIONAL
+  ❌ Automated Workflows: 0% success rate
+
+Technical Impact:
+  ⚠️  204+ wasted CI runs
+  ⚠️  CI/CD completely non-functional
+  ⚠️  Potential issue spam from failure notifications
+  ⚠️  Developer confusion from deprecated workflows
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ RECOMMENDED FIX WORKFLOW                                                │
+└─────────────────────────────────────────────────────────────────────────┘
+
+Step 1: Fix Active Workflows (HIGH PRIORITY)
+  1.1 Quote 'on:' key in daily-pipeline.yml
+  1.2 Quote 'on:' key in thesis_eval.yml
+  1.3 Add explicit trigger guards:
+      push:
+        branches-ignore:
+          - '**'
+  1.4 Test with workflow_dispatch
+
+Step 2: Clean Up Deprecated Workflows (MEDIUM PRIORITY)
+  2.1 Move daily-signal-collection.yml to archive
+  2.2 Move daily-monitoring.yml to archive
+  2.3 Update documentation
+
+Step 3: Verify (LOW PRIORITY)
+  3.1 Monitor next scheduled runs
+  3.2 Add workflow status badges
+  3.3 Set up failure alerts
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│ QUICK REFERENCE                                                         │
+└─────────────────────────────────────────────────────────────────────────┘
+
+📖 Full Analysis:     WORKFLOW_FAILURE_ANALYSIS.md
+📊 CSV Data:          workflow_failures.csv
+📋 JSON Data:         workflow_failures.json
+📄 Summary:           WORKFLOW_FAILURES_README.md
+🎨 Visual (this):     WORKFLOW_FAILURES_DIAGRAM.txt
+
+Verification Commands:
+  gh workflow list
+  gh run list --workflow=daily-pipeline.yml --limit 5
+  gh workflow run daily-pipeline.yml
+
+═══════════════════════════════════════════════════════════════════════════
+
+Generated: 2026-01-30T17:35:00Z
+Repository: https://github.com/nikhillinit/SweetSwwetHarmony
+By: GitHub Copilot Coding Agent
