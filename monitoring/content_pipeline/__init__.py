@@ -29,6 +29,10 @@ from monitoring.content_pipeline.presets import (
     get_preset,
     load_presets,
 )
+from monitoring.content_pipeline.planner import (
+    PipelinePlanner,
+    PAGE_TYPE_PRESETS,
+)
 from monitoring.content_pipeline.models import (
     FetchArtifact,
     PipelineResult,
@@ -49,6 +53,9 @@ __all__ = [
     "PresetRegistry",
     "get_preset",
     "load_presets",
+    # Pipeline planner
+    "PipelinePlanner",
+    "PAGE_TYPE_PRESETS",
     # Pipeline models
     "FetchArtifact",
     "PipelineResult",
