@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 # Storage
 from storage.signal_store import SignalStore, StoredSignal
@@ -88,6 +88,12 @@ from utils.signal_health import SignalHealthMonitor
 
 # Notifications
 from utils.slack_notifier import SlackNotifier, SlackConfig
+
+# Phase G Sprint 2: Identity Resolution & Bi-Temporal Claims
+from storage.entity_identity_store import EntityIdentityStore, StrongKeyBinding, AliasKeyBinding, BlockingToken
+from storage.claim_fact_store import ClaimFactStore, ClaimFact
+from utils.phase_g_entity_resolver import PhaseGEntityResolver, ResolvedEntityGroup
+from utils.claim_extractor import ClaimExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -160,6 +166,10 @@ class PipelineConfig:
     # Investor matching (Sprint 5)
     use_investor_matching: bool = False  # Enable investor matching
 
+    # Phase G Sprint 2: Identity Resolution & Bi-Temporal Claims
+    use_phase_g_identity_resolution: bool = False  # Enable blocking-first fuzzy entity resolution
+    use_claim_facts: bool = False  # Enable bi-temporal claim facts (SCD-2)
+
     @classmethod
     def from_env(cls) -> PipelineConfig:
         """Load configuration from environment variables"""
@@ -184,6 +194,8 @@ class PipelineConfig:
             use_competitor_detection=os.getenv("USE_COMPETITOR_DETECTION", "true").lower() == "true",
             use_exit_predictor=os.getenv("ENABLE_EXIT_PREDICTOR", "false").lower() == "true",
             use_investor_matching=os.getenv("ENABLE_INVESTOR_MATCHING", "false").lower() == "true",
+            use_phase_g_identity_resolution=os.getenv("USE_PHASE_G_IDENTITY_RESOLUTION", "false").lower() == "true",
+            use_claim_facts=os.getenv("USE_CLAIM_FACTS", "false").lower() == "true",
         )
 
 
@@ -379,6 +391,12 @@ class DiscoveryPipeline:
         if self.config.use_competitor_detection:
             self._competitor_detector = CompetitorDetector(self.config.portfolio_path)
 
+        # Phase G Sprint 2: Identity Resolution & Bi-Temporal Claims
+        self._identity_store: Optional[EntityIdentityStore] = None
+        self._phase_g_resolver: Optional[PhaseGEntityResolver] = None
+        self._claim_fact_store: Optional[ClaimFactStore] = None
+        self._claim_extractor: Optional[ClaimExtractor] = None
+
         # State
         self._initialized = False
 
@@ -470,6 +488,18 @@ class DiscoveryPipeline:
         if self.config.use_investor_matching:
             self._investor_matcher = InvestorMatcher(self._store)
             logger.info("InvestorMatcher initialized (investor matching enabled)")
+
+        # Initialize Phase G Sprint 2 components (if identity resolution enabled)
+        if self.config.use_phase_g_identity_resolution:
+            self._identity_store = EntityIdentityStore(self._store)
+            self._phase_g_resolver = PhaseGEntityResolver(self._identity_store)
+            logger.info("PhaseGEntityResolver initialized (blocking-first fuzzy matching enabled)")
+
+        # Initialize Claim Fact Store (if claim facts enabled)
+        if self.config.use_claim_facts:
+            self._claim_fact_store = ClaimFactStore(self._store)
+            self._claim_extractor = ClaimExtractor()
+            logger.info("ClaimFactStore + ClaimExtractor initialized (bi-temporal claims enabled)")
 
         # Initialize SignalHealthMonitor (non-fatal if it fails)
         try:
@@ -1135,6 +1165,10 @@ class DiscoveryPipeline:
             "thesis_rejected": 0,
             "thesis_held": 0,
             "thesis_passed": 0,
+            # Phase G Sprint 2 stats
+            "phase_g_entities_resolved": 0,
+            "phase_g_merges": 0,
+            "claim_facts_saved": 0,
         }
 
         # Get pending signals
@@ -1157,6 +1191,19 @@ class DiscoveryPipeline:
         if self.config.use_entities:
             by_key = await self._regroup_signals_by_entity(by_key)
             logger.info(f"After entity regrouping: {len(by_key)} unique entities")
+
+        # Phase G Sprint 2: Identity resolution with blocking-first fuzzy matching
+        entity_id_map: Dict[str, str] = {}  # canonical_key -> entity_id
+        if self.config.use_phase_g_identity_resolution and self._phase_g_resolver:
+            by_key, entity_id_map, phase_g_stats = await self._apply_phase_g_identity_resolution(
+                pending, by_key
+            )
+            stats["phase_g_entities_resolved"] = phase_g_stats.get("entities_resolved", 0)
+            stats["phase_g_merges"] = phase_g_stats.get("merges", 0)
+            logger.info(
+                f"After Phase G resolution: {len(by_key)} entities "
+                f"({stats['phase_g_merges']} merges)"
+            )
 
         # Consolidate signals if enabled
         consolidated_map: Dict[str, ConsolidatedSignal] = {}
@@ -1230,6 +1277,14 @@ class DiscoveryPipeline:
             stats["avg_enrichment_boost"] = stats["total_enrichment_boost"] / stats["enrichment_boosts_applied"]
         else:
             stats["avg_enrichment_boost"] = 0.0
+
+        # Phase G Sprint 2: Persist claim facts (after consolidation)
+        if self.config.use_claim_facts and self._claim_fact_store and self._claim_extractor:
+            claim_stats = await self._persist_claim_facts(
+                consolidated_map, entity_id_map
+            )
+            stats["claim_facts_saved"] = claim_stats.get("facts_saved", 0)
+            logger.info(f"Persisted {stats['claim_facts_saved']} claim facts")
 
         logger.info(f"Processing stage complete: {stats}")
 
@@ -1992,6 +2047,156 @@ class DiscoveryPipeline:
                 )
 
         return regrouped
+
+    async def _apply_phase_g_identity_resolution(
+        self,
+        pending_signals: List[StoredSignal],
+        by_key: Dict[str, List[StoredSignal]]
+    ) -> Tuple[Dict[str, List[StoredSignal]], Dict[str, str], Dict[str, int]]:
+        """
+        Apply Phase G Sprint 2 identity resolution with blocking-first fuzzy matching.
+
+        This regroups signals by resolved entity ID, handling fuzzy name matching
+        and entity merges.
+
+        Args:
+            pending_signals: All pending signals
+            by_key: Current grouping by canonical_key
+
+        Returns:
+            Tuple of:
+                - Regrouped signals by primary_canonical_key
+                - Entity ID map (canonical_key -> entity_id)
+                - Stats dict with resolution metrics
+        """
+        if not self._phase_g_resolver or not self._identity_store:
+            return by_key, {}, {"entities_resolved": 0, "merges": 0}
+
+        stats = {"entities_resolved": 0, "merges": 0}
+
+        try:
+            # Resolve signals into entity groups
+            groups = await self._phase_g_resolver.resolve(pending_signals)
+
+            # Persist identity state in batched transactions
+            batch_size = 50
+            total_merges = 0
+
+            for i in range(0, len(groups), batch_size):
+                batch = groups[i:i + batch_size]
+
+                async with self._store.transaction_immediate() as tx:
+                    for group in batch:
+                        # Upsert strong key bindings
+                        bindings = [
+                            StrongKeyBinding(
+                                strong_key=b[0],
+                                entity_id=b[1],
+                                source_signal_id=b[2],
+                                source_key=b[3]
+                            )
+                            for b in group.strong_keys_to_bind
+                        ]
+                        merges = await self._identity_store.upsert_strong_key_bindings(bindings, tx)
+                        total_merges += len(merges)
+
+                        # Upsert alias bindings
+                        aliases = [
+                            AliasKeyBinding(
+                                alias_key=a[0],
+                                entity_id=a[1],
+                                alias_type=a[2],
+                                confidence=a[3],
+                                source=a[4],
+                                expires_at=a[5]
+                            )
+                            for a in group.alias_keys_to_bind
+                        ]
+                        alias_merges = await self._identity_store.upsert_alias_bindings(aliases, tx)
+                        total_merges += len(alias_merges)
+
+                        # Upsert blocking tokens
+                        tokens = [
+                            BlockingToken(
+                                blocking_token=t[0],
+                                token_type=t[1],
+                                entity_id=t[2],
+                                alias_key=t[3]
+                            )
+                            for t in group.blocking_tokens_to_bind
+                        ]
+                        await self._identity_store.upsert_blocking_tokens(tokens, tx)
+
+            # Rebuild by_key mapping from resolved groups
+            regrouped: Dict[str, List[StoredSignal]] = {}
+            entity_id_map: Dict[str, str] = {}
+
+            for group in groups:
+                regrouped[group.primary_canonical_key] = group.signals
+                entity_id_map[group.primary_canonical_key] = group.entity_id
+
+            stats["entities_resolved"] = len(groups)
+            stats["merges"] = total_merges
+
+            merge_stats = self._phase_g_resolver.get_merge_stats()
+            logger.debug(f"Phase G resolver stats: {merge_stats}")
+
+            return regrouped, entity_id_map, stats
+
+        except Exception as e:
+            logger.exception(f"Phase G identity resolution failed: {e}")
+            # Fall back to original grouping
+            return by_key, {}, stats
+
+    async def _persist_claim_facts(
+        self,
+        consolidated_map: Dict[str, ConsolidatedSignal],
+        entity_id_map: Dict[str, str]
+    ) -> Dict[str, int]:
+        """
+        Persist claim facts extracted from consolidated signals.
+
+        Uses bi-temporal SCD-2 storage with authority-based supersession.
+
+        Args:
+            consolidated_map: Map of canonical_key -> ConsolidatedSignal
+            entity_id_map: Map of canonical_key -> entity_id
+
+        Returns:
+            Stats dict with facts_saved count
+        """
+        if not self._claim_fact_store or not self._claim_extractor:
+            return {"facts_saved": 0}
+
+        stats = {"facts_saved": 0}
+
+        try:
+            # Extract all claim facts
+            all_facts = self._claim_extractor.extract_batch(
+                list(consolidated_map.values()),
+                entity_id_map
+            )
+
+            # Persist in batched transactions
+            batch_size = 50
+            fact_items = list(all_facts.items())
+
+            for i in range(0, len(fact_items), batch_size):
+                batch = fact_items[i:i + batch_size]
+
+                async with self._store.transaction_immediate() as tx:
+                    for entity_id, facts in batch:
+                        for fact in facts:
+                            result = await self._claim_fact_store.save_fact(fact, tx)
+                            if result.action in ("inserted", "superseded"):
+                                stats["facts_saved"] += 1
+
+            logger.debug(f"Persisted {stats['facts_saved']} claim facts")
+            return stats
+
+        except Exception as e:
+            logger.exception(f"Claim facts persistence failed: {e}")
+            return stats
 
     def _infer_stage(self, signals: List[StoredSignal]) -> InvestmentStage:
         """Infer investment stage from signals"""
