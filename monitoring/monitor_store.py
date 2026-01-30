@@ -86,7 +86,9 @@ class MonitorStore:
                 active = 1
             RETURNING id, canonical_key, url, watch_type, interval_seconds,
                       last_checked_at, last_snapshot_id, consecutive_failures,
-                      backoff_until, cooldown_until, active, created_at
+                      backoff_until, cooldown_until, consecutive_low_sev_hits,
+                      last_low_sev_at, active, created_at,
+                      config_json, last_etag, last_modified
             """,
             (canonical_key, url, watch_type, interval_seconds, now)
         )
@@ -105,7 +107,8 @@ class MonitorStore:
             SELECT id, canonical_key, url, watch_type, interval_seconds,
                    last_checked_at, last_snapshot_id, consecutive_failures,
                    backoff_until, cooldown_until, consecutive_low_sev_hits,
-                   last_low_sev_at, active, created_at
+                   last_low_sev_at, active, created_at,
+                   config_json, last_etag, last_modified
             FROM watches
             WHERE id = ?
             """,
@@ -131,7 +134,8 @@ class MonitorStore:
             SELECT id, canonical_key, url, watch_type, interval_seconds,
                    last_checked_at, last_snapshot_id, consecutive_failures,
                    backoff_until, cooldown_until, consecutive_low_sev_hits,
-                   last_low_sev_at, active, created_at
+                   last_low_sev_at, active, created_at,
+                   config_json, last_etag, last_modified
             FROM watches
             WHERE canonical_key = ? AND url = ? AND watch_type = ?
             """,
@@ -169,7 +173,8 @@ class MonitorStore:
             SELECT id, canonical_key, url, watch_type, interval_seconds,
                    last_checked_at, last_snapshot_id, consecutive_failures,
                    backoff_until, cooldown_until, consecutive_low_sev_hits,
-                   last_low_sev_at, active, created_at
+                   last_low_sev_at, active, created_at,
+                   config_json, last_etag, last_modified
             FROM watches
             WHERE active = 1
               AND (backoff_until IS NULL OR backoff_until <= ?)
@@ -208,7 +213,8 @@ class MonitorStore:
             SELECT id, canonical_key, url, watch_type, interval_seconds,
                    last_checked_at, last_snapshot_id, consecutive_failures,
                    backoff_until, cooldown_until, consecutive_low_sev_hits,
-                   last_low_sev_at, active, created_at
+                   last_low_sev_at, active, created_at,
+                   config_json, last_etag, last_modified
             FROM watches
             WHERE canonical_key = ?
         """
@@ -288,6 +294,40 @@ class MonitorStore:
         )
         await self._db.commit()
 
+    async def update_watch_http_headers(
+        self,
+        watch_id: int,
+        etag: Optional[str] = None,
+        last_modified: Optional[str] = None,
+    ) -> None:
+        """
+        Update HTTP conditional headers for a watch.
+
+        Used to support conditional GET requests (If-None-Match, If-Modified-Since)
+        for bandwidth-efficient fetching.
+
+        Args:
+            watch_id: Watch ID
+            etag: ETag value from server response
+            last_modified: Last-Modified value from server response
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        now = datetime.now(timezone.utc).isoformat()
+
+        await self._db.execute(
+            """
+            UPDATE watches
+            SET last_etag = ?,
+                last_modified = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (etag, last_modified, now, watch_id)
+        )
+        await self._db.commit()
+
     def _row_to_watch(self, row: tuple) -> Watch:
         """Convert database row to Watch object."""
         return Watch(
@@ -305,6 +345,9 @@ class MonitorStore:
             last_low_sev_at=self._parse_datetime(row[11]) if len(row) > 11 else None,
             active=bool(row[12]) if len(row) > 12 else True,
             created_at=self._parse_datetime(row[13]) if len(row) > 13 else datetime.now(timezone.utc),
+            config_json=row[14] if len(row) > 14 else None,
+            last_etag=row[15] if len(row) > 15 else None,
+            last_modified=row[16] if len(row) > 16 else None,
         )
 
     # =========================================================================
