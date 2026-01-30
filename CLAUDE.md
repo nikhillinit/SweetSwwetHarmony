@@ -163,13 +163,13 @@ Write failing tests first, then minimal code to pass them.
 
 ---
 
-## Current Sprint: Signal Quality & Enrichment
+## Current Sprint: Signal Quality & Enrichment ✅ COMPLETE
 
-> **Critical Context from Codebase Analysis:**
-> - thesis_matcher.py rewritten with Consumer keywords and integrated into pipeline ✅
-> - llm_classifier.py results now persisted in thesis_classifications table ✅
-> - Signal routing now uses thesis fit (QUALIFIED/HELD/REJECTED) ✅
-> - New collectors should wait until existing signal flow is solid
+> **Sprint Summary:**
+> - All 5 phases completed successfully
+> - Signal consolidation, enrichment boost, thesis integration, exit predictor all operational
+> - Collector evaluation research complete (no new collectors needed)
+> - Existing collectors provide sufficient coverage for all signal types
 
 **Phase 1: Signal Consolidation** ✅ COMPLETE
 
@@ -245,19 +245,23 @@ Exit criteria met:
 - ✓ Percentile ranking via nightly batch
 - ✓ Non-blocking pipeline integration
 
-**Phase 5: Collector Evaluation** (research FIRST, build LAST)
+**Phase 5: Collector Evaluation** ✅ COMPLETE
 
 Problem: Proposed collectors may not have accessible APIs.
 
-- [ ] Research & document API availability:
-  - Wellfound: API deprecated 2023, scraping violates ToS → likely ABANDON
-  - App Store: iTunes Search limited, no new app listings API → likely DEFER
-  - Play Store: NO official API, 3rd-party services expensive → likely DEFER
-  - Press releases: Enterprise subscription required → likely ABANDON
-- [ ] For any viable options: signal quality analysis, cost-benefit
-- [ ] Build at most ONE collector if research justifies it
+- [x] Research & document API availability:
+  - Wellfound: No public API, third-party scrapers deprecated → **ABANDON**
+  - App Store: iTunes Search lacks "new apps" endpoint, App Store Connect only for own apps → **DEFER**
+  - Play Store: No official API, scraping violates ToS, 3rd-party $25K+/year → **DEFER**
+  - Press releases: Enterprise pricing, RSS feeds already in `rss_feeds.py` → **ABANDON**
+- [x] Cost-benefit analysis completed for all options
+- [x] Research doc created: `docs/collector-evaluation.md`
+- [x] No new collectors to build (all abandoned or deferred)
 
-Exit criteria: Research doc with BUILD/DEFER/ABANDON decisions + rationale.
+Exit criteria met:
+- ✓ All 4 collectors researched with BUILD/DEFER/ABANDON decisions
+- ✓ Research doc with detailed rationale at `docs/collector-evaluation.md`
+- ✓ Alternative approaches documented (existing collectors provide coverage)
 
 **Dependency Order:** Phase 1 → Phase 2 → Phase 3 → Phase 4 → Phase 5 (sequential)
 
