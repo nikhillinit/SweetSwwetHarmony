@@ -63,7 +63,7 @@ logger = logging.getLogger(__name__)
 # SCHEMA VERSION
 # =============================================================================
 
-CURRENT_SCHEMA_VERSION = 21
+CURRENT_SCHEMA_VERSION = 22
 
 # SQL for creating tables (migrations applied in order)
 MIGRATIONS = {
@@ -1525,6 +1525,27 @@ MIGRATIONS = {
     -- Temporal queries
     CREATE INDEX IF NOT EXISTS idx_claim_facts_temporal
         ON claim_facts(entity_id, valid_from, valid_until);
+    """,
+    22: """
+    -- =============================================================================
+    -- PROGRESSIVE CONTENT PIPELINE - Per-watch configuration and HTTP caching
+    -- =============================================================================
+    -- Adds columns to watches table for:
+    -- 1. Per-watch extraction configuration (selectors, presets, transport rules)
+    -- 2. HTTP conditional request support (ETag, Last-Modified headers)
+
+    -- 22.1: Add config_json for per-watch extraction configuration
+    -- JSON blob containing: selectors, preset reference, transport rules, etc.
+    ALTER TABLE watches ADD COLUMN config_json TEXT DEFAULT NULL;
+
+    -- 22.2: Add HTTP conditional request headers for efficient polling
+    -- Enables 304 Not Modified responses to skip unchanged pages
+    ALTER TABLE watches ADD COLUMN last_etag TEXT DEFAULT NULL;
+    ALTER TABLE watches ADD COLUMN last_modified TEXT DEFAULT NULL;
+
+    -- 22.3: Index for finding watches with custom configurations
+    CREATE INDEX IF NOT EXISTS idx_watches_config_type
+        ON watches(watch_type) WHERE config_json IS NOT NULL;
     """
 }
 
