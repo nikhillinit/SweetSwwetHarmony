@@ -19,6 +19,7 @@ Components:
 
 from monitoring.content_pipeline.config import (
     ExtractorConfig,
+    FallbackConfig,
     TransportConfig,
     WatchConfig,
     ConfigParser,
@@ -40,6 +41,7 @@ from monitoring.content_pipeline.extract_html import SelectorExtractor
 __all__ = [
     # Config classes
     "ExtractorConfig",
+    "FallbackConfig",
     "TransportConfig",
     "WatchConfig",
     "ConfigParser",

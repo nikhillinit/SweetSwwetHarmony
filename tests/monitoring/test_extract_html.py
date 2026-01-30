@@ -490,3 +490,343 @@ class TestExtractionTiming:
 
         # extraction_time_ms should be set (>= 0)
         assert result.extraction_time_ms >= 0
+
+
+class TestFallbackConfig:
+    """Test FallbackConfig dataclass."""
+
+    def test_default_values(self):
+        """FallbackConfig should have sensible defaults."""
+        from monitoring.content_pipeline.config import FallbackConfig
+
+        config = FallbackConfig()
+
+        assert config.fallback_on_empty is True
+        assert config.min_chars == 0
+        assert config.always_include_body is True
+
+    def test_custom_values(self):
+        """FallbackConfig should accept custom values."""
+        from monitoring.content_pipeline.config import FallbackConfig
+
+        config = FallbackConfig(
+            fallback_on_empty=False,
+            min_chars=100,
+            always_include_body=False,
+        )
+
+        assert config.fallback_on_empty is False
+        assert config.min_chars == 100
+        assert config.always_include_body is False
+
+
+class TestFallbackChainBehavior:
+    """Test selector fallback chain behavior with FallbackConfig."""
+
+    def test_fallback_on_empty_tries_next_selector(self):
+        """Should try next selector when current returns empty content."""
+        from monitoring.content_pipeline.config import FallbackConfig
+
+        html = """
+        <html>
+            <body>
+                <div id="empty"></div>
+                <article>Article content here.</article>
+            </body>
+        </html>
+        """
+        extractor = SelectorExtractor()
+        config = FallbackConfig(fallback_on_empty=True)
+        result = extractor.extract(
+            html,
+            selectors=["#empty", "article"],
+            fallback_config=config,
+        )
+
+        assert result.content == "Article content here."
+        assert result.metadata["selector_used"] == "article"
+        assert result.metadata["selector_index"] == 1
+        assert result.metadata["selectors_tried"] == ["#empty", "article"]
+        assert result.metadata["fallback_triggered"] is True
+
+    def test_fallback_on_empty_false_uses_first_match(self):
+        """Should use first matching selector even if empty when fallback_on_empty=False."""
+        from monitoring.content_pipeline.config import FallbackConfig
+
+        html = """
+        <html>
+            <body>
+                <div id="empty"></div>
+                <article>Article content here.</article>
+            </body>
+        </html>
+        """
+        extractor = SelectorExtractor()
+        config = FallbackConfig(fallback_on_empty=False)
+        result = extractor.extract(
+            html,
+            selectors=["#empty", "article"],
+            fallback_config=config,
+        )
+
+        # #empty exists, so it matches (even though empty)
+        # Actually, the current implementation checks for non-empty content, so it will skip
+        # But with fallback_on_empty=False and selector exists, behavior should differ
+        # Let's verify: when fallback_on_empty=False, we stop at first *matched* element
+        # This is a design choice - the selector matched but content is empty
+        # The test verifies fallback_on_empty=False means "don't try next if element found"
+        assert result.content == ""
+        assert result.metadata.get("selector_used") == "#empty"
+        assert result.metadata.get("fallback_triggered") is False
+
+    def test_min_chars_triggers_fallback(self):
+        """Should try next selector when content is below min_chars."""
+        from monitoring.content_pipeline.config import FallbackConfig
+
+        html = """
+        <html>
+            <body>
+                <div id="short">Hi</div>
+                <article>This is a much longer article with enough content.</article>
+            </body>
+        </html>
+        """
+        extractor = SelectorExtractor()
+        config = FallbackConfig(min_chars=20)
+        result = extractor.extract(
+            html,
+            selectors=["#short", "article"],
+            fallback_config=config,
+        )
+
+        # "Hi" is 2 chars, below min_chars=20, so should fallback to article
+        assert "much longer article" in result.content
+        assert result.metadata["selector_used"] == "article"
+        assert result.metadata["selectors_tried"] == ["#short", "article"]
+        assert result.metadata["fallback_triggered"] is True
+
+    def test_always_include_body_as_ultimate_fallback(self):
+        """Should fall back to 'body' when no selector matches and always_include_body=True."""
+        from monitoring.content_pipeline.config import FallbackConfig
+
+        html = """
+        <html>
+            <body>
+                <div>Some body content here.</div>
+            </body>
+        </html>
+        """
+        extractor = SelectorExtractor()
+        config = FallbackConfig(always_include_body=True)
+        result = extractor.extract(
+            html,
+            selectors=["#nonexistent", ".missing"],
+            fallback_config=config,
+        )
+
+        assert "Some body content here" in result.content
+        assert result.metadata["selector_used"] == "body"
+        assert result.metadata["selectors_tried"] == ["#nonexistent", ".missing", "body"]
+        assert result.metadata["fallback_triggered"] is True
+
+    def test_always_include_body_false_returns_empty(self):
+        """Should return empty when no selector matches and always_include_body=False."""
+        from monitoring.content_pipeline.config import FallbackConfig
+
+        html = """
+        <html>
+            <body>
+                <div>Some body content here.</div>
+            </body>
+        </html>
+        """
+        extractor = SelectorExtractor()
+        config = FallbackConfig(always_include_body=False)
+        result = extractor.extract(
+            html,
+            selectors=["#nonexistent", ".missing"],
+            fallback_config=config,
+        )
+
+        assert result.content == ""
+        assert result.metadata.get("selector_used") is None
+        assert result.metadata.get("selectors_tried") == ["#nonexistent", ".missing"]
+
+    def test_selectors_tried_tracked_in_metadata(self):
+        """Should track all selectors tried in metadata."""
+        from monitoring.content_pipeline.config import FallbackConfig
+
+        html = """
+        <html>
+            <body>
+                <div class="found">Content found.</div>
+            </body>
+        </html>
+        """
+        extractor = SelectorExtractor()
+        config = FallbackConfig()
+        result = extractor.extract(
+            html,
+            selectors=["#missing1", ".missing2", ".found"],
+            fallback_config=config,
+        )
+
+        assert result.content == "Content found."
+        assert result.metadata["selectors_tried"] == ["#missing1", ".missing2", ".found"]
+        assert result.metadata["selector_used"] == ".found"
+
+    def test_fallback_triggered_false_when_first_selector_works(self):
+        """Should set fallback_triggered=False when first selector works."""
+        from monitoring.content_pipeline.config import FallbackConfig
+
+        html = """
+        <html>
+            <body>
+                <article>Article content.</article>
+            </body>
+        </html>
+        """
+        extractor = SelectorExtractor()
+        config = FallbackConfig()
+        result = extractor.extract(
+            html,
+            selectors=["article", ".backup"],
+            fallback_config=config,
+        )
+
+        assert result.content == "Article content."
+        assert result.metadata["fallback_triggered"] is False
+        assert result.metadata["selectors_tried"] == ["article"]
+
+
+class TestFallbackConfidenceScoring:
+    """Test confidence scoring based on fallback behavior."""
+
+    def test_confidence_high_for_first_selector_match(self):
+        """Should have high confidence (1.0) when first selector matches well."""
+        from monitoring.content_pipeline.config import FallbackConfig
+
+        # Content must be >= 100 chars for high confidence
+        html = """
+        <html>
+            <body>
+                <article>This is a good article with plenty of content to extract. It contains enough text to be considered a quality extraction result with more than one hundred characters total.</article>
+            </body>
+        </html>
+        """
+        extractor = SelectorExtractor()
+        config = FallbackConfig()
+        result = extractor.extract(
+            html,
+            selectors=["article"],
+            fallback_config=config,
+        )
+
+        assert len(result.content) >= 100  # Verify test setup
+        assert result.confidence == 1.0
+
+    def test_confidence_medium_for_body_fallback(self):
+        """Should have medium confidence (0.7) when falling back to body."""
+        from monitoring.content_pipeline.config import FallbackConfig
+
+        # Content must be >= 100 chars for body fallback to get 0.7 (not 0.5 for short)
+        html = """
+        <html>
+            <body>
+                <div>This is body content with plenty of text to extract here. The content needs to be long enough to pass the 100 character threshold for quality confidence scoring.</div>
+            </body>
+        </html>
+        """
+        extractor = SelectorExtractor()
+        config = FallbackConfig(always_include_body=True)
+        result = extractor.extract(
+            html,
+            selectors=["#nonexistent"],
+            fallback_config=config,
+        )
+
+        assert len(result.content) >= 100  # Verify test setup
+        assert result.confidence == 0.7
+        assert result.metadata["selector_used"] == "body"
+
+    def test_confidence_low_for_very_short_content(self):
+        """Should have low confidence (0.5) when extracted content is very short."""
+        from monitoring.content_pipeline.config import FallbackConfig
+
+        html = """
+        <html>
+            <body>
+                <article>Short</article>
+            </body>
+        </html>
+        """
+        extractor = SelectorExtractor()
+        # min_chars=0 so we don't skip, but confidence should still be low
+        config = FallbackConfig(min_chars=0)
+        result = extractor.extract(
+            html,
+            selectors=["article"],
+            fallback_config=config,
+        )
+
+        # "Short" is 5 chars, which is < 100, so confidence should be 0.5
+        assert result.confidence == 0.5
+
+    def test_confidence_normal_for_adequate_content(self):
+        """Should have normal confidence (1.0) for content >= 100 chars."""
+        from monitoring.content_pipeline.config import FallbackConfig
+
+        html = """
+        <html>
+            <body>
+                <article>This is a much longer article that contains more than one hundred characters of actual text content for extraction purposes.</article>
+            </body>
+        </html>
+        """
+        extractor = SelectorExtractor()
+        config = FallbackConfig()
+        result = extractor.extract(
+            html,
+            selectors=["article"],
+            fallback_config=config,
+        )
+
+        assert len(result.content) >= 100
+        assert result.confidence == 1.0
+
+
+class TestBackwardCompatibility:
+    """Test backward compatibility when FallbackConfig is not provided."""
+
+    def test_extract_without_fallback_config(self):
+        """Should work as before when fallback_config is not provided."""
+        html = """
+        <html>
+            <body>
+                <article>Article content.</article>
+            </body>
+        </html>
+        """
+        extractor = SelectorExtractor()
+        result = extractor.extract(html, selectors=["article"])
+
+        assert result.content == "Article content."
+        assert result.metadata["selector_used"] == "article"
+        # Original behavior: no selectors_tried or fallback_triggered
+        # These fields may or may not be present - depends on implementation
+        # But content extraction should still work
+
+    def test_extract_with_none_fallback_config(self):
+        """Should work when fallback_config is explicitly None."""
+        html = """
+        <html>
+            <body>
+                <article>Article content.</article>
+            </body>
+        </html>
+        """
+        extractor = SelectorExtractor()
+        result = extractor.extract(html, selectors=["article"], fallback_config=None)
+
+        assert result.content == "Article content."
+        assert result.metadata["selector_used"] == "article"
