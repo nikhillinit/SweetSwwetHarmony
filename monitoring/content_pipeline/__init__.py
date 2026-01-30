@@ -13,6 +13,7 @@ Components:
 - PipelineResult: Final output from content pipeline
 - ExtractedContent: Single extracted content representation
 - RepresentationType: Types of content representations
+- HttpxTransport: HTTP transport with conditional request support
 """
 
 from monitoring.content_pipeline.config import (
@@ -32,6 +33,7 @@ from monitoring.content_pipeline.models import (
     ExtractedContent,
     RepresentationType,
 )
+from monitoring.content_pipeline.transport_httpx import HttpxTransport
 
 __all__ = [
     # Config classes
@@ -48,4 +50,6 @@ __all__ = [
     "PipelineResult",
     "ExtractedContent",
     "RepresentationType",
+    # Transport
+    "HttpxTransport",
 ]
