@@ -1520,6 +1520,244 @@ async def cmd_pipeline_entities(
 
 
 # =============================================================================
+# THESIS EVALUATION COMMANDS
+# =============================================================================
+
+async def cmd_eval_export(args):
+    """Export ground truth from Notion for thesis evaluation."""
+    from scripts.export_notion_ground_truth import NotionGroundTruthExporter
+
+    output_path = getattr(args, "output", "datasets/thesis_ground_truth.jsonl")
+    min_examples = getattr(args, "min_examples", 100)
+    dry_run = getattr(args, "dry_run", False)
+
+    print("=" * 70)
+    print("THESIS EVALUATION - EXPORT GROUND TRUTH")
+    print("=" * 70)
+    print(f"Output: {output_path}")
+    print(f"Min examples: {min_examples}")
+    print()
+
+    try:
+        exporter = NotionGroundTruthExporter()
+        samples = await exporter.export(min_examples=min_examples)
+
+        # Show label distribution
+        label_counts = {}
+        for sample in samples:
+            label_counts[sample.target] = label_counts.get(sample.target, 0) + 1
+
+        print(f"Exported {len(samples)} samples")
+        print("\nLabel distribution:")
+        for label, count in sorted(label_counts.items()):
+            print(f"  {label}: {count}")
+
+        if dry_run:
+            print("\n[DRY RUN] Not writing to file")
+            print("\nSample examples:")
+            for sample in samples[:3]:
+                print(f"\n--- {sample.metadata['company_name']} ---")
+                print(f"Target: {sample.target}")
+                print(f"Input: {sample.input[:150]}...")
+        else:
+            import json
+            from pathlib import Path
+            output_file = Path(output_path)
+            output_file.parent.mkdir(parents=True, exist_ok=True)
+
+            with open(output_file, "w", encoding="utf-8") as f:
+                for sample in samples:
+                    f.write(json.dumps(sample.to_dict()) + "\n")
+
+            print(f"\nWritten to {output_path}")
+
+    except ValueError as e:
+        print(f"\nError: {e}")
+        print("Set NOTION_API_KEY and NOTION_DATABASE_ID environment variables")
+        sys.exit(1)
+
+
+async def cmd_eval_run(args):
+    """Run thesis classification evaluation."""
+    from utils.thesis_evaluator import (
+        ThesisEvaluator,
+        format_evaluation_result,
+        format_comparison,
+    )
+    from storage.signal_store import SignalStore
+
+    eval_type = getattr(args, "type", "keyword")
+    dataset_path = getattr(args, "dataset", "datasets/thesis_sample.jsonl")
+    db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+    save_results = getattr(args, "save", True)
+
+    print("=" * 70)
+    print("THESIS CLASSIFICATION EVALUATION")
+    print("=" * 70)
+    print(f"Type: {eval_type}")
+    print(f"Dataset: {dataset_path}")
+    print()
+
+    evaluator = ThesisEvaluator()
+
+    if eval_type == "keyword":
+        result = await evaluator.evaluate_keyword(dataset_path)
+        print(format_evaluation_result(result))
+
+        # Save to database
+        if save_results:
+            store = SignalStore(db_path)
+            await store.initialize()
+            try:
+                await store.save_thesis_evaluation(
+                    run_id=result.run_id,
+                    evaluator_type=result.evaluator_type,
+                    dataset_path=result.dataset_path,
+                    accuracy=result.accuracy,
+                    per_class_metrics={
+                        k: v.to_dict() for k, v in result.per_class_metrics.items()
+                    },
+                    confusion_matrix=result.confusion_matrix,
+                    latency_ms=result.latency_ms,
+                    errors=result.errors,
+                )
+                print(f"\nResults saved to database (run_id: {result.run_id})")
+            finally:
+                await store.close()
+
+    elif eval_type == "llm":
+        result = await evaluator.evaluate_llm(dataset_path)
+        print(format_evaluation_result(result))
+
+        # Save to database
+        if save_results:
+            store = SignalStore(db_path)
+            await store.initialize()
+            try:
+                await store.save_thesis_evaluation(
+                    run_id=result.run_id,
+                    evaluator_type=result.evaluator_type,
+                    dataset_path=result.dataset_path,
+                    accuracy=result.accuracy,
+                    per_class_metrics={
+                        k: v.to_dict() for k, v in result.per_class_metrics.items()
+                    },
+                    confusion_matrix=result.confusion_matrix,
+                    latency_ms=result.latency_ms,
+                    token_usage=result.token_usage,
+                    errors=result.errors,
+                )
+                print(f"\nResults saved to database (run_id: {result.run_id})")
+            finally:
+                await store.close()
+
+    elif eval_type == "both":
+        comparison = await evaluator.evaluate_both(dataset_path)
+        print(format_comparison(comparison))
+
+        # Save both results
+        if save_results:
+            store = SignalStore(db_path)
+            await store.initialize()
+            try:
+                # Save keyword result
+                kw = comparison.keyword_result
+                await store.save_thesis_evaluation(
+                    run_id=kw.run_id,
+                    evaluator_type=kw.evaluator_type,
+                    dataset_path=kw.dataset_path,
+                    accuracy=kw.accuracy,
+                    per_class_metrics={
+                        k: v.to_dict() for k, v in kw.per_class_metrics.items()
+                    },
+                    confusion_matrix=kw.confusion_matrix,
+                    latency_ms=kw.latency_ms,
+                    errors=kw.errors,
+                )
+
+                # Save LLM result if available
+                if comparison.llm_result:
+                    llm = comparison.llm_result
+                    await store.save_thesis_evaluation(
+                        run_id=llm.run_id,
+                        evaluator_type=llm.evaluator_type,
+                        dataset_path=llm.dataset_path,
+                        accuracy=llm.accuracy,
+                        per_class_metrics={
+                            k: v.to_dict() for k, v in llm.per_class_metrics.items()
+                        },
+                        confusion_matrix=llm.confusion_matrix,
+                        latency_ms=llm.latency_ms,
+                        token_usage=llm.token_usage,
+                        errors=llm.errors,
+                    )
+
+                print(f"\nResults saved to database")
+            finally:
+                await store.close()
+
+    else:
+        print(f"Unknown evaluation type: {eval_type}")
+        print("Valid types: keyword, llm, both")
+        sys.exit(1)
+
+
+async def cmd_eval_results(args):
+    """Show historical thesis evaluation results."""
+    from storage.signal_store import SignalStore
+
+    db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+    limit = getattr(args, "limit", 10)
+    eval_type = getattr(args, "type", None)
+
+    print("=" * 70)
+    print("THESIS EVALUATION HISTORY")
+    print("=" * 70)
+
+    store = SignalStore(db_path)
+    await store.initialize()
+
+    try:
+        results = await store.get_thesis_evaluations(
+            evaluator_type=eval_type,
+            limit=limit,
+        )
+
+        if not results:
+            print("\nNo evaluation runs found.")
+            print("Run: python run_pipeline.py eval run --type keyword")
+            return
+
+        print(f"\nShowing {len(results)} most recent runs:")
+        print()
+        print(f"{'Run ID':<16} {'Type':<10} {'Accuracy':>10} {'Dataset':<30} {'Date':<20}")
+        print("-" * 90)
+
+        for r in results:
+            run_id = r["run_id"][:14] + ".." if len(r["run_id"]) > 16 else r["run_id"]
+            eval_type = r["evaluator_type"]
+            accuracy = f"{r['accuracy']:.1%}" if r["accuracy"] else "N/A"
+            dataset = r["dataset_path"][:28] + ".." if len(r["dataset_path"]) > 30 else r["dataset_path"]
+            date = r["created_at"][:19] if r["created_at"] else "N/A"
+
+            print(f"{run_id:<16} {eval_type:<10} {accuracy:>10} {dataset:<30} {date:<20}")
+
+        # Show trend if we have baseline
+        if len(results) >= 2:
+            latest = results[0]
+            baseline = results[1]
+
+            if latest["accuracy"] and baseline["accuracy"]:
+                delta = latest["accuracy"] - baseline["accuracy"]
+                if abs(delta) > 0.01:
+                    trend = "IMPROVED" if delta > 0 else "REGRESSED"
+                    print(f"\nTrend vs previous: {delta:+.1%} ({trend})")
+
+    finally:
+        await store.close()
+
+
+# =============================================================================
 # CLI ARGUMENT PARSER
 # =============================================================================
 
@@ -2388,6 +2626,115 @@ Examples:
         "--dry-run",
         action="store_true",
         help="Preview what would be imported without storing",
+    )
+
+    # --- eval command group ---
+    eval_parser = subparsers.add_parser(
+        "eval",
+        help="Thesis classification evaluation harness",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="""
+Thesis classification evaluation harness.
+
+Evaluates keyword matcher and LLM classifier accuracy against ground truth datasets.
+Provides per-class metrics, confusion matrices, and trend tracking.
+
+Examples:
+  # Export ground truth from Notion
+  python run_pipeline.py eval export --output datasets/thesis_ground_truth.jsonl
+
+  # Run keyword evaluation
+  python run_pipeline.py eval run --type keyword
+
+  # Run LLM evaluation
+  python run_pipeline.py eval run --type llm
+
+  # Compare keyword vs LLM
+  python run_pipeline.py eval run --type both
+
+  # View historical results
+  python run_pipeline.py eval results --limit 10
+""",
+    )
+    eval_sub = eval_parser.add_subparsers(dest="eval_cmd", help="Evaluation operation")
+
+    # eval export
+    eval_export_parser = eval_sub.add_parser(
+        "export",
+        help="Export ground truth from Notion",
+    )
+    eval_export_parser.add_argument(
+        "--output", "-o",
+        type=str,
+        default="datasets/thesis_ground_truth.jsonl",
+        help="Output JSONL file path (default: datasets/thesis_ground_truth.jsonl)",
+    )
+    eval_export_parser.add_argument(
+        "--min-examples",
+        type=int,
+        default=100,
+        help="Minimum examples to export (default: 100)",
+    )
+    eval_export_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show samples without writing to file",
+    )
+
+    # eval run
+    eval_run_parser = eval_sub.add_parser(
+        "run",
+        help="Run thesis classification evaluation",
+    )
+    eval_run_parser.add_argument(
+        "--type", "-t",
+        type=str,
+        default="keyword",
+        choices=["keyword", "llm", "both"],
+        help="Evaluation type (default: keyword)",
+    )
+    eval_run_parser.add_argument(
+        "--dataset", "-d",
+        type=str,
+        default="datasets/thesis_sample.jsonl",
+        help="Path to JSONL dataset (default: datasets/thesis_sample.jsonl)",
+    )
+    eval_run_parser.add_argument(
+        "--db-path",
+        type=str,
+        default=os.getenv("DISCOVERY_DB_PATH", "signals.db"),
+        help="Path to signals database",
+    )
+    eval_run_parser.add_argument(
+        "--no-save",
+        action="store_true",
+        dest="no_save",
+        help="Don't save results to database",
+    )
+
+    # eval results
+    eval_results_parser = eval_sub.add_parser(
+        "results",
+        help="View historical evaluation results",
+    )
+    eval_results_parser.add_argument(
+        "--limit", "-n",
+        type=int,
+        default=10,
+        help="Number of results to show (default: 10)",
+    )
+    eval_results_parser.add_argument(
+        "--type", "-t",
+        type=str,
+        choices=["keyword", "llm"],
+        default=None,
+        help="Filter by evaluation type",
+    )
+    eval_results_parser.add_argument(
+        "--db-path",
+        type=str,
+        default=os.getenv("DISCOVERY_DB_PATH", "signals.db"),
+        help="Path to signals database",
     )
 
     # --- sync-lps command ---
@@ -3486,6 +3833,23 @@ async def main():
                     sys.exit(1)
             else:
                 print("Monitor command requires a subcommand (add, run, status, list)")
+                sys.exit(1)
+        elif args.command == "eval":
+            # Handle eval subcommands
+            if hasattr(args, "eval_cmd") and args.eval_cmd:
+                if args.eval_cmd == "export":
+                    await cmd_eval_export(args)
+                elif args.eval_cmd == "run":
+                    # Convert no_save flag to save flag
+                    args.save = not getattr(args, "no_save", False)
+                    await cmd_eval_run(args)
+                elif args.eval_cmd == "results":
+                    await cmd_eval_results(args)
+                else:
+                    print(f"Unknown eval command: {args.eval_cmd}")
+                    sys.exit(1)
+            else:
+                print("Eval command requires a subcommand (export, run, results)")
                 sys.exit(1)
         elif args.command == "outbox":
             # Handle outbox subcommands
