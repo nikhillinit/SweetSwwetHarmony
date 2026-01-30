@@ -9,6 +9,9 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 import json
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -41,6 +44,39 @@ class Watch:
     active: bool = True
     created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: Optional[datetime] = None
+
+    # Content pipeline configuration (v2.5 - migration 22)
+    config_json: Optional[str] = None  # Per-watch extraction config (selectors, presets)
+    last_etag: Optional[str] = None  # HTTP ETag for conditional requests
+    last_modified: Optional[str] = None  # HTTP Last-Modified for conditional requests
+
+    @property
+    def config_dict(self) -> Dict[str, Any]:
+        """
+        Parse config_json into a dictionary.
+
+        Returns:
+            Parsed config dict, or {"preset": "default"} on None/invalid JSON.
+        """
+        if self.config_json is None:
+            return {"preset": "default"}
+        try:
+            parsed = json.loads(self.config_json)
+            if not isinstance(parsed, dict):
+                logger.warning(
+                    "config_json for watch %s is not a dict (got %s), using default",
+                    self.id,
+                    type(parsed).__name__,
+                )
+                return {"preset": "default"}
+            return parsed
+        except json.JSONDecodeError as e:
+            logger.warning(
+                "Invalid JSON in config_json for watch %s: %s",
+                self.id,
+                str(e),
+            )
+            return {"preset": "default"}
 
     def is_due(self, now: Optional[datetime] = None) -> bool:
         """Check if this watch is due for checking."""
@@ -86,6 +122,10 @@ class Watch:
             "active": self.active,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "config_json": self.config_json,
+            "config_dict": self.config_dict,
+            "last_etag": self.last_etag,
+            "last_modified": self.last_modified,
         }
 
 
