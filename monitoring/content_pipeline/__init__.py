@@ -14,6 +14,7 @@ Components:
 - ExtractedContent: Single extracted content representation
 - RepresentationType: Types of content representations
 - HttpxTransport: HTTP transport with conditional request support
+- SelectorExtractor: CSS/XPath-based HTML content extraction (parsel)
 """
 
 from monitoring.content_pipeline.config import (
@@ -34,6 +35,7 @@ from monitoring.content_pipeline.models import (
     RepresentationType,
 )
 from monitoring.content_pipeline.transport_httpx import HttpxTransport
+from monitoring.content_pipeline.extract_html import SelectorExtractor
 
 __all__ = [
     # Config classes
@@ -52,4 +54,6 @@ __all__ = [
     "RepresentationType",
     # Transport
     "HttpxTransport",
+    # Extraction
+    "SelectorExtractor",
 ]
