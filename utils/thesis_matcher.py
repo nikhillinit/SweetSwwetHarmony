@@ -72,7 +72,9 @@ CONSUMER_KEYWORDS: Dict[ConsumerThesis, Dict[str, float]] = {
         "health tracker": 0.8,
         "meditation app": 0.8,
         "sleep app": 0.8,
+        "sleep tracking": 0.8,  # Added: "sleep tracking app" matches this
         "nutrition app": 0.7,
+        "personalized workout": 0.8,  # Added for fitness app specificity
         # Medium weight - general terms
         "fitness": 0.5,
         "workout": 0.5,
@@ -85,6 +87,7 @@ CONSUMER_KEYWORDS: Dict[ConsumerThesis, Dict[str, float]] = {
         "health app": 0.6,
         "mental health": 0.5,
         "therapy": 0.4,
+        "guided relaxation": 0.5,  # Added for meditation/sleep apps
     },
     ConsumerThesis.TRAVEL_HOSPITALITY: {
         # High weight - specific travel terms
@@ -135,8 +138,13 @@ NEGATIVE_KEYWORDS: Dict[str, float] = {
     "saas platform": 0.4,
     "developer tool": 0.5,
     "api platform": 0.4,
+    "api management": 0.5,  # Added per plan
     "devops": 0.5,
     "infrastructure": 0.4,
+    "logistics platform": 0.5,  # Added: B2B logistics
+    "logistics": 0.3,  # Added: general logistics indicator
+    "data platform": 0.4,  # Added per plan
+    "sdk": 0.4,  # Added per plan
     # Crypto/Web3
     "blockchain": 0.5,
     "crypto": 0.5,
@@ -151,6 +159,7 @@ NEGATIVE_KEYWORDS: Dict[str, float] = {
     "series b": 0.3,
     "series c": 0.4,
     "series d": 0.5,
+    "aggregator": 0.2,  # Added: weak signal for price aggregators
 }
 
 

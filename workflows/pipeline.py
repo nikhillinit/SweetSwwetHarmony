@@ -170,6 +170,25 @@ class PipelineConfig:
     use_phase_g_identity_resolution: bool = False  # Enable blocking-first fuzzy entity resolution
     use_claim_facts: bool = False  # Enable bi-temporal claim facts (SCD-2)
 
+    # Timeout configuration (Phase C0)
+    collector_connect_timeout: float = 10.0   # TCP connection establishment
+    collector_search_timeout: float = 60.0    # List/search endpoints (often slowest)
+    collector_enrich_timeout: float = 45.0    # Detail fetching
+    collector_download_timeout: float = 90.0  # Large file downloads
+
+    # Network Scout / Warm Intro Enrichment (Phase A)
+    use_warm_intro_enrichment: bool = False   # Enable warm intro enrichment
+    user_email: Optional[str] = None          # Required when use_warm_intro_enrichment=True
+    private_graph_db_path: str = "private_graph.db"  # Privacy boundary for relationship data
+
+    def __post_init__(self):
+        """Validate configuration after initialization."""
+        if self.use_warm_intro_enrichment and not self.user_email:
+            raise ValueError(
+                "USER_EMAIL environment variable is required when "
+                "ENABLE_WARM_INTRO_ENRICHMENT is true"
+            )
+
     @classmethod
     def from_env(cls) -> PipelineConfig:
         """Load configuration from environment variables"""
@@ -196,6 +215,15 @@ class PipelineConfig:
             use_investor_matching=os.getenv("ENABLE_INVESTOR_MATCHING", "false").lower() == "true",
             use_phase_g_identity_resolution=os.getenv("USE_PHASE_G_IDENTITY_RESOLUTION", "false").lower() == "true",
             use_claim_facts=os.getenv("USE_CLAIM_FACTS", "false").lower() == "true",
+            # Timeout configuration
+            collector_connect_timeout=float(os.getenv("COLLECTOR_CONNECT_TIMEOUT", "10.0")),
+            collector_search_timeout=float(os.getenv("COLLECTOR_SEARCH_TIMEOUT", "60.0")),
+            collector_enrich_timeout=float(os.getenv("COLLECTOR_ENRICH_TIMEOUT", "45.0")),
+            collector_download_timeout=float(os.getenv("COLLECTOR_DOWNLOAD_TIMEOUT", "90.0")),
+            # Warm intro enrichment
+            use_warm_intro_enrichment=os.getenv("ENABLE_WARM_INTRO_ENRICHMENT", "false").lower() == "true",
+            user_email=os.getenv("USER_EMAIL"),
+            private_graph_db_path=os.getenv("PRIVATE_GRAPH_DB_PATH", "private_graph.db"),
         )
 
 

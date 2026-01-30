@@ -37,7 +37,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 import aiosqlite
 
@@ -683,3 +683,32 @@ class RelationshipStore:
             reply_count=reply_count,
             total_messages=total_messages,
         )
+
+    async def get_all_domains(
+        self,
+        me_email: str,
+    ) -> List[str]:
+        """
+        Get all target domains with relationship data for a user.
+
+        Args:
+            me_email: User's email (will be hashed)
+
+        Returns:
+            List of target domain strings
+        """
+        me_email_hash = self._hash_email(me_email)
+
+        async with self.transaction() as conn:
+            cursor = await conn.execute(
+                """
+                SELECT DISTINCT target_domain
+                FROM domain_relationships
+                WHERE me_email_hash = ?
+                ORDER BY target_domain
+                """,
+                (me_email_hash,)
+            )
+            rows = await cursor.fetchall()
+
+        return [row[0] for row in rows]

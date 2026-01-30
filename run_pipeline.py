@@ -1212,6 +1212,125 @@ async def cmd_relationship_health(args):
         await store.close()
 
 
+async def cmd_warm_intros(args):
+    """Look up warm intro data for investor domains."""
+    from storage.relationship_store import RelationshipStore
+    from utils.warm_intro_boost import WarmIntroBoost
+    from utils.warm_intro_enricher import WarmIntroEnricher
+
+    db_path = getattr(args, "db_path", None) or "private_graph.db"
+    user_email = getattr(args, "user_email", None) or os.environ.get("USER_EMAIL", "")
+    output_json = getattr(args, "output_json", False)
+    verbose = getattr(args, "verbose", False)
+    domain = getattr(args, "domain", None)
+    show_all = getattr(args, "show_all", False)
+
+    if not user_email:
+        print("Error: --user-email required or set USER_EMAIL env var")
+        return
+
+    if not domain and not show_all:
+        print("Error: --domain or --all required")
+        return
+
+    store = RelationshipStore(db_path=db_path)
+    await store.initialize()
+
+    try:
+        boost = WarmIntroBoost()
+        enricher = WarmIntroEnricher(
+            relationship_store=store,
+            warm_intro_boost=boost,
+        )
+
+        if domain:
+            # Single domain lookup
+            candidate = await enricher.enrich_investor(
+                investor_domain=domain,
+                user_email=user_email,
+            )
+
+            if output_json:
+                if candidate:
+                    print(json.dumps({
+                        "domain": candidate.investor_domain,
+                        "score": candidate.score,
+                        "badge": candidate.badge,
+                        "attribution": candidate.attribution,
+                        "source": candidate.source.value,
+                        "confidence": candidate.confidence,
+                    }, indent=2))
+                else:
+                    print(json.dumps({"domain": domain, "found": False}, indent=2))
+            else:
+                if candidate:
+                    print(f"\nWarm Intro Data for {domain}:")
+                    print("-" * 40)
+                    print(f"  Score:       {candidate.score:.2f}")
+                    print(f"  Badge:       {candidate.badge}")
+                    if verbose:
+                        print(f"  Attribution: {candidate.attribution}")
+                        print(f"  Source:      {candidate.source.value}")
+                        print(f"  Confidence:  {candidate.confidence}")
+                    print()
+                else:
+                    print(f"\nNo warm intro data found for {domain}")
+                    print("  (Run import-emails or sync-lps to build relationship data)")
+                    print()
+
+        elif show_all:
+            # List all domains with relationships
+            # Get all domains from store
+            all_domains = await store.get_all_domains(user_email)
+
+            if not all_domains:
+                print("\nNo relationship data found.")
+                print("  (Run import-emails or sync-lps to build relationship data)")
+                return
+
+            results = []
+            for target_domain in all_domains:
+                candidate = await enricher.enrich_investor(
+                    investor_domain=target_domain,
+                    user_email=user_email,
+                )
+                if candidate:
+                    results.append(candidate)
+
+            # Sort by score descending
+            results.sort(key=lambda c: c.score, reverse=True)
+
+            if output_json:
+                print(json.dumps([
+                    {
+                        "domain": c.investor_domain,
+                        "score": c.score,
+                        "badge": c.badge,
+                        "attribution": c.attribution,
+                        "source": c.source.value,
+                        "confidence": c.confidence,
+                    }
+                    for c in results
+                ], indent=2))
+            else:
+                print(f"\nWarm Intro Data ({len(results)} domains):")
+                print("-" * 60)
+                if verbose:
+                    print(f"{'Domain':<30} {'Score':>6} {'Badge':<15} {'Source':<10}")
+                    print("-" * 60)
+                    for c in results:
+                        print(f"{c.investor_domain:<30} {c.score:>6.2f} {c.badge:<15} {c.source.value:<10}")
+                else:
+                    print(f"{'Domain':<30} {'Score':>6} {'Badge':<15}")
+                    print("-" * 60)
+                    for c in results:
+                        print(f"{c.investor_domain:<30} {c.score:>6.2f} {c.badge:<15}")
+                print()
+
+    finally:
+        await store.close()
+
+
 # =============================================================================
 # PIPELINE DASHBOARD COMMANDS
 # =============================================================================
@@ -2828,6 +2947,65 @@ Examples:
         help="Output as JSON",
     )
 
+    # --- warm-intros command ---
+    warm_intros_parser = subparsers.add_parser(
+        "warm-intros",
+        help="Look up warm intro data for investor domains",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="""
+Look up warm intro relationship data for investor domains.
+
+Shows warm intro scores, badges, and attribution for domains that have
+existing relationship data (from Gmail import or LP sync).
+
+Examples:
+  # Look up a single domain
+  python run_pipeline.py warm-intros --domain sequoia.com
+
+  # Look up a single domain (verbose output)
+  python run_pipeline.py warm-intros --domain sequoia.com --verbose
+
+  # List all domains with warm intro data
+  python run_pipeline.py warm-intros --all
+
+  # JSON output (for automation)
+  python run_pipeline.py warm-intros --domain a16z.com --json
+""",
+    )
+    warm_intros_parser.add_argument(
+        "--domain",
+        type=str,
+        help="Investor domain to look up (e.g., sequoia.com)",
+    )
+    warm_intros_parser.add_argument(
+        "--all",
+        dest="show_all",
+        action="store_true",
+        help="Show all domains with warm intro data",
+    )
+    warm_intros_parser.add_argument(
+        "--user-email",
+        type=str,
+        help="User email address (or set USER_EMAIL env var)",
+    )
+    warm_intros_parser.add_argument(
+        "--db-path",
+        type=str,
+        default="private_graph.db",
+        help="Path to private graph database (default: private_graph.db)",
+    )
+    warm_intros_parser.add_argument(
+        "--verbose", "-v",
+        action="store_true",
+        help="Show detailed output (score, badge, attribution, source)",
+    )
+    warm_intros_parser.add_argument(
+        "--json",
+        dest="output_json",
+        action="store_true",
+        help="Output as JSON",
+    )
+
     return parser
 
 
@@ -3790,6 +3968,8 @@ async def main():
             await cmd_sync_lps(args)
         elif args.command == "relationship-health":
             await cmd_relationship_health(args)
+        elif args.command == "warm-intros":
+            await cmd_warm_intros(args)
         elif args.command == "import-csv":
             await cmd_import_csv(args)
         elif args.command == "corroborate":

@@ -84,6 +84,7 @@ class InvestorMatch:
     is_cold_start: bool = False
     portfolio_count: int = 0
     rank: int = 0
+    investor_domain: Optional[str] = None  # Website domain for warm intro enrichment
 
 
 @dataclass
@@ -542,7 +543,7 @@ class InvestorMatcher:
         # Get investor info
         cursor = await self.store._db.execute(
             """
-            SELECT i.id, i.name, i.investor_type, i.hq_country,
+            SELECT i.id, i.name, i.investor_type, i.hq_country, i.website_domain,
                    ip.stage_distribution, ip.sector_distribution,
                    ip.portfolio_count, ip.is_cold_start, ip.thesis_embedding
             FROM investors i
@@ -556,9 +557,9 @@ class InvestorMatcher:
         if not row:
             return None
 
-        inv_id, name, inv_type, country = row[0], row[1], row[2], row[3]
-        stage_dist_json, sector_dist_json = row[4], row[5]
-        portfolio_count, is_cold_start, thesis_embedding_blob = row[6] or 0, bool(row[7]), row[8]
+        inv_id, name, inv_type, country, website_domain = row[0], row[1], row[2], row[3], row[4]
+        stage_dist_json, sector_dist_json = row[5], row[6]
+        portfolio_count, is_cold_start, thesis_embedding_blob = row[7] or 0, bool(row[8]), row[9]
 
         # Parse distributions
         stage_dist = json.loads(stage_dist_json) if stage_dist_json else {}
@@ -618,6 +619,7 @@ class InvestorMatcher:
             explanations=explanations,
             is_cold_start=is_cold_start,
             portfolio_count=portfolio_count,
+            investor_domain=website_domain,
         )
 
     async def _get_investor_preferences(
