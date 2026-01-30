@@ -2,45 +2,41 @@ name: Daily Pipeline
 
 on:
   schedule:
-    # Run daily at 6:00 AM UTC (1:00 AM EST)
     - cron: '0 6 * * *'
   workflow_dispatch:
     inputs:
       collectors:
-        description: 'Comma-separated list of collectors to run'
+        description: Comma-separated list of collectors to run
         required: false
-        default: 'github,hacker_news,sec_edgar,domain_whois,product_hunt'
+        default: github,hacker_news,sec_edgar,domain_whois,product_hunt
       dry_run:
-        description: 'Run in dry-run mode (no Notion push)'
+        description: Run in dry-run mode
         type: boolean
         required: false
         default: false
       skip_monitoring:
-        description: 'Skip portfolio monitoring'
+        description: Skip portfolio monitoring
         type: boolean
         required: false
         default: false
       skip_discovery:
-        description: 'Skip discovery collection'
+        description: Skip discovery collection
         type: boolean
         required: false
         default: false
 
-# Prevent concurrent runs to avoid DB conflicts
 concurrency:
   group: daily-pipeline
   cancel-in-progress: false
 
 env:
   PYTHON_VERSION: '3.11'
-  DEFAULT_COLLECTORS: 'github,hacker_news,sec_edgar,domain_whois,product_hunt'
+  DEFAULT_COLLECTORS: github,hacker_news,sec_edgar,domain_whois,product_hunt
 
 jobs:
-  # Single unified job for all pipeline steps
   run-pipeline:
-    name: Daily Pipeline
+    name: Run Pipeline
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -49,7 +45,7 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-          cache: 'pip'
+          cache: pip
 
       - name: Install dependencies
         run: |
@@ -57,14 +53,12 @@ jobs:
           pip install httpx aiosqlite pydantic numpy aiohttp
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-      # === STEP 1: Restore DB Artifact ===
-      - name: Restore signals database from latest successful run
+      - name: Restore signals database
         id: restore-db
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # Try to download most recent signals-db artifact
           echo "Attempting to restore database from previous run..."
           if gh run download --name signals-db-latest -D ./artifact-tmp 2>/dev/null; then
             if [ -f artifact-tmp/signals.db ]; then
@@ -78,7 +72,6 @@ jobs:
             echo "No artifact found, will initialize fresh database"
           fi
 
-      # === STEP 2: Validate DB Integrity ===
       - name: Validate or initialize database
         env:
           DISCOVERY_DB_PATH: signals.db
@@ -92,8 +85,6 @@ jobs:
               rm -f signals.db signals.db-wal signals.db-shm
             fi
           fi
-
-          # Initialize if DB doesn't exist or was removed
           if [ ! -f signals.db ]; then
             echo "Initializing fresh database..."
             python -c "
@@ -108,7 +99,6 @@ jobs:
           "
           fi
 
-      # === STEP 3: Portfolio Sync ===
       - name: Sync portfolio companies
         if: ${{ github.event.inputs.skip_monitoring != 'true' }}
         env:
@@ -117,7 +107,6 @@ jobs:
           echo "Syncing portfolio companies..."
           python run_pipeline.py monitor sync-portfolio -v || echo "Portfolio sync completed with warnings"
 
-      # === STEP 4: Portfolio Monitoring ===
       - name: Run portfolio monitoring
         if: ${{ github.event.inputs.skip_monitoring != 'true' }}
         env:
@@ -127,7 +116,6 @@ jobs:
           echo "Running portfolio monitoring..."
           python run_pipeline.py monitor run --only-portfolio --limit 100 --no-embeddings -v || true
 
-      # === STEP 5: Slack Dispatch ===
       - name: Dispatch monitoring alerts to Slack
         if: ${{ github.event.inputs.skip_monitoring != 'true' }}
         env:
@@ -139,7 +127,6 @@ jobs:
             --run-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
             || echo "Dispatch completed (no webhook configured or no alerts)"
 
-      # === STEP 6: Suppression Sync ===
       - name: Sync suppression cache from Notion
         if: ${{ github.event.inputs.dry_run != 'true' }}
         env:
@@ -150,7 +137,6 @@ jobs:
           echo "Syncing suppression cache..."
           python run_pipeline.py sync -v || echo "Suppression sync completed with warnings"
 
-      # === STEP 7: Discovery Collection ===
       - name: Run discovery collectors
         if: ${{ github.event.inputs.skip_discovery != 'true' }}
         env:
@@ -164,16 +150,13 @@ jobs:
         run: |
           COLLECTORS="${{ github.event.inputs.collectors || env.DEFAULT_COLLECTORS }}"
           DRY_RUN="${{ github.event.inputs.dry_run || 'false' }}"
-
           echo "Running collectors: $COLLECTORS"
-
           if [ "$DRY_RUN" = "true" ]; then
             python run_pipeline.py full --collectors "$COLLECTORS" --dry-run -v
           else
             python run_pipeline.py full --collectors "$COLLECTORS" -v
           fi
 
-      # === STEP 8: Show stats ===
       - name: Show pipeline stats
         run: |
           echo "=== Pipeline Stats ==="
@@ -182,29 +165,22 @@ jobs:
           echo "=== Monitoring Status ==="
           python run_pipeline.py monitor status || true
 
-      # === STEP 9: Database Finalization (always runs) ===
       - name: Finalize database
         if: always()
         run: |
           echo "Finalizing database..."
           if [ -f signals.db ]; then
-            # Checkpoint WAL if present
             if [ -f signals.db-wal ]; then
               echo "Checkpointing WAL..."
               sqlite3 signals.db "PRAGMA wal_checkpoint(TRUNCATE);" || true
             fi
-
-            # Final integrity check
             echo "Final integrity check..."
             sqlite3 signals.db "PRAGMA integrity_check;" || echo "Integrity check skipped"
-
-            # Show DB size
             ls -lh signals.db*
           else
             echo "No database file to finalize"
           fi
 
-      # === STEP 10: Upload Artifact (always runs) ===
       - name: Upload signals database artifact
         if: always()
         uses: actions/upload-artifact@v4
@@ -217,7 +193,6 @@ jobs:
           retention-days: 30
           if-no-files-found: warn
 
-      # === STEP 11: Upload timestamped artifact for history ===
       - name: Upload timestamped database artifact
         if: success()
         uses: actions/upload-artifact@v4
@@ -226,48 +201,49 @@ jobs:
           path: signals.db
           retention-days: 7
 
-  # Failure notification job
   notify-on-failure:
     name: Notify on Failure
     runs-on: ubuntu-latest
     needs: run-pipeline
     if: failure()
-
     steps:
       - name: Send Slack failure notification
-        if: ${{ secrets.SLACK_WEBHOOK_URL != '' }}
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: |
-          curl -X POST -H 'Content-type: application/json' \
-            --data '{
-              "blocks": [
-                {
-                  "type": "header",
-                  "text": {
-                    "type": "plain_text",
-                    "text": "Daily Pipeline Failed",
-                    "emoji": true
-                  }
-                },
-                {
-                  "type": "section",
-                  "fields": [
-                    {"type": "mrkdwn", "text": "*Run:* #${{ github.run_number }}"},
-                    {"type": "mrkdwn", "text": "*Trigger:* ${{ github.event_name }}"}
-                  ]
-                },
-                {
-                  "type": "actions",
-                  "elements": [
-                    {
-                      "type": "button",
-                      "text": {"type": "plain_text", "text": "View Logs"},
-                      "url": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          if [ -n "$SLACK_WEBHOOK_URL" ]; then
+            curl -X POST -H 'Content-type: application/json' \
+              --data '{
+                "blocks": [
+                  {
+                    "type": "header",
+                    "text": {
+                      "type": "plain_text",
+                      "text": "Daily Pipeline Failed",
+                      "emoji": true
                     }
-                  ]
-                }
-              ],
-              "text": "Daily Pipeline Failed - Run #${{ github.run_number }}"
-            }' \
-            "$SLACK_WEBHOOK_URL"
+                  },
+                  {
+                    "type": "section",
+                    "fields": [
+                      {"type": "mrkdwn", "text": "*Run:* #${{ github.run_number }}"},
+                      {"type": "mrkdwn", "text": "*Trigger:* ${{ github.event_name }}"}
+                    ]
+                  },
+                  {
+                    "type": "actions",
+                    "elements": [
+                      {
+                        "type": "button",
+                        "text": {"type": "plain_text", "text": "View Logs"},
+                        "url": "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                      }
+                    ]
+                  }
+                ],
+                "text": "Daily Pipeline Failed - Run #${{ github.run_number }}"
+              }' \
+              "$SLACK_WEBHOOK_URL"
+          else
+            echo "SLACK_WEBHOOK_URL not configured, skipping notification"
+          fi
