@@ -78,7 +78,7 @@ Automated deal sourcing system for Press On Ventures (early-stage VC).
 | `opencorporates.py` | Global incorporations | 0.6-0.75 | OPENCORPORATES_API_KEY |
 | `news_api.py` | GNews consumer news | 0.4-0.75 | GNEWS_API_KEY |
 | `rss_feeds.py` | TechCrunch, PR Newswire, etc. | 0.35-0.65 | None |
-| `changedetection.py` | Website change monitoring | 0.5-0.85 | CHANGEDETECTION_API_KEY |
+| `changedetection.py` | Website change monitoring | 0.5-0.85 | ABANDONED (use built-in `monitoring/`) |
 
 ## Architecture Rules
 
@@ -363,12 +363,59 @@ GNEWS_API_KEY=xxx (free tier at gnews.io - 100 requests/day)
 RSS_FEEDS=https://... (optional, comma-separated custom RSS feed URLs)
 RSS_CATEGORIES=startup,health_tech,cpg (optional, filter feed categories)
 
-# Website change monitoring
-CHANGEDETECTION_URL=https://your-instance.local (self-hosted changedetection.io)
-CHANGEDETECTION_API_KEY=xxx (API key from changedetection.io settings)
+# Website change monitoring (ABANDONED - use built-in monitoring/ instead)
+# CHANGEDETECTION_URL=https://your-instance.local (not needed)
+# CHANGEDETECTION_API_KEY=xxx (not needed)
 
 # OpenAI Integration (for multi-LLM strategy iteration)
 OPENAI_API_KEY=sk-xxx (get at platform.openai.com/api-keys)
+```
+
+## API Key Coverage (Auto-Updated)
+
+> **Last verified:** 2026-01-30
+> **Rule:** `.claude/rules/api-key-coverage.md` - Claude auto-updates this section when keys change
+
+### Core Services (Required)
+| Key | Status | Collector/Service | Impact if Missing |
+|-----|--------|-------------------|-------------------|
+| GOOGLE_API_KEY | ✅ Configured | LLM thesis classification | No LLM classification (keyword-only) |
+| NOTION_API_KEY | ✅ Configured | CRM integration | Cannot push to Notion |
+| NOTION_DATABASE_ID | ✅ Configured | CRM database | Cannot push to Notion |
+| GITHUB_TOKEN | ✅ Configured | github.py, github_activity.py | Rate limited to 60 req/hr |
+
+### Optional Services
+| Key | Status | Collector/Service | Impact if Missing |
+|-----|--------|-------------------|-------------------|
+| OPENAI_API_KEY | ✅ Configured | Multi-LLM consensus | Maestro unavailable |
+| COMPANIES_HOUSE_API_KEY | ❌ Placeholder | companies_house.py | UK incorporations disabled |
+| PH_API_KEY | ❌ Missing | product_hunt.py | Product Hunt disabled |
+| PROXYCURL_API_KEY | ❌ Missing | linkedin.py | LinkedIn collector disabled |
+| CRUNCHBASE_API_KEY | ❌ Missing | crunchbase.py | Crunchbase collector disabled |
+| OPENCORPORATES_API_KEY | ❌ Missing | opencorporates.py | Global incorporations disabled |
+| GNEWS_API_KEY | ✅ Configured | news_api.py | News API enabled |
+| CHANGEDETECTION_API_KEY | ⛔ ABANDONED | changedetection.py | Use built-in `monitoring/` instead (free, more features) |
+| SLACK_WEBHOOK_URL | ❌ Missing | CI/CD notifications | No Slack alerts |
+
+### Collectors Working Without Keys
+These collectors work without API keys:
+- `sec_edgar.py` - SEC EDGAR (public API)
+- `domain_whois.py` - WHOIS lookups (public)
+- `job_postings.py` - Greenhouse/Lever (public)
+- `hacker_news.py` - HN API (public)
+- `arxiv.py` - ArXiv (public)
+- `uspto.py` - USPTO (public)
+- `rss_feeds.py` - RSS feeds (public)
+
+### Collector Availability Summary
+```
+Fully operational:  7 collectors (no key needed)
+Configured:         3 collectors (github, github_activity, news_api)
+Disabled:           5 collectors (missing keys)
+Abandoned:          1 collector (changedetection - use built-in monitoring/)
+─────────────────────────────────────────────
+Total:             16 collectors
+Working:           10 collectors (63%)
 ```
 
 ---

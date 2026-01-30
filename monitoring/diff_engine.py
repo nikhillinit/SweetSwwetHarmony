@@ -29,6 +29,12 @@ from monitoring.models import (
     SeverityComponents,
     MonitoringConfig,
 )
+from monitoring.page_type_classifier import (
+    PageTypeClassifier,
+    PageClassification,
+    PageType,
+    classify_page,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +46,8 @@ class DiffResult:
     should_trigger_profile_update: bool
     should_create_alert: bool
     trigger_reason: Optional[str] = None
+    page_classification: Optional[PageClassification] = None
+    why_now: Optional[str] = None
 
 
 class DiffEngine:
@@ -67,6 +75,7 @@ class DiffEngine:
         self._embedding_store = embedding_store
         self._embedding_generator = embedding_generator
         self._config = config or MonitoringConfig()
+        self._page_classifier = PageTypeClassifier()
 
     async def compute_diff(
         self,
@@ -134,10 +143,26 @@ class DiffEngine:
         )
         components.semantic_drift = semantic_drift
 
-        # 5. Calculate overall severity score
-        severity_score = self._calculate_severity(components, instant_trigger)
+        # 5. Classify page type
+        page_classification = self._page_classifier.classify(
+            url=new_snapshot.requested_url or "",
+            text_content=new_text_content if len(new_text_content) > 100 else None,
+        )
 
-        # 6. Create Diff object
+        # 6. Calculate overall severity score (with page type boost)
+        severity_score = self._calculate_severity(
+            components,
+            instant_trigger,
+            page_type_boost=page_classification.severity_boost,
+        )
+
+        # 7. Generate "why now" explanation
+        why_now = self._page_classifier.get_why_now(
+            page_classification.page_type,
+            diff_summary=None,  # Could add diff details here
+        )
+
+        # 8. Create Diff object
         from datetime import datetime, timezone
         diff = Diff(
             watch_id=new_snapshot.watch_id,
@@ -150,10 +175,10 @@ class DiffEngine:
             has_redirect=has_redirect,
             has_state_change=has_state_change,
             has_text_change=has_text_change,
-            diff_summary=self._create_summary(old_snapshot, new_snapshot, components),
+            diff_summary=self._create_summary(old_snapshot, new_snapshot, components, page_classification),
         )
 
-        # 7. Determine actions based on severity
+        # 9. Determine actions based on severity
         should_trigger = instant_trigger or severity_score >= self._config.profile_threshold
         should_alert = severity_score >= self._config.alert_threshold
 
@@ -165,6 +190,8 @@ class DiffEngine:
             should_trigger_profile_update=should_trigger,
             should_create_alert=should_alert,
             trigger_reason=trigger_reason,
+            page_classification=page_classification,
+            why_now=why_now,
         )
 
     async def _compute_semantic_drift(
@@ -278,6 +305,7 @@ class DiffEngine:
         self,
         components: SeverityComponents,
         instant_trigger: bool = False,
+        page_type_boost: float = 0.0,
     ) -> float:
         """
         Calculate overall severity score from components.
@@ -287,6 +315,7 @@ class DiffEngine:
         - semantic_drift (embedding similarity)
         - state_change (page_state transition)
         - redirect (host change)
+        - page_type_boost (extra weight for high-value pages like pricing/careers)
         """
         if instant_trigger:
             # Instant triggers get high severity
@@ -319,21 +348,25 @@ class DiffEngine:
         # Normalize by actual weights used
         if total_weight > 0:
             # Scale to use full 0-1 range based on available components
-            return min(1.0, score / total_weight)
+            normalized = score / total_weight
+            # Apply page type boost (e.g., pricing pages get +0.15)
+            boosted = normalized + page_type_boost
+            return min(1.0, boosted)
 
-        return 0.0
+        return page_type_boost  # Return boost even if no components
 
     def _create_summary(
         self,
         old_snapshot: Optional[Snapshot],
         new_snapshot: Snapshot,
         components: SeverityComponents,
+        page_classification: Optional[PageClassification] = None,
     ) -> dict:
         """Create a summary dict of the diff."""
         old_length = old_snapshot.text_length if old_snapshot else 0
         new_length = new_snapshot.text_length
 
-        return {
+        summary = {
             "old_text_length": old_length,
             "new_text_length": new_length,
             "length_change": new_length - old_length,
@@ -346,6 +379,14 @@ class DiffEngine:
             "old_host": old_snapshot.final_host if old_snapshot else None,
             "new_host": new_snapshot.final_host,
         }
+
+        # Add page classification if available
+        if page_classification:
+            summary["page_type"] = page_classification.page_type.value
+            summary["page_type_confidence"] = page_classification.confidence
+            summary["page_type_boost"] = page_classification.severity_boost
+
+        return summary
 
 
 # Convenience function for simple drift checks
