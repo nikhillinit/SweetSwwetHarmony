@@ -1,0 +1,166 @@
+{
+  "analysis_date": "2026-01-30T17:35:00Z",
+  "repository": "nikhillinit/SweetSwwetHarmony",
+  "summary": {
+    "total_workflows": 4,
+    "total_failures": 204,
+    "failure_rate": 1.0,
+    "active_workflows": 2,
+    "deprecated_workflows": 2
+  },
+  "root_cause": {
+    "primary": "YAML parsing issue - 'on:' keyword interpreted as boolean",
+    "secondary": "Workflows triggered on push events despite no push trigger configured",
+    "evidence": "All workflows show 0 jobs executed before failure"
+  },
+  "workflows": [
+    {
+      "name": "Daily Pipeline",
+      "file": ".github/workflows/daily-pipeline.yml",
+      "status": "ACTIVE",
+      "priority": "HIGH",
+      "consecutive_failures": 35,
+      "last_run": {
+        "id": 21523668852,
+        "number": 35,
+        "conclusion": "failure",
+        "event": "push",
+        "timestamp": "2026-01-30T16:55:06Z",
+        "jobs_executed": 0
+      },
+      "expected_triggers": [
+        "schedule: 0 6 * * * (daily at 6 AM UTC)",
+        "workflow_dispatch"
+      ],
+      "issues": [
+        "YAML parsing - on: key interpreted as boolean",
+        "Triggered on push despite schedule-only config",
+        "0 jobs executed - parsing failure"
+      ],
+      "impact": [
+        "Daily signal discovery not running",
+        "Portfolio monitoring not running",
+        "Suppression sync not running"
+      ]
+    },
+    {
+      "name": "Thesis Classification Evaluation",
+      "file": ".github/workflows/thesis_eval.yml",
+      "status": "ACTIVE",
+      "priority": "HIGH",
+      "consecutive_failures": 15,
+      "last_run": {
+        "id": 21523668461,
+        "number": 15,
+        "conclusion": "failure",
+        "event": "push",
+        "timestamp": "2026-01-30T16:55:06Z",
+        "jobs_executed": 0
+      },
+      "expected_triggers": [
+        "schedule: 0 2 * * 0 (weekly Sundays at 2 AM UTC)",
+        "workflow_dispatch"
+      ],
+      "issues": [
+        "YAML parsing - on: key interpreted as boolean",
+        "Triggered on push despite schedule-only config",
+        "0 jobs executed - parsing failure"
+      ],
+      "impact": [
+        "Thesis evaluation metrics never generated",
+        "No accuracy tracking",
+        "Quality monitoring disabled"
+      ]
+    },
+    {
+      "name": "Daily Signal Collection",
+      "file": ".github/workflows/daily-signal-collection.yml",
+      "status": "DEPRECATED",
+      "priority": "MEDIUM",
+      "consecutive_failures": 107,
+      "last_run": {
+        "id": 21523668704,
+        "number": 107,
+        "conclusion": "failure",
+        "event": "push",
+        "timestamp": "2026-01-30T16:55:06Z",
+        "jobs_executed": 0
+      },
+      "expected_triggers": [
+        "workflow_dispatch (schedule commented out)"
+      ],
+      "issues": [
+        "YAML parsing - on: key interpreted as boolean",
+        "Marked deprecated - should be removed",
+        "Creates GitHub issues on failure",
+        "Highest failure count (107)",
+        "Schedule commented out"
+      ],
+      "impact": [
+        "Wasting CI resources (most failures)",
+        "Potential issue spam from auto-issue creation",
+        "Confusion from deprecated workflow"
+      ]
+    },
+    {
+      "name": "Daily Website Monitoring",
+      "file": ".github/workflows/daily-monitoring.yml",
+      "status": "DEPRECATED",
+      "priority": "LOW",
+      "consecutive_failures": 37,
+      "last_run": {
+        "id": 21523668263,
+        "number": 37,
+        "conclusion": "failure",
+        "event": "push",
+        "timestamp": "2026-01-30T16:55:06Z",
+        "jobs_executed": 0
+      },
+      "expected_triggers": [
+        "workflow_dispatch (schedule commented out)"
+      ],
+      "issues": [
+        "YAML parsing - on: key interpreted as boolean",
+        "Marked deprecated - should be removed",
+        "Schedule commented out",
+        "Replaced by daily-pipeline.yml"
+      ],
+      "impact": [
+        "Wasting CI resources",
+        "Confusion from deprecated workflow"
+      ]
+    }
+  ],
+  "recommended_actions": [
+    {
+      "priority": "HIGH",
+      "action": "Fix YAML syntax in daily-pipeline.yml",
+      "details": "Quote 'on:' key or use alternative syntax to prevent boolean interpretation"
+    },
+    {
+      "priority": "HIGH",
+      "action": "Fix YAML syntax in thesis_eval.yml",
+      "details": "Quote 'on:' key or use alternative syntax to prevent boolean interpretation"
+    },
+    {
+      "priority": "HIGH",
+      "action": "Add explicit trigger guards",
+      "details": "Add push.branches-ignore to prevent unwanted push triggers"
+    },
+    {
+      "priority": "MEDIUM",
+      "action": "Remove or archive daily-signal-collection.yml",
+      "details": "Deprecated workflow with 107 failures - should be removed"
+    },
+    {
+      "priority": "MEDIUM",
+      "action": "Remove or archive daily-monitoring.yml",
+      "details": "Deprecated workflow - functionality moved to daily-pipeline.yml"
+    },
+    {
+      "priority": "LOW",
+      "action": "Test workflows with manual triggers",
+      "details": "Use workflow_dispatch to verify fixes work correctly"
+    }
+  ]
+}
