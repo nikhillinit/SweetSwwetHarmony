@@ -1,0 +1,5 @@
+Workflow,Path,Status,Total Failures,Last Run ID,Last Run Date,Event Type,Jobs Executed,Primary Issue,Secondary Issue,Priority
+Daily Website Monitoring,.github/workflows/daily-monitoring.yml,DEPRECATED,37,21523668263,2026-01-30T16:55:06Z,push,0,YAML parsing issue (on: key),Schedule commented out - no auto trigger,LOW
+Daily Pipeline,.github/workflows/daily-pipeline.yml,ACTIVE,35,21523668852,2026-01-30T16:55:06Z,push,0,YAML parsing issue (on: key),Triggered on push despite schedule-only config,HIGH
+Daily Signal Collection,.github/workflows/daily-signal-collection.yml,DEPRECATED,107,21523668704,2026-01-30T16:55:06Z,push,0,YAML parsing issue (on: key),Schedule commented out + creates failure issues,MEDIUM
+Thesis Evaluation,.github/workflows/thesis_eval.yml,ACTIVE,15,21523668461,2026-01-30T16:55:06Z,push,0,YAML parsing issue (on: key),Triggered on push despite schedule-only config,HIGH
