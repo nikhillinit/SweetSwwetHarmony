@@ -19,18 +19,24 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
+from collections import deque
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator, Callable, Dict, List, Optional, TypeVar
+from datetime import datetime, timezone
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional, TypeVar, Union
 
 import httpx
 
 from collectors.retry_strategy import RetryConfig, with_retry
+from collectors.timeout_config import TimeoutConfig, OperationType, TimeoutEvent
 from discovery_engine.mcp_server import CollectorResult, CollectorStatus
 from storage.signal_store import SignalStore
 from utils.rate_limiter import AsyncRateLimiter, get_rate_limiter
 from verification.verification_gate_v2 import Signal
 
 logger = logging.getLogger(__name__)
+
+# Maximum number of timeout events to keep in memory (prevents memory blowup)
+MAX_TIMEOUT_EVENTS = 100
 
 T = TypeVar("T")
 
@@ -63,6 +69,7 @@ class BaseCollector(ABC):
         retry_config: Optional[RetryConfig] = None,
         api_name: Optional[str] = None,
         asset_store: Optional["SourceAssetStore"] = None,
+        timeout_config: Optional[TimeoutConfig] = None,
     ):
         """
         Args:
@@ -71,12 +78,14 @@ class BaseCollector(ABC):
             retry_config: Configuration for retry behavior (default: RetryConfig())
             api_name: API name for rate limiting (e.g., "github", "sec_edgar")
             asset_store: Optional SourceAssetStore for change detection
+            timeout_config: Configuration for operation-specific timeouts
         """
         self.store = store
         self.collector_name = collector_name
         self.retry_config = retry_config or RetryConfig()
         self.api_name = api_name
         self.asset_store = asset_store
+        self.timeout_config = timeout_config
 
         # Set up rate limiter based on api_name
         if api_name:
@@ -95,6 +104,9 @@ class BaseCollector(ABC):
         self._retry_count = 0
         self._errors: List[str] = []
 
+        # Timeout telemetry (bounded to prevent memory blowup)
+        self._timeout_events: deque[TimeoutEvent] = deque(maxlen=MAX_TIMEOUT_EVENTS)
+
     async def __aenter__(self):
         """Async context manager entry - implement in subclass if needed"""
         return self
@@ -102,6 +114,60 @@ class BaseCollector(ABC):
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit - implement in subclass if needed"""
         pass
+
+    # =========================================================================
+    # TIMEOUT CONFIGURATION & TELEMETRY
+    # =========================================================================
+
+    def _get_timeout_for_operation(
+        self, operation: Union[OperationType, str] = OperationType.SEARCH
+    ) -> Union[httpx.Timeout, float]:
+        """
+        Get timeout value for the specified operation.
+
+        Args:
+            operation: Operation type (OperationType enum or string)
+
+        Returns:
+            httpx.Timeout if timeout_config is set, else default float (30.0)
+        """
+        if self.timeout_config is None:
+            return 30.0  # Default timeout when no config
+
+        return self.timeout_config.to_httpx_timeout(operation)
+
+    def _record_timeout(
+        self,
+        operation: OperationType,
+        endpoint: str,
+        timeout_seconds: float,
+    ) -> None:
+        """
+        Record a timeout event for telemetry.
+
+        Args:
+            operation: Operation type that timed out
+            endpoint: URL path or endpoint that timed out
+            timeout_seconds: Timeout value that was exceeded
+        """
+        event = TimeoutEvent(
+            collector=self.collector_name,
+            operation=operation,
+            endpoint=endpoint,
+            timeout_seconds=timeout_seconds,
+            occurred_at=datetime.now(timezone.utc),
+        )
+        self._timeout_events.append(event)
+
+        logger.warning(
+            f"Timeout recorded: {self.collector_name} {operation.value} "
+            f"at {endpoint} (timeout={timeout_seconds}s)"
+        )
+
+    @property
+    def timeout_event_count(self) -> int:
+        """Number of timeout events recorded."""
+        return len(self._timeout_events)
 
     @abstractmethod
     async def _collect_signals(self) -> List[Signal]:
@@ -457,7 +523,8 @@ class BaseCollector(ABC):
         url: str,
         headers: Optional[Dict[str, str]] = None,
         params: Optional[Dict[str, Any]] = None,
-        timeout: float = 30.0,
+        timeout: Optional[float] = None,
+        operation: Union[OperationType, str] = OperationType.SEARCH,
     ) -> Any:
         """
         Make an HTTP GET request with retry and rate limiting.
@@ -466,12 +533,14 @@ class BaseCollector(ABC):
         - Rate limit acquisition
         - Retry on transient HTTP errors
         - JSON response parsing
+        - Timeout telemetry on failures
 
         Args:
             url: URL to fetch
             headers: Optional request headers
             params: Optional query parameters
-            timeout: Request timeout in seconds
+            timeout: Request timeout in seconds (overrides operation-based timeout)
+            operation: Operation type for timeout selection (default: SEARCH)
 
         Returns:
             Parsed JSON response
@@ -480,13 +549,45 @@ class BaseCollector(ABC):
             httpx.HTTPStatusError: On non-retryable HTTP errors
             Exception: On exhausted retries
         """
+        # Get timeout - explicit timeout overrides operation-based timeout
+        if timeout is not None:
+            request_timeout = timeout
+        else:
+            request_timeout = self._get_timeout_for_operation(operation)
+
+        # Extract endpoint for telemetry
+        from urllib.parse import urlparse
+        endpoint = urlparse(url).path
+
+        # Track timeout value for telemetry
+        timeout_seconds = (
+            request_timeout.read
+            if isinstance(request_timeout, httpx.Timeout)
+            else request_timeout
+        )
+
         async def do_request() -> Any:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.get(url, headers=headers, params=params)
+            async with httpx.AsyncClient() as client:
+                response = await client.get(
+                    url,
+                    headers=headers,
+                    params=params,
+                    timeout=request_timeout,
+                )
                 response.raise_for_status()
                 return response.json()
 
-        return await self._fetch_with_retry(do_request)
+        try:
+            return await self._fetch_with_retry(do_request)
+        except httpx.TimeoutException:
+            # Record timeout telemetry
+            op = (
+                operation
+                if isinstance(operation, OperationType)
+                else OperationType(operation) if operation in [e.value for e in OperationType] else OperationType.SEARCH
+            )
+            self._record_timeout(op, endpoint, timeout_seconds)
+            raise
 
 
 # =============================================================================

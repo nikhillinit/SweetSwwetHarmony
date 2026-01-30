@@ -76,6 +76,7 @@ def is_retryable_error(error: Exception) -> bool:
     Retryable errors:
     - ConnectionError (network issues)
     - TimeoutError / asyncio.TimeoutError
+    - httpx.RequestError (all transport-level failures)
     - HTTP 5xx (server errors)
     - HTTP 429 (rate limited)
 
@@ -89,11 +90,19 @@ def is_retryable_error(error: Exception) -> bool:
     Returns:
         True if the error should be retried
     """
-    # Network errors
+    # Network errors (Python built-ins)
     if isinstance(error, (ConnectionError, TimeoutError, asyncio.TimeoutError)):
         return True
 
-    # HTTP errors
+    # httpx transport failures (covers TimeoutException, ConnectError, DNS issues, protocol errors)
+    # Note: httpx.RequestError is the base class for all transport-level failures:
+    # - httpx.TimeoutException (ReadTimeout, ConnectTimeout, WriteTimeout, PoolTimeout)
+    # - httpx.ConnectError (connection refused, DNS failure)
+    # - httpx.ReadError, httpx.WriteError
+    if isinstance(error, httpx.RequestError):
+        return True
+
+    # HTTP status errors (4xx/5xx responses)
     if isinstance(error, httpx.HTTPStatusError):
         status = error.response.status_code
 
