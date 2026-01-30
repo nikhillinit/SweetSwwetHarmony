@@ -115,18 +115,23 @@ class WatchConfig:
         preset: Name of the preset this config is based on
         extractor: Content extraction configuration
         transport: HTTP transport configuration
+        metadata: Optional metadata (e.g., auto_selected, page_type, confidence)
     """
     preset: str = "default"
     extractor: ExtractorConfig = field(default_factory=ExtractorConfig)
     transport: TransportConfig = field(default_factory=TransportConfig)
+    metadata: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
-        return {
+        result = {
             "preset": self.preset,
             "extractor": self.extractor.to_dict(),
             "transport": self.transport.to_dict(),
         }
+        if self.metadata:
+            result["metadata"] = self.metadata
+        return result
 
     def to_json(self) -> str:
         """Serialize to JSON string."""
@@ -137,11 +142,13 @@ class WatchConfig:
         """Create from dictionary."""
         extractor_data = data.get("extractor", {})
         transport_data = data.get("transport", {})
+        metadata = data.get("metadata", {})
 
         return cls(
             preset=data.get("preset", "default"),
             extractor=ExtractorConfig.from_dict(extractor_data),
             transport=TransportConfig.from_dict(transport_data),
+            metadata=metadata if isinstance(metadata, dict) else {},
         )
 
     @classmethod
