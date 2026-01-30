@@ -267,9 +267,7 @@ class SuppressionSync:
         try:
             # Use NotionConnector's internal method to query by statuses
             # This fetches ALL statuses in SYNC_STATUSES in a single OR query
-            import httpx
-            async with httpx.AsyncClient() as client:
-                pages = await self.notion._query_by_statuses(client, self.SYNC_STATUSES)
+            pages = await self.notion._query_by_statuses(self.SYNC_STATUSES)
 
             logger.info(f"Fetched {len(pages)} pages from Notion")
             return pages
