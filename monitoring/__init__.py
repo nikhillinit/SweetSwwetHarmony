@@ -8,6 +8,7 @@ Main components:
 - WebsiteMonitor: Core monitoring logic
 - MonitorStore: Database operations
 - DiffEngine: Severity calculation + semantic drift
+- PageTypeClassifier: URL/content classification (pricing, careers, terms, etc.)
 - EventType: Type-safe event routing
 - RetentionManager: Snapshot/diff pruning
 """
@@ -26,6 +27,12 @@ from monitoring.monitor_store import MonitorStore
 from monitoring.diff_engine import DiffEngine, DiffResult
 from monitoring.website_monitor import WebsiteMonitor, MonitoringResult
 from monitoring.retention import RetentionManager
+from monitoring.page_type_classifier import (
+    PageTypeClassifier,
+    PageClassification,
+    PageType,
+    classify_page,
+)
 
 __all__ = [
     # Events
@@ -46,4 +53,9 @@ __all__ = [
     "WebsiteMonitor",
     "MonitoringResult",
     "RetentionManager",
+    # Page classification
+    "PageTypeClassifier",
+    "PageClassification",
+    "PageType",
+    "classify_page",
 ]
