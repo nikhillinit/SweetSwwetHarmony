@@ -78,6 +78,7 @@ Automated deal sourcing system for Press On Ventures (early-stage VC).
 | `opencorporates.py` | Global incorporations | 0.6-0.75 | OPENCORPORATES_API_KEY |
 | `news_api.py` | GNews consumer news | 0.4-0.75 | GNEWS_API_KEY |
 | `rss_feeds.py` | TechCrunch, PR Newswire, etc. | 0.35-0.65 | None |
+| `changedetection.py` | Website change monitoring | 0.5-0.85 | CHANGEDETECTION_API_KEY |
 
 ## Architecture Rules
 
@@ -357,6 +358,10 @@ DISCOVERY_DB_PATH=signals.db (default)
 GNEWS_API_KEY=xxx (free tier at gnews.io - 100 requests/day)
 RSS_FEEDS=https://... (optional, comma-separated custom RSS feed URLs)
 RSS_CATEGORIES=startup,health_tech,cpg (optional, filter feed categories)
+
+# Website change monitoring
+CHANGEDETECTION_URL=https://your-instance.local (self-hosted changedetection.io)
+CHANGEDETECTION_API_KEY=xxx (API key from changedetection.io settings)
 
 # OpenAI Integration (for multi-LLM strategy iteration)
 OPENAI_API_KEY=sk-xxx (get at platform.openai.com/api-keys)
