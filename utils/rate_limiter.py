@@ -108,6 +108,8 @@ class RateLimiterPool:
         "arxiv": {"rate": None, "period": 1},               # Unlimited
         "uspto": {"rate": None, "period": 1},               # Unlimited
         "hacker_news": {"rate": 100, "period": 60},         # 100/min (conservative)
+        "changedetection": {"rate": 60, "period": 60},      # 60/min (self-hosted, conservative)
+        "rss": {"rate": None, "period": 1},                 # Unlimited (public feeds)
     }
 
     def __init__(self):
