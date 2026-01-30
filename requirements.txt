@@ -60,3 +60,7 @@ tavily-python>=0.3.0
 # Evaluation Framework (Inspect AI)
 inspect-ai>=0.3.0
 inspect-flow>=0.1.0
+
+# Phase G: Identity Resolution
+rapidfuzz>=3.0.0
+metaphone>=0.6

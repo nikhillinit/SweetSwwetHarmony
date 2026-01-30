@@ -63,7 +63,7 @@ logger = logging.getLogger(__name__)
 # SCHEMA VERSION
 # =============================================================================
 
-CURRENT_SCHEMA_VERSION = 18
+CURRENT_SCHEMA_VERSION = 21
 
 # SQL for creating tables (migrations applied in order)
 MIGRATIONS = {
@@ -1424,6 +1424,107 @@ MIGRATIONS = {
         ON llm_decisions(policy_version);
     CREATE INDEX IF NOT EXISTS idx_llm_decisions_field
         ON llm_decisions(field_name);
+    """,
+    20: """
+    -- =============================================================================
+    -- PHASE G SPRINT 2: IDENTITY RESOLUTION - Weak Aliases & Blocking Index
+    -- =============================================================================
+    -- Extends entity resolution with weak/fuzzy matching via blocking-first approach.
+    -- Preserves existing tables: entity_aliases, entity_migrations, llm_decisions (migration 19).
+
+    -- 20.1: Weak key aliases (name variants, fuzzy-derived)
+    -- Separate from strong key aliases in entity_aliases (migration 19)
+    CREATE TABLE IF NOT EXISTS entity_key_aliases (
+        alias_key TEXT PRIMARY KEY,               -- e.g., "name_norm:acme", "name_loc:acme:london"
+        entity_id TEXT NOT NULL,                  -- Stable entity identifier
+        alias_type TEXT NOT NULL,                 -- 'name_norm', 'name_loc', 'fuzzy_derived'
+        confidence REAL NOT NULL DEFAULT 0.8,     -- How confident we are in this alias
+        source TEXT,                              -- e.g., 'sec_edgar', 'companies_house', 'fuzzy_match'
+        expires_at TEXT,                          -- Fuzzy aliases expire after 30 days
+        archived_at TEXT,                         -- NULL = active, set to archive
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_entity_key_aliases_entity
+        ON entity_key_aliases(entity_id);
+    CREATE INDEX IF NOT EXISTS idx_entity_key_aliases_type
+        ON entity_key_aliases(alias_type);
+    CREATE INDEX IF NOT EXISTS idx_entity_key_aliases_active
+        ON entity_key_aliases(archived_at) WHERE archived_at IS NULL;
+    CREATE INDEX IF NOT EXISTS idx_entity_key_aliases_expires
+        ON entity_key_aliases(expires_at) WHERE expires_at IS NOT NULL;
+
+    -- 20.2: Blocking index for efficient fuzzy candidate retrieval
+    -- Constrains fuzzy matching to tokens that share blocking tokens
+    CREATE TABLE IF NOT EXISTS entity_blocking_index (
+        blocking_token TEXT NOT NULL,             -- e.g., "acme", "AKM" (metaphone)
+        token_type TEXT NOT NULL,                 -- 'first', 'meta', 'tld3', 'trigram'
+        entity_id TEXT NOT NULL,                  -- Entity this token belongs to
+        alias_key TEXT NOT NULL,                  -- Which alias generated this token
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (blocking_token, token_type, entity_id, alias_key)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_blocking_token_lookup
+        ON entity_blocking_index(blocking_token, token_type);
+    CREATE INDEX IF NOT EXISTS idx_blocking_entity
+        ON entity_blocking_index(entity_id);
+    CREATE INDEX IF NOT EXISTS idx_blocking_alias
+        ON entity_blocking_index(alias_key);
+    """,
+    21: """
+    -- =============================================================================
+    -- PHASE G SPRINT 2: BI-TEMPORAL CLAIM FACTS (SCD-2)
+    -- =============================================================================
+    -- Implements SCD-Type-2 fact storage with authority tiers.
+    -- Separate from migration 7 KG-lite (claims, claim_extractions, claim_evidence).
+    -- Enables: "What was the company name on 2024-01-15?" with full history.
+
+    -- 21.1: Bi-temporal claim facts
+    CREATE TABLE IF NOT EXISTS claim_facts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        entity_id TEXT NOT NULL,                  -- Stable entity identifier
+        predicate TEXT NOT NULL,                  -- 'company_name', 'founding_date', etc.
+        value_json TEXT NOT NULL,                 -- JSON-encoded value
+
+        -- Authority and confidence
+        source_tier INTEGER NOT NULL,             -- 1 (highest) to 5 (lowest)
+        confidence REAL NOT NULL DEFAULT 0.5,     -- 0-1 confidence score
+
+        -- Bi-temporal tracking (SCD-2)
+        valid_from TEXT NOT NULL,                 -- When this fact became true (business time)
+        valid_until TEXT,                         -- NULL = currently valid, set when superseded
+
+        -- Observation time
+        observed_at TEXT NOT NULL,                -- When we first observed this fact (system time)
+        last_observed_at TEXT,                    -- Updated if same value re-observed
+
+        -- Retraction
+        is_retracted INTEGER NOT NULL DEFAULT 0,  -- 1 = explicitly retracted
+
+        -- Evidence trail
+        supporting_signal_ids TEXT,               -- JSON array of signal IDs
+        source_canonical_key TEXT,                -- Which canonical key this came from
+
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
+    -- Active facts index: fast lookup for current state
+    CREATE INDEX IF NOT EXISTS idx_claim_facts_active
+        ON claim_facts(entity_id, predicate)
+        WHERE valid_until IS NULL AND is_retracted = 0;
+
+    -- History lookup
+    CREATE INDEX IF NOT EXISTS idx_claim_facts_entity
+        ON claim_facts(entity_id, predicate, valid_from);
+
+    -- Authority-based queries
+    CREATE INDEX IF NOT EXISTS idx_claim_facts_tier
+        ON claim_facts(entity_id, predicate, source_tier, observed_at DESC);
+
+    -- Temporal queries
+    CREATE INDEX IF NOT EXISTS idx_claim_facts_temporal
+        ON claim_facts(entity_id, valid_from, valid_until);
     """
 }
 
@@ -1673,7 +1774,10 @@ class SignalStore:
         # Connect to database
         self._db = await aiosqlite.connect(str(self.db_path))
 
-        # Enable foreign keys
+        # Performance and safety PRAGMAs for Phase G Sprint 2
+        await self._db.execute("PRAGMA journal_mode = WAL")
+        await self._db.execute("PRAGMA synchronous = NORMAL")
+        await self._db.execute("PRAGMA busy_timeout = 5000")
         await self._db.execute("PRAGMA foreign_keys = ON")
 
         # Apply migrations
@@ -1710,6 +1814,31 @@ class SignalStore:
         async with self._lock:
             try:
                 await self._db.execute("BEGIN")
+                yield self._db
+                await self._db.commit()
+            except Exception:
+                await self._db.rollback()
+                raise
+
+    @asynccontextmanager
+    async def transaction_immediate(self) -> AsyncIterator[aiosqlite.Connection]:
+        """
+        Context manager for IMMEDIATE transactions (Phase G Sprint 2).
+
+        Uses BEGIN IMMEDIATE to acquire a write lock immediately,
+        preventing write starvation in concurrent scenarios.
+
+        Usage:
+            async with store.transaction_immediate() as conn:
+                await conn.execute(...)
+                # Commits on success, rolls back on exception
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized. Call initialize() first.")
+
+        async with self._lock:
+            try:
+                await self._db.execute("BEGIN IMMEDIATE")
                 yield self._db
                 await self._db.commit()
             except Exception:
