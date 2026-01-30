@@ -136,6 +136,10 @@ class PresetRegistry:
                     "selectors": None,
                     "fallback_on_empty": True,
                 },
+                "content_limits": {
+                    "max_html_bytes": 5242880,  # 5 MB
+                    "max_json_bytes": 2097152,  # 2 MB
+                },
                 "transport": {
                     "initial": "httpx",
                     "on_403": None,
@@ -149,6 +153,10 @@ class PresetRegistry:
                     "preset": "spa",
                     "selectors": None,
                     "fallback_on_empty": True,
+                },
+                "content_limits": {
+                    "max_html_bytes": 5242880,  # 5 MB
+                    "max_json_bytes": 2097152,  # 2 MB
                 },
                 "transport": {
                     "initial": "playwright",
@@ -164,6 +172,10 @@ class PresetRegistry:
                     "selectors": ["article", "main", ".post-content", ".article-body"],
                     "fallback_on_empty": True,
                 },
+                "content_limits": {
+                    "max_html_bytes": 5242880,  # 5 MB
+                    "max_json_bytes": 2097152,  # 2 MB
+                },
                 "transport": {
                     "initial": "httpx",
                     "on_403": "playwright",
@@ -177,6 +189,10 @@ class PresetRegistry:
                     "preset": "pricing",
                     "selectors": [".pricing", "#pricing", "[data-testid='pricing']"],
                     "fallback_on_empty": True,
+                },
+                "content_limits": {
+                    "max_html_bytes": 5242880,  # 5 MB
+                    "max_json_bytes": 2097152,  # 2 MB
                 },
                 "transport": {
                     "initial": "httpx",
