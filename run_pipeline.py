@@ -57,6 +57,18 @@ Examples:
   # Push qualified signals to Notion
   python run_pipeline.py pipeline push --confirm
 
+  # View claim facts for an entity (Phase G)
+  python run_pipeline.py pipeline claims <entity_id>
+
+  # View claim history for an entity
+  python run_pipeline.py pipeline claims <entity_id> --history
+
+  # View claims at a specific point in time
+  python run_pipeline.py pipeline claims <entity_id> --at 2024-06-15T00:00:00Z
+
+  # View entity resolution statistics
+  python run_pipeline.py pipeline entities
+
   # Import OpenVC CSV export (dry run)
   python run_pipeline.py import-csv --source openvc export.csv --dry-run
 
@@ -526,6 +538,39 @@ async def cmd_stats(args):
         print("SUPPRESSION CACHE")
         print("-" * 70)
         print(f"Active entries: {storage.get('active_suppression_entries', 0)}")
+        print()
+
+        # Phase G: Entity Resolution & Claims
+        print("PHASE G: ENTITY RESOLUTION & CLAIMS")
+        print("-" * 70)
+        try:
+            cursor = await pipeline._store._db.execute("SELECT COUNT(*) FROM entity_aliases")
+            strong_keys = (await cursor.fetchone())[0]
+            cursor = await pipeline._store._db.execute("SELECT COUNT(*) FROM entity_key_aliases")
+            alias_keys = (await cursor.fetchone())[0]
+            cursor = await pipeline._store._db.execute("SELECT COUNT(*) FROM entity_blocking_index")
+            blocking_tokens = (await cursor.fetchone())[0]
+            cursor = await pipeline._store._db.execute("SELECT COUNT(*) FROM claim_facts")
+            claim_facts = (await cursor.fetchone())[0]
+            cursor = await pipeline._store._db.execute(
+                "SELECT COUNT(*) FROM claim_facts WHERE valid_until IS NULL AND is_retracted = 0"
+            )
+            active_claims = (await cursor.fetchone())[0]
+            cursor = await pipeline._store._db.execute("SELECT COUNT(*) FROM entity_migrations")
+            migrations = (await cursor.fetchone())[0]
+
+            print(f"Strong key bindings: {strong_keys}")
+            print(f"Weak alias bindings: {alias_keys}")
+            print(f"Blocking tokens: {blocking_tokens}")
+            print(f"Entity migrations: {migrations}")
+            print(f"Total claim facts: {claim_facts}")
+            print(f"Active claims: {active_claims}")
+            print()
+            print(f"Feature flags:")
+            print(f"  USE_PHASE_G_IDENTITY_RESOLUTION: {config.use_phase_g_identity_resolution}")
+            print(f"  USE_CLAIM_FACTS: {config.use_claim_facts}")
+        except Exception as e:
+            print(f"Phase G tables not available: {e}")
         print()
 
         print("CONFIGURATION")
@@ -1330,6 +1375,150 @@ def _print_stats(stats: PipelineStats):
         print(f"Duration: {stats.duration_seconds:.2f}s")
 
 
+async def cmd_pipeline_claims(
+    entity_id: str,
+    db_path: str = "signals.db",
+    show_history: bool = False,
+    at_time: Optional[str] = None,
+    predicate: Optional[str] = None,
+) -> None:
+    """Query claim facts for an entity."""
+    from storage.claim_fact_store import ClaimFactStore
+
+    store = SignalStore(db_path)
+    await store.initialize()
+    claim_store = ClaimFactStore(store)
+
+    try:
+        print(f"\n{'='*70}")
+        print(f"Claim Facts for Entity: {entity_id}")
+        print(f"{'='*70}\n")
+
+        # Get predicates to query
+        predicates = [predicate] if predicate else [
+            "company_name", "founding_date", "location",
+            "industry", "funding_raised", "website"
+        ]
+
+        if at_time:
+            # Point-in-time query
+            print(f"Point in time: {at_time}\n")
+            for pred in predicates:
+                fact = await claim_store.get_fact_at_time(entity_id, pred, at_time)
+                if fact:
+                    _print_fact(fact)
+        elif show_history:
+            # Full history
+            print("Full History (most recent first)\n")
+            for pred in predicates:
+                history = await claim_store.get_fact_history(entity_id, pred)
+                if history:
+                    print(f"  {pred}:")
+                    for fact in history:
+                        status = "ACTIVE" if fact["valid_until"] is None else f"until {fact['valid_until'][:10]}"
+                        print(f"    [{status}] {fact['value']} (tier={fact['source_tier']}, conf={fact['confidence']:.2f})")
+                    print()
+        else:
+            # Current active facts
+            print("Current Active Facts\n")
+            found_any = False
+            for pred in predicates:
+                fact = await claim_store.get_active_fact(entity_id, pred)
+                if fact:
+                    found_any = True
+                    _print_fact(fact)
+
+            if not found_any:
+                print("  No claim facts found for this entity.\n")
+                print("  Hint: Run pipeline with USE_CLAIM_FACTS=true to extract claims.\n")
+
+        print(f"{'='*70}\n")
+
+    finally:
+        await store.close()
+
+
+def _print_fact(fact: dict) -> None:
+    """Pretty print a claim fact."""
+    print(f"  {fact['predicate']:15} = {fact['value']}")
+    print(f"    {'':15}   tier={fact['source_tier']} | conf={fact['confidence']:.2f} | observed={fact['observed_at'][:10]}")
+    if fact.get('supporting_signal_ids'):
+        print(f"    {'':15}   signals: {fact['supporting_signal_ids']}")
+    print()
+
+
+async def cmd_pipeline_entities(
+    db_path: str = "signals.db",
+    limit: int = 20,
+) -> None:
+    """Show entity resolution statistics."""
+    store = SignalStore(db_path)
+    await store.initialize()
+
+    try:
+        print(f"\n{'='*70}")
+        print("Entity Resolution Statistics")
+        print(f"{'='*70}\n")
+
+        # Query entity-related tables
+        cursor = await store._db.execute("SELECT COUNT(*) FROM entity_aliases")
+        strong_keys = (await cursor.fetchone())[0]
+
+        cursor = await store._db.execute("SELECT COUNT(*) FROM entity_key_aliases")
+        alias_keys = (await cursor.fetchone())[0]
+
+        cursor = await store._db.execute("SELECT COUNT(*) FROM entity_blocking_index")
+        blocking_tokens = (await cursor.fetchone())[0]
+
+        cursor = await store._db.execute("SELECT COUNT(*) FROM entity_migrations")
+        migrations = (await cursor.fetchone())[0]
+
+        cursor = await store._db.execute("SELECT COUNT(*) FROM claim_facts")
+        claim_facts = (await cursor.fetchone())[0]
+
+        cursor = await store._db.execute(
+            "SELECT COUNT(*) FROM claim_facts WHERE valid_until IS NULL AND is_retracted = 0"
+        )
+        active_claims = (await cursor.fetchone())[0]
+
+        print("IDENTITY RESOLUTION")
+        print("-" * 40)
+        print(f"  Strong key bindings:   {strong_keys:>6}")
+        print(f"  Weak alias bindings:   {alias_keys:>6}")
+        print(f"  Blocking tokens:       {blocking_tokens:>6}")
+        print(f"  Entity migrations:     {migrations:>6}")
+        print()
+
+        print("BI-TEMPORAL CLAIMS")
+        print("-" * 40)
+        print(f"  Total claim facts:     {claim_facts:>6}")
+        print(f"  Active (current):      {active_claims:>6}")
+        print(f"  Historical:            {claim_facts - active_claims:>6}")
+        print()
+
+        # Show recent entities with claims
+        cursor = await store._db.execute("""
+            SELECT entity_id, COUNT(*) as fact_count, MAX(created_at) as last_updated
+            FROM claim_facts
+            GROUP BY entity_id
+            ORDER BY last_updated DESC
+            LIMIT ?
+        """, (limit,))
+        rows = await cursor.fetchall()
+
+        if rows:
+            print(f"RECENT ENTITIES (top {limit})")
+            print("-" * 40)
+            for entity_id, count, last_updated in rows:
+                print(f"  {entity_id[:16]}  | {count} facts | {last_updated[:10]}")
+            print()
+
+        print(f"{'='*70}\n")
+
+    finally:
+        await store.close()
+
+
 # =============================================================================
 # CLI ARGUMENT PARSER
 # =============================================================================
@@ -1659,6 +1848,19 @@ Environment variables:
         type=str,
         help="Path to SQLite database",
     )
+
+    # pipeline claims
+    claims_parser = pipeline_sub.add_parser("claims", help="Query claim facts for an entity")
+    claims_parser.add_argument("entity_id", type=str, help="Entity ID (16-char hex)")
+    claims_parser.add_argument("--history", action="store_true", help="Show full history")
+    claims_parser.add_argument("--at", type=str, dest="at_time", help="Point-in-time query (ISO timestamp)")
+    claims_parser.add_argument("--predicate", type=str, help="Filter by predicate (company_name, etc.)")
+    claims_parser.add_argument("--db-path", type=str, help="Path to SQLite database")
+
+    # pipeline entities
+    entities_parser = pipeline_sub.add_parser("entities", help="Show entity resolution statistics")
+    entities_parser.add_argument("--limit", type=int, default=20, help="Max entities to show")
+    entities_parser.add_argument("--db-path", type=str, help="Path to SQLite database")
 
     # Schema command with subcommands
     schema_parser = subparsers.add_parser(
@@ -3204,8 +3406,21 @@ async def main():
                     confirm=args.confirm,
                     dry_run=args.dry_run,
                 )
+            elif args.pipeline_cmd == "claims":
+                await cmd_pipeline_claims(
+                    entity_id=args.entity_id,
+                    db_path=db_path,
+                    show_history=args.history,
+                    at_time=args.at_time,
+                    predicate=args.predicate,
+                )
+            elif args.pipeline_cmd == "entities":
+                await cmd_pipeline_entities(
+                    db_path=db_path,
+                    limit=args.limit,
+                )
             else:
-                print("Pipeline command requires a subcommand (status, qualified, push)")
+                print("Pipeline command requires a subcommand (status, qualified, push, claims, entities)")
                 sys.exit(1)
         elif args.command == "schema":
             # Handle schema subcommands
