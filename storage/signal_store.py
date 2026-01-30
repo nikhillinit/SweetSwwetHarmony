@@ -5494,7 +5494,7 @@ class SignalStore:
                        posted_at, detected_at
                 FROM community_mentions
                 WHERE canonical_key = ? AND source = ?
-                ORDER BY detected_at DESC
+                ORDER BY detected_at DESC, id DESC
                 LIMIT ?
                 """,
                 (canonical_key, source, limit),
@@ -5510,7 +5510,7 @@ class SignalStore:
                        posted_at, detected_at
                 FROM community_mentions
                 WHERE canonical_key = ?
-                ORDER BY detected_at DESC
+                ORDER BY detected_at DESC, id DESC
                 LIMIT ?
                 """,
                 (canonical_key, limit),

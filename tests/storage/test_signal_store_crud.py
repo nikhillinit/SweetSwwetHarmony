@@ -122,11 +122,14 @@ class TestSaveSignal:
     @pytest.mark.asyncio
     async def test_save_signal_duplicate_requires_new_detected_at(self, store: SignalStore, sample_signal_data: Dict[str, Any]):
         """Duplicate signals should require different detected_at timestamp."""
-        # First save
+        from datetime import timedelta
+
+        # First save with explicit timestamp
+        sample_signal_data["detected_at"] = datetime.now(timezone.utc)
         id1 = await store.save_signal(**sample_signal_data)
 
-        # Second save with same data gets new auto-generated detected_at (different millisecond)
-        # This tests that we need different timestamps for same company/type combo
+        # Second save with different detected_at (1 second later)
+        sample_signal_data["detected_at"] = datetime.now(timezone.utc) + timedelta(seconds=1)
         id2 = await store.save_signal(**sample_signal_data)
 
         # Both should succeed since detected_at differs
