@@ -4621,6 +4621,163 @@ class SignalStore:
         return cursor.rowcount > 0
 
     # =========================================================================
+    # THESIS EVALUATION METHODS
+    # =========================================================================
+
+    async def save_thesis_evaluation(
+        self,
+        run_id: str,
+        evaluator_type: str,
+        dataset_path: str,
+        accuracy: float,
+        per_class_metrics: Dict[str, Any],
+        confusion_matrix: Dict[str, Dict[str, int]],
+        latency_ms: Optional[int] = None,
+        token_usage: Optional[Dict[str, int]] = None,
+        errors: Optional[List[str]] = None,
+    ) -> int:
+        """
+        Save a thesis classification evaluation run.
+
+        Uses existing evaluation_runs table with run_type='thesis_keyword' or 'thesis_llm'.
+
+        Args:
+            run_id: Unique run identifier
+            evaluator_type: 'keyword' or 'llm'
+            dataset_path: Path to dataset used
+            accuracy: Overall accuracy (0-1)
+            per_class_metrics: Dict of {class: {precision, recall, f1, support}}
+            confusion_matrix: Dict of {actual: {predicted: count}}
+            latency_ms: Total evaluation time in ms
+            token_usage: Optional {input_tokens, output_tokens} for LLM
+            errors: Optional list of error messages
+
+        Returns:
+            Database row ID
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        now = datetime.now(timezone.utc).isoformat()
+        run_type = f"thesis_{evaluator_type}"
+
+        # Combine metrics into single JSON
+        metrics = {
+            "accuracy": accuracy,
+            "per_class": per_class_metrics,
+            "confusion_matrix": confusion_matrix,
+        }
+
+        # Config stores additional metadata
+        config = {
+            "dataset_path": dataset_path,
+            "latency_ms": latency_ms,
+            "token_usage": token_usage,
+            "errors": errors,
+        }
+
+        cursor = await self._db.execute(
+            """
+            INSERT INTO evaluation_runs (
+                run_id, run_type, model_version, embedding_version,
+                gold_set_version, metrics, config, baseline_run_id, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                run_id,
+                run_type,
+                evaluator_type,  # Use evaluator_type as model_version
+                None,  # No embedding version for thesis eval
+                dataset_path,  # Use dataset_path as gold_set_version
+                json.dumps(metrics),
+                json.dumps(config),
+                None,  # No baseline for now
+                now,
+            ),
+        )
+        await self._db.commit()
+        return cursor.lastrowid or 0
+
+    async def get_thesis_evaluations(
+        self,
+        evaluator_type: Optional[str] = None,
+        limit: int = 10,
+    ) -> List[Dict[str, Any]]:
+        """
+        Get recent thesis evaluation runs.
+
+        Args:
+            evaluator_type: Optional filter ('keyword', 'llm', or None for both)
+            limit: Maximum runs to return
+
+        Returns:
+            List of evaluation run dicts with metrics
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        query = """
+            SELECT
+                id, run_id, run_type, model_version,
+                gold_set_version, metrics, config, created_at
+            FROM evaluation_runs
+            WHERE run_type LIKE 'thesis_%'
+        """
+        params: List[Any] = []
+
+        if evaluator_type:
+            query += " AND run_type = ?"
+            params.append(f"thesis_{evaluator_type}")
+
+        query += " ORDER BY created_at DESC, id DESC LIMIT ?"
+        params.append(limit)
+
+        cursor = await self._db.execute(query, params)
+        rows = await cursor.fetchall()
+
+        results = []
+        for row in rows:
+            metrics = json.loads(row[5]) if row[5] else {}
+            config = json.loads(row[6]) if row[6] else {}
+
+            results.append({
+                "id": row[0],
+                "run_id": row[1],
+                "run_type": row[2],
+                "evaluator_type": row[2].replace("thesis_", ""),
+                "model_version": row[3],
+                "dataset_path": row[4],
+                "accuracy": metrics.get("accuracy"),
+                "per_class_metrics": metrics.get("per_class", {}),
+                "confusion_matrix": metrics.get("confusion_matrix", {}),
+                "latency_ms": config.get("latency_ms"),
+                "token_usage": config.get("token_usage"),
+                "errors": config.get("errors", []),
+                "created_at": row[7],
+            })
+
+        return results
+
+    async def get_thesis_baseline(
+        self,
+        evaluator_type: str,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Get most recent evaluation as baseline for comparison.
+
+        Args:
+            evaluator_type: 'keyword' or 'llm'
+
+        Returns:
+            Most recent evaluation run or None
+        """
+        results = await self.get_thesis_evaluations(
+            evaluator_type=evaluator_type,
+            limit=1,
+        )
+        return results[0] if results else None
+
+    # =========================================================================
     # COMPANY STATE METHODS (Migration 13)
     # =========================================================================
 
