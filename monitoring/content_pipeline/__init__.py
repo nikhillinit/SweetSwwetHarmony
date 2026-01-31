@@ -45,6 +45,7 @@ from monitoring.content_pipeline.models import (
 )
 from monitoring.content_pipeline.transport_httpx import HttpxTransport
 from monitoring.content_pipeline.extract_html import SelectorExtractor
+from monitoring.content_pipeline.orchestrator import ContentPipeline
 
 __all__ = [
     # Config classes
@@ -69,6 +70,8 @@ __all__ = [
     "HttpxTransport",
     # Extraction
     "SelectorExtractor",
+    # Orchestrator
+    "ContentPipeline",
     # Exceptions
     "ContentSizeExceededError",
 ]
