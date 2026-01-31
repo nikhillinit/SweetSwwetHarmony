@@ -15,6 +15,7 @@ Components:
 - RepresentationType: Types of content representations
 - HttpxTransport: HTTP transport with conditional request support and streaming size limits
 - SelectorExtractor: CSS/XPath-based HTML content extraction (parsel)
+- InscriptisExtractor: HTML-to-text with table/grid layout preservation (inscriptis)
 - ContentSizeExceededError: Raised when content exceeds configured size limits
 """
 
@@ -45,6 +46,7 @@ from monitoring.content_pipeline.models import (
 )
 from monitoring.content_pipeline.transport_httpx import HttpxTransport
 from monitoring.content_pipeline.extract_html import SelectorExtractor
+from monitoring.content_pipeline.extract_inscriptis import InscriptisExtractor
 from monitoring.content_pipeline.orchestrator import ContentPipeline
 
 __all__ = [
@@ -70,6 +72,7 @@ __all__ = [
     "HttpxTransport",
     # Extraction
     "SelectorExtractor",
+    "InscriptisExtractor",
     # Orchestrator
     "ContentPipeline",
     # Exceptions
