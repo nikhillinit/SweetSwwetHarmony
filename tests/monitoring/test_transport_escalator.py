@@ -827,3 +827,259 @@ class TestBlockedSiteRecovery:
             result = await escalator.fetch("https://test.com")
 
             assert result.transport_used == "curl_cffi", f"Failed to detect pattern: {pattern}"
+
+
+class TestThreeTierEscalation:
+    """Test 3-tier escalation: httpx → curl_cffi → playwright.
+
+    When on_blocked is configured and curl_cffi also gets blocked,
+    should escalate to playwright as the final fallback.
+    """
+
+    @pytest.mark.asyncio
+    async def test_escalates_to_playwright_when_curl_also_blocked(self):
+        """Should escalate to playwright when both httpx and curl_cffi are blocked."""
+        from monitoring.content_pipeline.transport_escalator import TransportEscalator
+
+        # Primary (httpx) gets 403
+        mock_primary = AsyncMock()
+        mock_primary.fetch = AsyncMock(return_value=FetchArtifact(
+            url="https://protected.com",
+            status_code=403,
+            headers={},
+            content="Forbidden",
+            transport_used="httpx",
+            fetch_time_ms=50,
+        ))
+
+        # Fallback (curl_cffi) also gets blocked
+        mock_fallback = AsyncMock()
+        mock_fallback.fetch = AsyncMock(return_value=FetchArtifact(
+            url="https://protected.com",
+            status_code=403,
+            headers={},
+            content="Still Forbidden",
+            transport_used="curl_cffi",
+            fetch_time_ms=100,
+        ))
+
+        # Third tier (playwright) succeeds
+        mock_third = AsyncMock()
+        mock_third.fetch = AsyncMock(return_value=FetchArtifact(
+            url="https://protected.com",
+            status_code=200,
+            headers={},
+            content="<html>Success via Playwright</html>",
+            transport_used="playwright",
+            fetch_time_ms=500,
+        ))
+
+        config = TransportConfig(on_403="curl_cffi", on_blocked="playwright")
+        escalator = TransportEscalator(
+            config=config,
+            primary_transport=mock_primary,
+            fallback_transport=mock_fallback,
+            third_tier_transport=mock_third,
+        )
+
+        result = await escalator.fetch("https://protected.com")
+
+        # Should have tried all three
+        mock_primary.fetch.assert_called_once()
+        mock_fallback.fetch.assert_called_once()
+        mock_third.fetch.assert_called_once()
+        assert result.status_code == 200
+        assert result.transport_used == "playwright"
+
+    @pytest.mark.asyncio
+    async def test_escalates_to_playwright_on_blocked_pattern_after_curl(self):
+        """Should escalate to playwright when curl_cffi returns blocked pattern."""
+        from monitoring.content_pipeline.transport_escalator import TransportEscalator
+
+        # Primary (httpx) gets Cloudflare challenge
+        cloudflare_content = "<html>Checking your browser before accessing</html>"
+        mock_primary = AsyncMock()
+        mock_primary.fetch = AsyncMock(return_value=FetchArtifact(
+            url="https://cloudflare-site.com",
+            status_code=200,
+            headers={},
+            content=cloudflare_content,
+            transport_used="httpx",
+            fetch_time_ms=50,
+        ))
+
+        # Fallback (curl_cffi) also gets Cloudflare challenge
+        mock_fallback = AsyncMock()
+        mock_fallback.fetch = AsyncMock(return_value=FetchArtifact(
+            url="https://cloudflare-site.com",
+            status_code=200,
+            headers={},
+            content=cloudflare_content,  # Still blocked
+            transport_used="curl_cffi",
+            fetch_time_ms=100,
+        ))
+
+        # Third tier (playwright) bypasses
+        mock_third = AsyncMock()
+        mock_third.fetch = AsyncMock(return_value=FetchArtifact(
+            url="https://cloudflare-site.com",
+            status_code=200,
+            headers={},
+            content="<html>Real Content</html>",
+            transport_used="playwright",
+            fetch_time_ms=500,
+        ))
+
+        config = TransportConfig(on_403="curl_cffi", on_blocked="playwright")
+        escalator = TransportEscalator(
+            config=config,
+            primary_transport=mock_primary,
+            fallback_transport=mock_fallback,
+            third_tier_transport=mock_third,
+        )
+
+        result = await escalator.fetch("https://cloudflare-site.com")
+
+        assert result.transport_used == "playwright"
+        assert "Real Content" in result.content
+
+    @pytest.mark.asyncio
+    async def test_no_playwright_when_on_blocked_not_configured(self):
+        """Should NOT escalate to playwright when on_blocked is not set."""
+        from monitoring.content_pipeline.transport_escalator import TransportEscalator
+
+        mock_primary = AsyncMock()
+        mock_primary.fetch = AsyncMock(return_value=FetchArtifact(
+            url="https://protected.com",
+            status_code=403,
+            headers={},
+            content="Forbidden",
+            transport_used="httpx",
+            fetch_time_ms=50,
+        ))
+
+        mock_fallback = AsyncMock()
+        mock_fallback.fetch = AsyncMock(return_value=FetchArtifact(
+            url="https://protected.com",
+            status_code=403,
+            headers={},
+            content="Still Forbidden",
+            transport_used="curl_cffi",
+            fetch_time_ms=100,
+        ))
+
+        mock_third = AsyncMock()
+        mock_third.fetch = AsyncMock()  # Should never be called
+
+        # on_blocked is NOT configured
+        config = TransportConfig(on_403="curl_cffi", on_blocked=None)
+        escalator = TransportEscalator(
+            config=config,
+            primary_transport=mock_primary,
+            fallback_transport=mock_fallback,
+            third_tier_transport=mock_third,
+        )
+
+        result = await escalator.fetch("https://protected.com")
+
+        # Should return curl_cffi result without escalating
+        mock_third.fetch.assert_not_called()
+        assert result.transport_used == "curl_cffi"
+
+    @pytest.mark.asyncio
+    async def test_stops_at_curl_when_curl_succeeds(self):
+        """Should NOT escalate to playwright when curl_cffi succeeds."""
+        from monitoring.content_pipeline.transport_escalator import TransportEscalator
+
+        mock_primary = AsyncMock()
+        mock_primary.fetch = AsyncMock(return_value=FetchArtifact(
+            url="https://protected.com",
+            status_code=403,
+            headers={},
+            content="Forbidden",
+            transport_used="httpx",
+            fetch_time_ms=50,
+        ))
+
+        # Fallback (curl_cffi) succeeds
+        mock_fallback = AsyncMock()
+        mock_fallback.fetch = AsyncMock(return_value=FetchArtifact(
+            url="https://protected.com",
+            status_code=200,
+            headers={},
+            content="<html>Success via curl_cffi</html>",
+            transport_used="curl_cffi",
+            fetch_time_ms=100,
+        ))
+
+        mock_third = AsyncMock()
+        mock_third.fetch = AsyncMock()  # Should never be called
+
+        config = TransportConfig(on_403="curl_cffi", on_blocked="playwright")
+        escalator = TransportEscalator(
+            config=config,
+            primary_transport=mock_primary,
+            fallback_transport=mock_fallback,
+            third_tier_transport=mock_third,
+        )
+
+        result = await escalator.fetch("https://protected.com")
+
+        # Should stop at curl_cffi
+        mock_third.fetch.assert_not_called()
+        assert result.transport_used == "curl_cffi"
+
+    @pytest.mark.asyncio
+    async def test_passes_playwright_config_to_third_tier(self):
+        """Should pass playwright_wait_selector and timeout to third tier."""
+        from monitoring.content_pipeline.transport_escalator import TransportEscalator
+
+        mock_primary = AsyncMock()
+        mock_primary.fetch = AsyncMock(return_value=FetchArtifact(
+            url="https://spa-site.com",
+            status_code=403,
+            headers={},
+            content="Forbidden",
+            transport_used="httpx",
+            fetch_time_ms=50,
+        ))
+
+        mock_fallback = AsyncMock()
+        mock_fallback.fetch = AsyncMock(return_value=FetchArtifact(
+            url="https://spa-site.com",
+            status_code=403,
+            headers={},
+            content="Still Forbidden",
+            transport_used="curl_cffi",
+            fetch_time_ms=100,
+        ))
+
+        mock_third = AsyncMock()
+        mock_third.fetch = AsyncMock(return_value=FetchArtifact(
+            url="https://spa-site.com",
+            status_code=200,
+            headers={},
+            content="<html>SPA Content</html>",
+            transport_used="playwright",
+            fetch_time_ms=500,
+        ))
+
+        config = TransportConfig(
+            on_403="curl_cffi",
+            on_blocked="playwright",
+            playwright_wait_selector="#app",
+            playwright_timeout_ms=15000,
+        )
+        escalator = TransportEscalator(
+            config=config,
+            primary_transport=mock_primary,
+            fallback_transport=mock_fallback,
+            third_tier_transport=mock_third,
+        )
+
+        await escalator.fetch("https://spa-site.com")
+
+        # Verify playwright config was passed
+        call_kwargs = mock_third.fetch.call_args.kwargs
+        assert call_kwargs.get("wait_for_selector") == "#app"
+        assert call_kwargs.get("timeout") == 15000

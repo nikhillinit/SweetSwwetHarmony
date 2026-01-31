@@ -61,16 +61,25 @@ class TransportProtocol(Protocol):
 
 class TransportEscalator:
     """
-    Orchestrates transport escalation for bot detection bypass.
+    Orchestrates 3-tier transport escalation for bot detection bypass.
 
-    Uses primary transport (httpx) first, escalates to fallback (curl_cffi)
-    when encountering:
+    Escalation tiers:
+    - Tier 1: Primary transport (httpx) - Fast, standard HTTP/2
+    - Tier 2: Fallback transport (curl_cffi) - Browser TLS impersonation
+    - Tier 3: Third tier transport (playwright) - Full headless browser
+
+    Escalation triggers:
     - 403 Forbidden (if on_403 configured)
     - 429 Too Many Requests (if on_429 configured)
     - Blocked response patterns (Cloudflare, CAPTCHA, etc.)
+    - on_blocked: Additional escalation to playwright when Tier 2 also blocked
 
     Example:
-        config = TransportConfig(on_403="curl_cffi", user_agent_profile="chrome")
+        config = TransportConfig(
+            on_403="curl_cffi",
+            on_blocked="playwright",
+            user_agent_profile="chrome",
+        )
         escalator = TransportEscalator(config=config)
         result = await escalator.fetch("https://example.com")
     """
@@ -80,6 +89,7 @@ class TransportEscalator:
         config: Optional[TransportConfig] = None,
         primary_transport: Optional[TransportProtocol] = None,
         fallback_transport: Optional[TransportProtocol] = None,
+        third_tier_transport: Optional[TransportProtocol] = None,
     ):
         """
         Initialize the TransportEscalator.
@@ -88,10 +98,12 @@ class TransportEscalator:
             config: TransportConfig with escalation settings
             primary_transport: Primary transport (defaults to HttpxTransport)
             fallback_transport: Fallback transport (defaults to CurlCffiTransport)
+            third_tier_transport: Third tier transport (defaults to PlaywrightTransport)
         """
         self._config = config or TransportConfig()
         self._primary_transport = primary_transport
         self._fallback_transport = fallback_transport
+        self._third_tier_transport = third_tier_transport
 
     def _get_primary_transport(self) -> TransportProtocol:
         """Get or create primary transport."""
@@ -111,9 +123,18 @@ class TransportEscalator:
         self._fallback_transport = CurlCffiTransport()
         return self._fallback_transport
 
-    def _should_escalate(self, artifact: FetchArtifact) -> bool:
+    def _get_third_tier_transport(self) -> TransportProtocol:
+        """Get or create third tier transport (playwright)."""
+        if self._third_tier_transport is not None:
+            return self._third_tier_transport
+
+        from monitoring.content_pipeline.transport_playwright import PlaywrightTransport
+        self._third_tier_transport = PlaywrightTransport()
+        return self._third_tier_transport
+
+    def _should_escalate_to_tier2(self, artifact: FetchArtifact) -> bool:
         """
-        Determine if we should escalate to fallback transport.
+        Determine if we should escalate from primary to fallback transport.
 
         Escalation triggers:
         - 403 status code (when on_403 is configured)
@@ -137,20 +158,66 @@ class TransportEscalator:
 
         # Check 403
         if artifact.status_code == 403 and self._config.on_403 is not None:
-            logger.info("Escalating due to 403 Forbidden")
+            logger.info("Escalating to tier 2 due to 403 Forbidden")
             return True
 
         # Check 429
         if artifact.status_code == 429 and self._config.on_429 is not None:
-            logger.info("Escalating due to 429 Too Many Requests")
+            logger.info("Escalating to tier 2 due to 429 Too Many Requests")
             return True
 
         # Check blocked patterns in response body
         if self._is_blocked_response(artifact.content):
-            logger.info("Escalating due to blocked response pattern")
+            logger.info("Escalating to tier 2 due to blocked response pattern")
             return True
 
         return False
+
+    def _should_escalate_to_tier3(self, artifact: FetchArtifact) -> bool:
+        """
+        Determine if we should escalate from fallback to third tier (playwright).
+
+        Escalation triggers:
+        - on_blocked is configured AND:
+          - 403 status code, OR
+          - 429 status code, OR
+          - Blocked response patterns
+
+        Args:
+            artifact: FetchArtifact from fallback transport
+
+        Returns:
+            True if we should try third tier transport
+        """
+        # Check if third tier escalation is enabled
+        if self._config.on_blocked is None:
+            return False
+
+        # Check 403
+        if artifact.status_code == 403:
+            logger.info("Escalating to tier 3 due to 403 Forbidden")
+            return True
+
+        # Check 429
+        if artifact.status_code == 429:
+            logger.info("Escalating to tier 3 due to 429 Too Many Requests")
+            return True
+
+        # Check blocked patterns in response body
+        if self._is_blocked_response(artifact.content):
+            logger.info("Escalating to tier 3 due to blocked response pattern")
+            return True
+
+        return False
+
+    def _should_escalate(self, artifact: FetchArtifact) -> bool:
+        """
+        Determine if we should escalate to fallback transport.
+
+        DEPRECATED: Use _should_escalate_to_tier2 instead.
+        Kept for backwards compatibility.
+        """
+        return self._should_escalate_to_tier2(artifact)
 
     def _is_blocked_response(self, content: str) -> bool:
         """
@@ -177,11 +244,16 @@ class TransportEscalator:
         max_json_bytes: Optional[int] = None,
     ) -> FetchArtifact:
         """
-        Fetch URL with automatic transport escalation.
+        Fetch URL with automatic 3-tier transport escalation.
 
-        First tries primary transport (httpx). If that encounters
-        403/429/blocked patterns and escalation is configured, tries
-        fallback transport (curl_cffi with browser impersonation).
+        Escalation chain:
+        1. Primary transport (httpx) - Fast HTTP/2
+        2. Fallback transport (curl_cffi) - Browser TLS impersonation
+        3. Third tier transport (playwright) - Full headless browser
+
+        Each tier only escalates if:
+        - Previous tier encounters 403/429/blocked patterns
+        - Corresponding config option is set (on_403/on_429/on_blocked)
 
         Args:
             url: URL to fetch
@@ -192,11 +264,11 @@ class TransportEscalator:
             max_json_bytes: Maximum JSON content size
 
         Returns:
-            FetchArtifact from whichever transport succeeded (or fallback result)
+            FetchArtifact from whichever transport succeeded (or last result)
         """
         primary = self._get_primary_transport()
 
-        # Try primary transport
+        # Tier 1: Try primary transport
         artifact = await primary.fetch(
             url=url,
             etag=etag,
@@ -206,8 +278,8 @@ class TransportEscalator:
             max_json_bytes=max_json_bytes,
         )
 
-        # Check if we should escalate
-        if self._should_escalate(artifact):
+        # Check if we should escalate to Tier 2
+        if self._should_escalate_to_tier2(artifact):
             fallback = self._get_fallback_transport()
 
             # Build fallback kwargs
@@ -225,11 +297,40 @@ class TransportEscalator:
                 fallback_kwargs["impersonate"] = self._config.user_agent_profile
 
             logger.info(
-                "Escalating from %s to fallback transport for %s",
+                "Escalating from %s to tier 2 (curl_cffi) for %s",
                 artifact.transport_used,
                 url,
             )
 
-            return await fallback.fetch(**fallback_kwargs)
+            # Tier 2: Try fallback transport
+            artifact = await fallback.fetch(**fallback_kwargs)
+
+            # Check if we should escalate to Tier 3
+            if self._should_escalate_to_tier3(artifact):
+                third_tier = self._get_third_tier_transport()
+
+                # Build third tier kwargs
+                third_tier_kwargs = {
+                    "url": url,
+                    "etag": etag,
+                    "last_modified": last_modified,
+                    "max_html_bytes": max_html_bytes,
+                    "max_json_bytes": max_json_bytes,
+                }
+
+                # Pass playwright-specific config
+                if self._config.playwright_wait_selector:
+                    third_tier_kwargs["wait_for_selector"] = self._config.playwright_wait_selector
+                if self._config.playwright_timeout_ms:
+                    third_tier_kwargs["timeout"] = self._config.playwright_timeout_ms
+
+                logger.info(
+                    "Escalating from %s to tier 3 (playwright) for %s",
+                    artifact.transport_used,
+                    url,
+                )
+
+                # Tier 3: Try playwright transport
+                artifact = await third_tier.fetch(**third_tier_kwargs)
 
         return artifact
