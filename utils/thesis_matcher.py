@@ -7,18 +7,28 @@ Matches companies against Press On Ventures' Consumer investment thesis:
 - Travel & Hospitality: Travel booking, hospitality tech, restaurants
 - Consumer Marketplaces: Consumer-facing two-sided markets
 
+Phase B Enhancements (from founder_intel_canonical):
+- Intent phrases: "join waitlist", "private beta", "pricing", etc.
+- Domain regex patterns: get*, try*, join* consumer domains
+- Domain blacklist: localhost, example, staging, etc.
+- Additional negative keywords: boilerplate, template, tutorial, etc.
+
 Usage:
     from utils.thesis_matcher import ThesisMatcher, ThesisFit
 
     matcher = ThesisMatcher()
     fit = matcher.score("Meal kit delivery startup")
     print(f"Thesis: {fit.thesis}, Score: {fit.score}")
+
+    # With domain analysis
+    fit = matcher.score("Health app", domain_name="getfitness.com")
+    print(f"Domain match: {fit.domain_match}")
 """
 
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict, List, Optional
 
@@ -138,13 +148,13 @@ NEGATIVE_KEYWORDS: Dict[str, float] = {
     "saas platform": 0.4,
     "developer tool": 0.5,
     "api platform": 0.4,
-    "api management": 0.5,  # Added per plan
+    "api management": 0.5,
     "devops": 0.5,
     "infrastructure": 0.4,
-    "logistics platform": 0.5,  # Added: B2B logistics
-    "logistics": 0.3,  # Added: general logistics indicator
-    "data platform": 0.4,  # Added per plan
-    "sdk": 0.4,  # Added per plan
+    "logistics platform": 0.5,
+    "logistics": 0.3,
+    "data platform": 0.4,
+    "sdk": 0.4,
     # Crypto/Web3
     "blockchain": 0.5,
     "crypto": 0.5,
@@ -159,8 +169,56 @@ NEGATIVE_KEYWORDS: Dict[str, float] = {
     "series b": 0.3,
     "series c": 0.4,
     "series d": 0.5,
-    "aggregator": 0.2,  # Added: weak signal for price aggregators
+    "aggregator": 0.2,
+    # Phase B: Template/Educational content (from founder_intel_canonical)
+    "boilerplate": 0.6,
+    "starter": 0.5,
+    "template": 0.5,
+    "tutorial": 0.5,
+    "workshop": 0.4,
+    "course": 0.4,
+    "homework": 0.4,
+    "assignment": 0.4,
+    "example": 0.3,
+    "demo repo": 0.5,
+    # Phase B: Developer tools (from founder_intel_canonical)
+    "cli": 0.4,
+    "library": 0.4,
+    "framework": 0.4,
+    "plugin": 0.4,
+    "linter": 0.5,
 }
+
+# Intent phrases that indicate commercial/consumer intent (Phase B)
+INTENT_PHRASES: Dict[str, float] = {
+    "join waitlist": 0.3,
+    "request access": 0.3,
+    "private beta": 0.3,
+    "coming soon": 0.2,
+    "book a demo": 0.2,
+    "sign up": 0.2,
+    "get started": 0.2,
+    "pricing": 0.25,
+    "subscribe": 0.2,
+}
+
+# Regex patterns for consumer-oriented domains (Phase B)
+CONSUMER_DOMAIN_PATTERNS: List[str] = [
+    r"^get[a-z0-9-]{3,}$",  # getmyapp.com
+    r"^try[a-z0-9-]{3,}$",  # tryproduct.io
+    r"^join[a-z0-9-]{3,}$",  # joincommunity.co
+]
+
+# Domain blacklist fragments for non-production domains (Phase B)
+DOMAIN_BLACKLIST_FRAGMENTS: List[str] = [
+    "localhost",
+    "example",
+    "sample",
+    "test",
+    "staging",
+    "dev.",
+    "internal",
+]
 
 
 @dataclass
@@ -172,6 +230,10 @@ class ThesisFit:
     negative_keywords: List[str]
     all_scores: Dict[str, float]  # Score per thesis
     confidence: str  # HIGH, MEDIUM, LOW
+    # Phase B additions
+    intent_phrases_matched: List[str] = field(default_factory=list)
+    domain_match: bool = False
+    domain_blacklisted: bool = False
 
     @property
     def is_fit(self) -> bool:
@@ -187,6 +249,10 @@ class ThesisFit:
             "all_scores": {k: round(v, 3) for k, v in self.all_scores.items()},
             "confidence": self.confidence,
             "is_fit": self.is_fit,
+            # Phase B additions
+            "intent_phrases_matched": self.intent_phrases_matched,
+            "domain_match": self.domain_match,
+            "domain_blacklisted": self.domain_blacklisted,
         }
 
 
@@ -214,8 +280,18 @@ class ThesisMatcher:
         self,
         text: str,
         company_name: Optional[str] = None,
+        domain_name: Optional[str] = None,
     ) -> ThesisFit:
-        """Score text against all Consumer thesis categories."""
+        """Score text against all Consumer thesis categories.
+
+        Args:
+            text: Company description or README content
+            company_name: Optional company name for additional context
+            domain_name: Optional domain for pattern matching (Phase B)
+
+        Returns:
+            ThesisFit with score, matched keywords, and domain analysis
+        """
         if not text:
             return ThesisFit(
                 thesis=ConsumerThesis.UNKNOWN,
@@ -224,11 +300,29 @@ class ThesisMatcher:
                 negative_keywords=[],
                 all_scores={},
                 confidence="LOW",
+                intent_phrases_matched=[],
+                domain_match=False,
+                domain_blacklisted=False,
             )
 
         normalized = self._normalize(text)
         if company_name:
             normalized += " " + self._normalize(company_name)
+
+        # Phase B: Check domain blacklist first
+        domain_blacklisted = self._check_domain_blacklist(domain_name)
+        if domain_blacklisted:
+            return ThesisFit(
+                thesis=ConsumerThesis.UNKNOWN,
+                score=0.0,
+                matched_keywords=[],
+                negative_keywords=[],
+                all_scores={},
+                confidence="LOW",
+                intent_phrases_matched=[],
+                domain_match=False,
+                domain_blacklisted=True,
+            )
 
         # Score each thesis
         scores: Dict[str, float] = {}
@@ -241,6 +335,12 @@ class ThesisMatcher:
 
         # Find negative keywords
         negative_matches = self._find_negative_keywords(normalized)
+
+        # Phase B: Find intent phrases
+        intent_matches = self._find_intent_phrases(normalized)
+
+        # Phase B: Check domain patterns
+        domain_match = self._check_domain_patterns(domain_name)
 
         # Find best thesis
         if scores:
@@ -258,6 +358,15 @@ class ThesisMatcher:
             penalty = sum(NEGATIVE_KEYWORDS.get(kw, 0.2) for kw in negative_matches)
             best_score = max(0.0, best_score - penalty * 0.5)
 
+        # Phase B: Apply intent phrase boost
+        if intent_matches:
+            intent_boost = sum(INTENT_PHRASES.get(phrase, 0.1) for phrase in intent_matches)
+            best_score = min(1.0, best_score + intent_boost)
+
+        # Phase B: Apply domain pattern boost
+        if domain_match:
+            best_score = min(1.0, best_score + 0.15)
+
         # Determine confidence
         if best_score >= 0.7:
             confidence = "HIGH"
@@ -273,6 +382,9 @@ class ThesisMatcher:
             negative_keywords=negative_matches,
             all_scores=scores,
             confidence=confidence,
+            intent_phrases_matched=intent_matches,
+            domain_match=domain_match,
+            domain_blacklisted=False,
         )
 
     def _normalize(self, text: str) -> str:
@@ -309,6 +421,59 @@ class ThesisMatcher:
             if re.search(pattern, text):
                 matches.append(keyword)
         return matches
+
+    def _find_intent_phrases(self, text: str) -> List[str]:
+        """Find intent phrases that indicate commercial/consumer intent (Phase B)."""
+        matches = []
+        for phrase in INTENT_PHRASES:
+            pattern = r'\b' + re.escape(phrase) + r'\b'
+            if re.search(pattern, text):
+                matches.append(phrase)
+        return matches
+
+    def _check_domain_patterns(self, domain_name: Optional[str]) -> bool:
+        """Check if domain matches consumer-oriented patterns (Phase B).
+
+        Patterns like get*, try*, join* indicate consumer-focused apps.
+        """
+        if not domain_name:
+            return False
+
+        # Extract just the domain name without TLD
+        domain_lower = domain_name.lower()
+        # Remove protocol if present
+        if "://" in domain_lower:
+            domain_lower = domain_lower.split("://")[1]
+        # Remove port if present
+        if ":" in domain_lower:
+            domain_lower = domain_lower.split(":")[0]
+        # Get the first part (subdomain or main domain)
+        parts = domain_lower.split(".")
+        if not parts:
+            return False
+
+        # Check against patterns (typically check the main domain, not TLD)
+        # For "getfitness.com", check "getfitness"
+        main_domain = parts[0] if len(parts) > 1 else parts[0]
+
+        for pattern in CONSUMER_DOMAIN_PATTERNS:
+            if re.match(pattern, main_domain):
+                return True
+        return False
+
+    def _check_domain_blacklist(self, domain_name: Optional[str]) -> bool:
+        """Check if domain is blacklisted (non-production) (Phase B).
+
+        Blacklist fragments: localhost, example, sample, test, staging, dev., internal
+        """
+        if not domain_name:
+            return False
+
+        domain_lower = domain_name.lower()
+        for fragment in DOMAIN_BLACKLIST_FRAGMENTS:
+            if fragment in domain_lower:
+                return True
+        return False
 
     def score_signals(self, signals: List[Dict]) -> ThesisFit:
         """Score a list of signals to determine thesis fit."""

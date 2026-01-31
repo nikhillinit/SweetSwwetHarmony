@@ -118,6 +118,75 @@ class TestThesisFilterResult:
         assert d["llm_score"] is None
         assert d["llm_category"] is None
 
+    # Phase B: Test new fields
+    def test_intent_phrases_matched_default_empty(self):
+        """Intent phrases matched defaults to empty list."""
+        result = ThesisFilterResult(
+            routing=RoutingDecision.QUALIFIED,
+            keyword_score=0.6,
+        )
+        assert result.intent_phrases_matched == []
+
+    def test_intent_phrases_matched_populated(self):
+        """Intent phrases matched can be populated."""
+        result = ThesisFilterResult(
+            routing=RoutingDecision.QUALIFIED,
+            keyword_score=0.7,
+            intent_phrases_matched=["join waitlist", "pricing"],
+        )
+        assert result.intent_phrases_matched == ["join waitlist", "pricing"]
+
+    def test_domain_match_default_false(self):
+        """Domain match defaults to False."""
+        result = ThesisFilterResult(
+            routing=RoutingDecision.QUALIFIED,
+            keyword_score=0.6,
+        )
+        assert result.domain_match is False
+
+    def test_domain_match_true(self):
+        """Domain match can be set to True."""
+        result = ThesisFilterResult(
+            routing=RoutingDecision.QUALIFIED,
+            keyword_score=0.7,
+            domain_match=True,
+        )
+        assert result.domain_match is True
+
+    def test_domain_blacklisted_default_false(self):
+        """Domain blacklisted defaults to False."""
+        result = ThesisFilterResult(
+            routing=RoutingDecision.QUALIFIED,
+            keyword_score=0.6,
+        )
+        assert result.domain_blacklisted is False
+
+    def test_domain_blacklisted_true(self):
+        """Domain blacklisted can be set to True."""
+        result = ThesisFilterResult(
+            routing=RoutingDecision.REJECTED,
+            keyword_score=0.0,
+            domain_blacklisted=True,
+        )
+        assert result.domain_blacklisted is True
+
+    def test_to_dict_includes_phase_b_fields(self):
+        """to_dict includes Phase B fields."""
+        result = ThesisFilterResult(
+            routing=RoutingDecision.QUALIFIED,
+            keyword_score=0.7,
+            intent_phrases_matched=["join waitlist"],
+            domain_match=True,
+            domain_blacklisted=False,
+        )
+        d = result.to_dict()
+        assert "intent_phrases_matched" in d
+        assert "domain_match" in d
+        assert "domain_blacklisted" in d
+        assert d["intent_phrases_matched"] == ["join waitlist"]
+        assert d["domain_match"] is True
+        assert d["domain_blacklisted"] is False
+
 
 class TestThesisFilterRouting:
     """Test routing logic."""
@@ -373,3 +442,133 @@ class TestThesisFilterWithMockedLLM:
 
         result = await filter_instance.classify("Meditation and wellness platform")
         assert result.llm_rationale == "Wellness app with strong consumer focus"
+
+
+# =============================================================================
+# Phase B Tests: Domain Matching and Intent Phrases in ThesisFilter
+# =============================================================================
+
+
+class TestThesisFilterPhaseB:
+    """Test Phase B enhancements in ThesisFilter."""
+
+    @pytest.fixture
+    def filter_instance(self):
+        return ThesisFilter(ThesisFilterConfig())
+
+    @pytest.mark.asyncio
+    async def test_domain_name_passed_to_matcher(self, filter_instance):
+        """Domain name should be passed to underlying ThesisMatcher."""
+        result = await filter_instance.classify(
+            "Health tracking app",
+            domain_name="getfitness.com",
+            skip_llm=True,
+        )
+        # Should capture domain match from ThesisMatcher
+        assert result.domain_match is True
+
+    @pytest.mark.asyncio
+    async def test_domain_blacklist_applied(self, filter_instance):
+        """Blacklisted domains should be captured in result."""
+        result = await filter_instance.classify(
+            "Great meal kit startup",
+            domain_name="localhost:3000",
+            skip_llm=True,
+        )
+        assert result.domain_blacklisted is True
+
+    @pytest.mark.asyncio
+    async def test_intent_phrases_captured(self, filter_instance):
+        """Intent phrases should be captured in result."""
+        result = await filter_instance.classify(
+            "Fitness app - join waitlist for early access",
+            skip_llm=True,
+        )
+        assert "join waitlist" in result.intent_phrases_matched
+
+    @pytest.mark.asyncio
+    async def test_multiple_intent_phrases(self, filter_instance):
+        """Multiple intent phrases should all be captured."""
+        result = await filter_instance.classify(
+            "Health app - join waitlist - check pricing - subscribe now",
+            skip_llm=True,
+        )
+        assert len(result.intent_phrases_matched) >= 2
+
+    @pytest.mark.asyncio
+    async def test_get_prefix_domain_boosts_score(self, filter_instance):
+        """get* domain pattern should boost score."""
+        base_result = await filter_instance.classify(
+            "Health tracking app",
+            skip_llm=True,
+        )
+        domain_result = await filter_instance.classify(
+            "Health tracking app",
+            domain_name="getfitness.com",
+            skip_llm=True,
+        )
+        # Domain match should boost score
+        assert domain_result.keyword_score >= base_result.keyword_score
+
+    @pytest.mark.asyncio
+    async def test_try_prefix_domain_matches(self, filter_instance):
+        """try* domain pattern should be detected."""
+        result = await filter_instance.classify(
+            "Meal delivery service",
+            domain_name="tryfresh.io",
+            skip_llm=True,
+        )
+        assert result.domain_match is True
+
+    @pytest.mark.asyncio
+    async def test_join_prefix_domain_matches(self, filter_instance):
+        """join* domain pattern should be detected."""
+        result = await filter_instance.classify(
+            "Wellness community",
+            domain_name="joinwellness.co",
+            skip_llm=True,
+        )
+        assert result.domain_match is True
+
+    @pytest.mark.asyncio
+    async def test_regular_domain_no_match(self, filter_instance):
+        """Regular domain should not trigger domain match."""
+        result = await filter_instance.classify(
+            "Health app",
+            domain_name="healthapp.com",
+            skip_llm=True,
+        )
+        assert result.domain_match is False
+
+    @pytest.mark.asyncio
+    async def test_staging_domain_blacklisted(self, filter_instance):
+        """Staging domains should be blacklisted."""
+        result = await filter_instance.classify(
+            "Travel booking platform",
+            domain_name="staging.myapp.com",
+            skip_llm=True,
+        )
+        assert result.domain_blacklisted is True
+
+    @pytest.mark.asyncio
+    async def test_example_domain_blacklisted(self, filter_instance):
+        """Example domains should be blacklisted."""
+        result = await filter_instance.classify(
+            "Marketplace for goods",
+            domain_name="example.com",
+            skip_llm=True,
+        )
+        assert result.domain_blacklisted is True
+
+    @pytest.mark.asyncio
+    async def test_to_dict_has_phase_b_fields(self, filter_instance):
+        """Result.to_dict() should include Phase B fields."""
+        result = await filter_instance.classify(
+            "Health app - join waitlist",
+            domain_name="getfitness.com",
+            skip_llm=True,
+        )
+        d = result.to_dict()
+        assert "intent_phrases_matched" in d
+        assert "domain_match" in d
+        assert "domain_blacklisted" in d

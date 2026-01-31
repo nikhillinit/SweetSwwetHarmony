@@ -58,6 +58,10 @@ class ThesisFilterResult:
     confidence_adjustment: float = 0.0
     rejection_reason: Optional[str] = None
     thesis_fit: Optional[float] = None  # Combined thesis fit score
+    # Phase B additions (from ThesisFit)
+    intent_phrases_matched: List[str] = field(default_factory=list)
+    domain_match: bool = False
+    domain_blacklisted: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert result to dictionary."""
@@ -72,6 +76,10 @@ class ThesisFilterResult:
             "llm_rationale": self.llm_rationale,
             "llm_skipped": self.llm_skipped,
             "confidence_adjustment": self.confidence_adjustment,
+            # Phase B additions
+            "intent_phrases_matched": self.intent_phrases_matched,
+            "domain_match": self.domain_match,
+            "domain_blacklisted": self.domain_blacklisted,
         }
 
 
@@ -125,6 +133,7 @@ class ThesisFilter:
         self,
         text: str,
         company_name: Optional[str] = None,
+        domain_name: Optional[str] = None,
         skip_llm: bool = False,
     ) -> ThesisFilterResult:
         """
@@ -133,13 +142,14 @@ class ThesisFilter:
         Args:
             text: Description or combined signal text
             company_name: Optional company name for context
+            domain_name: Optional domain for pattern matching (Phase B)
             skip_llm: If True, only run keyword matching
 
         Returns:
             ThesisFilterResult with routing decision
         """
-        # Stage 1: Keyword matching
-        keyword_fit = self._keyword_matcher.score(text, company_name)
+        # Stage 1: Keyword matching (with Phase B domain support)
+        keyword_fit = self._keyword_matcher.score(text, company_name, domain_name=domain_name)
 
         # Check if we should skip LLM (obvious non-fit or explicit skip)
         if skip_llm or keyword_fit.score < self.config.skip_llm_if_keyword_below:
@@ -164,6 +174,10 @@ class ThesisFilter:
                 negative_keywords=keyword_fit.negative_keywords,
                 llm_skipped=True,
                 confidence_adjustment=adjustment,
+                # Phase B additions
+                intent_phrases_matched=keyword_fit.intent_phrases_matched,
+                domain_match=keyword_fit.domain_match,
+                domain_blacklisted=keyword_fit.domain_blacklisted,
             )
 
         # Stage 2: LLM classification
@@ -213,6 +227,10 @@ class ThesisFilter:
             llm_rationale=llm_result.rationale if llm_result else None,
             llm_skipped=False,
             confidence_adjustment=adjustment,
+            # Phase B additions
+            intent_phrases_matched=keyword_fit.intent_phrases_matched,
+            domain_match=keyword_fit.domain_match,
+            domain_blacklisted=keyword_fit.domain_blacklisted,
         )
 
     def _calculate_adjustment(
