@@ -1,0 +1,42 @@
+{
+  "error": null,
+  "fetch_artifact": {
+    "content": "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n    <meta charset=\"UTF-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <title>Pricing - Acme Analytics</title>\n</head>\n<body>\n    <nav>\n        <ul>\n            <li><a href=\"/\">Home</a></li>\n            <li><a href=\"/features\">Features</a></li>\n            <li><a href=\"/pricing\">Pricing</a></li>\n            <li><a href=\"/contact\">Contact</a></li>\n        </ul>\n    </nav>\n\n    <main>\n        <h1>Simple, Transparent Pricing</h1>\n        <p>Choose the plan that works best for your business.</p>\n\n        <div id=\"pricing\">\n            <div class=\"pricing-table\">\n                <div class=\"plan\">\n                    <h2>Starter</h2>\n                    <p class=\"price\">$29/mo</p>\n                    <p>Billed annually at $348</p>\n                    <ul>\n                        <li>Up to 10,000 events/month</li>\n                        <li>5 team members</li>\n                        <li>Basic analytics</li>\n                        <li>Email support</li>\n                    </ul>\n                    <a href=\"/signup?plan=starter\" class=\"cta\">Get Started</a>\n                </div>\n\n                <div class=\"plan featured\">\n                    <h2>Professional</h2>\n                    <p class=\"price\">$99/mo</p>\n                    <p>Billed annually at $1,188</p>\n                    <ul>\n                        <li>Up to 100,000 events/month</li>\n                        <li>Unlimited team members</li>\n                        <li>Advanced analytics</li>\n                        <li>Priority support</li>\n                        <li>Custom dashboards</li>\n                    </ul>\n                    <a href=\"/signup?plan=pro\" class=\"cta\">Start Free Trial</a>\n                </div>\n\n                <div class=\"plan\">\n                    <h2>Enterprise</h2>\n                    <p class=\"price\">Custom</p>\n                    <p>Contact sales for pricing</p>\n                    <ul>\n                        <li>Unlimited events</li>\n                        <li>Unlimited team members</li>\n                        <li>White-label options</li>\n                        <li>Dedicated support</li>\n                        <li>Custom integrations</li>\n                        <li>SLA guarantee</li>\n                    </ul>\n                    <a href=\"/contact-sales\" class=\"cta\">Contact Sales</a>\n                </div>\n            </div>\n        </div>\n\n        <section class=\"faq\">\n            <h2>Frequently Asked Questions</h2>\n            <p>All plans include a 14-day free trial. No credit card required.</p>\n        </section>\n    </main>\n\n    <footer>\n        <p>&copy; 2025 Acme Analytics. All rights reserved.</p>\n    </footer>\n</body>\n</html>\n",
+    "encoding": null,
+    "etag": null,
+    "headers": {
+      "content-type": "text/html"
+    },
+    "is_cacheable": false,
+    "is_not_modified": false,
+    "last_modified": null,
+    "status_code": 200,
+    "transport_used": "httpx",
+    "truncated": false,
+    "url": "https://acme-analytics.com/pricing"
+  },
+  "pipeline_version": "1.0",
+  "preset_used": "pricing_table_v1",
+  "primary_representation": "text",
+  "representations": [
+    {
+      "confidence": 1.0,
+      "content": "Starter $29/mo Billed annually at $348 Up to 10,000 events/month 5 team members Basic analytics Email support Get Started Professional $99/mo Billed annually at $1,188 Up to 100,000 events/month Unlimited team members Advanced analytics Priority support Custom dashboards Start Free Trial Enterprise Custom Contact sales for pricing Unlimited events Unlimited team members White-label options Dedicated support Custom integrations SLA guarantee Contact Sales",
+      "extractor_name": "parsel_v1",
+      "metadata": {
+        "fallback_triggered": false,
+        "selector_index": 0,
+        "selector_used": "#pricing",
+        "selectors_tried": [
+          "#pricing"
+        ]
+      },
+      "representation_type": "text"
+    }
+  ],
+  "selectors_tried": [
+    "#pricing"
+  ],
+  "success": true,
+  "watch_id": 1
+}

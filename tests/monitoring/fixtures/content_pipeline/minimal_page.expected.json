@@ -1,0 +1,46 @@
+{
+  "error": null,
+  "fetch_artifact": {
+    "content": "<!DOCTYPE html>\n<html>\n<head>\n    <title>Coming Soon</title>\n</head>\n<body>\n    <p>Under construction</p>\n</body>\n</html>\n",
+    "encoding": null,
+    "etag": null,
+    "headers": {
+      "content-type": "text/html"
+    },
+    "is_cacheable": false,
+    "is_not_modified": false,
+    "last_modified": null,
+    "status_code": 200,
+    "transport_used": "httpx",
+    "truncated": false,
+    "url": "https://acme-analytics.com/coming-soon"
+  },
+  "pipeline_version": "1.0",
+  "preset_used": "default",
+  "primary_representation": "text",
+  "representations": [
+    {
+      "confidence": 0.5,
+      "content": "Under construction",
+      "extractor_name": "parsel_v1",
+      "metadata": {
+        "fallback_triggered": true,
+        "selector_index": 2,
+        "selector_used": "body",
+        "selectors_tried": [
+          "main",
+          "article",
+          "body"
+        ]
+      },
+      "representation_type": "text"
+    }
+  ],
+  "selectors_tried": [
+    "main",
+    "article",
+    "body"
+  ],
+  "success": true,
+  "watch_id": 4
+}
