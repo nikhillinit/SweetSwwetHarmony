@@ -9,7 +9,7 @@ Features:
 - XPath selector support (prefix with "xpath:")
 - Selector fallback (try selectors in order)
 - Element removal (remove noise before extraction)
-- Whitespace normalization
+- Whitespace normalization (configurable: aggressive or layout-preserving)
 - Configurable fallback chains with FallbackConfig
 """
 
@@ -20,6 +20,11 @@ from typing import List, Optional, TYPE_CHECKING
 from parsel import Selector
 
 from monitoring.content_pipeline.models import ExtractedContent, RepresentationType
+from monitoring.content_pipeline.normalize import (
+    NormalizationMode,
+    normalize_aggressive,
+    normalize_layout_preserving,
+)
 
 if TYPE_CHECKING:
     from monitoring.content_pipeline.config import FallbackConfig
@@ -35,7 +40,24 @@ class SelectorExtractor:
 
     Uses parsel (Scrapy's parsing library) for selector evaluation.
     Selectors are tried in order; first match is used.
+
+    Attributes:
+        normalization_mode: Whitespace normalization strategy to use.
+            - AGGRESSIVE (default): Collapse all whitespace to single spaces
+            - LAYOUT_PRESERVING: Preserve line breaks but clean up excessive whitespace
+            - NONE: No normalization applied
     """
+
+    def __init__(
+        self, normalization_mode: NormalizationMode = NormalizationMode.AGGRESSIVE
+    ) -> None:
+        """
+        Initialize the SelectorExtractor with configuration options.
+
+        Args:
+            normalization_mode: Whitespace normalization strategy (default: AGGRESSIVE)
+        """
+        self.normalization_mode = normalization_mode
 
     def extract(
         self,
@@ -341,11 +363,12 @@ class SelectorExtractor:
 
     def _normalize_whitespace(self, text: str) -> str:
         """
-        Normalize whitespace in extracted text.
+        Normalize whitespace in extracted text based on configured mode.
 
-        - Collapse multiple spaces to single space
-        - Collapse multiple newlines
-        - Trim leading/trailing whitespace
+        Modes:
+        - AGGRESSIVE: Collapse all whitespace to single spaces (default)
+        - LAYOUT_PRESERVING: Preserve line breaks, clean excessive whitespace
+        - NONE: Return text unchanged
 
         Args:
             text: Raw extracted text
@@ -353,11 +376,13 @@ class SelectorExtractor:
         Returns:
             Normalized text
         """
-        # Replace multiple whitespace (including newlines) with single space
-        text = re.sub(r"\s+", " ", text)
-        # Trim leading/trailing whitespace
-        text = text.strip()
-        return text
+        if self.normalization_mode == NormalizationMode.NONE:
+            return text
+        elif self.normalization_mode == NormalizationMode.LAYOUT_PRESERVING:
+            return normalize_layout_preserving(text)
+        else:
+            # Default: AGGRESSIVE
+            return normalize_aggressive(text)
 
     def _empty_result(self, start_time: float) -> ExtractedContent:
         """

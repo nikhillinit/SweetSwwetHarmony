@@ -830,3 +830,98 @@ class TestBackwardCompatibility:
 
         assert result.content == "Article content."
         assert result.metadata["selector_used"] == "article"
+
+
+class TestNormalizationMode:
+    """Test configurable whitespace normalization modes."""
+
+    def test_default_normalization_mode_is_aggressive(self):
+        """Default normalization should be aggressive (collapse all whitespace)."""
+        from monitoring.content_pipeline.normalize import NormalizationMode
+
+        extractor = SelectorExtractor()
+        assert extractor.normalization_mode == NormalizationMode.AGGRESSIVE
+
+    def test_aggressive_mode_collapses_newlines(self):
+        """Aggressive mode should collapse newlines to spaces."""
+        from monitoring.content_pipeline.normalize import NormalizationMode
+
+        html = """
+        <html>
+            <body>
+                <div>
+                    Line one.
+
+                    Line two.
+                </div>
+            </body>
+        </html>
+        """
+        extractor = SelectorExtractor(normalization_mode=NormalizationMode.AGGRESSIVE)
+        result = extractor.extract(html, selectors=["div"])
+
+        # Newlines should be collapsed to single space
+        assert "\n" not in result.content
+        assert "Line one. Line two." == result.content
+
+    def test_layout_preserving_mode_keeps_newlines(self):
+        """Layout-preserving mode should keep line structure."""
+        from monitoring.content_pipeline.normalize import NormalizationMode
+
+        html = """
+        <html>
+            <body>
+                <div>Line one.
+Line two.</div>
+            </body>
+        </html>
+        """
+        extractor = SelectorExtractor(
+            normalization_mode=NormalizationMode.LAYOUT_PRESERVING
+        )
+        result = extractor.extract(html, selectors=["div"])
+
+        # Line breaks should be preserved
+        assert "\n" in result.content
+        assert "Line one." in result.content
+        assert "Line two." in result.content
+
+    def test_layout_preserving_mode_collapses_excessive_blank_lines(self):
+        """Layout-preserving mode should collapse 3+ blank lines to 2."""
+        from monitoring.content_pipeline.normalize import NormalizationMode
+
+        html = """<div>A
+
+
+
+
+B</div>"""
+        extractor = SelectorExtractor(
+            normalization_mode=NormalizationMode.LAYOUT_PRESERVING
+        )
+        result = extractor.extract(html, selectors=["div"])
+
+        # Should not have 4+ consecutive newlines
+        assert "\n\n\n\n" not in result.content
+        # But should still have some blank lines
+        assert "\n" in result.content
+
+    def test_none_mode_preserves_all_whitespace(self):
+        """NONE mode should not modify whitespace at all."""
+        from monitoring.content_pipeline.normalize import NormalizationMode
+
+        html = "<div>Text    with     spaces</div>"
+        extractor = SelectorExtractor(normalization_mode=NormalizationMode.NONE)
+        result = extractor.extract(html, selectors=["div"])
+
+        # Multiple spaces should be preserved
+        assert "    " in result.content or "     " in result.content
+
+    def test_constructor_accepts_normalization_mode(self):
+        """Constructor should accept normalization_mode parameter."""
+        from monitoring.content_pipeline.normalize import NormalizationMode
+
+        extractor = SelectorExtractor(
+            normalization_mode=NormalizationMode.LAYOUT_PRESERVING
+        )
+        assert extractor.normalization_mode == NormalizationMode.LAYOUT_PRESERVING
