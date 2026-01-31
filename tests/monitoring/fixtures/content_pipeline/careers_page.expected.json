@@ -1,0 +1,42 @@
+{
+  "error": null,
+  "fetch_artifact": {
+    "content": "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n    <meta charset=\"UTF-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <title>Careers at Acme Analytics - Join Our Team</title>\n</head>\n<body>\n    <nav>\n        <a href=\"/\">Acme Analytics</a>\n        <ul>\n            <li><a href=\"/about\">About</a></li>\n            <li><a href=\"/careers\">Careers</a></li>\n            <li><a href=\"/blog\">Blog</a></li>\n        </ul>\n    </nav>\n\n    <main>\n        <section class=\"hero\">\n            <h1>Join Our Team</h1>\n            <p>We're building the future of analytics. Come help us make data accessible to everyone.</p>\n        </section>\n\n        <section class=\"culture\">\n            <h2>Why Work at Acme?</h2>\n            <div class=\"benefits\">\n                <div class=\"benefit\">\n                    <h3>Remote-First</h3>\n                    <p>Work from anywhere in the world. We're a distributed team across 15 countries.</p>\n                </div>\n                <div class=\"benefit\">\n                    <h3>Competitive Compensation</h3>\n                    <p>Top-of-market salaries, equity packages, and comprehensive benefits.</p>\n                </div>\n                <div class=\"benefit\">\n                    <h3>Learning Budget</h3>\n                    <p>$3,000 annual budget for courses, conferences, and books.</p>\n                </div>\n                <div class=\"benefit\">\n                    <h3>Flexible PTO</h3>\n                    <p>Unlimited vacation policy with minimum 3 weeks encouraged.</p>\n                </div>\n            </div>\n        </section>\n\n        <section class=\"open-positions\">\n            <h2>Open Positions</h2>\n\n            <div class=\"job-list\">\n                <div class=\"job\">\n                    <h3>Senior Software Engineer - Backend</h3>\n                    <p class=\"location\">Remote (US/EU timezones)</p>\n                    <p class=\"type\">Full-time</p>\n                    <p>Join our platform team to build scalable data infrastructure that processes billions of events daily.</p>\n                    <p class=\"salary\">Salary range: $180,000 - $220,000</p>\n                    <a href=\"/careers/senior-backend\" class=\"apply\">Apply Now</a>\n                </div>\n\n                <div class=\"job\">\n                    <h3>Product Designer</h3>\n                    <p class=\"location\">Remote (Any timezone)</p>\n                    <p class=\"type\">Full-time</p>\n                    <p>Design intuitive experiences that help customers understand their data at a glance.</p>\n                    <p class=\"salary\">Salary range: $150,000 - $180,000</p>\n                    <a href=\"/careers/product-designer\" class=\"apply\">Apply Now</a>\n                </div>\n\n                <div class=\"job\">\n                    <h3>Machine Learning Engineer</h3>\n                    <p class=\"location\">Remote (US/EU timezones)</p>\n                    <p class=\"type\">Full-time</p>\n                    <p>Build AI models that automatically surface insights from customer data.</p>\n                    <p class=\"salary\">Salary range: $200,000 - $250,000</p>\n                    <a href=\"/careers/ml-engineer\" class=\"apply\">Apply Now</a>\n                </div>\n\n                <div class=\"job\">\n                    <h3>Developer Advocate</h3>\n                    <p class=\"location\">San Francisco, CA or Remote (US)</p>\n                    <p class=\"type\">Full-time</p>\n                    <p>Help developers succeed with our APIs through content, demos, and community engagement.</p>\n                    <p class=\"salary\">Salary range: $140,000 - $170,000</p>\n                    <a href=\"/careers/dev-advocate\" class=\"apply\">Apply Now</a>\n                </div>\n            </div>\n        </section>\n\n        <section class=\"team\">\n            <h2>Meet the Team</h2>\n            <p>We're a team of 45 people passionate about making data analytics accessible to everyone. Founded in 2020, we've grown from a small startup to serving over 10,000 customers worldwide.</p>\n        </section>\n    </main>\n\n    <footer>\n        <p>&copy; 2025 Acme Analytics. All rights reserved.</p>\n    </footer>\n</body>\n</html>\n",
+    "encoding": null,
+    "etag": null,
+    "headers": {
+      "content-type": "text/html"
+    },
+    "is_cacheable": false,
+    "is_not_modified": false,
+    "last_modified": null,
+    "status_code": 200,
+    "transport_used": "httpx",
+    "truncated": false,
+    "url": "https://acme-analytics.com/careers"
+  },
+  "pipeline_version": "1.0",
+  "preset_used": "default",
+  "primary_representation": "text",
+  "representations": [
+    {
+      "confidence": 1.0,
+      "content": "Join Our Team We're building the future of analytics. Come help us make data accessible to everyone. Why Work at Acme? Remote-First Work from anywhere in the world. We're a distributed team across 15 countries. Competitive Compensation Top-of-market salaries, equity packages, and comprehensive benefits. Learning Budget $3,000 annual budget for courses, conferences, and books. Flexible PTO Unlimited vacation policy with minimum 3 weeks encouraged. Open Positions Senior Software Engineer - Backend Remote (US/EU timezones) Full-time Join our platform team to build scalable data infrastructure that processes billions of events daily. Salary range: $180,000 - $220,000 Apply Now Product Designer Remote (Any timezone) Full-time Design intuitive experiences that help customers understand their data at a glance. Salary range: $150,000 - $180,000 Apply Now Machine Learning Engineer Remote (US/EU timezones) Full-time Build AI models that automatically surface insights from customer data. Salary range: $200,000 - $250,000 Apply Now Developer Advocate San Francisco, CA or Remote (US) Full-time Help developers succeed with our APIs through content, demos, and community engagement. Salary range: $140,000 - $170,000 Apply Now Meet the Team We're a team of 45 people passionate about making data analytics accessible to everyone. Founded in 2020, we've grown from a small startup to serving over 10,000 customers worldwide.",
+      "extractor_name": "parsel_v1",
+      "metadata": {
+        "fallback_triggered": false,
+        "selector_index": 0,
+        "selector_used": "main",
+        "selectors_tried": [
+          "main"
+        ]
+      },
+      "representation_type": "text"
+    }
+  ],
+  "selectors_tried": [
+    "main"
+  ],
+  "success": true,
+  "watch_id": 3
+}

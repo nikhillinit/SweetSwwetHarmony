@@ -1,0 +1,42 @@
+{
+  "error": null,
+  "fetch_artifact": {
+    "content": "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n    <meta charset=\"UTF-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <title>Introducing Acme Analytics 3.0 - Acme Blog</title>\n    <meta name=\"description\" content=\"Today we're excited to announce the launch of Acme Analytics 3.0 with new AI-powered insights.\">\n    <meta property=\"og:type\" content=\"article\">\n    <meta property=\"article:published_time\" content=\"2025-01-15T09:00:00Z\">\n</head>\n<body>\n    <header>\n        <nav>\n            <a href=\"/\">Acme Analytics</a>\n            <ul>\n                <li><a href=\"/blog\">Blog</a></li>\n                <li><a href=\"/docs\">Docs</a></li>\n                <li><a href=\"/pricing\">Pricing</a></li>\n            </ul>\n        </nav>\n    </header>\n\n    <main>\n        <article class=\"blog-post\">\n            <header>\n                <h1>Introducing Acme Analytics 3.0</h1>\n                <div class=\"meta\">\n                    <span class=\"author\">By Sarah Chen, CEO</span>\n                    <time datetime=\"2025-01-15\">January 15, 2025</time>\n                    <span class=\"reading-time\">5 min read</span>\n                </div>\n            </header>\n\n            <div class=\"post-content\">\n                <p>Today we're excited to announce the launch of Acme Analytics 3.0, our biggest update ever. This release introduces AI-powered insights that automatically surface the metrics that matter most to your business.</p>\n\n                <h2>What's New</h2>\n                <p>After months of development and beta testing with over 500 customers, we're bringing three major features to everyone:</p>\n\n                <h3>AI-Powered Anomaly Detection</h3>\n                <p>Our new machine learning models automatically detect unusual patterns in your data and alert you before small issues become big problems. No more setting up manual alerts for every metric.</p>\n\n                <h3>Natural Language Queries</h3>\n                <p>Ask questions in plain English like \"What was our conversion rate last month compared to the previous quarter?\" and get instant answers with visualizations.</p>\n\n                <h3>Predictive Analytics</h3>\n                <p>See where your metrics are heading with forecasts based on historical patterns. Plan ahead with confidence knowing what to expect.</p>\n\n                <h2>Migration Guide</h2>\n                <p>Existing customers will be automatically upgraded over the next two weeks. No action is required on your part. Check our <a href=\"/docs/migration\">migration documentation</a> for details.</p>\n\n                <h2>Pricing Updates</h2>\n                <p>All new features are included in existing Professional and Enterprise plans at no additional cost. Starter plans will have limited access to AI features.</p>\n\n                <p>We're incredibly grateful to our community for the feedback that shaped this release. Thank you for being part of the Acme journey.</p>\n            </div>\n\n            <footer class=\"post-footer\">\n                <div class=\"tags\">\n                    <a href=\"/blog/tag/product\">Product</a>\n                    <a href=\"/blog/tag/announcements\">Announcements</a>\n                    <a href=\"/blog/tag/ai\">AI</a>\n                </div>\n                <div class=\"share\">\n                    <a href=\"#\">Share on Twitter</a>\n                    <a href=\"#\">Share on LinkedIn</a>\n                </div>\n            </footer>\n        </article>\n\n        <aside class=\"related\">\n            <h3>Related Posts</h3>\n            <ul>\n                <li><a href=\"/blog/analytics-2-5\">Acme Analytics 2.5 Release Notes</a></li>\n                <li><a href=\"/blog/ai-roadmap\">Our AI Roadmap for 2025</a></li>\n            </ul>\n        </aside>\n    </main>\n\n    <footer>\n        <p>&copy; 2025 Acme Analytics</p>\n    </footer>\n</body>\n</html>\n",
+    "encoding": null,
+    "etag": null,
+    "headers": {
+      "content-type": "text/html"
+    },
+    "is_cacheable": false,
+    "is_not_modified": false,
+    "last_modified": null,
+    "status_code": 200,
+    "transport_used": "httpx",
+    "truncated": false,
+    "url": "https://acme-analytics.com/blog/introducing-3-0"
+  },
+  "pipeline_version": "1.0",
+  "preset_used": "blog_post_v1",
+  "primary_representation": "text",
+  "representations": [
+    {
+      "confidence": 1.0,
+      "content": "Introducing Acme Analytics 3.0 By Sarah Chen, CEO January 15, 2025 5 min read Today we're excited to announce the launch of Acme Analytics 3.0, our biggest update ever. This release introduces AI-powered insights that automatically surface the metrics that matter most to your business. What's New After months of development and beta testing with over 500 customers, we're bringing three major features to everyone: AI-Powered Anomaly Detection Our new machine learning models automatically detect unusual patterns in your data and alert you before small issues become big problems. No more setting up manual alerts for every metric. Natural Language Queries Ask questions in plain English like \"What was our conversion rate last month compared to the previous quarter?\" and get instant answers with visualizations. Predictive Analytics See where your metrics are heading with forecasts based on historical patterns. Plan ahead with confidence knowing what to expect. Migration Guide Existing customers will be automatically upgraded over the next two weeks. No action is required on your part. Check our migration documentation for details. Pricing Updates All new features are included in existing Professional and Enterprise plans at no additional cost. Starter plans will have limited access to AI features. We're incredibly grateful to our community for the feedback that shaped this release. Thank you for being part of the Acme journey. Product Announcements AI Share on Twitter Share on LinkedIn",
+      "extractor_name": "parsel_v1",
+      "metadata": {
+        "fallback_triggered": false,
+        "selector_index": 0,
+        "selector_used": "article",
+        "selectors_tried": [
+          "article"
+        ]
+      },
+      "representation_type": "text"
+    }
+  ],
+  "selectors_tried": [
+    "article"
+  ],
+  "success": true,
+  "watch_id": 2
+}
