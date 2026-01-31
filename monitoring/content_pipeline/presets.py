@@ -201,6 +201,44 @@ class PresetRegistry:
                     "on_timeout": None,
                 },
             },
+            "js_rendered_v1": {
+                "description": "JavaScript-rendered sites requiring headless browser fallback",
+                "extractor": {
+                    "preset": "js_rendered_v1",
+                    "selectors": None,  # Use full page content
+                    "fallback_on_empty": True,
+                },
+                "content_limits": {
+                    "max_html_bytes": 5242880,  # 5 MB
+                    "max_json_bytes": 2097152,  # 2 MB
+                },
+                "transport": {
+                    "initial": "httpx",
+                    "on_403": "curl_cffi",
+                    "on_429": "curl_cffi",
+                    "on_blocked": "playwright",  # Third tier for blocked patterns
+                    "playwright_wait_selector": None,  # Auto-detect
+                    "playwright_timeout_ms": 30000,  # 30 seconds
+                },
+            },
+            "spa_hydration_v1": {
+                "description": "SPA sites with hydration data (__NEXT_DATA__, __NUXT__)",
+                "extractor": {
+                    "preset": "spa_hydration_v1",
+                    "selectors": None,
+                    "fallback_on_empty": True,
+                    "prefer_structured": True,
+                },
+                "content_limits": {
+                    "max_html_bytes": 5242880,  # 5 MB
+                    "max_json_bytes": 2097152,  # 2 MB
+                },
+                "transport": {
+                    "initial": "httpx",
+                    "on_403": "curl_cffi",
+                    "on_blocked": "playwright",
+                },
+            },
         }
 
 

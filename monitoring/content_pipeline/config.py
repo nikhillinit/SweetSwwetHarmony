@@ -81,17 +81,23 @@ class TransportConfig:
         on_403: Transport to use on 403 Forbidden response
         on_429: Transport to use on 429 Too Many Requests response
         on_timeout: Transport to use on timeout
+        on_blocked: Transport to use when blocked pattern detected (third tier)
         max_html_bytes: Maximum size for HTML content (default: 5MB)
         max_json_bytes: Maximum size for JSON content (default: 2MB)
         user_agent_profile: Browser profile for curl_cffi (e.g., "chrome", "firefox", "safari")
+        playwright_wait_selector: CSS selector to wait for in Playwright (auto-detect if None)
+        playwright_timeout_ms: Timeout for Playwright navigation in milliseconds (default: 30000)
     """
     initial: str = "httpx"
     on_403: Optional[str] = None
     on_429: Optional[str] = None
     on_timeout: Optional[str] = None
+    on_blocked: Optional[str] = None
     max_html_bytes: int = 5_242_880  # 5MB
     max_json_bytes: int = 2_097_152  # 2MB
     user_agent_profile: Optional[str] = None
+    playwright_wait_selector: Optional[str] = None
+    playwright_timeout_ms: int = 30000  # 30 seconds
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -102,10 +108,16 @@ class TransportConfig:
             result["on_429"] = self.on_429
         if self.on_timeout is not None:
             result["on_timeout"] = self.on_timeout
+        if self.on_blocked is not None:
+            result["on_blocked"] = self.on_blocked
         result["max_html_bytes"] = self.max_html_bytes
         result["max_json_bytes"] = self.max_json_bytes
         if self.user_agent_profile is not None:
             result["user_agent_profile"] = self.user_agent_profile
+        if self.playwright_wait_selector is not None:
+            result["playwright_wait_selector"] = self.playwright_wait_selector
+        if self.playwright_timeout_ms != 30000:
+            result["playwright_timeout_ms"] = self.playwright_timeout_ms
         return result
 
     @classmethod
@@ -116,9 +128,12 @@ class TransportConfig:
             on_403=data.get("on_403"),
             on_429=data.get("on_429"),
             on_timeout=data.get("on_timeout"),
+            on_blocked=data.get("on_blocked"),
             max_html_bytes=data.get("max_html_bytes", 5_242_880),
             max_json_bytes=data.get("max_json_bytes", 2_097_152),
             user_agent_profile=data.get("user_agent_profile"),
+            playwright_wait_selector=data.get("playwright_wait_selector"),
+            playwright_timeout_ms=data.get("playwright_timeout_ms", 30000),
         )
 
 
