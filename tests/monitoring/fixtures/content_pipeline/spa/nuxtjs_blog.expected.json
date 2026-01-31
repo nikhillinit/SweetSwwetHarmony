@@ -1,0 +1,74 @@
+{
+    "description": "Expected extraction result for Nuxt.js blog page",
+    "preset": "spa_hydration_v1",
+    "primary_representation": "json",
+    "expected_content": {
+        "data": [
+            {
+                "posts": [
+                    {
+                        "id": 1,
+                        "title": "Introduction to Vue 3",
+                        "slug": "intro-vue-3",
+                        "excerpt": "Learn the basics of Vue 3 composition API",
+                        "author": {
+                            "name": "Jane Doe",
+                            "avatar": "/avatars/jane.jpg"
+                        },
+                        "publishedAt": "2024-01-15",
+                        "tags": ["vue", "javascript", "tutorial"],
+                        "readTime": 5
+                    },
+                    {
+                        "id": 2,
+                        "title": "Nuxt 3 Server Components",
+                        "slug": "nuxt-3-server-components",
+                        "excerpt": "Deep dive into Nuxt 3 server components",
+                        "author": {
+                            "name": "John Smith",
+                            "avatar": "/avatars/john.jpg"
+                        },
+                        "publishedAt": "2024-01-20",
+                        "tags": ["nuxt", "vue", "ssr"],
+                        "readTime": 8
+                    },
+                    {
+                        "id": 3,
+                        "title": "State Management in 2024",
+                        "slug": "state-management-2024",
+                        "excerpt": "Modern approaches to state management",
+                        "author": {
+                            "name": "Jane Doe",
+                            "avatar": "/avatars/jane.jpg"
+                        },
+                        "publishedAt": "2024-01-25",
+                        "tags": ["state", "pinia", "vue"],
+                        "readTime": 6
+                    }
+                ],
+                "meta": {
+                    "total": 42,
+                    "page": 1,
+                    "perPage": 10
+                }
+            }
+        ],
+        "state": {
+            "user": null,
+            "theme": "light"
+        },
+        "serverRendered": true,
+        "config": {
+            "public": {
+                "apiBase": "https://api.techinsights.com"
+            }
+        }
+    },
+    "hydration_source": "nuxt",
+    "assertions": {
+        "has_posts": true,
+        "post_count": 3,
+        "has_meta": true,
+        "has_state": true
+    }
+}

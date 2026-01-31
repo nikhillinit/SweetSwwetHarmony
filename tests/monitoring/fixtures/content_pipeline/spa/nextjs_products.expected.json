@@ -1,0 +1,71 @@
+{
+    "description": "Expected extraction result for Next.js products page",
+    "preset": "spa_hydration_v1",
+    "primary_representation": "json",
+    "expected_content": {
+        "page": "/products",
+        "props": {
+            "pageProps": {
+                "products": [
+                    {
+                        "id": "prod_001",
+                        "name": "Premium Widget",
+                        "description": "A high-quality widget for all your needs",
+                        "price": 29.99,
+                        "currency": "USD",
+                        "category": "Electronics",
+                        "inStock": true,
+                        "rating": 4.5,
+                        "reviews": 128
+                    },
+                    {
+                        "id": "prod_002",
+                        "name": "Deluxe Gadget",
+                        "description": "The ultimate gadget experience",
+                        "price": 49.99,
+                        "currency": "USD",
+                        "category": "Electronics",
+                        "inStock": true,
+                        "rating": 4.8,
+                        "reviews": 256
+                    },
+                    {
+                        "id": "prod_003",
+                        "name": "Basic Tool",
+                        "description": "Reliable and affordable",
+                        "price": 9.99,
+                        "currency": "USD",
+                        "category": "Tools",
+                        "inStock": false,
+                        "rating": 4.2,
+                        "reviews": 64
+                    }
+                ],
+                "pagination": {
+                    "page": 1,
+                    "perPage": 12,
+                    "total": 3,
+                    "totalPages": 1
+                },
+                "filters": {
+                    "categories": ["Electronics", "Tools", "Home"],
+                    "priceRange": {"min": 0, "max": 100}
+                }
+            }
+        },
+        "query": {},
+        "appGip": true,
+        "gssp": false,
+        "isFallback": false,
+        "runtimeConfig": {},
+        "scriptLoader": []
+    },
+    "volatile_keys_removed": ["buildId", "__N_SSG"],
+    "hydration_source": "next_data",
+    "assertions": {
+        "has_products": true,
+        "product_count": 3,
+        "has_pagination": true,
+        "has_filters": true
+    }
+}

@@ -6,7 +6,8 @@ Coordinates the content extraction pipeline for a Watch:
 2. Uses HttpxTransport to fetch content with conditional requests
 3. Uses SelectorExtractor to extract content from HTML
 4. Optionally uses StructuredDataExtractor for JSON-LD/microdata extraction
-5. Builds PipelineResult with timing and metadata
+5. Optionally uses HydrationExtractor for SPA hydration data (__NEXT_DATA__, __NUXT__)
+6. Builds PipelineResult with timing and metadata
 
 Handles 304 Not Modified responses and various error conditions.
 Supports multiple representations (TEXT, JSON) when prefer_structured=True.
@@ -23,6 +24,7 @@ import httpx
 from monitoring.content_pipeline.config import FallbackConfig, WatchConfig
 from monitoring.content_pipeline.exceptions import ContentSizeExceededError
 from monitoring.content_pipeline.extract_html import SelectorExtractor
+from monitoring.content_pipeline.extract_hydration import HydrationExtractor
 from monitoring.content_pipeline.extract_structured import StructuredDataExtractor
 from monitoring.content_pipeline.models import (
     ExtractedContent,
@@ -75,6 +77,7 @@ class ContentPipeline:
         transport: Optional[HttpxTransport] = None,
         extractor: Optional[SelectorExtractor] = None,
         structured_extractor: Optional[StructuredDataExtractor] = None,
+        hydration_extractor: Optional[HydrationExtractor] = None,
     ):
         """
         Initialize the ContentPipeline.
@@ -84,11 +87,13 @@ class ContentPipeline:
             transport: Optional HttpxTransport instance (creates default if not provided)
             extractor: Optional SelectorExtractor instance (creates default if not provided)
             structured_extractor: Optional StructuredDataExtractor (not created by default)
+            hydration_extractor: Optional HydrationExtractor for SPA data (not created by default)
         """
         self._planner = planner or PipelinePlanner()
         self._transport = transport or HttpxTransport()
         self._extractor = extractor or SelectorExtractor()
         self._structured_extractor = structured_extractor
+        self._hydration_extractor = hydration_extractor
 
     async def process(self, watch: "Watch") -> PipelineResult:
         """
@@ -268,7 +273,11 @@ class ContentPipeline:
         """
         Extract all content representations from HTML.
 
-        When prefer_structured=True:
+        For SPA presets (spa, spa_hydration_v1):
+        - Tries hydration extraction first (__NEXT_DATA__, __NUXT__)
+        - Falls back to text extraction if no hydration data found
+
+        When prefer_structured=True (non-SPA):
         - Tries structured data extraction first (JSON-LD/microdata)
         - If structured data is rich (confidence >= 0.5), includes it
         - Always does text extraction
@@ -290,10 +299,22 @@ class ContentPipeline:
         selectors_tried: Optional[List[str]] = None
 
         prefer_structured = watch_config.extractor.prefer_structured
+        is_spa_preset = watch_config.extractor.preset in ("spa", "spa_hydration_v1")
 
-        # Try structured extraction first if prefer_structured is True
+        # For SPA presets, try hydration extraction first
+        hydration_content: Optional[ExtractedContent] = None
+        if is_spa_preset and self._hydration_extractor is not None:
+            hydration_content = self._extract_hydration(html)
+            if hydration_content is not None:
+                representations.append(hydration_content)
+                primary_rep = RepresentationType.JSON
+                # For SPA, hydration data is primary - skip other extractions unless fallback needed
+                if not watch_config.extractor.fallback_on_empty:
+                    return representations, primary_rep, selectors_tried
+
+        # Try structured extraction if prefer_structured and not SPA (or SPA with no hydration data)
         structured_content: Optional[ExtractedContent] = None
-        if prefer_structured:
+        if prefer_structured and not is_spa_preset:
             structured_content = self._extract_structured(html)
             # Include structured data if confidence meets threshold
             if (
@@ -303,23 +324,53 @@ class ContentPipeline:
                 representations.append(structured_content)
                 primary_rep = RepresentationType.JSON
 
-        # Always do text extraction
-        text_content = self._extract_text(html, watch_config)
-        if text_content is not None:
-            representations.append(text_content)
+        # Do text extraction if:
+        # - Not a SPA preset, OR
+        # - SPA preset but no hydration data found and fallback_on_empty is True
+        should_extract_text = (
+            not is_spa_preset or
+            (hydration_content is None and watch_config.extractor.fallback_on_empty)
+        )
 
-            # Get selectors_tried from text extraction metadata
-            if text_content.metadata:
-                selectors_tried = text_content.metadata.get("selectors_tried")
-                if selectors_tried is None and text_content.metadata.get("selector_used"):
-                    selectors_tried = [text_content.metadata["selector_used"]]
+        if should_extract_text:
+            text_content = self._extract_text(html, watch_config)
+            if text_content is not None:
+                representations.append(text_content)
 
-        # If no structured data was found or confidence was low, text is primary
-        if not representations or (structured_content is None or
-                                   structured_content.confidence < STRUCTURED_DATA_CONFIDENCE_THRESHOLD):
+                # Get selectors_tried from text extraction metadata
+                if text_content.metadata:
+                    selectors_tried = text_content.metadata.get("selectors_tried")
+                    if selectors_tried is None and text_content.metadata.get("selector_used"):
+                        selectors_tried = [text_content.metadata["selector_used"]]
+
+        # If no structured/hydration data was found or confidence was low, text is primary
+        if hydration_content is None and (
+            not representations or
+            (structured_content is None or
+             structured_content.confidence < STRUCTURED_DATA_CONFIDENCE_THRESHOLD)
+        ):
             primary_rep = RepresentationType.TEXT
 
         return representations, primary_rep, selectors_tried
+
+    def _extract_hydration(self, html: str) -> Optional[ExtractedContent]:
+        """
+        Extract SPA hydration data (__NEXT_DATA__, __NUXT__) from HTML.
+
+        Args:
+            html: Raw HTML content
+
+        Returns:
+            ExtractedContent with JSON representation or None
+        """
+        if self._hydration_extractor is None:
+            return None
+
+        try:
+            return self._hydration_extractor.extract(html)
+        except Exception as e:
+            logger.debug("Hydration extraction failed: %s", str(e))
+            return None
 
     def _extract_structured(self, html: str) -> Optional[ExtractedContent]:
         """
