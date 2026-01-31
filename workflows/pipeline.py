@@ -97,6 +97,7 @@ from utils.claim_extractor import ClaimExtractor
 
 # Feature states for SHADOW experimentation
 from utils.feature_states import FeatureRegistry, FeatureState
+from utils.boilerplate_detector import BoilerplateDetector
 
 logger = logging.getLogger(__name__)
 
@@ -436,6 +437,9 @@ class DiscoveryPipeline:
 
         # Feature states for SHADOW experimentation (Phase A)
         self._feature_registry = FeatureRegistry()
+
+        # Phase C: Boilerplate detection in SHADOW mode
+        self._boilerplate_detector = BoilerplateDetector()
 
         # State
         self._initialized = False
@@ -1507,6 +1511,47 @@ class DiscoveryPipeline:
                     )
             except Exception as e:
                 logger.warning(f"Enrichment calculation failed (non-fatal): {e}")
+
+        # Phase C: Boilerplate detection in SHADOW mode
+        # Run BEFORE thesis filtering so it logs even for rejected/held signals
+        boilerplate_match = None
+        if self._feature_registry.is_enabled("boilerplate_defense"):
+            try:
+                # Extract tokens from all signals' raw_data
+                combined_raw = {}
+                for sig in signals:
+                    if sig.raw_data:
+                        # Merge raw_data from all signals
+                        for k, v in sig.raw_data.items():
+                            if k not in combined_raw:
+                                combined_raw[k] = v
+
+                # Run boilerplate detection
+                boilerplate_match = self._boilerplate_detector.detect_from_raw_data(combined_raw)
+
+                # SHADOW log the result (don't affect routing)
+                if self._store:
+                    shadow_data = self._boilerplate_detector.get_shadow_log_data(
+                        self._boilerplate_detector.extract_tokens(combined_raw),
+                        boilerplate_match,
+                    )
+                    await self._store.log_shadow_computation(
+                        feature_name="boilerplate_defense",
+                        canonical_key=canonical_key,
+                        computed_value=shadow_data,
+                        signal_id=signals[0].id if signals else None,
+                    )
+                    self._run_stats.shadow_logs_written += 1
+
+                    if boilerplate_match and boilerplate_match.is_boilerplate:
+                        logger.info(
+                            f"Boilerplate detected (SHADOW): {canonical_key} "
+                            f"matches {boilerplate_match.signature_name} "
+                            f"({boilerplate_match.similarity:.0%})"
+                        )
+
+            except Exception as e:
+                logger.debug(f"Boilerplate detection failed (non-fatal): {e}")
 
         # Thesis filtering (before verification gate)
         thesis_result = None
