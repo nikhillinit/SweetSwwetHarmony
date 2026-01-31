@@ -126,6 +126,7 @@ class TestTransportConfig:
         assert config.on_403 is None
         assert config.on_429 is None
         assert config.on_timeout is None
+        assert config.user_agent_profile is None
 
     def test_custom_values(self):
         """TransportConfig should accept custom values."""
@@ -207,6 +208,51 @@ class TestTransportConfig:
         assert restored.on_403 == original.on_403
         assert restored.on_429 == original.on_429
         assert restored.on_timeout == original.on_timeout
+
+    def test_user_agent_profile_default_none(self):
+        """user_agent_profile should default to None."""
+        config = TransportConfig()
+        assert config.user_agent_profile is None
+
+    def test_user_agent_profile_accepts_chrome(self):
+        """user_agent_profile should accept 'chrome' value."""
+        config = TransportConfig(user_agent_profile="chrome")
+        assert config.user_agent_profile == "chrome"
+
+    def test_user_agent_profile_accepts_firefox(self):
+        """user_agent_profile should accept 'firefox' value."""
+        config = TransportConfig(user_agent_profile="firefox")
+        assert config.user_agent_profile == "firefox"
+
+    def test_user_agent_profile_accepts_safari(self):
+        """user_agent_profile should accept 'safari' value."""
+        config = TransportConfig(user_agent_profile="safari")
+        assert config.user_agent_profile == "safari"
+
+    def test_user_agent_profile_in_to_dict(self):
+        """to_dict should include user_agent_profile when set."""
+        config = TransportConfig(user_agent_profile="chrome")
+        result = config.to_dict()
+        assert result["user_agent_profile"] == "chrome"
+
+    def test_user_agent_profile_not_in_to_dict_when_none(self):
+        """to_dict should not include user_agent_profile when None."""
+        config = TransportConfig()
+        result = config.to_dict()
+        assert "user_agent_profile" not in result
+
+    def test_user_agent_profile_from_dict(self):
+        """from_dict should restore user_agent_profile."""
+        data = {"user_agent_profile": "firefox"}
+        config = TransportConfig.from_dict(data)
+        assert config.user_agent_profile == "firefox"
+
+    def test_user_agent_profile_roundtrip(self):
+        """user_agent_profile should survive to_dict/from_dict roundtrip."""
+        original = TransportConfig(user_agent_profile="safari")
+        serialized = original.to_dict()
+        restored = TransportConfig.from_dict(serialized)
+        assert restored.user_agent_profile == original.user_agent_profile
 
 
 class TestWatchConfig:

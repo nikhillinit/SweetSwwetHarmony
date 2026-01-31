@@ -388,3 +388,28 @@ class TestUserAgent:
             headers = call_args.kwargs.get("headers", {})
             assert "User-Agent" in headers
             assert "DiscoveryEngine" in headers["User-Agent"]
+
+
+class TestHTTP2Support:
+    """Test HTTP/2 support configuration."""
+
+    @pytest.mark.asyncio
+    async def test_fetch_uses_http2_by_default(self):
+        """fetch() should use HTTP/2 by default."""
+        mock_response = make_mock_response(status_code=200, content="content")
+
+        with patch("httpx.AsyncClient") as mock_client_class:
+            setup_mock_client(mock_client_class, mock_response)
+
+            transport = HttpxTransport()
+            await transport.fetch("https://example.com")
+
+            # Verify http2=True was passed to AsyncClient
+            call_kwargs = mock_client_class.call_args.kwargs
+            assert call_kwargs.get("http2") is True
+
+    def test_http2_enabled_attribute(self):
+        """HttpxTransport should have http2_enabled=True by default."""
+        transport = HttpxTransport()
+        assert hasattr(transport, "http2_enabled")
+        assert transport.http2_enabled is True

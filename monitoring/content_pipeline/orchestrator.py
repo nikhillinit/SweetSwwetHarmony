@@ -33,6 +33,7 @@ from monitoring.content_pipeline.models import (
     RepresentationType,
 )
 from monitoring.content_pipeline.planner import PipelinePlanner
+from monitoring.content_pipeline.transport_escalator import TransportEscalator
 from monitoring.content_pipeline.transport_httpx import HttpxTransport
 
 if TYPE_CHECKING:
@@ -151,6 +152,7 @@ class ContentPipeline:
                 last_modified=last_modified,
                 max_html_bytes=watch_config.transport.max_html_bytes,
                 max_json_bytes=watch_config.transport.max_json_bytes,
+                transport_config=watch_config.transport,
             )
         except httpx.TimeoutException as e:
             error_message = f"Request timeout: {str(e)}"
@@ -243,9 +245,13 @@ class ContentPipeline:
         last_modified: Optional[str] = None,
         max_html_bytes: Optional[int] = None,
         max_json_bytes: Optional[int] = None,
+        transport_config: Optional["TransportConfig"] = None,
     ) -> FetchArtifact:
         """
-        Fetch content from URL using HttpxTransport.
+        Fetch content from URL using TransportEscalator.
+
+        Uses TransportEscalator for automatic fallback from httpx to curl_cffi
+        when encountering 403/429 or bot detection patterns.
 
         Args:
             url: URL to fetch
@@ -253,11 +259,18 @@ class ContentPipeline:
             last_modified: Optional Last-Modified for conditional request
             max_html_bytes: Maximum HTML content size
             max_json_bytes: Maximum JSON content size
+            transport_config: Optional TransportConfig with escalation settings
 
         Returns:
             FetchArtifact with response data
         """
-        return await self._transport.fetch(
+        from monitoring.content_pipeline.config import TransportConfig
+
+        # Use escalator for automatic fallback handling
+        config = transport_config or TransportConfig()
+        escalator = TransportEscalator(config=config)
+
+        return await escalator.fetch(
             url=url,
             etag=etag,
             last_modified=last_modified,

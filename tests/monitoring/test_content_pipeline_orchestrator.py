@@ -693,17 +693,17 @@ class TestContentPipelineTransportConfig:
             MockPlanner.return_value = mock_planner
 
             with patch(
-                "monitoring.content_pipeline.orchestrator.HttpxTransport"
-            ) as MockTransport:
-                mock_transport = AsyncMock()
-                mock_transport.fetch = AsyncMock(return_value=mock_fetch_artifact)
-                MockTransport.return_value = mock_transport
+                "monitoring.content_pipeline.orchestrator.TransportEscalator"
+            ) as MockEscalator:
+                mock_escalator = AsyncMock()
+                mock_escalator.fetch = AsyncMock(return_value=mock_fetch_artifact)
+                MockEscalator.return_value = mock_escalator
 
                 pipeline = ContentPipeline()
                 await pipeline.process(watch)
 
                 # Verify size limits were passed to transport
-                call_kwargs = mock_transport.fetch.call_args.kwargs
+                call_kwargs = mock_escalator.fetch.call_args.kwargs
                 assert call_kwargs.get("max_html_bytes") == 1_000_000
                 assert call_kwargs.get("max_json_bytes") == 500_000
 
@@ -818,7 +818,7 @@ class TestContentPipelineRemoveSelectors:
 
 
 class TestContentPipelineIntegration:
-    """Integration tests with real components (no mocks)."""
+    """Integration tests with real components (mocked transport only)."""
 
     @pytest.mark.asyncio
     async def test_full_pipeline_with_simple_html(self):
@@ -849,11 +849,11 @@ class TestContentPipelineIntegration:
         )
 
         with patch(
-            "monitoring.content_pipeline.orchestrator.HttpxTransport"
-        ) as MockTransport:
-            mock_transport = MagicMock()
-            mock_transport.fetch = AsyncMock(return_value=mock_fetch_artifact)
-            MockTransport.return_value = mock_transport
+            "monitoring.content_pipeline.orchestrator.TransportEscalator"
+        ) as MockEscalator:
+            mock_escalator = MagicMock()
+            mock_escalator.fetch = AsyncMock(return_value=mock_fetch_artifact)
+            MockEscalator.return_value = mock_escalator
 
             pipeline = ContentPipeline()
             result = await pipeline.process(watch)
@@ -895,11 +895,11 @@ class TestContentPipelineIntegration:
         )
 
         with patch(
-            "monitoring.content_pipeline.orchestrator.HttpxTransport"
-        ) as MockTransport:
-            mock_transport = MagicMock()
-            mock_transport.fetch = AsyncMock(return_value=mock_fetch_artifact)
-            MockTransport.return_value = mock_transport
+            "monitoring.content_pipeline.orchestrator.TransportEscalator"
+        ) as MockEscalator:
+            mock_escalator = MagicMock()
+            mock_escalator.fetch = AsyncMock(return_value=mock_fetch_artifact)
+            MockEscalator.return_value = mock_escalator
 
             pipeline = ContentPipeline()
             result = await pipeline.process(watch)
@@ -907,3 +907,130 @@ class TestContentPipelineIntegration:
             # Should auto-select pricing preset
             assert result.preset_used == "pricing_table_v1"
             assert result.success is True
+
+
+class TestContentPipelineTransportEscalation:
+    """Test transport escalation integration."""
+
+    @pytest.mark.asyncio
+    async def test_pipeline_uses_transport_escalator(self):
+        """ContentPipeline should use TransportEscalator for fetching."""
+        from monitoring.content_pipeline.orchestrator import ContentPipeline
+        from monitoring.content_pipeline.transport_escalator import TransportEscalator
+
+        watch = Watch(
+            id=1,
+            url="https://example.com",
+            canonical_key="domain:example.com",
+        )
+
+        mock_fetch_artifact = FetchArtifact(
+            url="https://example.com",
+            status_code=200,
+            headers={},
+            content="<html><body>Content</body></html>",
+            transport_used="httpx",
+            fetch_time_ms=50,
+        )
+
+        with patch(
+            "monitoring.content_pipeline.orchestrator.TransportEscalator"
+        ) as MockEscalator:
+            mock_escalator = AsyncMock()
+            mock_escalator.fetch = AsyncMock(return_value=mock_fetch_artifact)
+            MockEscalator.return_value = mock_escalator
+
+            pipeline = ContentPipeline()
+            result = await pipeline.process(watch)
+
+            # Verify TransportEscalator was used
+            MockEscalator.assert_called_once()
+            mock_escalator.fetch.assert_called_once()
+            assert result.success is True
+
+    @pytest.mark.asyncio
+    async def test_pipeline_passes_transport_config_to_escalator(self):
+        """ContentPipeline should pass TransportConfig to escalator."""
+        from monitoring.content_pipeline.orchestrator import ContentPipeline
+
+        watch = Watch(
+            id=1,
+            url="https://example.com",
+            canonical_key="domain:example.com",
+        )
+
+        mock_fetch_artifact = FetchArtifact(
+            url="https://example.com",
+            status_code=200,
+            headers={},
+            content="<html><body>Content</body></html>",
+            transport_used="httpx",
+            fetch_time_ms=50,
+        )
+
+        # Create config with escalation settings
+        mock_config = WatchConfig(
+            preset="default",
+            transport=TransportConfig(
+                on_403="curl_cffi",
+                user_agent_profile="chrome",
+            ),
+        )
+
+        with patch(
+            "monitoring.content_pipeline.orchestrator.PipelinePlanner"
+        ) as MockPlanner:
+            mock_planner = MagicMock()
+            mock_planner.plan.return_value = mock_config
+            MockPlanner.return_value = mock_planner
+
+            with patch(
+                "monitoring.content_pipeline.orchestrator.TransportEscalator"
+            ) as MockEscalator:
+                mock_escalator = AsyncMock()
+                mock_escalator.fetch = AsyncMock(return_value=mock_fetch_artifact)
+                MockEscalator.return_value = mock_escalator
+
+                pipeline = ContentPipeline()
+                await pipeline.process(watch)
+
+                # Verify TransportConfig was passed
+                call_kwargs = MockEscalator.call_args.kwargs
+                config = call_kwargs.get("config")
+                assert config is not None
+                assert config.on_403 == "curl_cffi"
+                assert config.user_agent_profile == "chrome"
+
+    @pytest.mark.asyncio
+    async def test_pipeline_reports_transport_used_in_artifact(self):
+        """PipelineResult should report which transport was used."""
+        from monitoring.content_pipeline.orchestrator import ContentPipeline
+
+        watch = Watch(
+            id=1,
+            url="https://example.com",
+            canonical_key="domain:example.com",
+        )
+
+        # Simulate escalation - curl_cffi was used
+        mock_fetch_artifact = FetchArtifact(
+            url="https://example.com",
+            status_code=200,
+            headers={},
+            content="<html><body>Content</body></html>",
+            transport_used="curl_cffi",  # Escalated to curl_cffi
+            fetch_time_ms=100,
+        )
+
+        with patch(
+            "monitoring.content_pipeline.orchestrator.TransportEscalator"
+        ) as MockEscalator:
+            mock_escalator = AsyncMock()
+            mock_escalator.fetch = AsyncMock(return_value=mock_fetch_artifact)
+            MockEscalator.return_value = mock_escalator
+
+            pipeline = ContentPipeline()
+            result = await pipeline.process(watch)
+
+            # fetch_artifact should show curl_cffi was used
+            assert result.fetch_artifact.transport_used == "curl_cffi"

@@ -86,9 +86,7 @@ class TestSpaHydrationPreset:
         self, next_data_html: str, spa_config: WatchConfig
     ) -> None:
         """Test that spa_hydration_v1 preset extracts __NEXT_DATA__."""
-        # Mock transport to return our test HTML
-        mock_transport = AsyncMock()
-        mock_transport.fetch.return_value = FetchArtifact(
+        mock_artifact = FetchArtifact(
             url="https://example.com/products",
             status_code=200,
             headers={"content-type": "text/html"},
@@ -99,17 +97,23 @@ class TestSpaHydrationPreset:
         mock_planner = MagicMock()
         mock_planner.plan.return_value = spa_config
 
-        # Create pipeline with hydration extractor
-        pipeline = ContentPipeline(
-            planner=mock_planner,
-            transport=mock_transport,
-            hydration_extractor=HydrationExtractor(),
-        )
+        with patch(
+            "monitoring.content_pipeline.orchestrator.TransportEscalator"
+        ) as MockEscalator:
+            mock_escalator = MagicMock()
+            mock_escalator.fetch = AsyncMock(return_value=mock_artifact)
+            MockEscalator.return_value = mock_escalator
 
-        result = await pipeline.process_url(
-            watch_id=1,
-            url="https://example.com/products",
-        )
+            # Create pipeline with hydration extractor
+            pipeline = ContentPipeline(
+                planner=mock_planner,
+                hydration_extractor=HydrationExtractor(),
+            )
+
+            result = await pipeline.process_url(
+                watch_id=1,
+                url="https://example.com/products",
+            )
 
         assert result.success is True
         assert result.preset_used == "spa_hydration_v1"
@@ -130,8 +134,7 @@ class TestSpaHydrationPreset:
         self, nuxt_html: str, spa_config: WatchConfig
     ) -> None:
         """Test that spa_hydration_v1 preset extracts __NUXT__."""
-        mock_transport = AsyncMock()
-        mock_transport.fetch.return_value = FetchArtifact(
+        mock_artifact = FetchArtifact(
             url="https://example.com",
             status_code=200,
             headers={"content-type": "text/html"},
@@ -141,16 +144,22 @@ class TestSpaHydrationPreset:
         mock_planner = MagicMock()
         mock_planner.plan.return_value = spa_config
 
-        pipeline = ContentPipeline(
-            planner=mock_planner,
-            transport=mock_transport,
-            hydration_extractor=HydrationExtractor(),
-        )
+        with patch(
+            "monitoring.content_pipeline.orchestrator.TransportEscalator"
+        ) as MockEscalator:
+            mock_escalator = MagicMock()
+            mock_escalator.fetch = AsyncMock(return_value=mock_artifact)
+            MockEscalator.return_value = mock_escalator
 
-        result = await pipeline.process_url(
-            watch_id=1,
-            url="https://example.com",
-        )
+            pipeline = ContentPipeline(
+                planner=mock_planner,
+                hydration_extractor=HydrationExtractor(),
+            )
+
+            result = await pipeline.process_url(
+                watch_id=1,
+                url="https://example.com",
+            )
 
         assert result.success is True
 
@@ -169,8 +178,7 @@ class TestSpaHydrationPreset:
         self, next_data_html: str, spa_config: WatchConfig
     ) -> None:
         """Test that spa_hydration_v1 preset sets JSON as primary representation."""
-        mock_transport = AsyncMock()
-        mock_transport.fetch.return_value = FetchArtifact(
+        mock_artifact = FetchArtifact(
             url="https://example.com",
             status_code=200,
             headers={"content-type": "text/html"},
@@ -180,16 +188,22 @@ class TestSpaHydrationPreset:
         mock_planner = MagicMock()
         mock_planner.plan.return_value = spa_config
 
-        pipeline = ContentPipeline(
-            planner=mock_planner,
-            transport=mock_transport,
-            hydration_extractor=HydrationExtractor(),
-        )
+        with patch(
+            "monitoring.content_pipeline.orchestrator.TransportEscalator"
+        ) as MockEscalator:
+            mock_escalator = MagicMock()
+            mock_escalator.fetch = AsyncMock(return_value=mock_artifact)
+            MockEscalator.return_value = mock_escalator
 
-        result = await pipeline.process_url(
-            watch_id=1,
-            url="https://example.com",
-        )
+            pipeline = ContentPipeline(
+                planner=mock_planner,
+                hydration_extractor=HydrationExtractor(),
+            )
+
+            result = await pipeline.process_url(
+                watch_id=1,
+                url="https://example.com",
+            )
 
         assert result.success is True
         assert result.primary_representation == RepresentationType.JSON
@@ -216,8 +230,7 @@ class TestSpaHydrationPreset:
             ),
         )
 
-        mock_transport = AsyncMock()
-        mock_transport.fetch.return_value = FetchArtifact(
+        mock_artifact = FetchArtifact(
             url="https://example.com",
             status_code=200,
             headers={"content-type": "text/html"},
@@ -227,16 +240,22 @@ class TestSpaHydrationPreset:
         mock_planner = MagicMock()
         mock_planner.plan.return_value = spa_config
 
-        pipeline = ContentPipeline(
-            planner=mock_planner,
-            transport=mock_transport,
-            hydration_extractor=HydrationExtractor(),
-        )
+        with patch(
+            "monitoring.content_pipeline.orchestrator.TransportEscalator"
+        ) as MockEscalator:
+            mock_escalator = MagicMock()
+            mock_escalator.fetch = AsyncMock(return_value=mock_artifact)
+            MockEscalator.return_value = mock_escalator
 
-        result = await pipeline.process_url(
-            watch_id=1,
-            url="https://example.com",
-        )
+            pipeline = ContentPipeline(
+                planner=mock_planner,
+                hydration_extractor=HydrationExtractor(),
+            )
+
+            result = await pipeline.process_url(
+                watch_id=1,
+                url="https://example.com",
+            )
 
         assert result.success is True
         # Should fall back to TEXT since no hydration data
@@ -266,8 +285,7 @@ class TestHydrationExtractorMetadata:
             ),
         )
 
-        mock_transport = AsyncMock()
-        mock_transport.fetch.return_value = FetchArtifact(
+        mock_artifact = FetchArtifact(
             url="https://example.com",
             status_code=200,
             headers={"content-type": "text/html"},
@@ -277,16 +295,22 @@ class TestHydrationExtractorMetadata:
         mock_planner = MagicMock()
         mock_planner.plan.return_value = spa_config
 
-        pipeline = ContentPipeline(
-            planner=mock_planner,
-            transport=mock_transport,
-            hydration_extractor=HydrationExtractor(),
-        )
+        with patch(
+            "monitoring.content_pipeline.orchestrator.TransportEscalator"
+        ) as MockEscalator:
+            mock_escalator = MagicMock()
+            mock_escalator.fetch = AsyncMock(return_value=mock_artifact)
+            MockEscalator.return_value = mock_escalator
 
-        result = await pipeline.process_url(
-            watch_id=1,
-            url="https://example.com",
-        )
+            pipeline = ContentPipeline(
+                planner=mock_planner,
+                hydration_extractor=HydrationExtractor(),
+            )
+
+            result = await pipeline.process_url(
+                watch_id=1,
+                url="https://example.com",
+            )
 
         # Find JSON representation
         json_rep = next(
