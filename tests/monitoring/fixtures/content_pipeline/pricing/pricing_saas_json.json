@@ -1,0 +1,73 @@
+{
+  "microdata": [],
+  "json-ld": [
+    {
+      "@context": "https://schema.org",
+      "@type": "Product",
+      "name": "FitTrack Pro - Free Plan",
+      "description": "Basic fitness tracking for individuals",
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD",
+        "availability": "https://schema.org/InStock"
+      }
+    },
+    {
+      "@context": "https://schema.org",
+      "@type": "Product",
+      "name": "FitTrack Pro - Pro Plan",
+      "description": "Advanced fitness tracking with AI coaching",
+      "offers": {
+        "@type": "Offer",
+        "price": "9.99",
+        "priceCurrency": "USD",
+        "priceValidUntil": "2026-12-31",
+        "availability": "https://schema.org/InStock"
+      }
+    },
+    {
+      "@context": "https://schema.org",
+      "@type": "Product",
+      "name": "FitTrack Pro - Enterprise Plan",
+      "description": "Team fitness platform with admin controls",
+      "offers": {
+        "@type": "Offer",
+        "price": "29.99",
+        "priceCurrency": "USD",
+        "priceValidUntil": "2026-12-31",
+        "availability": "https://schema.org/InStock"
+      }
+    }
+  ],
+  "opengraph": [
+    {
+      "og:title": "FitTrack Pro Pricing",
+      "og:description": "Choose the plan that fits your fitness journey",
+      "@type": "website",
+      "@context": {
+        "og": "http://ogp.me/ns#"
+      }
+    }
+  ],
+  "rdfa": [
+    {
+      "@id": "",
+      "http://ogp.me/ns#description": [
+        {
+          "@value": "Choose the plan that fits your fitness journey"
+        }
+      ],
+      "http://ogp.me/ns#title": [
+        {
+          "@value": "FitTrack Pro Pricing"
+        }
+      ],
+      "http://ogp.me/ns#type": [
+        {
+          "@value": "website"
+        }
+      ]
+    }
+  ]
+}

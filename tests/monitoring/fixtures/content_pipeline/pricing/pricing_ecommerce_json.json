@@ -1,0 +1,86 @@
+{
+  "microdata": [
+    {
+      "@type": "Product",
+      "@context": "https://schema.org",
+      "name": "Vitamin C Serum",
+      "description": "Brightening serum with 15% vitamin C",
+      "offers": {
+        "@type": "Offer",
+        "price": "24.99",
+        "priceCurrency": "USD",
+        "availability": "https://schema.org/InStock"
+      },
+      "aggregateRating": {
+        "@type": "AggregateRating",
+        "ratingValue": "4.8",
+        "reviewCount": "156"
+      }
+    },
+    {
+      "@type": "Product",
+      "@context": "https://schema.org",
+      "name": "Hydrating Moisturizer",
+      "description": "48-hour hydration with hyaluronic acid",
+      "offers": {
+        "@type": "Offer",
+        "price": "32.00",
+        "priceCurrency": "USD",
+        "availability": "https://schema.org/InStock"
+      },
+      "aggregateRating": {
+        "@type": "AggregateRating",
+        "ratingValue": "4.9",
+        "reviewCount": "203"
+      }
+    },
+    {
+      "@type": "Product",
+      "@context": "https://schema.org",
+      "name": "Retinol Night Cream",
+      "description": "Anti-aging cream with encapsulated retinol",
+      "offers": {
+        "@type": "Offer",
+        "price": "45.00",
+        "priceCurrency": "USD",
+        "availability": "https://schema.org/LimitedAvailability"
+      },
+      "aggregateRating": {
+        "@type": "AggregateRating",
+        "ratingValue": "4.7",
+        "reviewCount": "89"
+      }
+    }
+  ],
+  "json-ld": [],
+  "opengraph": [
+    {
+      "og:title": "GlowUp Beauty Products",
+      "og:site_name": "GlowUp Beauty",
+      "@type": "website",
+      "@context": {
+        "og": "http://ogp.me/ns#"
+      }
+    }
+  ],
+  "rdfa": [
+    {
+      "@id": "",
+      "http://ogp.me/ns#site_name": [
+        {
+          "@value": "GlowUp Beauty"
+        }
+      ],
+      "http://ogp.me/ns#title": [
+        {
+          "@value": "GlowUp Beauty Products"
+        }
+      ],
+      "http://ogp.me/ns#type": [
+        {
+          "@value": "website"
+        }
+      ]
+    }
+  ]
+}

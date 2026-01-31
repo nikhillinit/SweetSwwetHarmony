@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Shop - GlowUp Beauty</title>
+    <meta property="og:title" content="GlowUp Beauty Products">
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="GlowUp Beauty">
+</head>
+<body>
+    <header>
+        <nav>
+            <a href="/">GlowUp Beauty</a>
+            <ul>
+                <li><a href="/shop">Shop</a></li>
+                <li><a href="/about">About</a></li>
+                <li><a href="/cart">Cart</a></li>
+            </ul>
+        </nav>
+    </header>
+
+    <main id="products">
+        <h1>Our Best Sellers</h1>
+        <p>Clean beauty products for radiant skin.</p>
+
+        <div class="product-grid">
+            <article itemscope itemtype="https://schema.org/Product">
+                <h2 itemprop="name">Vitamin C Serum</h2>
+                <p itemprop="description">Brightening serum with 15% vitamin C</p>
+                <div itemprop="offers" itemscope itemtype="https://schema.org/Offer">
+                    <span itemprop="price" content="24.99">$24.99</span>
+                    <meta itemprop="priceCurrency" content="USD">
+                    <link itemprop="availability" href="https://schema.org/InStock">
+                </div>
+                <div itemprop="aggregateRating" itemscope itemtype="https://schema.org/AggregateRating">
+                    <span itemprop="ratingValue">4.8</span>/5
+                    (<span itemprop="reviewCount">156</span> reviews)
+                </div>
+            </article>
+
+            <article itemscope itemtype="https://schema.org/Product">
+                <h2 itemprop="name">Hydrating Moisturizer</h2>
+                <p itemprop="description">48-hour hydration with hyaluronic acid</p>
+                <div itemprop="offers" itemscope itemtype="https://schema.org/Offer">
+                    <span itemprop="price" content="32.00">$32.00</span>
+                    <meta itemprop="priceCurrency" content="USD">
+                    <link itemprop="availability" href="https://schema.org/InStock">
+                </div>
+                <div itemprop="aggregateRating" itemscope itemtype="https://schema.org/AggregateRating">
+                    <span itemprop="ratingValue">4.9</span>/5
+                    (<span itemprop="reviewCount">203</span> reviews)
+                </div>
+            </article>
+
+            <article itemscope itemtype="https://schema.org/Product">
+                <h2 itemprop="name">Retinol Night Cream</h2>
+                <p itemprop="description">Anti-aging cream with encapsulated retinol</p>
+                <div itemprop="offers" itemscope itemtype="https://schema.org/Offer">
+                    <span itemprop="price" content="45.00">$45.00</span>
+                    <meta itemprop="priceCurrency" content="USD">
+                    <link itemprop="availability" href="https://schema.org/LimitedAvailability">
+                </div>
+                <div itemprop="aggregateRating" itemscope itemtype="https://schema.org/AggregateRating">
+                    <span itemprop="ratingValue">4.7</span>/5
+                    (<span itemprop="reviewCount">89</span> reviews)
+                </div>
+            </article>
+        </div>
+
+        <section class="promo-banner">
+            <p>Free shipping on orders over $50!</p>
+        </section>
+    </main>
+
+    <footer>
+        <p>2025 GlowUp Beauty. Cruelty-free and sustainable.</p>
+    </footer>
+</body>
+</html>
