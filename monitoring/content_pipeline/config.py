@@ -76,11 +76,15 @@ class TransportConfig:
         on_403: Transport to use on 403 Forbidden response
         on_429: Transport to use on 429 Too Many Requests response
         on_timeout: Transport to use on timeout
+        max_html_bytes: Maximum size for HTML content (default: 5MB)
+        max_json_bytes: Maximum size for JSON content (default: 2MB)
     """
     initial: str = "httpx"
     on_403: Optional[str] = None
     on_429: Optional[str] = None
     on_timeout: Optional[str] = None
+    max_html_bytes: int = 5_242_880  # 5MB
+    max_json_bytes: int = 2_097_152  # 2MB
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -91,6 +95,8 @@ class TransportConfig:
             result["on_429"] = self.on_429
         if self.on_timeout is not None:
             result["on_timeout"] = self.on_timeout
+        result["max_html_bytes"] = self.max_html_bytes
+        result["max_json_bytes"] = self.max_json_bytes
         return result
 
     @classmethod
@@ -101,6 +107,8 @@ class TransportConfig:
             on_403=data.get("on_403"),
             on_429=data.get("on_429"),
             on_timeout=data.get("on_timeout"),
+            max_html_bytes=data.get("max_html_bytes", 5_242_880),
+            max_json_bytes=data.get("max_json_bytes", 2_097_152),
         )
 
 

@@ -44,6 +44,9 @@ class FetchArtifact:
     transport_used: str = "httpx"
     fetch_time_ms: int = 0
 
+    # Content size handling
+    truncated: bool = False  # True if content was truncated due to size limits
+
     @property
     def is_cacheable(self) -> bool:
         """
@@ -74,6 +77,7 @@ class FetchArtifact:
             "fetched_at": self.fetched_at.isoformat() if self.fetched_at else None,
             "transport_used": self.transport_used,
             "fetch_time_ms": self.fetch_time_ms,
+            "truncated": self.truncated,
             "is_cacheable": self.is_cacheable,
             "is_not_modified": self.is_not_modified,
         }
