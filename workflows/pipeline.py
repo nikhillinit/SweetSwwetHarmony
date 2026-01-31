@@ -95,6 +95,9 @@ from storage.claim_fact_store import ClaimFactStore, ClaimFact
 from utils.phase_g_entity_resolver import PhaseGEntityResolver, ResolvedEntityGroup
 from utils.claim_extractor import ClaimExtractor
 
+# Feature states for SHADOW experimentation
+from utils.feature_states import FeatureRegistry, FeatureState
+
 logger = logging.getLogger(__name__)
 
 
@@ -259,6 +262,9 @@ class PipelineStats:
     prospects_updated: int = 0
     prospects_skipped: int = 0
 
+    # Shadow logging stats
+    shadow_logs_written: int = 0
+
     # Errors
     errors: List[str] = field(default_factory=list)
 
@@ -310,6 +316,9 @@ class PipelineStats:
                 "prospects_created": self.prospects_created,
                 "prospects_updated": self.prospects_updated,
                 "prospects_skipped": self.prospects_skipped,
+            },
+            "shadow": {
+                "logs_written": self.shadow_logs_written,
             },
             "errors": self.errors,
             "health": self.health_report.to_dict() if self.health_report else None,
@@ -424,6 +433,9 @@ class DiscoveryPipeline:
         self._phase_g_resolver: Optional[PhaseGEntityResolver] = None
         self._claim_fact_store: Optional[ClaimFactStore] = None
         self._claim_extractor: Optional[ClaimExtractor] = None
+
+        # Feature states for SHADOW experimentation (Phase A)
+        self._feature_registry = FeatureRegistry()
 
         # State
         self._initialized = False
@@ -954,10 +966,11 @@ class DiscoveryPipeline:
 
             # Import collector dynamically based on name
             if collector_name == "github":
-                from collectors.github import GitHubCollector
+                from collectors.github import GitHubCollector, TopicMode
                 collector = GitHubCollector(
                     **common_args,
-                    github_token=self.config.github_token
+                    github_token=self.config.github_token,
+                    topic_mode=TopicMode.CONSUMER,  # Consumer thesis focus
                 )
             elif collector_name == "sec_edgar":
                 from collectors.sec_edgar import SECEdgarCollector
@@ -1582,6 +1595,31 @@ class DiscoveryPipeline:
                         )
                     except Exception as e:
                         logger.warning(f"Failed to save thesis classification (non-fatal): {e}")
+
+                # Phase B: SHADOW logging for thesis match details
+                if self._feature_registry.is_enabled("thesis_match"):
+                    try:
+                        import json
+                        shadow_value = json.dumps({
+                            "keyword_score": thesis_result.keyword_score,
+                            "keyword_category": thesis_result.keyword_category,
+                            "keyword_matches": thesis_result.keyword_matches,
+                            "negative_keywords": thesis_result.negative_keywords,
+                            "intent_phrases_matched": thesis_result.intent_phrases_matched,
+                            "domain_match": thesis_result.domain_match,
+                            "domain_blacklisted": thesis_result.domain_blacklisted,
+                            "routing": thesis_result.routing.value,
+                            "confidence_adjustment": thesis_result.confidence_adjustment,
+                        })
+                        await self._store.log_shadow_computation(
+                            feature_name="thesis_match",
+                            canonical_key=canonical_key,
+                            computed_value=shadow_value,
+                            signal_id=signals[0].id if signals else None,
+                        )
+                        self._run_stats.shadow_logs_written += 1
+                    except Exception as e:
+                        logger.debug(f"Failed to log thesis_match shadow (non-fatal): {e}")
 
                 # Apply confidence adjustment to enrichment boost
                 enrichment_boost += thesis_result.confidence_adjustment

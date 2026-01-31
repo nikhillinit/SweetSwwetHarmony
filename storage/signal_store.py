@@ -63,7 +63,7 @@ logger = logging.getLogger(__name__)
 # SCHEMA VERSION
 # =============================================================================
 
-CURRENT_SCHEMA_VERSION = 22
+CURRENT_SCHEMA_VERSION = 23
 
 # SQL for creating tables (migrations applied in order)
 MIGRATIONS = {
@@ -1546,6 +1546,34 @@ MIGRATIONS = {
     -- 22.3: Index for finding watches with custom configurations
     CREATE INDEX IF NOT EXISTS idx_watches_config_type
         ON watches(watch_type) WHERE config_json IS NOT NULL;
+    """,
+    23: """
+    -- =============================================================================
+    -- SHADOW LOGGING INFRASTRUCTURE - Feature experimentation framework
+    -- =============================================================================
+    -- Enables the "build wide, activate narrow" experimentation pattern:
+    -- 1. Deploy features in SHADOW mode (computed but 0 weight)
+    -- 2. Log predictions without affecting routing
+    -- 3. Measure correlation with outcomes over 2-3 weeks
+    -- 4. Promote to ACTIVE only if lift is demonstrated
+
+    -- 23.1: shadow_log table for storing SHADOW feature computations
+    CREATE TABLE IF NOT EXISTS shadow_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        feature_name TEXT NOT NULL,          -- e.g., 'boilerplate_defense', 'team_shape'
+        canonical_key TEXT NOT NULL,         -- Company/entity identifier
+        computed_value TEXT NOT NULL,        -- JSON blob of computation result
+        signal_id INTEGER,                   -- Optional FK to signals table
+        logged_at TEXT NOT NULL,             -- ISO 8601 timestamp
+
+        FOREIGN KEY (signal_id) REFERENCES signals(id) ON DELETE SET NULL
+    );
+
+    -- 23.2: Indexes for common query patterns
+    CREATE INDEX IF NOT EXISTS idx_shadow_log_feature ON shadow_log(feature_name);
+    CREATE INDEX IF NOT EXISTS idx_shadow_log_canonical_key ON shadow_log(canonical_key);
+    CREATE INDEX IF NOT EXISTS idx_shadow_log_logged_at ON shadow_log(logged_at);
+    CREATE INDEX IF NOT EXISTS idx_shadow_log_feature_logged ON shadow_log(feature_name, logged_at);
     """
 }
 
@@ -2746,6 +2774,306 @@ class SignalStore:
         ]
 
         return [dict(zip(columns, row)) for row in rows]
+
+    # =========================================================================
+    # SHADOW LOGGING
+    # =========================================================================
+
+    async def log_shadow_computation(
+        self,
+        feature_name: str,
+        canonical_key: str,
+        computed_value: Dict[str, Any],
+        signal_id: Optional[int] = None,
+    ) -> int:
+        """
+        Log a SHADOW feature computation for later analysis.
+
+        SHADOW features are computed but have 0 weight - they don't affect
+        routing/scoring. Logging allows measuring correlation with outcomes
+        before promoting to ACTIVE.
+
+        Args:
+            feature_name: Feature identifier (e.g., 'boilerplate_defense')
+            canonical_key: Company/entity identifier
+            computed_value: Computation result (will be JSON serialized)
+            signal_id: Optional FK to link to a specific signal
+
+        Returns:
+            The shadow_log ID
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        now = datetime.now(timezone.utc).isoformat()
+
+        async with self.transaction() as conn:
+            cursor = await conn.execute(
+                """
+                INSERT INTO shadow_log (
+                    feature_name, canonical_key, computed_value, signal_id, logged_at
+                )
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    feature_name,
+                    canonical_key,
+                    json.dumps(computed_value),
+                    signal_id,
+                    now,
+                )
+            )
+            log_id = cursor.lastrowid
+
+        logger.debug(f"Logged SHADOW computation: {feature_name} for {canonical_key}")
+        return log_id
+
+    async def get_shadow_logs(
+        self,
+        feature_name: Optional[str] = None,
+        canonical_key: Optional[str] = None,
+        since: Optional[datetime] = None,
+        limit: int = 100,
+    ) -> List[Dict[str, Any]]:
+        """
+        Retrieve shadow computation logs with optional filters.
+
+        Args:
+            feature_name: Filter by feature
+            canonical_key: Filter by company/entity
+            since: Filter by timestamp (logs after this time)
+            limit: Max results (default 100)
+
+        Returns:
+            List of log entries as dicts
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        query = """
+            SELECT id, feature_name, canonical_key, computed_value, signal_id, logged_at
+            FROM shadow_log
+            WHERE 1=1
+        """
+        params: List[Any] = []
+
+        if feature_name:
+            query += " AND feature_name = ?"
+            params.append(feature_name)
+
+        if canonical_key:
+            query += " AND canonical_key = ?"
+            params.append(canonical_key)
+
+        if since:
+            query += " AND logged_at > ?"
+            params.append(since.isoformat())
+
+        query += " ORDER BY logged_at DESC LIMIT ?"
+        params.append(limit)
+
+        async with self.transaction() as conn:
+            cursor = await conn.execute(query, params)
+            rows = await cursor.fetchall()
+
+        results = []
+        for row in rows:
+            results.append({
+                "id": row[0],
+                "feature_name": row[1],
+                "canonical_key": row[2],
+                "computed_value": json.loads(row[3]) if row[3] else {},
+                "signal_id": row[4],
+                "logged_at": datetime.fromisoformat(row[5]) if row[5] else None,
+            })
+
+        return results
+
+    async def count_shadow_logs(
+        self,
+        feature_name: Optional[str] = None,
+    ) -> int:
+        """
+        Count shadow computation logs.
+
+        Args:
+            feature_name: Optional filter by feature
+
+        Returns:
+            Count of logs
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        query = "SELECT COUNT(*) FROM shadow_log"
+        params: List[Any] = []
+
+        if feature_name:
+            query += " WHERE feature_name = ?"
+            params.append(feature_name)
+
+        async with self.transaction() as conn:
+            cursor = await conn.execute(query, params)
+            row = await cursor.fetchone()
+
+        return row[0] if row else 0
+
+    async def get_shadow_correlation_report(
+        self,
+        feature_name: str,
+        outcome_field: str = "processing_status",
+        days: int = 7,
+    ) -> Dict[str, Any]:
+        """
+        Generate correlation report for a shadow feature.
+
+        Analyzes how shadow feature values correlate with signal outcomes
+        to help decide if feature should be promoted to ACTIVE.
+
+        Args:
+            feature_name: Feature to analyze
+            outcome_field: Field to use for outcomes (default: processing_status)
+            days: Number of days to analyze (default: 7)
+
+        Returns:
+            Report dict with:
+            - feature_name: The feature analyzed
+            - total_logs: Count of logs in period
+            - period_start/end: Time range analyzed
+            - value_distribution: Counts of different computed values
+            - outcome_distribution: Counts of different outcomes
+            - outcome_by_value: Cross-tabulation of values vs outcomes
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        now = datetime.now(timezone.utc)
+        period_start = now - timedelta(days=days)
+
+        report: Dict[str, Any] = {
+            "feature_name": feature_name,
+            "total_logs": 0,
+            "period_start": period_start.isoformat(),
+            "period_end": now.isoformat(),
+            "value_distribution": {},
+            "outcome_distribution": {},
+            "outcome_by_value": {},
+        }
+
+        # Get shadow logs for the period
+        logs = await self.get_shadow_logs(
+            feature_name=feature_name,
+            since=period_start,
+            limit=10000,  # Reasonable limit for analysis
+        )
+
+        report["total_logs"] = len(logs)
+
+        if not logs:
+            return report
+
+        # Analyze value distribution
+        match_true = 0
+        match_false = 0
+        for log in logs:
+            val = log.get("computed_value", {})
+            if isinstance(val, dict) and "match" in val:
+                if val["match"]:
+                    match_true += 1
+                else:
+                    match_false += 1
+
+        if match_true > 0 or match_false > 0:
+            report["value_distribution"] = {
+                "match_true": match_true,
+                "match_false": match_false,
+            }
+
+        # Get outcome distribution for linked signals
+        signal_ids = [log["signal_id"] for log in logs if log.get("signal_id")]
+        if signal_ids:
+            async with self.transaction() as conn:
+                placeholders = ",".join("?" * len(signal_ids))
+                cursor = await conn.execute(
+                    f"""
+                    SELECT signal_id, status
+                    FROM signal_processing
+                    WHERE signal_id IN ({placeholders})
+                    """,
+                    signal_ids
+                )
+                outcomes = {row[0]: row[1] for row in await cursor.fetchall()}
+
+            # Count outcome distribution
+            outcome_counts: Dict[str, int] = {}
+            for status in outcomes.values():
+                outcome_counts[status] = outcome_counts.get(status, 0) + 1
+            report["outcome_distribution"] = outcome_counts
+
+            # Cross-tabulate: for each value type, what outcomes do we see?
+            outcome_by_value: Dict[str, Dict[str, int]] = {}
+            for log in logs:
+                signal_id = log.get("signal_id")
+                if signal_id and signal_id in outcomes:
+                    val = log.get("computed_value", {})
+                    if isinstance(val, dict) and "match" in val:
+                        key = "match_true" if val["match"] else "match_false"
+                        if key not in outcome_by_value:
+                            outcome_by_value[key] = {}
+                        outcome = outcomes[signal_id]
+                        outcome_by_value[key][outcome] = outcome_by_value[key].get(outcome, 0) + 1
+            report["outcome_by_value"] = outcome_by_value
+
+        return report
+
+    async def mark_processing_status(
+        self,
+        signal_id: int,
+        status: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """
+        Mark a signal's processing status.
+
+        Creates or updates the signal_processing record.
+
+        Args:
+            signal_id: The signal ID
+            status: Processing status (pending, pushed, rejected, etc.)
+            metadata: Optional extra context
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        now = datetime.now(timezone.utc).isoformat()
+
+        async with self.transaction() as conn:
+            # Check if record exists
+            cursor = await conn.execute(
+                "SELECT id FROM signal_processing WHERE signal_id = ?",
+                (signal_id,)
+            )
+            existing = await cursor.fetchone()
+
+            if existing:
+                # Update existing
+                await conn.execute(
+                    """
+                    UPDATE signal_processing
+                    SET status = ?, updated_at = ?, metadata = COALESCE(?, metadata)
+                    WHERE signal_id = ?
+                    """,
+                    (status, now, json.dumps(metadata) if metadata else None, signal_id)
+                )
+            else:
+                # Insert new
+                await conn.execute(
+                    """
+                    INSERT INTO signal_processing (signal_id, status, created_at, updated_at, metadata)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (signal_id, status, now, now, json.dumps(metadata) if metadata else None)
+                )
 
     # =========================================================================
     # NOTION OUTBOX
