@@ -5,23 +5,27 @@ Coordinates the content extraction pipeline for a Watch:
 1. Uses PipelinePlanner to determine WatchConfig from URL and config_json
 2. Uses HttpxTransport to fetch content with conditional requests
 3. Uses SelectorExtractor to extract content from HTML
-4. Builds PipelineResult with timing and metadata
+4. Optionally uses StructuredDataExtractor for JSON-LD/microdata extraction
+5. Builds PipelineResult with timing and metadata
 
 Handles 304 Not Modified responses and various error conditions.
+Supports multiple representations (TEXT, JSON) when prefer_structured=True.
 """
 
 from __future__ import annotations
 
 import logging
 import time
-from typing import Optional, TYPE_CHECKING
+from typing import List, Optional, TYPE_CHECKING
 
 import httpx
 
 from monitoring.content_pipeline.config import FallbackConfig, WatchConfig
 from monitoring.content_pipeline.exceptions import ContentSizeExceededError
 from monitoring.content_pipeline.extract_html import SelectorExtractor
+from monitoring.content_pipeline.extract_structured import StructuredDataExtractor
 from monitoring.content_pipeline.models import (
+    ExtractedContent,
     FetchArtifact,
     PipelineResult,
     RepresentationType,
@@ -34,6 +38,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Minimum confidence for structured data to be considered "rich"
+STRUCTURED_DATA_CONFIDENCE_THRESHOLD = 0.5
+
 
 class ContentPipeline:
     """
@@ -43,6 +50,7 @@ class ContentPipeline:
     - PipelinePlanner: Determines WatchConfig from URL and config_json
     - HttpxTransport: Fetches content with conditional requests (ETag/Last-Modified)
     - SelectorExtractor: Extracts content from HTML using CSS/XPath selectors
+    - StructuredDataExtractor: Extracts JSON-LD/microdata (when prefer_structured=True)
 
     Usage:
         pipeline = ContentPipeline()
@@ -56,6 +64,9 @@ class ContentPipeline:
             url="https://example.com",
             etag='"abc123"',
         )
+
+        # With structured data extraction
+        # Set prefer_structured=True in ExtractorConfig to get JSON-LD as primary
     """
 
     def __init__(
@@ -63,6 +74,7 @@ class ContentPipeline:
         planner: Optional[PipelinePlanner] = None,
         transport: Optional[HttpxTransport] = None,
         extractor: Optional[SelectorExtractor] = None,
+        structured_extractor: Optional[StructuredDataExtractor] = None,
     ):
         """
         Initialize the ContentPipeline.
@@ -71,10 +83,12 @@ class ContentPipeline:
             planner: Optional PipelinePlanner instance (creates default if not provided)
             transport: Optional HttpxTransport instance (creates default if not provided)
             extractor: Optional SelectorExtractor instance (creates default if not provided)
+            structured_extractor: Optional StructuredDataExtractor (not created by default)
         """
         self._planner = planner or PipelinePlanner()
         self._transport = transport or HttpxTransport()
         self._extractor = extractor or SelectorExtractor()
+        self._structured_extractor = structured_extractor
 
     async def process(self, watch: "Watch") -> PipelineResult:
         """
@@ -180,9 +194,9 @@ class ContentPipeline:
                 total_time_ms=total_time_ms,
             )
 
-        # Extract content
+        # Extract content - potentially both structured and text
         try:
-            extracted_content = self._extract_content(
+            representations, primary_rep, selectors_tried = self._extract_all_content(
                 html=fetch_artifact.content,
                 watch_config=watch_config,
             )
@@ -202,23 +216,15 @@ class ContentPipeline:
                 total_time_ms=total_time_ms,
             )
 
-        # Calculate total time
-        extraction_time = extracted_content.extraction_time_ms if extracted_content else 0
+        # Calculate total time from all representations
+        extraction_time = sum(r.extraction_time_ms for r in representations)
         total_time_ms = fetch_artifact.fetch_time_ms + extraction_time
-
-        # Build selectors_tried from extraction metadata
-        selectors_tried = None
-        if extracted_content and extracted_content.metadata:
-            selectors_tried = extracted_content.metadata.get("selectors_tried")
-            # If no selectors_tried, try to get from selector_used
-            if selectors_tried is None and extracted_content.metadata.get("selector_used"):
-                selectors_tried = [extracted_content.metadata["selector_used"]]
 
         return PipelineResult(
             watch_id=watch_id,
             fetch_artifact=fetch_artifact,
-            representations=[extracted_content] if extracted_content else [],
-            primary_representation=RepresentationType.TEXT,
+            representations=representations,
+            primary_representation=primary_rep,
             success=True,
             preset_used=watch_config.preset,
             selectors_tried=selectors_tried,
@@ -254,9 +260,91 @@ class ContentPipeline:
             max_json_bytes=max_json_bytes,
         )
 
-    def _extract_content(self, html: str, watch_config: WatchConfig) -> Optional["ExtractedContent"]:
+    def _extract_all_content(
+        self,
+        html: str,
+        watch_config: WatchConfig,
+    ) -> tuple[List[ExtractedContent], RepresentationType, Optional[List[str]]]:
         """
-        Extract content from HTML using SelectorExtractor.
+        Extract all content representations from HTML.
+
+        When prefer_structured=True:
+        - Tries structured data extraction first (JSON-LD/microdata)
+        - If structured data is rich (confidence >= 0.5), includes it
+        - Always does text extraction
+        - Returns JSON as primary if structured data is rich
+
+        When prefer_structured=False:
+        - Only does text extraction
+        - Returns TEXT as primary
+
+        Args:
+            html: Raw HTML content
+            watch_config: WatchConfig with extraction settings
+
+        Returns:
+            Tuple of (representations list, primary representation type, selectors_tried)
+        """
+        representations: List[ExtractedContent] = []
+        primary_rep = RepresentationType.TEXT
+        selectors_tried: Optional[List[str]] = None
+
+        prefer_structured = watch_config.extractor.prefer_structured
+
+        # Try structured extraction first if prefer_structured is True
+        structured_content: Optional[ExtractedContent] = None
+        if prefer_structured:
+            structured_content = self._extract_structured(html)
+            # Include structured data if confidence meets threshold
+            if (
+                structured_content is not None
+                and structured_content.confidence >= STRUCTURED_DATA_CONFIDENCE_THRESHOLD
+            ):
+                representations.append(structured_content)
+                primary_rep = RepresentationType.JSON
+
+        # Always do text extraction
+        text_content = self._extract_text(html, watch_config)
+        if text_content is not None:
+            representations.append(text_content)
+
+            # Get selectors_tried from text extraction metadata
+            if text_content.metadata:
+                selectors_tried = text_content.metadata.get("selectors_tried")
+                if selectors_tried is None and text_content.metadata.get("selector_used"):
+                    selectors_tried = [text_content.metadata["selector_used"]]
+
+        # If no structured data was found or confidence was low, text is primary
+        if not representations or (structured_content is None or
+                                   structured_content.confidence < STRUCTURED_DATA_CONFIDENCE_THRESHOLD):
+            primary_rep = RepresentationType.TEXT
+
+        return representations, primary_rep, selectors_tried
+
+    def _extract_structured(self, html: str) -> Optional[ExtractedContent]:
+        """
+        Extract structured data (JSON-LD/microdata) from HTML.
+
+        Args:
+            html: Raw HTML content
+
+        Returns:
+            ExtractedContent with JSON representation or None
+        """
+        # Create extractor on demand if not injected
+        extractor = self._structured_extractor
+        if extractor is None:
+            extractor = StructuredDataExtractor()
+
+        try:
+            return extractor.extract(html)
+        except Exception as e:
+            logger.debug("Structured data extraction failed: %s", str(e))
+            return None
+
+    def _extract_text(self, html: str, watch_config: WatchConfig) -> Optional[ExtractedContent]:
+        """
+        Extract text content from HTML using SelectorExtractor.
 
         Args:
             html: Raw HTML content
@@ -265,8 +353,6 @@ class ContentPipeline:
         Returns:
             ExtractedContent or None if extraction fails
         """
-        from monitoring.content_pipeline.models import ExtractedContent
-
         # Get selectors from config
         selectors = watch_config.extractor.selectors or ["body"]
 
@@ -286,3 +372,18 @@ class ContentPipeline:
             remove_selectors=remove_selectors,
             fallback_config=fallback_config,
         )
+
+    def _extract_content(self, html: str, watch_config: WatchConfig) -> Optional[ExtractedContent]:
+        """
+        Extract content from HTML using SelectorExtractor.
+
+        DEPRECATED: Use _extract_all_content for multiple representations.
+
+        Args:
+            html: Raw HTML content
+            watch_config: WatchConfig with extraction settings
+
+        Returns:
+            ExtractedContent or None if extraction fails
+        """
+        return self._extract_text(html, watch_config)
