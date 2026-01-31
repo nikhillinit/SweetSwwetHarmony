@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Static Page - No SPA</title>
+</head>
+<body>
+    <header>
+        <h1>Welcome to Our Static Page</h1>
+        <nav>
+            <a href="/">Home</a>
+            <a href="/about">About</a>
+            <a href="/contact">Contact</a>
+        </nav>
+    </header>
+    <main>
+        <article>
+            <h2>About Our Company</h2>
+            <p>We are a technology company focused on innovation and quality.</p>
+            <p>Founded in 2020, we have grown to serve customers worldwide.</p>
+            <ul>
+                <li>High-quality products</li>
+                <li>Excellent customer service</li>
+                <li>Fast shipping</li>
+            </ul>
+        </article>
+    </main>
+    <footer>
+        <p>&copy; 2024 Static Company</p>
+    </footer>
+    <script>
+        // Regular JavaScript - no hydration data
+        console.log('Page loaded');
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('DOM ready');
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Products - Acme Store</title>
+    <meta name="description" content="Browse our product catalog">
+</head>
+<body>
+    <div id="__next">
+        <header>
+            <nav>
+                <a href="/">Acme Store</a>
+                <ul>
+                    <li><a href="/products">Products</a></li>
+                    <li><a href="/about">About</a></li>
+                    <li><a href="/contact">Contact</a></li>
+                </ul>
+            </nav>
+        </header>
+        <main>
+            <h1>Our Products</h1>
+            <div class="product-grid">
+                <!-- Products rendered by React -->
+                <div class="skeleton-loading">Loading products...</div>
+            </div>
+        </main>
+        <footer>
+            <p>&copy; 2024 Acme Store</p>
+        </footer>
+    </div>
+    <script id="__NEXT_DATA__" type="application/json">
+        {
+            "props": {
+                "pageProps": {
+                    "products": [
+                        {
+                            "id": "prod_001",
+                            "name": "Premium Widget",
+                            "description": "A high-quality widget for all your needs",
+                            "price": 29.99,
+                            "currency": "USD",
+                            "category": "Electronics",
+                            "inStock": true,
+                            "rating": 4.5,
+                            "reviews": 128
+                        },
+                        {
+                            "id": "prod_002",
+                            "name": "Deluxe Gadget",
+                            "description": "The ultimate gadget experience",
+                            "price": 49.99,
+                            "currency": "USD",
+                            "category": "Electronics",
+                            "inStock": true,
+                            "rating": 4.8,
+                            "reviews": 256
+                        },
+                        {
+                            "id": "prod_003",
+                            "name": "Basic Tool",
+                            "description": "Reliable and affordable",
+                            "price": 9.99,
+                            "currency": "USD",
+                            "category": "Tools",
+                            "inStock": false,
+                            "rating": 4.2,
+                            "reviews": 64
+                        }
+                    ],
+                    "pagination": {
+                        "page": 1,
+                        "perPage": 12,
+                        "total": 3,
+                        "totalPages": 1
+                    },
+                    "filters": {
+                        "categories": ["Electronics", "Tools", "Home"],
+                        "priceRange": {"min": 0, "max": 100}
+                    }
+                },
+                "__N_SSG": true
+            },
+            "page": "/products",
+            "query": {},
+            "buildId": "abc123xyz",
+            "runtimeConfig": {},
+            "isFallback": false,
+            "gssp": false,
+            "appGip": true,
+            "scriptLoader": []
+        }
+    </script>
+    <script src="/_next/static/chunks/main.js"></script>
+</body>
+</html>
