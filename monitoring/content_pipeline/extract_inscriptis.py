@@ -19,10 +19,13 @@ Usage:
     result = extractor.extract(html)
 """
 
+import logging
 import time
 from typing import Any, Dict, Optional
 
 from inscriptis import get_text
+
+logger = logging.getLogger(__name__)
 from inscriptis.model.config import ParserConfig
 
 from monitoring.content_pipeline.models import ExtractedContent, RepresentationType
@@ -94,17 +97,21 @@ class InscriptisExtractor:
             # Calculate extraction time
             extraction_time_ms = int((time.perf_counter() - start_time) * 1000)
 
+            # Calculate confidence based on content length
+            confidence = self._calculate_confidence(text)
+
             return ExtractedContent(
                 representation_type=RepresentationType.TEXT,
                 content=text,
                 extractor_name="inscriptis_v1",
                 extraction_time_ms=extraction_time_ms,
-                confidence=1.0,
+                confidence=confidence,
                 metadata=self._build_metadata(),
             )
 
-        except Exception:
-            # If inscriptis fails, return empty result
+        except Exception as e:
+            # Log the exception for debugging
+            logger.debug(f"Inscriptis extraction failed: {e}")
             return self._empty_result(start_time)
 
     def _empty_result(self, start_time: float) -> ExtractedContent:
@@ -127,6 +134,30 @@ class InscriptisExtractor:
             confidence=0.0,
             metadata=self._build_metadata(),
         )
+
+    def _calculate_confidence(self, text: str) -> float:
+        """
+        Calculate confidence score based on content length.
+
+        Confidence levels:
+        - 1.0: Normal output (>= 200 chars)
+        - 0.8: Short output (50-199 chars)
+        - 0.5: Very short output (< 50 chars)
+
+        Args:
+            text: Extracted text content
+
+        Returns:
+            Confidence score between 0.0 and 1.0
+        """
+        content_length = len(text.strip())
+
+        if content_length < 50:
+            return 0.5
+        elif content_length < 200:
+            return 0.8
+        else:
+            return 1.0
 
     def _build_metadata(self) -> Dict[str, Any]:
         """
