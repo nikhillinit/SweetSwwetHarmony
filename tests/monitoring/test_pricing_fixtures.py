@@ -320,11 +320,11 @@ class TestContentPipelineWithStructuredData:
         })
 
         with patch(
-            "monitoring.content_pipeline.orchestrator.HttpxTransport"
-        ) as MockTransport:
-            mock_transport = MagicMock()
-            mock_transport.fetch = AsyncMock(return_value=mock_artifact)
-            MockTransport.return_value = mock_transport
+            "monitoring.content_pipeline.orchestrator.TransportEscalator"
+        ) as MockEscalator:
+            mock_escalator = MagicMock()
+            mock_escalator.fetch = AsyncMock(return_value=mock_artifact)
+            MockEscalator.return_value = mock_escalator
 
             pipeline = ContentPipeline()
             result = await pipeline.process_url(
@@ -365,11 +365,11 @@ class TestContentPipelineWithStructuredData:
         })
 
         with patch(
-            "monitoring.content_pipeline.orchestrator.HttpxTransport"
-        ) as MockTransport:
-            mock_transport = MagicMock()
-            mock_transport.fetch = AsyncMock(return_value=mock_artifact)
-            MockTransport.return_value = mock_transport
+            "monitoring.content_pipeline.orchestrator.TransportEscalator"
+        ) as MockEscalator:
+            mock_escalator = MagicMock()
+            mock_escalator.fetch = AsyncMock(return_value=mock_artifact)
+            MockEscalator.return_value = mock_escalator
 
             pipeline = ContentPipeline()
             result = await pipeline.process_url(
@@ -402,11 +402,11 @@ class TestContentPipelineWithStructuredData:
         })
 
         with patch(
-            "monitoring.content_pipeline.orchestrator.HttpxTransport"
-        ) as MockTransport:
-            mock_transport = MagicMock()
-            mock_transport.fetch = AsyncMock(return_value=mock_artifact)
-            MockTransport.return_value = mock_transport
+            "monitoring.content_pipeline.orchestrator.TransportEscalator"
+        ) as MockEscalator:
+            mock_escalator = MagicMock()
+            mock_escalator.fetch = AsyncMock(return_value=mock_artifact)
+            MockEscalator.return_value = mock_escalator
 
             pipeline = ContentPipeline()
             result = await pipeline.process_url(

@@ -29,6 +29,8 @@ class HttpxTransport:
     Content size limits are enforced via streaming to avoid memory bombs:
     - HTML/unknown: 5MB default
     - JSON: 2MB default
+
+    HTTP/2 is enabled by default for better performance and connection multiplexing.
     """
 
     # Default max content sizes
@@ -41,6 +43,9 @@ class HttpxTransport:
 
     # User-Agent string
     user_agent: str = "DiscoveryEngine/1.0 (ContentPipeline; +https://github.com/harmonic)"
+
+    # HTTP/2 enabled by default
+    http2_enabled: bool = True
 
     def _get_limit_for_content_type(
         self,
@@ -120,7 +125,7 @@ class HttpxTransport:
         # Record start time for timing
         start_time = time.perf_counter()
 
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(http2=self.http2_enabled) as client:
             async with client.stream(
                 "GET",
                 url,

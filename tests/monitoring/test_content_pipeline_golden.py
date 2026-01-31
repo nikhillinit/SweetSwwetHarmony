@@ -198,11 +198,11 @@ class TestGoldenFilePricingPage:
         mock_artifact = create_mock_fetch_artifact(url, html_content)
 
         with patch(
-            "monitoring.content_pipeline.orchestrator.HttpxTransport"
-        ) as MockTransport:
-            mock_transport = MagicMock()
-            mock_transport.fetch = AsyncMock(return_value=mock_artifact)
-            MockTransport.return_value = mock_transport
+            "monitoring.content_pipeline.orchestrator.TransportEscalator"
+        ) as MockEscalator:
+            mock_escalator = MagicMock()
+            mock_escalator.fetch = AsyncMock(return_value=mock_artifact)
+            MockEscalator.return_value = mock_escalator
 
             pipeline = ContentPipeline()
             result = await pipeline.process_url(
@@ -247,11 +247,11 @@ class TestGoldenFileBlogPost:
         mock_artifact = create_mock_fetch_artifact(url, html_content)
 
         with patch(
-            "monitoring.content_pipeline.orchestrator.HttpxTransport"
-        ) as MockTransport:
-            mock_transport = MagicMock()
-            mock_transport.fetch = AsyncMock(return_value=mock_artifact)
-            MockTransport.return_value = mock_transport
+            "monitoring.content_pipeline.orchestrator.TransportEscalator"
+        ) as MockEscalator:
+            mock_escalator = MagicMock()
+            mock_escalator.fetch = AsyncMock(return_value=mock_artifact)
+            MockEscalator.return_value = mock_escalator
 
             pipeline = ContentPipeline()
             result = await pipeline.process_url(
@@ -296,11 +296,11 @@ class TestGoldenFileCareersPage:
         mock_artifact = create_mock_fetch_artifact(url, html_content)
 
         with patch(
-            "monitoring.content_pipeline.orchestrator.HttpxTransport"
-        ) as MockTransport:
-            mock_transport = MagicMock()
-            mock_transport.fetch = AsyncMock(return_value=mock_artifact)
-            MockTransport.return_value = mock_transport
+            "monitoring.content_pipeline.orchestrator.TransportEscalator"
+        ) as MockEscalator:
+            mock_escalator = MagicMock()
+            mock_escalator.fetch = AsyncMock(return_value=mock_artifact)
+            MockEscalator.return_value = mock_escalator
 
             pipeline = ContentPipeline()
             result = await pipeline.process_url(
@@ -345,11 +345,11 @@ class TestGoldenFileMinimalPage:
         mock_artifact = create_mock_fetch_artifact(url, html_content)
 
         with patch(
-            "monitoring.content_pipeline.orchestrator.HttpxTransport"
-        ) as MockTransport:
-            mock_transport = MagicMock()
-            mock_transport.fetch = AsyncMock(return_value=mock_artifact)
-            MockTransport.return_value = mock_transport
+            "monitoring.content_pipeline.orchestrator.TransportEscalator"
+        ) as MockEscalator:
+            mock_escalator = MagicMock()
+            mock_escalator.fetch = AsyncMock(return_value=mock_artifact)
+            MockEscalator.return_value = mock_escalator
 
             pipeline = ContentPipeline()
             result = await pipeline.process_url(
@@ -394,11 +394,11 @@ class TestGoldenFileLandingPage:
         mock_artifact = create_mock_fetch_artifact(url, html_content)
 
         with patch(
-            "monitoring.content_pipeline.orchestrator.HttpxTransport"
-        ) as MockTransport:
-            mock_transport = MagicMock()
-            mock_transport.fetch = AsyncMock(return_value=mock_artifact)
-            MockTransport.return_value = mock_transport
+            "monitoring.content_pipeline.orchestrator.TransportEscalator"
+        ) as MockEscalator:
+            mock_escalator = MagicMock()
+            mock_escalator.fetch = AsyncMock(return_value=mock_artifact)
+            MockEscalator.return_value = mock_escalator
 
             pipeline = ContentPipeline()
             result = await pipeline.process_url(
@@ -497,11 +497,11 @@ class TestGoldenFileContentVerification:
         mock_artifact = create_mock_fetch_artifact(url, html_content)
 
         with patch(
-            "monitoring.content_pipeline.orchestrator.HttpxTransport"
-        ) as MockTransport:
-            mock_transport = MagicMock()
-            mock_transport.fetch = AsyncMock(return_value=mock_artifact)
-            MockTransport.return_value = mock_transport
+            "monitoring.content_pipeline.orchestrator.TransportEscalator"
+        ) as MockEscalator:
+            mock_escalator = MagicMock()
+            mock_escalator.fetch = AsyncMock(return_value=mock_artifact)
+            MockEscalator.return_value = mock_escalator
 
             pipeline = ContentPipeline()
             result = await pipeline.process_url(watch_id=1, url=url)
@@ -521,11 +521,11 @@ class TestGoldenFileContentVerification:
         mock_artifact = create_mock_fetch_artifact(url, html_content)
 
         with patch(
-            "monitoring.content_pipeline.orchestrator.HttpxTransport"
-        ) as MockTransport:
-            mock_transport = MagicMock()
-            mock_transport.fetch = AsyncMock(return_value=mock_artifact)
-            MockTransport.return_value = mock_transport
+            "monitoring.content_pipeline.orchestrator.TransportEscalator"
+        ) as MockEscalator:
+            mock_escalator = MagicMock()
+            mock_escalator.fetch = AsyncMock(return_value=mock_artifact)
+            MockEscalator.return_value = mock_escalator
 
             pipeline = ContentPipeline()
             result = await pipeline.process_url(watch_id=2, url=url)
@@ -544,11 +544,11 @@ class TestGoldenFileContentVerification:
         mock_artifact = create_mock_fetch_artifact(url, html_content)
 
         with patch(
-            "monitoring.content_pipeline.orchestrator.HttpxTransport"
-        ) as MockTransport:
-            mock_transport = MagicMock()
-            mock_transport.fetch = AsyncMock(return_value=mock_artifact)
-            MockTransport.return_value = mock_transport
+            "monitoring.content_pipeline.orchestrator.TransportEscalator"
+        ) as MockEscalator:
+            mock_escalator = MagicMock()
+            mock_escalator.fetch = AsyncMock(return_value=mock_artifact)
+            MockEscalator.return_value = mock_escalator
 
             pipeline = ContentPipeline()
             result = await pipeline.process_url(watch_id=3, url=url)
@@ -572,11 +572,11 @@ class TestGoldenFileContentVerification:
         mock_artifact = create_mock_fetch_artifact(url, html_content)
 
         with patch(
-            "monitoring.content_pipeline.orchestrator.HttpxTransport"
-        ) as MockTransport:
-            mock_transport = MagicMock()
-            mock_transport.fetch = AsyncMock(return_value=mock_artifact)
-            MockTransport.return_value = mock_transport
+            "monitoring.content_pipeline.orchestrator.TransportEscalator"
+        ) as MockEscalator:
+            mock_escalator = MagicMock()
+            mock_escalator.fetch = AsyncMock(return_value=mock_artifact)
+            MockEscalator.return_value = mock_escalator
 
             pipeline = ContentPipeline()
             result = await pipeline.process_url(watch_id=4, url=url)

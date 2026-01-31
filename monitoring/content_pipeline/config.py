@@ -83,6 +83,7 @@ class TransportConfig:
         on_timeout: Transport to use on timeout
         max_html_bytes: Maximum size for HTML content (default: 5MB)
         max_json_bytes: Maximum size for JSON content (default: 2MB)
+        user_agent_profile: Browser profile for curl_cffi (e.g., "chrome", "firefox", "safari")
     """
     initial: str = "httpx"
     on_403: Optional[str] = None
@@ -90,6 +91,7 @@ class TransportConfig:
     on_timeout: Optional[str] = None
     max_html_bytes: int = 5_242_880  # 5MB
     max_json_bytes: int = 2_097_152  # 2MB
+    user_agent_profile: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -102,6 +104,8 @@ class TransportConfig:
             result["on_timeout"] = self.on_timeout
         result["max_html_bytes"] = self.max_html_bytes
         result["max_json_bytes"] = self.max_json_bytes
+        if self.user_agent_profile is not None:
+            result["user_agent_profile"] = self.user_agent_profile
         return result
 
     @classmethod
@@ -114,6 +118,7 @@ class TransportConfig:
             on_timeout=data.get("on_timeout"),
             max_html_bytes=data.get("max_html_bytes", 5_242_880),
             max_json_bytes=data.get("max_json_bytes", 2_097_152),
+            user_agent_profile=data.get("user_agent_profile"),
         )
 
 
