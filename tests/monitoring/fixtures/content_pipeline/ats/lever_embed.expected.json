@@ -1,0 +1,6 @@
+{
+    "provider": "lever",
+    "board_id": "financeapp",
+    "api_url": "https://api.lever.co/v0/postings/financeapp",
+    "detected": true
+}

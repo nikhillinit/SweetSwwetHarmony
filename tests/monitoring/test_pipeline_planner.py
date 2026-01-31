@@ -448,3 +448,175 @@ class TestWatchConfigMetadataExtension:
         parsed = json.loads(json_str)
         assert "metadata" in parsed
         assert parsed["metadata"]["auto_selected"] is True
+
+
+class TestPipelinePlannerATSDiscovery:
+    """Test ATS embed detection in PipelinePlanner."""
+
+    def test_careers_with_greenhouse_embed_uses_ats_preset(self):
+        """Careers page with Greenhouse embed should use ats_api_v1 preset."""
+        from monitoring.content_pipeline.planner import PipelinePlanner
+
+        planner = PipelinePlanner()
+        html = """
+        <html>
+        <body>
+            <h1>Careers at Acme Corp</h1>
+            <div id="grnhse_app"></div>
+            <script src="https://boards.greenhouse.io/embed/job_board/js?for=acmecorp"></script>
+        </body>
+        </html>
+        """
+
+        result = planner.plan("https://acme.com/careers", html=html)
+
+        assert result.preset == "ats_api_v1"
+        assert result.metadata.get("ats_provider") == "greenhouse"
+        assert result.metadata.get("ats_board_id") == "acmecorp"
+        assert result.metadata.get("ats_api_url") == "https://boards-api.greenhouse.io/v1/boards/acmecorp/jobs"
+
+    def test_careers_with_lever_embed_uses_ats_preset(self):
+        """Careers page with Lever embed should use ats_api_v1 preset."""
+        from monitoring.content_pipeline.planner import PipelinePlanner
+
+        planner = PipelinePlanner()
+        html = """
+        <html>
+        <body>
+            <h1>Join Our Team</h1>
+            <a href="https://jobs.lever.co/coolstartup">View Openings</a>
+        </body>
+        </html>
+        """
+
+        result = planner.plan("https://cool.io/careers", html=html)
+
+        assert result.preset == "ats_api_v1"
+        assert result.metadata.get("ats_provider") == "lever"
+        assert result.metadata.get("ats_board_id") == "coolstartup"
+
+    def test_careers_with_ashby_embed_uses_ats_preset(self):
+        """Careers page with Ashby embed should use ats_api_v1 preset."""
+        from monitoring.content_pipeline.planner import PipelinePlanner
+
+        planner = PipelinePlanner()
+        html = """
+        <html>
+        <body>
+            <h1>Work With Us</h1>
+            <a href="https://jobs.ashbyhq.com/techcompany">See Jobs</a>
+        </body>
+        </html>
+        """
+
+        result = planner.plan("https://tech.co/careers", html=html)
+
+        assert result.preset == "ats_api_v1"
+        assert result.metadata.get("ats_provider") == "ashby"
+        assert result.metadata.get("ats_board_id") == "techcompany"
+
+    def test_careers_without_ats_uses_default(self):
+        """Careers page without ATS embed should use default preset."""
+        from monitoring.content_pipeline.planner import PipelinePlanner
+
+        planner = PipelinePlanner()
+        html = """
+        <html>
+        <body>
+            <h1>Careers</h1>
+            <p>Email us at jobs@company.com</p>
+        </body>
+        </html>
+        """
+
+        result = planner.plan("https://company.com/careers", html=html)
+
+        assert result.preset == "default"
+        assert result.metadata.get("page_type") == "careers"
+        assert "ats_provider" not in result.metadata
+
+    def test_non_careers_page_ignores_ats_detection(self):
+        """Non-careers pages should not trigger ATS detection."""
+        from monitoring.content_pipeline.planner import PipelinePlanner
+
+        planner = PipelinePlanner()
+        # Even though HTML has Greenhouse link, pricing page should use pricing preset
+        html = """
+        <html>
+        <body>
+            <h1>Pricing</h1>
+            <a href="https://boards.greenhouse.io/acme">We're hiring!</a>
+        </body>
+        </html>
+        """
+
+        result = planner.plan("https://acme.com/pricing", html=html)
+
+        assert result.preset == "pricing_table_v1"
+        assert result.metadata.get("page_type") == "pricing"
+        # ATS metadata should not be present
+        assert "ats_provider" not in result.metadata
+
+    def test_careers_page_without_html_uses_default(self):
+        """Careers page without HTML content should use default preset."""
+        from monitoring.content_pipeline.planner import PipelinePlanner
+
+        planner = PipelinePlanner()
+
+        # No HTML provided - can't detect ATS
+        result = planner.plan("https://company.com/careers")
+
+        assert result.preset == "default"
+        assert result.metadata.get("page_type") == "careers"
+
+    def test_explicit_config_overrides_ats_detection(self):
+        """Explicit config should override ATS auto-detection."""
+        from monitoring.content_pipeline.planner import PipelinePlanner
+
+        planner = PipelinePlanner()
+        html = """
+        <html>
+        <body>
+            <script src="https://boards.greenhouse.io/embed/job_board/js?for=acme"></script>
+        </body>
+        </html>
+        """
+        explicit_config = json.dumps({"preset": "spa_hydration_v1"})
+
+        result = planner.plan(
+            "https://acme.com/careers",
+            config_json=explicit_config,
+            html=html,
+        )
+
+        # Explicit config wins
+        assert result.preset == "spa_hydration_v1"
+        assert result.metadata.get("auto_selected") is False
+
+    def test_ats_metadata_includes_confidence(self):
+        """ATS detection metadata should include confidence."""
+        from monitoring.content_pipeline.planner import PipelinePlanner
+
+        planner = PipelinePlanner()
+        html = """
+        <script src="https://boards.greenhouse.io/embed/job_board/js?for=company"></script>
+        """
+
+        result = planner.plan("https://company.com/careers", html=html)
+
+        assert "ats_confidence" in result.metadata
+        assert 0.0 <= result.metadata["ats_confidence"] <= 1.0
+
+    def test_jobs_url_triggers_ats_detection(self):
+        """Jobs URL should also trigger ATS detection."""
+        from monitoring.content_pipeline.planner import PipelinePlanner
+
+        planner = PipelinePlanner()
+        html = """
+        <a href="https://jobs.lever.co/healthtech">Apply Now</a>
+        """
+
+        result = planner.plan("https://health.tech/jobs", html=html)
+
+        assert result.preset == "ats_api_v1"
+        assert result.metadata.get("ats_provider") == "lever"
