@@ -42,10 +42,12 @@ class ExtractorConfig:
         preset: Name of the extraction preset (e.g., "default", "article", "spa")
         selectors: Optional CSS selectors for custom extraction
         fallback_on_empty: If True, fall back to full-page extraction when selectors return empty
+        prefer_structured: If True, prefer structured data (JSON-LD) as primary when available
     """
     preset: str = "default"
     selectors: Optional[List[str]] = None
     fallback_on_empty: bool = True
+    prefer_structured: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary for JSON serialization."""
@@ -54,6 +56,8 @@ class ExtractorConfig:
             result["selectors"] = self.selectors
         if not self.fallback_on_empty:
             result["fallback_on_empty"] = self.fallback_on_empty
+        if self.prefer_structured:
+            result["prefer_structured"] = self.prefer_structured
         return result
 
     @classmethod
@@ -63,6 +67,7 @@ class ExtractorConfig:
             preset=data.get("preset", "default"),
             selectors=data.get("selectors"),
             fallback_on_empty=data.get("fallback_on_empty", True),
+            prefer_structured=data.get("prefer_structured", False),
         )
 
 
