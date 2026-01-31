@@ -142,11 +142,13 @@ class TestTransportConfig:
         assert config.on_timeout == "playwright"
 
     def test_to_dict_minimal(self):
-        """to_dict should only include set values."""
+        """to_dict should only include set values (plus defaults for size limits)."""
         config = TransportConfig()
         result = config.to_dict()
 
-        assert result == {"initial": "httpx"}
+        assert result["initial"] == "httpx"
+        assert result["max_html_bytes"] == 5_242_880  # 5MB default
+        assert result["max_json_bytes"] == 2_097_152  # 2MB default
         assert "on_403" not in result
         assert "on_429" not in result
         assert "on_timeout" not in result
