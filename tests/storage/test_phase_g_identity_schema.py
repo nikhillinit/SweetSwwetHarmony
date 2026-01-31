@@ -50,11 +50,11 @@ async def fresh_db() -> tuple[SignalStore, str]:
 # =============================================================================
 
 class TestSchemaVersion:
-    """Tests for schema version 21."""
+    """Tests for schema version (at least 21 for Phase G Sprint 2)."""
 
-    def test_current_schema_version_is_21(self):
-        """CURRENT_SCHEMA_VERSION should be 21 for Phase G Sprint 2."""
-        assert CURRENT_SCHEMA_VERSION == 21
+    def test_current_schema_version_is_at_least_21(self):
+        """CURRENT_SCHEMA_VERSION should be at least 21 (Phase G Sprint 2 baseline)."""
+        assert CURRENT_SCHEMA_VERSION >= 21
 
     @pytest.mark.asyncio
     async def test_migration_21_applied(self, fresh_db: tuple[SignalStore, str]):
