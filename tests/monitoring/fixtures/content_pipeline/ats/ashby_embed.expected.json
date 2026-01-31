@@ -1,0 +1,6 @@
+{
+    "provider": "ashby",
+    "board_id": "ailabs",
+    "api_url": "https://api.ashbyhq.com/posting-api/job-board/ailabs",
+    "detected": true
+}

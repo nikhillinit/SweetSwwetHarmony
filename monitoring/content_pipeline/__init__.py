@@ -21,6 +21,9 @@ Components:
 - normalize_layout_preserving: Normalize whitespace while preserving layout
 - normalize_aggressive: Collapse all whitespace to single spaces
 - ContentSizeExceededError: Raised when content exceeds configured size limits
+- ATSSignatureDetector: Detects ATS embeds (Greenhouse, Lever, Ashby, Workable)
+- ATSDiscoveryResult: Result of ATS detection with provider, board_id, and API URL
+- ATSProvider: Enum of supported ATS providers
 """
 
 from monitoring.content_pipeline.config import (
@@ -58,6 +61,13 @@ from monitoring.content_pipeline.normalize import (
     normalize_aggressive,
 )
 from monitoring.content_pipeline.orchestrator import ContentPipeline
+from monitoring.content_pipeline.ats_discovery import (
+    ATSSignatureDetector,
+    ATSDiscoveryResult,
+    ATSProvider,
+    detect_ats,
+    get_detector,
+)
 
 __all__ = [
     # Config classes
@@ -92,4 +102,10 @@ __all__ = [
     "ContentPipeline",
     # Exceptions
     "ContentSizeExceededError",
+    # ATS Discovery
+    "ATSSignatureDetector",
+    "ATSDiscoveryResult",
+    "ATSProvider",
+    "detect_ats",
+    "get_detector",
 ]

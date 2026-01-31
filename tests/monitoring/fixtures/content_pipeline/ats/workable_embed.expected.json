@@ -1,0 +1,6 @@
+{
+    "provider": "workable",
+    "board_id": "fooddeliveryco",
+    "api_url": "https://apply.workable.com/fooddeliveryco",
+    "detected": true
+}
