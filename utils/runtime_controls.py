@@ -1,0 +1,382 @@
+"""
+Runtime Controls for Negative Keyword Policy v2.
+
+Centralized parsing and normalization of environment variables and kwargs
+for v2 policy enablement. Handles:
+- Normalization: empty/whitespace → unset, case normalization
+- Membership validation: loader_mode, enablement values
+- Invariant enforcement: shadow/live → strict, live → execution enabled
+- Legacy mapping: enable_v2_policy → v2_enablement
+
+Bug hazards addressed:
+- #4: env var casing/whitespace/empty string pitfalls
+- #6: missing membership validation
+- #11: empty env var treated as real value
+
+Usage:
+    controls = RuntimeControls.from_env(
+        v2_enablement="shadow",
+        policy_loader_mode=None,  # will derive from enablement
+    )
+    print(controls.v2_enablement)  # "shadow"
+    print(controls.policy_loader_mode)  # "strict" (derived)
+"""
+
+from __future__ import annotations
+
+import logging
+import os
+from dataclasses import dataclass
+from typing import Optional
+
+logger = logging.getLogger(__name__)
+
+# Valid membership values
+VALID_LOADER_MODES = frozenset({"permissive", "strict"})
+VALID_ENABLEMENTS = frozenset({"disabled", "shadow", "live"})
+
+# Boolean parsing values
+TRUTHY_VALUES = frozenset({"true", "1", "yes", "on"})
+FALSY_VALUES = frozenset({"false", "0", "no", "off"})
+
+
+def _normalize_string(value: Optional[str]) -> Optional[str]:
+    """Normalize string value from env or args.
+
+    Rules:
+    - None → None (unset)
+    - "" or whitespace-only → None (treat as unset)
+    - Otherwise → stripped and lowercased
+
+    Bug #4 mitigation: centralized normalization prevents casing/whitespace issues.
+    Bug #11 mitigation: empty string → None, not empty string.
+    """
+    if value is None:
+        return None
+    stripped = value.strip()
+    if not stripped:
+        return None
+    return stripped.lower()
+
+
+def _parse_bool_env(
+    value: Optional[str],
+    derive_from_enablement: str,
+    env_var_name: str = "V2_EXECUTION_ENABLED",
+) -> bool:
+    """Parse boolean from environment variable with lenient handling.
+
+    Rules:
+    - Truthy: true, 1, yes, on
+    - Falsy: false, 0, no, off
+    - Unset/empty/whitespace: derive from enablement (shadow/live → True, disabled → False)
+    - Unrecognized non-empty: log WARNING, derive default
+
+    Args:
+        value: Raw env var value
+        derive_from_enablement: Resolved enablement to derive default from
+        env_var_name: Name of env var for logging
+
+    Returns:
+        Parsed boolean value
+    """
+    normalized = _normalize_string(value)
+
+    # Unset → derive from enablement
+    if normalized is None:
+        return derive_from_enablement in {"shadow", "live"}
+
+    # Truthy values
+    if normalized in TRUTHY_VALUES:
+        return True
+
+    # Falsy values
+    if normalized in FALSY_VALUES:
+        return False
+
+    # Unrecognized → warn and derive
+    logger.warning(
+        "Unrecognized boolean value for %s: '%s'. "
+        "Expected true/false/1/0/yes/no/on/off. "
+        "Deriving default from enablement '%s'.",
+        env_var_name,
+        value,
+        derive_from_enablement,
+    )
+    return derive_from_enablement in {"shadow", "live"}
+
+
+@dataclass
+class RuntimeControls:
+    """Runtime controls for v2 policy behavior.
+
+    Fields:
+        policy_loader_mode: "permissive" or "strict"
+        v2_enablement: "disabled", "shadow", or "live"
+        v2_execution_enabled: Whether v2 scoring is active
+
+    Invariants (enforced at construction):
+        - enablement in {shadow, live} → loader_mode must be "strict"
+        - enablement == live → v2_execution_enabled must be True
+    """
+
+    policy_loader_mode: str
+    v2_enablement: str
+    v2_execution_enabled: bool
+
+    def __post_init__(self):
+        """Validate membership after initialization."""
+        # Bug #6 mitigation: explicit membership validation
+        if self.policy_loader_mode not in VALID_LOADER_MODES:
+            raise ValueError(
+                f"Invalid policy_loader_mode: '{self.policy_loader_mode}'. "
+                f"Must be one of: {sorted(VALID_LOADER_MODES)}"
+            )
+        if self.v2_enablement not in VALID_ENABLEMENTS:
+            raise ValueError(
+                f"Invalid v2_enablement: '{self.v2_enablement}'. "
+                f"Must be one of: {sorted(VALID_ENABLEMENTS)}"
+            )
+
+    @classmethod
+    def from_env(
+        cls,
+        *,
+        v2_enablement: Optional[str] = None,
+        policy_loader_mode: Optional[str] = None,
+        v2_execution_enabled: Optional[bool] = None,
+        enable_v2_policy: Optional[bool] = None,
+    ) -> "RuntimeControls":
+        """Create RuntimeControls from kwargs and environment variables.
+
+        Precedence (highest to lowest):
+        1. Explicit kwargs (v2_enablement, policy_loader_mode, v2_execution_enabled)
+        2. Legacy kwarg (enable_v2_policy) - only if modern not provided
+        3. Environment variables (V2_ENABLEMENT, POLICY_LOADER_MODE, V2_EXECUTION_ENABLED)
+        4. Defaults (disabled, permissive/strict derived, derived from enablement)
+
+        Legacy mapping:
+        - enable_v2_policy=True → v2_enablement="shadow"
+        - enable_v2_policy=False → v2_enablement="disabled"
+
+        Invariants (auto-corrected with WARNING for env misconfig):
+        - shadow/live → loader_mode must be "strict"
+        - live → v2_execution_enabled must be True
+
+        Invalid explicit args raise ValueError (programmer error).
+        Invalid env values log WARNING and use defaults (config error).
+        """
+        # Step 1: Resolve enablement
+        resolved_enablement = cls._resolve_enablement(
+            v2_enablement=v2_enablement,
+            enable_v2_policy=enable_v2_policy,
+        )
+
+        # Step 2: Resolve loader mode (may depend on enablement)
+        resolved_loader_mode = cls._resolve_loader_mode(
+            policy_loader_mode=policy_loader_mode,
+            enablement=resolved_enablement,
+        )
+
+        # Step 3: Resolve execution enabled (depends on enablement)
+        resolved_execution = cls._resolve_execution_enabled(
+            v2_execution_enabled=v2_execution_enabled,
+            enablement=resolved_enablement,
+        )
+
+        # Step 4: Enforce invariants with corrections
+        resolved_loader_mode, resolved_execution = cls._enforce_invariants(
+            enablement=resolved_enablement,
+            loader_mode=resolved_loader_mode,
+            execution_enabled=resolved_execution,
+        )
+
+        # Log resolved values at DEBUG level
+        logger.debug(
+            "RuntimeControls resolved: enablement=%s, loader_mode=%s, execution=%s",
+            resolved_enablement,
+            resolved_loader_mode,
+            resolved_execution,
+        )
+
+        return cls(
+            policy_loader_mode=resolved_loader_mode,
+            v2_enablement=resolved_enablement,
+            v2_execution_enabled=resolved_execution,
+        )
+
+    @classmethod
+    def _resolve_enablement(
+        cls,
+        v2_enablement: Optional[str],
+        enable_v2_policy: Optional[bool],
+    ) -> str:
+        """Resolve v2_enablement from args and env.
+
+        Precedence:
+        1. Explicit v2_enablement kwarg
+        2. Legacy enable_v2_policy mapped
+        3. Env V2_ENABLEMENT
+        4. Default "disabled"
+        """
+        # 1. Explicit v2_enablement (highest priority)
+        if v2_enablement is not None:
+            normalized = _normalize_string(v2_enablement)
+            if normalized is None:
+                # Explicit empty string → treat as unset, fall through
+                pass
+            elif normalized not in VALID_ENABLEMENTS:
+                # Invalid explicit arg → programmer error
+                raise ValueError(
+                    f"Invalid v2_enablement: '{v2_enablement}'. "
+                    f"Must be one of: {sorted(VALID_ENABLEMENTS)}"
+                )
+            else:
+                return normalized
+
+        # 2. Legacy enable_v2_policy mapping (only if modern not provided)
+        if enable_v2_policy is not None:
+            if enable_v2_policy:
+                return "shadow"
+            else:
+                return "disabled"
+
+        # 3. Environment variable
+        env_value = os.environ.get("V2_ENABLEMENT")
+        normalized_env = _normalize_string(env_value)
+        if normalized_env is not None:
+            if normalized_env not in VALID_ENABLEMENTS:
+                # Invalid env value → warn and treat as unset
+                logger.warning(
+                    "Invalid V2_ENABLEMENT env value: '%s'. "
+                    "Expected one of: %s. Using default 'disabled'.",
+                    env_value,
+                    sorted(VALID_ENABLEMENTS),
+                )
+            else:
+                return normalized_env
+
+        # 4. Default
+        return "disabled"
+
+    @classmethod
+    def _resolve_loader_mode(
+        cls,
+        policy_loader_mode: Optional[str],
+        enablement: str,
+    ) -> str:
+        """Resolve policy_loader_mode from args and env.
+
+        Precedence:
+        1. Explicit policy_loader_mode kwarg
+        2. Env POLICY_LOADER_MODE
+        3. Derived: shadow/live → "strict", else "permissive"
+        """
+        # 1. Explicit kwarg
+        if policy_loader_mode is not None:
+            normalized = _normalize_string(policy_loader_mode)
+            if normalized is None:
+                # Explicit empty → treat as unset
+                pass
+            elif normalized not in VALID_LOADER_MODES:
+                # Invalid explicit arg → programmer error
+                raise ValueError(
+                    f"Invalid policy_loader_mode: '{policy_loader_mode}'. "
+                    f"Must be one of: {sorted(VALID_LOADER_MODES)}"
+                )
+            else:
+                return normalized
+
+        # 2. Environment variable
+        env_value = os.environ.get("POLICY_LOADER_MODE")
+        normalized_env = _normalize_string(env_value)
+        if normalized_env is not None:
+            if normalized_env not in VALID_LOADER_MODES:
+                # Invalid env value → warn and treat as unset
+                logger.warning(
+                    "Invalid POLICY_LOADER_MODE env value: '%s'. "
+                    "Expected one of: %s. Deriving from enablement.",
+                    env_value,
+                    sorted(VALID_LOADER_MODES),
+                )
+            else:
+                return normalized_env
+
+        # 3. Derive from enablement
+        if enablement in {"shadow", "live"}:
+            return "strict"
+        return "permissive"
+
+    @classmethod
+    def _resolve_execution_enabled(
+        cls,
+        v2_execution_enabled: Optional[bool],
+        enablement: str,
+    ) -> bool:
+        """Resolve v2_execution_enabled from args and env.
+
+        Precedence:
+        1. Explicit v2_execution_enabled kwarg
+        2. Env V2_EXECUTION_ENABLED (with lenient parsing)
+        3. Derived: shadow/live → True, disabled → False
+        """
+        # 1. Explicit kwarg
+        if v2_execution_enabled is not None:
+            return v2_execution_enabled
+
+        # 2. Environment variable with lenient parsing
+        env_value = os.environ.get("V2_EXECUTION_ENABLED")
+        return _parse_bool_env(env_value, enablement)
+
+    @classmethod
+    def _enforce_invariants(
+        cls,
+        enablement: str,
+        loader_mode: str,
+        execution_enabled: bool,
+    ) -> tuple[str, bool]:
+        """Enforce invariants, auto-correcting with warnings.
+
+        Invariants:
+        - shadow/live → loader_mode must be "strict"
+        - live → execution_enabled must be True
+
+        Returns corrected (loader_mode, execution_enabled).
+        """
+        corrected_loader_mode = loader_mode
+        corrected_execution = execution_enabled
+
+        # Invariant 1: shadow/live requires strict
+        if enablement in {"shadow", "live"} and loader_mode != "strict":
+            logger.warning(
+                "Invariant violation: v2_enablement='%s' requires "
+                "policy_loader_mode='strict', but got '%s'. Auto-correcting to 'strict'.",
+                enablement,
+                loader_mode,
+            )
+            corrected_loader_mode = "strict"
+
+        # Invariant 2: live requires execution enabled
+        if enablement == "live" and not execution_enabled:
+            logger.warning(
+                "Invariant violation: v2_enablement='live' requires "
+                "v2_execution_enabled=True, but got False. Auto-correcting to True.",
+            )
+            corrected_execution = True
+
+        return corrected_loader_mode, corrected_execution
+
+    @property
+    def is_v2_active(self) -> bool:
+        """Check if v2 policy is active (not disabled)."""
+        return self.v2_enablement != "disabled"
+
+    @property
+    def is_shadow_mode(self) -> bool:
+        """Check if running in shadow mode."""
+        return self.v2_enablement == "shadow"
+
+    @property
+    def is_live_mode(self) -> bool:
+        """Check if running in live mode."""
+        return self.v2_enablement == "live"

@@ -13,6 +13,11 @@ Phase B Enhancements (from founder_intel_canonical):
 - Domain blacklist: localhost, example, staging, etc.
 - Additional negative keywords: boilerplate, template, tutorial, etc.
 
+Phase 0A: v2 Policy Infrastructure (scaffolding only, no scoring changes)
+- RuntimeControls: Centralized env/arg parsing for v2 enablement
+- PolicyLoader: YAML policy loading with permissive/strict modes
+- Zero-cost when disabled: No I/O when v2_enablement="disabled"
+
 Usage:
     from utils.thesis_matcher import ThesisMatcher, ThesisFit
 
@@ -23,14 +28,24 @@ Usage:
     # With domain analysis
     fit = matcher.score("Health app", domain_name="getfitness.com")
     print(f"Domain match: {fit.domain_match}")
+
+    # With v2 policy (shadow mode - logging only, no scoring changes yet)
+    matcher_v2 = ThesisMatcher(v2_enablement="shadow")
 """
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+
+if TYPE_CHECKING:
+    from utils.policy_loader import PolicyBundle
+    from utils.runtime_controls import RuntimeControls
+
+logger = logging.getLogger(__name__)
 
 
 class ConsumerThesis(str, Enum):
@@ -222,6 +237,54 @@ DOMAIN_BLACKLIST_FRAGMENTS: List[str] = [
 
 
 @dataclass
+class ThesisFitTrace:
+    """Explainability trace for thesis classification debugging.
+
+    Captures all decision points in the thesis matching process to enable
+    debugging and tuning of the scoring algorithm.
+
+    Fields:
+        matched_hard_negatives: Hard negative keywords that completely disqualify
+        soft_negatives: Soft negative keywords with their individual penalties
+        rescue_anchors_matched: Tier-grouped positive keywords that can rescue
+        rescue_blocked_by: Reason why rescue was blocked (if applicable)
+        aggregator_exception_triggered: Whether aggregator override was applied
+        applied_ai_path: AI-specific routing path (prosumer | role_based_b2b | None)
+        final_score: Final thesis fit score after all adjustments
+        routing_decision: Routing decision (QUALIFIED | HELD | REJECTED)
+        explanation: Human-readable explanation of the scoring decision
+
+    Example explanation:
+        "Score: 0.52. Soft negative 'platform' (-0.05) rescued by tier-1 anchor
+        'patient' (+0.35). Anti-rescue not triggered. Routed to QUALIFIED."
+    """
+    matched_hard_negatives: List[str] = field(default_factory=list)
+    soft_negatives: List[Tuple[str, float]] = field(default_factory=list)
+    rescue_anchors_matched: Dict[str, List[str]] = field(default_factory=dict)
+    rescue_blocked_by: Optional[str] = None
+    aggregator_exception_triggered: bool = False
+    applied_ai_path: Optional[str] = None
+    final_score: float = 0.0
+    routing_decision: str = "UNKNOWN"
+    explanation: str = ""
+
+    def to_dict(self) -> Dict:
+        """Convert trace to dictionary for serialization."""
+        return {
+            "matched_hard_negatives": self.matched_hard_negatives,
+            "soft_negatives": [{"keyword": kw, "penalty": penalty}
+                              for kw, penalty in self.soft_negatives],
+            "rescue_anchors_matched": self.rescue_anchors_matched,
+            "rescue_blocked_by": self.rescue_blocked_by,
+            "aggregator_exception_triggered": self.aggregator_exception_triggered,
+            "applied_ai_path": self.applied_ai_path,
+            "final_score": round(self.final_score, 3),
+            "routing_decision": self.routing_decision,
+            "explanation": self.explanation,
+        }
+
+
+@dataclass
 class ThesisFit:
     """Result of thesis matching."""
     thesis: ConsumerThesis
@@ -234,6 +297,8 @@ class ThesisFit:
     intent_phrases_matched: List[str] = field(default_factory=list)
     domain_match: bool = False
     domain_blacklisted: bool = False
+    # Gap 9: Explainability trace
+    trace: Optional[ThesisFitTrace] = None
 
     @property
     def is_fit(self) -> bool:
@@ -241,7 +306,7 @@ class ThesisFit:
         return self.score >= 0.4
 
     def to_dict(self) -> Dict:
-        return {
+        result = {
             "thesis": self.thesis.value,
             "score": round(self.score, 3),
             "matched_keywords": self.matched_keywords,
@@ -254,6 +319,10 @@ class ThesisFit:
             "domain_match": self.domain_match,
             "domain_blacklisted": self.domain_blacklisted,
         }
+        # Gap 9: Include trace if available
+        if self.trace:
+            result["trace"] = self.trace.to_dict()
+        return result
 
 
 class ThesisMatcher:
@@ -262,12 +331,37 @@ class ThesisMatcher:
 
     Uses keyword matching with weights to score thesis fit.
     Returns the best-matching thesis with a confidence score.
+
+    Phase 0A v2 Policy Support:
+    - Accepts v2_enablement, policy_loader_mode, v2_execution_enabled kwargs
+    - Legacy enable_v2_policy kwarg mapped to v2_enablement
+    - Zero-cost when disabled (no I/O, no policy loading)
+    - Scoring behavior unchanged in Phase 0A (scaffolding only)
     """
 
     def __init__(
         self,
         custom_keywords: Optional[Dict[ConsumerThesis, Dict[str, float]]] = None,
+        *,
+        enable_v2_policy: Optional[bool] = None,
+        v2_enablement: Optional[str] = None,
+        policy_loader_mode: Optional[str] = None,
+        v2_execution_enabled: Optional[bool] = None,
+        config_path: Optional[str] = None,
     ):
+        """Initialize ThesisMatcher with optional v2 policy configuration.
+
+        Args:
+            custom_keywords: Custom keyword weights to merge with defaults
+            enable_v2_policy: Legacy kwarg (True → shadow, False → disabled)
+            v2_enablement: "disabled", "shadow", or "live"
+            policy_loader_mode: "permissive" or "strict"
+            v2_execution_enabled: Whether v2 scoring is active
+            config_path: Explicit path to policy directory
+
+        Phase 0A: v2 infrastructure is wired but scoring behavior is unchanged.
+        """
+        # Initialize v1 keywords (always happens)
         self.keywords = {k: dict(v) for k, v in CONSUMER_KEYWORDS.items()}
         if custom_keywords:
             for thesis, kws in custom_keywords.items():
@@ -275,6 +369,61 @@ class ThesisMatcher:
                     self.keywords[thesis].update(kws)
                 else:
                     self.keywords[thesis] = kws
+
+        # Phase 0A: Wire v2 controls
+        self._controls: Optional["RuntimeControls"] = None
+        self._policy_bundle: Optional["PolicyBundle"] = None
+        self.config: Dict = {}  # Shallow copy of policies (Bug #5 mitigation)
+
+        # Step 1: Resolve RuntimeControls (validate-before-I/O)
+        # Import here to avoid circular imports and allow zero-cost when disabled
+        from utils.runtime_controls import RuntimeControls
+
+        self._controls = RuntimeControls.from_env(
+            v2_enablement=v2_enablement,
+            policy_loader_mode=policy_loader_mode,
+            v2_execution_enabled=v2_execution_enabled,
+            enable_v2_policy=enable_v2_policy,
+        )
+
+        # Step 2: Zero-cost when disabled - no I/O, no policy loading
+        if self._controls.v2_enablement == "disabled":
+            if config_path is not None:
+                logger.warning(
+                    "config_path='%s' supplied but v2_enablement='disabled'. "
+                    "Policy will not be loaded.",
+                    config_path,
+                )
+            # Leave _policy_bundle as None, config as empty dict
+            return
+
+        # Step 3: Load policies (only if v2 is enabled)
+        from utils.policy_loader import (
+            DEFAULT_V2_SPECS,
+            load_policy_bundle,
+            resolve_policy_dir,
+        )
+
+        policy_dir = resolve_policy_dir(explicit=config_path)
+        self._policy_bundle = load_policy_bundle(
+            base_dir=policy_dir,
+            specs=DEFAULT_V2_SPECS,
+            loader_mode=self._controls.policy_loader_mode,
+        )
+
+        # Bug #5 mitigation: Shallow copy of policies dict
+        # Top-level mutation of self.config won't affect bundle.policies
+        # Nested dicts remain shared (documented limitation)
+        self.config = dict(self._policy_bundle.policies)
+
+        logger.debug(
+            "ThesisMatcher initialized with v2 policy: enablement=%s, "
+            "loader_mode=%s, execution=%s, policies=%s",
+            self._controls.v2_enablement,
+            self._controls.policy_loader_mode,
+            self._controls.v2_execution_enabled,
+            list(self.config.keys()),
+        )
 
     def score(
         self,
@@ -293,6 +442,11 @@ class ThesisMatcher:
             ThesisFit with score, matched keywords, and domain analysis
         """
         if not text:
+            empty_trace = ThesisFitTrace(
+                final_score=0.0,
+                routing_decision="REJECTED",
+                explanation="Score: 0.00. Empty text provided. Routed to REJECTED.",
+            )
             return ThesisFit(
                 thesis=ConsumerThesis.UNKNOWN,
                 score=0.0,
@@ -303,6 +457,7 @@ class ThesisMatcher:
                 intent_phrases_matched=[],
                 domain_match=False,
                 domain_blacklisted=False,
+                trace=empty_trace,
             )
 
         normalized = self._normalize(text)
@@ -312,6 +467,12 @@ class ThesisMatcher:
         # Phase B: Check domain blacklist first
         domain_blacklisted = self._check_domain_blacklist(domain_name)
         if domain_blacklisted:
+            blacklist_trace = ThesisFitTrace(
+                final_score=0.0,
+                routing_decision="REJECTED",
+                explanation=f"Score: 0.00. Domain '{domain_name}' matched blacklist "
+                           f"(non-production). Routed to REJECTED.",
+            )
             return ThesisFit(
                 thesis=ConsumerThesis.UNKNOWN,
                 score=0.0,
@@ -322,6 +483,7 @@ class ThesisMatcher:
                 intent_phrases_matched=[],
                 domain_match=False,
                 domain_blacklisted=True,
+                trace=blacklist_trace,
             )
 
         # Score each thesis
@@ -375,6 +537,15 @@ class ThesisMatcher:
         else:
             confidence = "LOW"
 
+        # Generate explainability trace
+        trace = self._generate_trace(
+            best_score=best_score,
+            matched_keywords=matched_kws,
+            negative_matches=negative_matches,
+            intent_matches=intent_matches,
+            domain_match=domain_match,
+        )
+
         return ThesisFit(
             thesis=best_thesis if best_score > 0.1 else ConsumerThesis.UNKNOWN,
             score=best_score,
@@ -385,6 +556,7 @@ class ThesisMatcher:
             intent_phrases_matched=intent_matches,
             domain_match=domain_match,
             domain_blacklisted=False,
+            trace=trace,
         )
 
     def _normalize(self, text: str) -> str:
@@ -474,6 +646,83 @@ class ThesisMatcher:
             if fragment in domain_lower:
                 return True
         return False
+
+    def _generate_trace(
+        self,
+        best_score: float,
+        matched_keywords: List[str],
+        negative_matches: List[str],
+        intent_matches: List[str],
+        domain_match: bool,
+    ) -> ThesisFitTrace:
+        """Generate explainability trace for thesis classification.
+
+        This is a stub implementation that captures current state.
+        Full scoring logic (rescue anchors, anti-rescue, aggregator exceptions)
+        will be implemented in Task #13.
+
+        Args:
+            best_score: Final thesis fit score
+            matched_keywords: Positive keywords matched
+            negative_matches: Negative keywords matched
+            intent_matches: Intent phrases matched
+            domain_match: Whether domain pattern matched
+
+        Returns:
+            ThesisFitTrace with explanation
+        """
+        # Convert negative matches to soft negatives with penalties
+        soft_negatives = [
+            (kw, NEGATIVE_KEYWORDS.get(kw, 0.2))
+            for kw in negative_matches
+        ]
+
+        # Determine routing decision based on score
+        if best_score >= 0.3:
+            routing_decision = "QUALIFIED"
+        elif best_score >= 0.1:
+            routing_decision = "HELD"
+        else:
+            routing_decision = "REJECTED"
+
+        # Build human-readable explanation
+        explanation_parts = [f"Score: {best_score:.2f}."]
+
+        if matched_keywords:
+            explanation_parts.append(
+                f"Matched {len(matched_keywords)} positive keyword(s): "
+                f"{', '.join(matched_keywords[:3])}."
+            )
+
+        if soft_negatives:
+            total_penalty = sum(penalty for _, penalty in soft_negatives)
+            explanation_parts.append(
+                f"Soft negatives ({', '.join(kw for kw, _ in soft_negatives[:3])}) "
+                f"applied penalty: -{total_penalty * 0.5:.2f}."
+            )
+
+        if intent_matches:
+            explanation_parts.append(
+                f"Intent phrases boosted score: {', '.join(intent_matches)}."
+            )
+
+        if domain_match:
+            explanation_parts.append("Consumer domain pattern matched (+0.15).")
+
+        explanation_parts.append(f"Routed to {routing_decision}.")
+
+        # Note: Full rescue logic will be added in Task #13
+        return ThesisFitTrace(
+            matched_hard_negatives=[],  # Stub: no hard negatives yet
+            soft_negatives=soft_negatives,
+            rescue_anchors_matched={},  # Stub: rescue logic in Task #13
+            rescue_blocked_by=None,  # Stub: anti-rescue in Task #13
+            aggregator_exception_triggered=False,  # Stub: aggregator in Task #13
+            applied_ai_path=None,  # Stub: AI path detection in Task #13
+            final_score=best_score,
+            routing_decision=routing_decision,
+            explanation=" ".join(explanation_parts),
+        )
 
     def score_signals(self, signals: List[Dict]) -> ThesisFit:
         """Score a list of signals to determine thesis fit."""
