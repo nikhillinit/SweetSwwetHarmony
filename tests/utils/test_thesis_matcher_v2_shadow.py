@@ -106,3 +106,68 @@ class TestInternalDataclasses:
         assert penalty.matches == ["enterprise", "b2b"]
         assert penalty.raw_penalty == 1.0
         assert penalty.applied_penalty == 0.5
+
+
+class TestComputeCore:
+    """Test _compute_core() helper extraction."""
+
+    def test_compute_core_returns_core_score(self):
+        """_compute_core() should return a _CoreScore dataclass."""
+        from utils.thesis_matcher import ThesisMatcher, _CoreScore
+
+        matcher = ThesisMatcher(v2_enablement="disabled")
+        normalized = "healthy meal kits delivered"
+        core = matcher._compute_core(normalized, domain_name=None)
+
+        assert isinstance(core, _CoreScore)
+        assert core.normalized == normalized
+
+    def test_compute_core_scores_all_theses(self):
+        """_compute_core() should score all thesis categories."""
+        from utils.thesis_matcher import ThesisMatcher, ConsumerThesis
+
+        matcher = ThesisMatcher(v2_enablement="disabled")
+        core = matcher._compute_core("healthy meal kits delivered", domain_name=None)
+
+        # Should have scores for all theses
+        assert "consumer_cpg" in core.scores
+        assert "consumer_health_tech" in core.scores
+        assert "travel_hospitality" in core.scores
+        assert "consumer_marketplace" in core.scores
+
+    def test_compute_core_finds_best_thesis(self):
+        """_compute_core() should identify best matching thesis."""
+        from utils.thesis_matcher import ThesisMatcher, ConsumerThesis
+
+        matcher = ThesisMatcher(v2_enablement="disabled")
+        core = matcher._compute_core("fitness app wellness workout", domain_name=None)
+
+        assert core.best_thesis == ConsumerThesis.CONSUMER_HEALTH_TECH
+        assert core.base_score > 0
+
+    def test_compute_core_detects_intent_phrases(self):
+        """_compute_core() should detect intent phrases."""
+        from utils.thesis_matcher import ThesisMatcher
+
+        matcher = ThesisMatcher(v2_enablement="disabled")
+        core = matcher._compute_core("join waitlist for our app", domain_name=None)
+
+        assert "join waitlist" in core.intent_matches
+
+    def test_compute_core_detects_domain_patterns(self):
+        """_compute_core() should detect consumer domain patterns."""
+        from utils.thesis_matcher import ThesisMatcher
+
+        matcher = ThesisMatcher(v2_enablement="disabled")
+        core = matcher._compute_core("some text", domain_name="getfitness.com")
+
+        assert core.domain_match is True
+
+    def test_compute_core_no_domain_match_for_non_consumer_domain(self):
+        """_compute_core() should not match non-consumer domains."""
+        from utils.thesis_matcher import ThesisMatcher
+
+        matcher = ThesisMatcher(v2_enablement="disabled")
+        core = matcher._compute_core("some text", domain_name="example.com")
+
+        assert core.domain_match is False
