@@ -597,78 +597,45 @@ class ThesisMatcher:
                 trace=blacklist_trace,
             )
 
-        # Score each thesis
-        scores: Dict[str, float] = {}
-        all_matches: Dict[str, List[str]] = {}
+        # Compute core (shared between v1 and v2)
+        core = self._compute_core(normalized, domain_name)
 
-        for thesis, keywords in self.keywords.items():
-            score, matches = self._score_thesis(normalized, keywords)
-            scores[thesis.value] = score
-            all_matches[thesis.value] = matches
+        # v1 path (always computed)
+        w1 = self._negative_weights_v1()
+        p1 = self._compute_penalty(core.normalized, w1)
+        s1 = self._apply_adjustments(core.base_score, p1, core.intent_matches, core.domain_match)
+        fit_v1 = self._build_fit(core, s1, p1, w1)
 
-        # Find negative keywords
-        negative_matches = self._find_negative_keywords(normalized)
+        # If v2 disabled OR execution disabled => return v1
+        if (
+            not self._controls
+            or self._controls.v2_enablement == "disabled"
+            or not self._controls.v2_execution_enabled
+        ):
+            return fit_v1
 
-        # Phase B: Find intent phrases
-        intent_matches = self._find_intent_phrases(normalized)
+        # v2 path
+        w2 = self._negative_weights_v2()
 
-        # Phase B: Check domain patterns
-        domain_match = self._check_domain_patterns(domain_name)
+        # Safety: if v2 is live but weights are empty, warn and fall back to v1
+        if self._controls.v2_enablement == "live" and not w2:
+            logger.error(
+                "v2 enabled (live) but negative_keyword_policy is empty; "
+                "falling back to v1 to avoid silent penalty removal"
+            )
+            return fit_v1
 
-        # Find best thesis
-        if scores:
-            best_thesis_name = max(scores, key=scores.get)
-            best_score = scores[best_thesis_name]
-            best_thesis = ConsumerThesis(best_thesis_name)
-            matched_kws = all_matches.get(best_thesis_name, [])
-        else:
-            best_thesis = ConsumerThesis.UNKNOWN
-            best_score = 0.0
-            matched_kws = []
+        p2 = self._compute_penalty(core.normalized, w2)
+        s2 = self._apply_adjustments(core.base_score, p2, core.intent_matches, core.domain_match)
+        fit_v2 = self._build_fit(core, s2, p2, w2)
 
-        # Apply negative penalty
-        if negative_matches:
-            penalty = sum(NEGATIVE_KEYWORDS.get(kw, 0.2) for kw in negative_matches)
-            best_score = max(0.0, best_score - penalty * 0.5)
+        # Shadow mode: attach diff and return v1
+        if self._controls.v2_enablement == "shadow":
+            self._attach_v2_shadow_diff(fit_v1, fit_v2, p1, p2)
+            return fit_v1
 
-        # Phase B: Apply intent phrase boost
-        if intent_matches:
-            intent_boost = sum(INTENT_PHRASES.get(phrase, 0.1) for phrase in intent_matches)
-            best_score = min(1.0, best_score + intent_boost)
-
-        # Phase B: Apply domain pattern boost
-        if domain_match:
-            best_score = min(1.0, best_score + 0.15)
-
-        # Determine confidence
-        if best_score >= 0.7:
-            confidence = "HIGH"
-        elif best_score >= 0.4:
-            confidence = "MEDIUM"
-        else:
-            confidence = "LOW"
-
-        # Generate explainability trace
-        trace = self._generate_trace(
-            best_score=best_score,
-            matched_keywords=matched_kws,
-            negative_matches=negative_matches,
-            intent_matches=intent_matches,
-            domain_match=domain_match,
-        )
-
-        return ThesisFit(
-            thesis=best_thesis if best_score > 0.1 else ConsumerThesis.UNKNOWN,
-            score=best_score,
-            matched_keywords=matched_kws,
-            negative_keywords=negative_matches,
-            all_scores=scores,
-            confidence=confidence,
-            intent_phrases_matched=intent_matches,
-            domain_match=domain_match,
-            domain_blacklisted=False,
-            trace=trace,
-        )
+        # Live mode: return v2
+        return fit_v2
 
     def _normalize(self, text: str) -> str:
         return text.lower().strip()
