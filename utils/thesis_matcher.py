@@ -253,6 +253,7 @@ class ThesisFitTrace:
         final_score: Final thesis fit score after all adjustments
         routing_decision: Routing decision (QUALIFIED | HELD | REJECTED)
         explanation: Human-readable explanation of the scoring decision
+        v2_shadow: Shadow mode comparison data (v1 vs v2 scoring diff) - Phase 0B-2
 
     Example explanation:
         "Score: 0.52. Soft negative 'platform' (-0.05) rescued by tier-1 anchor
@@ -267,10 +268,12 @@ class ThesisFitTrace:
     final_score: float = 0.0
     routing_decision: str = "UNKNOWN"
     explanation: str = ""
+    # Phase 0B-2: Shadow mode comparison data
+    v2_shadow: Optional[Dict] = None
 
     def to_dict(self) -> Dict:
         """Convert trace to dictionary for serialization."""
-        return {
+        result = {
             "matched_hard_negatives": self.matched_hard_negatives,
             "soft_negatives": [{"keyword": kw, "penalty": penalty}
                               for kw, penalty in self.soft_negatives],
@@ -282,6 +285,10 @@ class ThesisFitTrace:
             "routing_decision": self.routing_decision,
             "explanation": self.explanation,
         }
+        # Phase 0B-2: Only include v2_shadow if present
+        if self.v2_shadow is not None:
+            result["v2_shadow"] = self.v2_shadow
+        return result
 
 
 @dataclass
