@@ -1,24 +1,148 @@
-# Negative Keyword Policy v2 - Marker File
+# Negative Keyword Policy v2
 #
-# This file enables the v2 policy loader to discover the config/v2 directory.
-# Phase 0A: Marker file only (enables directory discovery)
-# Phase 0B-1: Will be populated with NegativeKeywordPolicy weights
+# Phase 0A: Marker file (enables directory discovery)
+# Phase 0B-1: Populated with NEGATIVE_KEYWORDS (this version)
+# Phase 0B-2: ThesisMatcher scoring will read from this file
 #
-# When V2_ENABLEMENT=shadow or V2_ENABLEMENT=live, ThesisMatcher will:
-# 1. Discover this file via resolve_policy_dir()
-# 2. Load this YAML into PolicyBundle.policies["negative_keyword_policy"]
-# 3. Use the weights below for v2 scoring (after Phase 0B-1)
-#
-# Schema (Phase 0B-1):
-#   version: "1.0"
-#   negative_keywords:
-#     <keyword>:
-#       weight: <float>  # 0.0-1.0, default 1.0
-#       category: <str>  # Optional: B2B, Developer, Enterprise, etc.
+# Schema contract:
+# - version: required (str|int|float, coerced to string)
+# - schema: required (format identifier for compatibility)
+# - negative_keywords: required (dict, can be empty)
+#   - <keyword>: dict with weight and category
 
 version: "1.0"
+schema: "negative_keyword_policy_v1"
+description: "Negative keyword policy (mirrors NEGATIVE_KEYWORDS until Phase 0B-2)"
 
-# Empty for Phase 0A - will be populated in Phase 0B-1 with:
-# - Current NEGATIVE_KEYWORDS from thesis_matcher.py constants
-# - Per-keyword weights for fine-tuning
-negative_keywords: {}
+negative_keywords:
+  # B2B/Enterprise (12 keywords)
+  enterprise:
+    weight: 0.5
+    category: B2B_ENTERPRISE
+  b2b:
+    weight: 0.5
+    category: B2B_ENTERPRISE
+  saas platform:
+    weight: 0.4
+    category: B2B_ENTERPRISE
+  developer tool:
+    weight: 0.5
+    category: B2B_ENTERPRISE
+  api platform:
+    weight: 0.4
+    category: B2B_ENTERPRISE
+  api management:
+    weight: 0.5
+    category: B2B_ENTERPRISE
+  devops:
+    weight: 0.5
+    category: B2B_ENTERPRISE
+  infrastructure:
+    weight: 0.4
+    category: B2B_ENTERPRISE
+  logistics platform:
+    weight: 0.5
+    category: B2B_ENTERPRISE
+  logistics:
+    weight: 0.3
+    category: B2B_ENTERPRISE
+  data platform:
+    weight: 0.4
+    category: B2B_ENTERPRISE
+  sdk:
+    weight: 0.4
+    category: B2B_ENTERPRISE
+
+  # Crypto/Web3 (6 keywords)
+  blockchain:
+    weight: 0.5
+    category: CRYPTO_WEB3
+  crypto:
+    weight: 0.5
+    category: CRYPTO_WEB3
+  web3:
+    weight: 0.5
+    category: CRYPTO_WEB3
+  nft:
+    weight: 0.5
+    category: CRYPTO_WEB3
+  defi:
+    weight: 0.5
+    category: CRYPTO_WEB3
+  token:
+    weight: 0.3
+    category: CRYPTO_WEB3
+
+  # Services (3 keywords)
+  consulting:
+    weight: 0.4
+    category: SERVICES
+  agency:
+    weight: 0.4
+    category: SERVICES
+  services firm:
+    weight: 0.4
+    category: SERVICES
+
+  # Stages (4 keywords)
+  series b:
+    weight: 0.3
+    category: STAGES
+  series c:
+    weight: 0.4
+    category: STAGES
+  series d:
+    weight: 0.5
+    category: STAGES
+  aggregator:
+    weight: 0.2
+    category: STAGES
+
+  # Educational (10 keywords)
+  boilerplate:
+    weight: 0.6
+    category: EDUCATIONAL
+  starter:
+    weight: 0.5
+    category: EDUCATIONAL
+  template:
+    weight: 0.5
+    category: EDUCATIONAL
+  tutorial:
+    weight: 0.5
+    category: EDUCATIONAL
+  workshop:
+    weight: 0.4
+    category: EDUCATIONAL
+  course:
+    weight: 0.4
+    category: EDUCATIONAL
+  homework:
+    weight: 0.4
+    category: EDUCATIONAL
+  assignment:
+    weight: 0.4
+    category: EDUCATIONAL
+  example:
+    weight: 0.3
+    category: EDUCATIONAL
+  demo repo:
+    weight: 0.5
+    category: EDUCATIONAL
+
+  # DevTools (5 keywords)
+  cli:
+    weight: 0.4
+    category: DEVTOOLS
+  library:
+    weight: 0.4
+    category: DEVTOOLS
+  framework:
+    weight: 0.4
+    category: DEVTOOLS
+  plugin:
+    weight: 0.4
+    category: DEVTOOLS
+  linter:
+    weight: 0.5
+    category: DEVTOOLS

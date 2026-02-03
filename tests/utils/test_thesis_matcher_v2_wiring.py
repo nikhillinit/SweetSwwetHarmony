@@ -22,9 +22,9 @@ class TestLegacyPrecedenceBeatsEnv:
         # Set env to disabled
         monkeypatch.setenv("V2_ENABLEMENT", "disabled")
 
-        # Create a minimal policy file for the loader
+        # Create a minimal policy file for the loader (Phase 0B-1 schema)
         policy_file = tmp_path / "negative_keyword_policy.yaml"
-        policy_file.write_text("version: '2.0'\ntest: true\n")
+        policy_file.write_text("version: '2.0'\nschema: 'negative_keyword_policy_v1'\nnegative_keywords: {}\n")
 
         from utils.thesis_matcher import ThesisMatcher
 
@@ -55,9 +55,9 @@ class TestLegacyPrecedenceBeatsEnv:
 
     def test_explicit_v2_enablement_beats_legacy(self, monkeypatch, tmp_path):
         """Explicit v2_enablement kwarg should beat legacy enable_v2_policy."""
-        # Create a minimal policy file
+        # Create a minimal policy file (Phase 0B-1 schema)
         policy_file = tmp_path / "negative_keyword_policy.yaml"
-        policy_file.write_text("version: '2.0'\ntest: true\n")
+        policy_file.write_text("version: '2.0'\nschema: 'negative_keyword_policy_v1'\nnegative_keywords: {}\n")
 
         from utils.thesis_matcher import ThesisMatcher
 
@@ -216,9 +216,9 @@ class TestShallowCopyContract:
 
     def test_config_is_shallow_copy(self, tmp_path):
         """Mutating self.config should not affect bundle.policies."""
-        # Create a policy file
+        # Create a policy file (Phase 0B-1 schema)
         policy_file = tmp_path / "negative_keyword_policy.yaml"
-        policy_file.write_text("version: '2.0'\ntest_key: test_value\n")
+        policy_file.write_text("version: '2.0'\nschema: 'negative_keyword_policy_v1'\nnegative_keywords: {}\ntest_key: test_value\n")
 
         from utils.thesis_matcher import ThesisMatcher
 
@@ -256,8 +256,9 @@ class TestControlsAccessible:
 
     def test_controls_set_on_shadow(self, tmp_path):
         """_controls should be set in shadow mode."""
+        # Create a minimal policy file (Phase 0B-1 schema)
         policy_file = tmp_path / "negative_keyword_policy.yaml"
-        policy_file.write_text("version: '2.0'\n")
+        policy_file.write_text("version: '2.0'\nschema: 'negative_keyword_policy_v1'\nnegative_keywords: {}\n")
 
         from utils.thesis_matcher import ThesisMatcher
 
@@ -270,3 +271,111 @@ class TestControlsAccessible:
         assert matcher._controls.v2_enablement == "shadow"
         assert matcher._controls.policy_loader_mode == "strict"
         assert matcher._controls.v2_execution_enabled is True
+
+
+class TestSchemaValidationEnforced:
+    """Test that schema validation is enforced in shadow/live modes (Phase 0B-1)."""
+
+    def test_invalid_schema_raises_runtime_error(self, tmp_path):
+        """Invalid policy schema should raise RuntimeError in shadow mode."""
+        # Create a policy file missing required fields
+        policy_file = tmp_path / "negative_keyword_policy.yaml"
+        policy_file.write_text("version: '2.0'\n")  # Missing schema and negative_keywords
+
+        from utils.thesis_matcher import ThesisMatcher
+
+        with pytest.raises(RuntimeError) as exc_info:
+            ThesisMatcher(
+                v2_enablement="shadow",
+                config_path=str(tmp_path),
+            )
+
+        # Verify error message contains useful debugging info
+        error_msg = str(exc_info.value)
+        assert "negative_keyword_policy" in error_msg
+        assert "schema" in error_msg.lower() or "negative_keywords" in error_msg.lower()
+
+    def test_invalid_weight_raises_runtime_error(self, tmp_path):
+        """Invalid weight in policy should raise RuntimeError."""
+        policy_file = tmp_path / "negative_keyword_policy.yaml"
+        policy_file.write_text(
+            "version: '2.0'\n"
+            "schema: 'negative_keyword_policy_v1'\n"
+            "negative_keywords:\n"
+            "  enterprise:\n"
+            "    weight: 1.5\n"  # Invalid: > 1.0
+            "    category: B2B_ENTERPRISE\n"
+        )
+
+        from utils.thesis_matcher import ThesisMatcher
+
+        with pytest.raises(RuntimeError) as exc_info:
+            ThesisMatcher(
+                v2_enablement="shadow",
+                config_path=str(tmp_path),
+            )
+
+        assert "weight" in str(exc_info.value).lower()
+
+    def test_invalid_category_raises_runtime_error(self, tmp_path):
+        """Invalid category in policy should raise RuntimeError."""
+        policy_file = tmp_path / "negative_keyword_policy.yaml"
+        policy_file.write_text(
+            "version: '2.0'\n"
+            "schema: 'negative_keyword_policy_v1'\n"
+            "negative_keywords:\n"
+            "  enterprise:\n"
+            "    weight: 0.5\n"
+            "    category: INVALID_CATEGORY\n"  # Invalid category
+        )
+
+        from utils.thesis_matcher import ThesisMatcher
+
+        with pytest.raises(RuntimeError) as exc_info:
+            ThesisMatcher(
+                v2_enablement="shadow",
+                config_path=str(tmp_path),
+            )
+
+        assert "category" in str(exc_info.value).lower()
+
+    def test_disabled_mode_does_not_validate(self, tmp_path):
+        """Disabled mode should not run validation (zero I/O)."""
+        # Create an invalid policy file - but disabled mode should never read it
+        policy_file = tmp_path / "negative_keyword_policy.yaml"
+        policy_file.write_text("invalid: yaml: content:")  # Invalid YAML
+
+        from utils.thesis_matcher import ThesisMatcher
+
+        # Should NOT raise because disabled mode doesn't load policies
+        matcher = ThesisMatcher(v2_enablement="disabled")
+
+        assert matcher._controls.v2_enablement == "disabled"
+        assert matcher._negative_keyword_policy is None
+
+    def test_typed_policy_available_after_validation(self, tmp_path):
+        """After validation, _negative_keyword_policy should be populated."""
+        policy_file = tmp_path / "negative_keyword_policy.yaml"
+        policy_file.write_text(
+            "version: '2.0'\n"
+            "schema: 'negative_keyword_policy_v1'\n"
+            "description: 'Test policy'\n"
+            "negative_keywords:\n"
+            "  enterprise:\n"
+            "    weight: 0.5\n"
+            "    category: B2B_ENTERPRISE\n"
+        )
+
+        from utils.thesis_matcher import ThesisMatcher
+
+        matcher = ThesisMatcher(
+            v2_enablement="shadow",
+            config_path=str(tmp_path),
+        )
+
+        assert matcher._negative_keyword_policy is not None
+        assert matcher._negative_keyword_policy.version == "2.0"
+        assert matcher._negative_keyword_policy.schema == "negative_keyword_policy_v1"
+        assert matcher._negative_keyword_policy.description == "Test policy"
+        assert len(matcher._negative_keyword_policy.keywords) == 1
+        assert matcher._negative_keyword_policy.keywords["enterprise"].weight == 0.5
