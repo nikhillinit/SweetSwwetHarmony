@@ -403,3 +403,66 @@ class TestApplyAdjustments:
         )
 
         assert result == pytest.approx(0.8)
+
+
+class TestNegativeWeightsAccessors:
+    """Test _negative_weights_v1() and _negative_weights_v2() accessors."""
+
+    def test_negative_weights_v1_returns_hardcoded_dict(self):
+        """_negative_weights_v1() should return NEGATIVE_KEYWORDS."""
+        from utils.thesis_matcher import ThesisMatcher, NEGATIVE_KEYWORDS
+
+        matcher = ThesisMatcher(v2_enablement="disabled")
+        weights = matcher._negative_weights_v1()
+
+        assert weights is NEGATIVE_KEYWORDS
+
+    def test_negative_weights_v2_returns_empty_when_disabled(self):
+        """_negative_weights_v2() should return empty dict when v2 disabled."""
+        from utils.thesis_matcher import ThesisMatcher
+
+        matcher = ThesisMatcher(v2_enablement="disabled")
+        weights = matcher._negative_weights_v2()
+
+        assert weights == {}
+
+    def test_negative_weights_v2_returns_policy_weights(self, tmp_path):
+        """_negative_weights_v2() should return weights from YAML policy."""
+        policy_file = tmp_path / "negative_keyword_policy.yaml"
+        policy_file.write_text(
+            "version: '2.0'\n"
+            "schema: 'negative_keyword_policy_v1'\n"
+            "negative_keywords:\n"
+            "  enterprise:\n"
+            "    weight: 0.6\n"
+            "    category: B2B_ENTERPRISE\n"
+            "  blockchain:\n"
+            "    weight: 0.7\n"
+            "    category: CRYPTO_WEB3\n"
+        )
+
+        from utils.thesis_matcher import ThesisMatcher
+
+        matcher = ThesisMatcher(v2_enablement="shadow", config_path=str(tmp_path))
+        weights = matcher._negative_weights_v2()
+
+        assert weights == {"enterprise": 0.6, "blockchain": 0.7}
+
+    def test_negative_weights_v2_matches_yaml_exactly(self, tmp_path):
+        """_negative_weights_v2() weights should match YAML values exactly."""
+        policy_file = tmp_path / "negative_keyword_policy.yaml"
+        policy_file.write_text(
+            "version: '2.0'\n"
+            "schema: 'negative_keyword_policy_v1'\n"
+            "negative_keywords:\n"
+            "  test_keyword:\n"
+            "    weight: 0.42\n"
+            "    category: B2B_ENTERPRISE\n"
+        )
+
+        from utils.thesis_matcher import ThesisMatcher
+
+        matcher = ThesisMatcher(v2_enablement="shadow", config_path=str(tmp_path))
+        weights = matcher._negative_weights_v2()
+
+        assert weights["test_keyword"] == 0.42
