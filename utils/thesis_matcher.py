@@ -485,6 +485,57 @@ class ThesisMatcher:
             list(self.config.keys()),
         )
 
+    def _compute_core(
+        self,
+        normalized: str,
+        domain_name: Optional[str],
+    ) -> _CoreScore:
+        """Compute core scoring: positive thesis scores + intent/domain signals.
+
+        This is shared between v1 and v2 paths so differences only come from negatives.
+
+        Args:
+            normalized: Normalized text to score
+            domain_name: Optional domain for pattern matching
+
+        Returns:
+            _CoreScore with all positive scoring results
+        """
+        # Score each thesis (existing logic)
+        scores: Dict[str, float] = {}
+        all_matches: Dict[str, List[str]] = {}
+
+        for thesis, keywords in self.keywords.items():
+            score, matches = self._score_thesis(normalized, keywords)
+            scores[thesis.value] = score
+            all_matches[thesis.value] = matches
+
+        # Find best thesis
+        if scores:
+            best_thesis_name = max(scores, key=scores.get)
+            base_score = scores[best_thesis_name]
+            best_thesis = ConsumerThesis(best_thesis_name)
+            matched_kws = all_matches.get(best_thesis_name, [])
+        else:
+            best_thesis = ConsumerThesis.UNKNOWN
+            base_score = 0.0
+            matched_kws = []
+
+        # Intent phrases and domain patterns
+        intent_matches = self._find_intent_phrases(normalized)
+        domain_match = self._check_domain_patterns(domain_name)
+
+        return _CoreScore(
+            normalized=normalized,
+            scores=scores,
+            all_matches=all_matches,
+            best_thesis=best_thesis,
+            base_score=base_score,
+            matched_kws=matched_kws,
+            intent_matches=intent_matches,
+            domain_match=domain_match,
+        )
+
     def score(
         self,
         text: str,
