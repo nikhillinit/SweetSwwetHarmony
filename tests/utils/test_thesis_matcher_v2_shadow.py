@@ -301,3 +301,105 @@ class TestComputePenalty:
         assert result.matches == []
         assert result.raw_penalty == 0.0
         assert result.applied_penalty == 0.0
+
+
+class TestApplyAdjustments:
+    """Test _apply_adjustments() helper method."""
+
+    def test_apply_adjustments_subtracts_penalty(self):
+        """_apply_adjustments() should subtract applied penalty from base score."""
+        from utils.thesis_matcher import ThesisMatcher, _PenaltyResult
+
+        matcher = ThesisMatcher(v2_enablement="disabled")
+        penalty = _PenaltyResult(matches=["enterprise"], raw_penalty=0.5, applied_penalty=0.25)
+
+        result = matcher._apply_adjustments(
+            base_score=0.6,
+            penalty=penalty,
+            intent_matches=[],
+            domain_match=False,
+        )
+
+        assert result == pytest.approx(0.35)
+
+    def test_apply_adjustments_adds_intent_boost(self):
+        """_apply_adjustments() should add intent phrase boost."""
+        from utils.thesis_matcher import ThesisMatcher, _PenaltyResult
+
+        matcher = ThesisMatcher(v2_enablement="disabled")
+        penalty = _PenaltyResult(matches=[], raw_penalty=0.0, applied_penalty=0.0)
+
+        result = matcher._apply_adjustments(
+            base_score=0.5,
+            penalty=penalty,
+            intent_matches=["join waitlist"],  # 0.3 boost
+            domain_match=False,
+        )
+
+        assert result == pytest.approx(0.8)
+
+    def test_apply_adjustments_adds_domain_boost(self):
+        """_apply_adjustments() should add domain pattern boost."""
+        from utils.thesis_matcher import ThesisMatcher, _PenaltyResult
+
+        matcher = ThesisMatcher(v2_enablement="disabled")
+        penalty = _PenaltyResult(matches=[], raw_penalty=0.0, applied_penalty=0.0)
+
+        result = matcher._apply_adjustments(
+            base_score=0.5,
+            penalty=penalty,
+            intent_matches=[],
+            domain_match=True,  # 0.15 boost
+        )
+
+        assert result == pytest.approx(0.65)
+
+    def test_apply_adjustments_clamps_to_zero(self):
+        """_apply_adjustments() should not go below 0."""
+        from utils.thesis_matcher import ThesisMatcher, _PenaltyResult
+
+        matcher = ThesisMatcher(v2_enablement="disabled")
+        penalty = _PenaltyResult(matches=["a", "b"], raw_penalty=2.0, applied_penalty=1.0)
+
+        result = matcher._apply_adjustments(
+            base_score=0.3,
+            penalty=penalty,
+            intent_matches=[],
+            domain_match=False,
+        )
+
+        assert result == 0.0
+
+    def test_apply_adjustments_clamps_to_one(self):
+        """_apply_adjustments() should not exceed 1.0."""
+        from utils.thesis_matcher import ThesisMatcher, _PenaltyResult
+
+        matcher = ThesisMatcher(v2_enablement="disabled")
+        penalty = _PenaltyResult(matches=[], raw_penalty=0.0, applied_penalty=0.0)
+
+        result = matcher._apply_adjustments(
+            base_score=0.9,
+            penalty=penalty,
+            intent_matches=["join waitlist", "pricing"],  # 0.3 + 0.25 = 0.55
+            domain_match=True,  # 0.15
+        )
+
+        assert result == 1.0
+
+    def test_apply_adjustments_order_penalty_then_boosts(self):
+        """_apply_adjustments() should apply penalty first, then boosts."""
+        from utils.thesis_matcher import ThesisMatcher, _PenaltyResult
+
+        matcher = ThesisMatcher(v2_enablement="disabled")
+        # Penalty: 0.25 applied, Intent: 0.3, Domain: 0.15
+        # Order: 0.6 - 0.25 = 0.35, then 0.35 + 0.3 = 0.65, then 0.65 + 0.15 = 0.8
+        penalty = _PenaltyResult(matches=["enterprise"], raw_penalty=0.5, applied_penalty=0.25)
+
+        result = matcher._apply_adjustments(
+            base_score=0.6,
+            penalty=penalty,
+            intent_matches=["join waitlist"],
+            domain_match=True,
+        )
+
+        assert result == pytest.approx(0.8)

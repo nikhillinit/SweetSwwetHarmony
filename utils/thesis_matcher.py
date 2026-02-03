@@ -752,6 +752,46 @@ class ThesisMatcher:
         applied = raw * 0.5
         return _PenaltyResult(matches=matches, raw_penalty=raw, applied_penalty=applied)
 
+    def _apply_adjustments(
+        self,
+        base_score: float,
+        penalty: _PenaltyResult,
+        intent_matches: List[str],
+        domain_match: bool,
+    ) -> float:
+        """Apply penalty and boosts to base score.
+
+        Order preserved from original score():
+        1. Subtract penalty (if matches)
+        2. Add intent phrase boost (if matches)
+        3. Add domain pattern boost (if match)
+
+        Args:
+            base_score: Score before adjustments
+            penalty: Penalty result from _compute_penalty
+            intent_matches: Intent phrases matched
+            domain_match: Whether domain pattern matched
+
+        Returns:
+            Final score clamped to [0.0, 1.0]
+        """
+        score = base_score
+
+        # Apply negative penalty
+        if penalty.matches:
+            score = max(0.0, score - penalty.applied_penalty)
+
+        # Apply intent phrase boost
+        if intent_matches:
+            intent_boost = sum(INTENT_PHRASES.get(p, 0.1) for p in intent_matches)
+            score = min(1.0, score + intent_boost)
+
+        # Apply domain pattern boost
+        if domain_match:
+            score = min(1.0, score + 0.15)
+
+        return score
+
     def _find_intent_phrases(self, text: str) -> List[str]:
         """Find intent phrases that indicate commercial/consumer intent (Phase B)."""
         matches = []
