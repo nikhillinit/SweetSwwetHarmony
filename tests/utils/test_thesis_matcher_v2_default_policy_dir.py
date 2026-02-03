@@ -40,8 +40,18 @@ class TestV2DefaultPolicyDirectory:
         # Verify marker file was loaded
         assert "negative_keyword_policy" in matcher.config
         policy = matcher.config["negative_keyword_policy"]
-        assert policy.get("version") == "1.0"
+        # Phase 0B-1: version exists but value not pinned; schema is the stable contract
+        assert policy.get("version") is not None
+        assert policy.get("schema") == "negative_keyword_policy_v1"
         assert "negative_keywords" in policy
+
+        # Phase 0B-1: Verify negative_keywords is populated with all 40 keywords
+        from utils.thesis_matcher import NEGATIVE_KEYWORDS
+        assert len(policy.get("negative_keywords", {})) == len(NEGATIVE_KEYWORDS)
+
+        # Phase 0B-1: Verify typed policy object is available
+        assert matcher._negative_keyword_policy is not None
+        assert len(matcher._negative_keyword_policy.keywords) == 40
 
     def test_live_mode_loads_from_default_directory(self, monkeypatch):
         """V2_ENABLEMENT=live should load policy from config/v2/ without explicit path."""

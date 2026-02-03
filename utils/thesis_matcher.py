@@ -374,6 +374,8 @@ class ThesisMatcher:
         self._controls: Optional["RuntimeControls"] = None
         self._policy_bundle: Optional["PolicyBundle"] = None
         self.config: Dict = {}  # Shallow copy of policies (Bug #5 mitigation)
+        # Phase 0B-1: Typed policy object (populated when v2 enabled, None when disabled)
+        self._negative_keyword_policy = None  # NegativeKeywordPolicy or None
 
         # Step 1: Resolve RuntimeControls (validate-before-I/O)
         # Import here to avoid circular imports and allow zero-cost when disabled
@@ -415,6 +417,29 @@ class ThesisMatcher:
         # Top-level mutation of self.config won't affect bundle.policies
         # Nested dicts remain shared (documented limitation)
         self.config = dict(self._policy_bundle.policies)
+
+        # Phase 0B-1: Validate schema and parse into typed object
+        # PolicyLoader is schema-agnostic; ThesisMatcher validates policy-specific schema
+        from utils.negative_keyword_policy import (
+            NegativeKeywordPolicy,
+            validate_negative_keyword_policy,
+        )
+
+        policy = self._policy_bundle.policies.get("negative_keyword_policy", {})
+        result = validate_negative_keyword_policy(policy)
+
+        if not result.valid:
+            raise RuntimeError(
+                f"Policy schema invalid for 'negative_keyword_policy' in "
+                f"{self._policy_bundle.base_dir}: {result.errors}"
+            )
+
+        if result.warnings:
+            for warning in result.warnings:
+                logger.warning(warning)
+
+        # Parse into typed object for Phase 0B-2 (not used for scoring yet)
+        self._negative_keyword_policy = NegativeKeywordPolicy.from_config(policy)
 
         logger.debug(
             "ThesisMatcher initialized with v2 policy: enablement=%s, "
