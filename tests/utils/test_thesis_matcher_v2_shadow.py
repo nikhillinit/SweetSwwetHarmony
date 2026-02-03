@@ -831,3 +831,166 @@ class TestAttachV2ShadowDiff:
 
         # trace is still None
         assert fit_v1.trace is None
+
+
+class TestScoreShadowModeIntegration:
+    """Integration tests for score() with shadow mode."""
+
+    def test_shadow_mode_returns_v1_result(self, tmp_path):
+        """Shadow mode should always return v1 result."""
+        # Create policy with DIFFERENT weights than v1
+        policy_file = tmp_path / "negative_keyword_policy.yaml"
+        policy_file.write_text(
+            "version: '2.0'\n"
+            "schema: 'negative_keyword_policy_v1'\n"
+            "negative_keywords:\n"
+            "  enterprise:\n"
+            "    weight: 0.9\n"  # Higher than v1's 0.5
+            "    category: B2B_ENTERPRISE\n"
+        )
+
+        from utils.thesis_matcher import ThesisMatcher, NEGATIVE_KEYWORDS
+
+        matcher_v1 = ThesisMatcher(v2_enablement="disabled")
+        matcher_shadow = ThesisMatcher(v2_enablement="shadow", config_path=str(tmp_path))
+
+        text = "enterprise software for food delivery"
+
+        fit_v1 = matcher_v1.score(text)
+        fit_shadow = matcher_shadow.score(text)
+
+        # Shadow should return same result as v1
+        assert fit_shadow.score == fit_v1.score
+        assert fit_shadow.thesis == fit_v1.thesis
+        assert fit_shadow.confidence == fit_v1.confidence
+        assert fit_shadow.negative_keywords == fit_v1.negative_keywords
+
+    def test_shadow_mode_attaches_v2_diff(self, tmp_path):
+        """Shadow mode should attach v2_shadow diff to trace."""
+        policy_file = tmp_path / "negative_keyword_policy.yaml"
+        policy_file.write_text(
+            "version: '2.0'\n"
+            "schema: 'negative_keyword_policy_v1'\n"
+            "negative_keywords:\n"
+            "  enterprise:\n"
+            "    weight: 0.9\n"
+            "    category: B2B_ENTERPRISE\n"
+        )
+
+        from utils.thesis_matcher import ThesisMatcher
+
+        matcher = ThesisMatcher(v2_enablement="shadow", config_path=str(tmp_path))
+        fit = matcher.score("enterprise food delivery startup")
+
+        assert fit.trace is not None
+        assert fit.trace.v2_shadow is not None
+        assert "v1" in fit.trace.v2_shadow
+        assert "v2" in fit.trace.v2_shadow
+
+    def test_shadow_mode_v2_diff_shows_different_penalty(self, tmp_path):
+        """Shadow diff should show v2 uses different penalty weights."""
+        policy_file = tmp_path / "negative_keyword_policy.yaml"
+        policy_file.write_text(
+            "version: '2.0'\n"
+            "schema: 'negative_keyword_policy_v1'\n"
+            "negative_keywords:\n"
+            "  enterprise:\n"
+            "    weight: 0.8\n"  # v1 is 0.5
+            "    category: B2B_ENTERPRISE\n"
+        )
+
+        from utils.thesis_matcher import ThesisMatcher
+
+        matcher = ThesisMatcher(v2_enablement="shadow", config_path=str(tmp_path))
+        fit = matcher.score("enterprise meal kit delivery")
+
+        shadow = fit.trace.v2_shadow
+        # v1 raw penalty: 0.5, v2 raw penalty: 0.8
+        assert shadow["v1"]["penalty_raw"] == 0.5
+        assert shadow["v2"]["penalty_raw"] == 0.8
+        # v2 score should be lower due to higher penalty
+        assert shadow["v2"]["score"] < shadow["v1"]["score"]
+
+    def test_disabled_mode_no_v2_shadow(self):
+        """Disabled mode should not have v2_shadow in trace."""
+        from utils.thesis_matcher import ThesisMatcher
+
+        matcher = ThesisMatcher(v2_enablement="disabled")
+        fit = matcher.score("enterprise food delivery")
+
+        assert fit.trace is not None
+        assert fit.trace.v2_shadow is None
+
+    def test_live_mode_returns_v2_result(self, tmp_path):
+        """Live mode should return v2 result."""
+        policy_file = tmp_path / "negative_keyword_policy.yaml"
+        policy_file.write_text(
+            "version: '2.0'\n"
+            "schema: 'negative_keyword_policy_v1'\n"
+            "negative_keywords:\n"
+            "  enterprise:\n"
+            "    weight: 0.1\n"  # Much lower than v1's 0.5
+            "    category: B2B_ENTERPRISE\n"
+        )
+
+        from utils.thesis_matcher import ThesisMatcher
+
+        matcher_v1 = ThesisMatcher(v2_enablement="disabled")
+        matcher_live = ThesisMatcher(v2_enablement="live", config_path=str(tmp_path))
+
+        text = "enterprise food delivery startup"
+
+        fit_v1 = matcher_v1.score(text)
+        fit_live = matcher_live.score(text)
+
+        # Live should return different (higher) score due to lower penalty
+        assert fit_live.score > fit_v1.score
+
+    def test_shadow_logs_high_signal_diff(self, tmp_path, caplog):
+        """Shadow mode should log when diff is significant."""
+        import logging
+
+        policy_file = tmp_path / "negative_keyword_policy.yaml"
+        policy_file.write_text(
+            "version: '2.0'\n"
+            "schema: 'negative_keyword_policy_v1'\n"
+            "negative_keywords: {}\n"  # Empty = no penalty in v2
+        )
+
+        from utils.thesis_matcher import ThesisMatcher
+
+        matcher = ThesisMatcher(v2_enablement="shadow", config_path=str(tmp_path))
+
+        with caplog.at_level(logging.INFO):
+            # "enterprise" in v1 has 0.5 penalty, v2 has 0 - delta >= 0.05
+            # Need text with positive keywords so there's a score to penalize
+            fit = matcher.score("enterprise food delivery meal kits")
+
+        # Should have logged the diff (delta >= 0.05 because v1 has penalty, v2 doesn't)
+        assert any("v2 shadow diff" in record.message for record in caplog.records)
+
+    def test_existing_score_behavior_unchanged(self):
+        """All existing score() behaviors should be preserved."""
+        from utils.thesis_matcher import ThesisMatcher, ConsumerThesis
+
+        matcher = ThesisMatcher(v2_enablement="disabled")
+
+        # Empty text
+        fit = matcher.score("")
+        assert fit.score == 0.0
+        assert fit.thesis == ConsumerThesis.UNKNOWN
+
+        # Domain blacklist
+        fit = matcher.score("food delivery", domain_name="localhost:3000")
+        assert fit.domain_blacklisted is True
+        assert fit.score == 0.0
+
+        # Positive match
+        fit = matcher.score("healthy meal kits delivered to your door")
+        assert fit.thesis == ConsumerThesis.CONSUMER_CPG
+        assert fit.score > 0.4
+
+        # Negative keyword penalty
+        fit = matcher.score("enterprise b2b saas platform")
+        assert "enterprise" in fit.negative_keywords
+        assert "b2b" in fit.negative_keywords
