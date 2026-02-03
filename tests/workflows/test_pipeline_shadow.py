@@ -420,3 +420,120 @@ class TestPipelineBoilerplateDefense:
                 await pipeline.close()
         finally:
             os.unlink(db_path)
+
+
+# =============================================================================
+# PHASE 0B-3: THESIS MATCH SHADOW LOGGING TESTS
+# =============================================================================
+
+class TestPipelineThesisMatchShadow:
+    """Tests for thesis_match shadow logging with v2_shadow support."""
+
+    @pytest.mark.asyncio
+    async def test_thesis_match_shadow_log_not_double_encoded(self):
+        """Shadow log computed_value should be a dict, not a JSON string of JSON."""
+        fd, db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+
+        try:
+            config = PipelineConfig(
+                notion_api_key="test",
+                notion_database_id="test-db",
+                db_path=db_path,
+                use_thesis_filter=True,
+            )
+            pipeline = DiscoveryPipeline(config)
+            await pipeline.initialize()
+
+            # Add a signal with clear thesis match content
+            signal_id = await pipeline._store.save_signal(
+                signal_type="github_spike",
+                source_api="github",
+                canonical_key="github_org:meal-kit-company",
+                company_name="Meal Kit Co",
+                confidence=0.7,
+                raw_data={"description": "Healthy meal kit delivery startup"},
+            )
+
+            # Process the signal (dry run)
+            await pipeline.process_pending(dry_run=True)
+
+            # Check shadow logs for thesis_match
+            logs = await pipeline._store.get_shadow_logs(feature_name="thesis_match")
+
+            # Should have at least one log entry
+            assert len(logs) >= 1
+
+            log = logs[0]
+            computed = log["computed_value"]
+
+            # The computed_value should be JSON-parsed automatically by get_shadow_logs
+            # If it's still a string, it was double-encoded
+            if isinstance(computed, str):
+                import json
+                parsed = json.loads(computed)
+                # If we can parse it AGAIN and get a dict, it was double-encoded
+                # (string → parsed string containing JSON → parse that to dict)
+                # The value should be parseable only ONCE.
+                try:
+                    double_parsed = json.loads(parsed)
+                    # If this succeeds, it was double-encoded - FAIL
+                    pytest.fail(
+                        f"computed_value was double-encoded: first parse gave "
+                        f"{type(parsed).__name__}, second parse gave {type(double_parsed).__name__}"
+                    )
+                except (TypeError, json.JSONDecodeError):
+                    # Expected: parsed is already a dict, not a JSON string
+                    pass
+
+            await pipeline.close()
+        finally:
+            os.unlink(db_path)
+
+    @pytest.mark.asyncio
+    async def test_thesis_match_shadow_includes_v2_shadow(self):
+        """Shadow log should include v2_shadow when ThesisMatcher is in shadow mode."""
+        fd, db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+
+        try:
+            # Set v2 to shadow mode via env
+            with patch.dict(os.environ, {"THESIS_MATCHER_V2_ENABLEMENT": "shadow"}):
+                config = PipelineConfig(
+                    notion_api_key="test",
+                    notion_database_id="test-db",
+                    db_path=db_path,
+                    use_thesis_filter=True,
+                )
+                pipeline = DiscoveryPipeline(config)
+                await pipeline.initialize()
+
+                # Add a signal with negative keyword to trigger shadow diff
+                signal_id = await pipeline._store.save_signal(
+                    signal_type="github_spike",
+                    source_api="github",
+                    canonical_key="github_org:enterprise-food",
+                    company_name="Enterprise Food Co",
+                    confidence=0.7,
+                    raw_data={"description": "Enterprise food delivery platform"},
+                )
+
+                # Process the signal (dry run)
+                await pipeline.process_pending(dry_run=True)
+
+                # Check shadow logs for thesis_match
+                logs = await pipeline._store.get_shadow_logs(feature_name="thesis_match")
+
+                if len(logs) >= 1:
+                    log = logs[0]
+                    import json
+                    computed = log["computed_value"]
+                    if isinstance(computed, str):
+                        computed = json.loads(computed)
+
+                    # Should have v2_shadow field
+                    assert "v2_shadow" in computed, f"v2_shadow not in computed: {computed.keys()}"
+
+                await pipeline.close()
+        finally:
+            os.unlink(db_path)

@@ -62,10 +62,12 @@ class ThesisFilterResult:
     intent_phrases_matched: List[str] = field(default_factory=list)
     domain_match: bool = False
     domain_blacklisted: bool = False
+    # Phase 0B-3: v2 shadow mode comparison data
+    v2_shadow: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert result to dictionary."""
-        return {
+        result = {
             "routing": self.routing.value,
             "keyword_score": self.keyword_score,
             "keyword_category": self.keyword_category,
@@ -81,6 +83,10 @@ class ThesisFilterResult:
             "domain_match": self.domain_match,
             "domain_blacklisted": self.domain_blacklisted,
         }
+        # Phase 0B-3: Only include v2_shadow if present
+        if self.v2_shadow is not None:
+            result["v2_shadow"] = self.v2_shadow
+        return result
 
 
 # Alias for backward compatibility with tests
@@ -166,6 +172,11 @@ class ThesisFilter:
             else:
                 routing = RoutingDecision.QUALIFIED
 
+            # Phase 0B-3: Extract v2_shadow from trace
+            v2_shadow = None
+            if keyword_fit.trace and keyword_fit.trace.v2_shadow:
+                v2_shadow = keyword_fit.trace.v2_shadow
+
             return ThesisFilterResult(
                 routing=routing,
                 keyword_score=keyword_fit.score,
@@ -178,6 +189,8 @@ class ThesisFilter:
                 intent_phrases_matched=keyword_fit.intent_phrases_matched,
                 domain_match=keyword_fit.domain_match,
                 domain_blacklisted=keyword_fit.domain_blacklisted,
+                # Phase 0B-3: v2 shadow comparison
+                v2_shadow=v2_shadow,
             )
 
         # Stage 2: LLM classification
@@ -216,6 +229,11 @@ class ThesisFilter:
             else:
                 routing = RoutingDecision.QUALIFIED
 
+        # Phase 0B-3: Extract v2_shadow from trace
+        v2_shadow = None
+        if keyword_fit.trace and keyword_fit.trace.v2_shadow:
+            v2_shadow = keyword_fit.trace.v2_shadow
+
         return ThesisFilterResult(
             routing=routing,
             keyword_score=keyword_fit.score,
@@ -231,6 +249,8 @@ class ThesisFilter:
             intent_phrases_matched=keyword_fit.intent_phrases_matched,
             domain_match=keyword_fit.domain_match,
             domain_blacklisted=keyword_fit.domain_blacklisted,
+            # Phase 0B-3: v2 shadow comparison
+            v2_shadow=v2_shadow,
         )
 
     def _calculate_adjustment(

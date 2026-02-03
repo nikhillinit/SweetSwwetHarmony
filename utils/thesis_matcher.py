@@ -411,6 +411,8 @@ class ThesisMatcher:
         self.config: Dict = {}  # Shallow copy of policies (Bug #5 mitigation)
         # Phase 0B-1: Typed policy object (populated when v2 enabled, None when disabled)
         self._negative_keyword_policy = None  # NegativeKeywordPolicy or None
+        # Phase 0B-3: Policy hash for tracking which policy version was used
+        self._policy_hash: Optional[str] = None
 
         # Step 1: Resolve RuntimeControls (validate-before-I/O)
         # Import here to avoid circular imports and allow zero-cost when disabled
@@ -476,13 +478,17 @@ class ThesisMatcher:
         # Parse into typed object for Phase 0B-2 (not used for scoring yet)
         self._negative_keyword_policy = NegativeKeywordPolicy.from_config(policy)
 
+        # Phase 0B-3: Compute policy hash for shadow log tracking
+        self._policy_hash = self._compute_policy_hash(policy)
+
         logger.debug(
             "ThesisMatcher initialized with v2 policy: enablement=%s, "
-            "loader_mode=%s, execution=%s, policies=%s",
+            "loader_mode=%s, execution=%s, policies=%s, policy_hash=%s",
             self._controls.v2_enablement,
             self._controls.policy_loader_mode,
             self._controls.v2_execution_enabled,
             list(self.config.keys()),
+            self._policy_hash[:8] if self._policy_hash else None,
         )
 
     def _compute_core(
@@ -740,6 +746,28 @@ class ThesisMatcher:
             for kw, entry in self._negative_keyword_policy.keywords.items()
         }
 
+    @staticmethod
+    def _compute_policy_hash(policy: Dict) -> str:
+        """Compute a hash of the policy dict for tracking.
+
+        Uses SHA-256 of canonical JSON (sorted keys, compact format)
+        to ensure consistent hashing across runs.
+
+        Args:
+            policy: Policy dict to hash
+
+        Returns:
+            SHA-256 hash of canonical JSON (first 16 chars)
+        """
+        import hashlib
+        import json
+
+        # Canonical JSON: sorted keys, no whitespace
+        canonical = json.dumps(policy, sort_keys=True, separators=(",", ":"))
+        full_hash = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        # Return first 16 chars for brevity while maintaining uniqueness
+        return full_hash[:16]
+
     def _apply_adjustments(
         self,
         base_score: float,
@@ -877,6 +905,8 @@ class ThesisMatcher:
             "would_change_is_fit": (fit_v2.is_fit != fit_v1.is_fit),
             "would_change_routing": (route(fit_v2.score) != route(fit_v1.score)),
             "would_change_thesis": (fit_v2.thesis != fit_v1.thesis),
+            # Phase 0B-3: Include policy hash for tracking
+            "policy_hash": self._policy_hash,
         }
 
         fit_v1.trace.v2_shadow = diff
