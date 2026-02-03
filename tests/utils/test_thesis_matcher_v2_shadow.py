@@ -240,3 +240,64 @@ class TestFindNegativeKeywordsRefactor:
         result = matcher._find_negative_keywords(text, negative_vocab=vocab_list)
 
         assert result == ["enterprise"]
+
+
+class TestComputePenalty:
+    """Test _compute_penalty() helper method."""
+
+    def test_compute_penalty_returns_penalty_result(self):
+        """_compute_penalty() should return a _PenaltyResult dataclass."""
+        from utils.thesis_matcher import ThesisMatcher, _PenaltyResult, NEGATIVE_KEYWORDS
+
+        matcher = ThesisMatcher(v2_enablement="disabled")
+        result = matcher._compute_penalty("enterprise platform", NEGATIVE_KEYWORDS)
+
+        assert isinstance(result, _PenaltyResult)
+
+    def test_compute_penalty_calculates_raw_and_applied(self):
+        """_compute_penalty() should calculate raw and applied penalties."""
+        from utils.thesis_matcher import ThesisMatcher, NEGATIVE_KEYWORDS
+
+        matcher = ThesisMatcher(v2_enablement="disabled")
+        # "enterprise" has weight 0.5 in NEGATIVE_KEYWORDS
+        result = matcher._compute_penalty("enterprise software", NEGATIVE_KEYWORDS)
+
+        assert "enterprise" in result.matches
+        assert result.raw_penalty == 0.5
+        assert result.applied_penalty == 0.25  # raw * 0.5
+
+    def test_compute_penalty_sums_multiple_matches(self):
+        """_compute_penalty() should sum weights for multiple matches."""
+        from utils.thesis_matcher import ThesisMatcher, NEGATIVE_KEYWORDS
+
+        matcher = ThesisMatcher(v2_enablement="disabled")
+        # "enterprise" (0.5) + "b2b" (0.5) = 1.0 raw
+        result = matcher._compute_penalty("enterprise b2b platform", NEGATIVE_KEYWORDS)
+
+        assert "enterprise" in result.matches
+        assert "b2b" in result.matches
+        assert result.raw_penalty == 1.0
+        assert result.applied_penalty == 0.5
+
+    def test_compute_penalty_with_custom_weights(self):
+        """_compute_penalty() should use custom weights dict."""
+        from utils.thesis_matcher import ThesisMatcher
+
+        matcher = ThesisMatcher(v2_enablement="disabled")
+        custom_weights = {"enterprise": 0.8, "platform": 0.3}
+        result = matcher._compute_penalty("enterprise platform", custom_weights)
+
+        assert result.matches == ["enterprise", "platform"]
+        assert result.raw_penalty == 1.1
+        assert result.applied_penalty == pytest.approx(0.55)
+
+    def test_compute_penalty_no_matches(self):
+        """_compute_penalty() should return zeros when no matches."""
+        from utils.thesis_matcher import ThesisMatcher, NEGATIVE_KEYWORDS
+
+        matcher = ThesisMatcher(v2_enablement="disabled")
+        result = matcher._compute_penalty("healthy food delivery", NEGATIVE_KEYWORDS)
+
+        assert result.matches == []
+        assert result.raw_penalty == 0.0
+        assert result.applied_penalty == 0.0
