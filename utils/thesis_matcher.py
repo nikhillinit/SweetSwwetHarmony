@@ -332,6 +332,34 @@ class ThesisFit:
         return result
 
 
+@dataclass(frozen=True)
+class _CoreScore:
+    """Internal: Core scoring result before penalty application.
+
+    Captures positive thesis scoring + intent/domain signals.
+    Shared between v1 and v2 paths to ensure differences only come from negatives.
+    """
+    normalized: str
+    scores: Dict[str, float]
+    all_matches: Dict[str, List[str]]
+    best_thesis: ConsumerThesis
+    base_score: float  # Best score BEFORE negative penalty + boosts
+    matched_kws: List[str]
+    intent_matches: List[str]
+    domain_match: bool
+
+
+@dataclass(frozen=True)
+class _PenaltyResult:
+    """Internal: Result of negative keyword penalty calculation.
+
+    Separates penalty computation from score adjustment for v1/v2 comparison.
+    """
+    matches: List[str]
+    raw_penalty: float  # sum(weights)
+    applied_penalty: float  # raw_penalty * 0.5 (current behavior)
+
+
 class ThesisMatcher:
     """
     Matches company descriptions against Consumer investment thesis.
