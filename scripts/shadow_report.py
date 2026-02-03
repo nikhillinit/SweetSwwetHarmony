@@ -307,7 +307,7 @@ def generate_markdown_report(summary: ReportSummary, records: List[ShadowRecord]
         f"| Delta Score P95 | {summary.delta_score_p95:.4f} |",
         f"| Max Absolute Delta | {summary.max_abs_delta:.4f} |",
         "",
-        "## Transition Matrix (v1 → v2)",
+        "## Transition Matrix (v1 -> v2)",
         "",
     ]
 
