@@ -752,6 +752,27 @@ class ThesisMatcher:
         applied = raw * 0.5
         return _PenaltyResult(matches=matches, raw_penalty=raw, applied_penalty=applied)
 
+    def _negative_weights_v1(self) -> Dict[str, float]:
+        """Get v1 negative keyword weights (hardcoded NEGATIVE_KEYWORDS).
+
+        Returns:
+            NEGATIVE_KEYWORDS dict (not a copy - callers should not mutate)
+        """
+        return NEGATIVE_KEYWORDS
+
+    def _negative_weights_v2(self) -> Dict[str, float]:
+        """Get v2 negative keyword weights from YAML policy.
+
+        Returns:
+            Dict mapping keywords to weights, or empty dict if v2 not enabled
+        """
+        if not getattr(self, "_negative_keyword_policy", None):
+            return {}
+        return {
+            kw: entry.weight
+            for kw, entry in self._negative_keyword_policy.keywords.items()
+        }
+
     def _apply_adjustments(
         self,
         base_score: float,
