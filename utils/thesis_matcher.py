@@ -733,6 +733,25 @@ class ThesisMatcher:
                 matches.append(keyword)
         return matches
 
+    def _compute_penalty(
+        self,
+        normalized: str,
+        weights: Dict[str, float],
+    ) -> _PenaltyResult:
+        """Compute negative keyword penalty using specified weights.
+
+        Args:
+            normalized: Normalized text to search
+            weights: Dict mapping keywords to penalty weights
+
+        Returns:
+            _PenaltyResult with matches, raw penalty sum, and applied penalty
+        """
+        matches = self._find_negative_keywords(normalized, negative_vocab=weights)
+        raw = sum(weights.get(kw, 0.2) for kw in matches)
+        applied = raw * 0.5
+        return _PenaltyResult(matches=matches, raw_penalty=raw, applied_penalty=applied)
+
     def _find_intent_phrases(self, text: str) -> List[str]:
         """Find intent phrases that indicate commercial/consumer intent (Phase B)."""
         matches = []
