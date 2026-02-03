@@ -466,3 +466,152 @@ class TestNegativeWeightsAccessors:
         weights = matcher._negative_weights_v2()
 
         assert weights["test_keyword"] == 0.42
+
+
+class TestBuildFit:
+    """Test _build_fit() helper method."""
+
+    def test_build_fit_returns_thesis_fit(self):
+        """_build_fit() should return a ThesisFit object."""
+        from utils.thesis_matcher import (
+            ThesisMatcher, ThesisFit, _CoreScore, _PenaltyResult,
+            ConsumerThesis, NEGATIVE_KEYWORDS
+        )
+
+        matcher = ThesisMatcher(v2_enablement="disabled")
+        core = _CoreScore(
+            normalized="test",
+            scores={"consumer_cpg": 0.5},
+            all_matches={"consumer_cpg": ["food"]},
+            best_thesis=ConsumerThesis.CONSUMER_CPG,
+            base_score=0.5,
+            matched_kws=["food"],
+            intent_matches=[],
+            domain_match=False,
+        )
+        penalty = _PenaltyResult(matches=[], raw_penalty=0.0, applied_penalty=0.0)
+
+        fit = matcher._build_fit(core, final_score=0.5, penalty=penalty, negative_weights=NEGATIVE_KEYWORDS)
+
+        assert isinstance(fit, ThesisFit)
+
+    def test_build_fit_sets_confidence_high(self):
+        """_build_fit() should set HIGH confidence for score >= 0.7."""
+        from utils.thesis_matcher import (
+            ThesisMatcher, _CoreScore, _PenaltyResult,
+            ConsumerThesis, NEGATIVE_KEYWORDS
+        )
+
+        matcher = ThesisMatcher(v2_enablement="disabled")
+        core = _CoreScore(
+            normalized="test",
+            scores={"consumer_cpg": 0.8},
+            all_matches={"consumer_cpg": ["food"]},
+            best_thesis=ConsumerThesis.CONSUMER_CPG,
+            base_score=0.8,
+            matched_kws=["food"],
+            intent_matches=[],
+            domain_match=False,
+        )
+        penalty = _PenaltyResult(matches=[], raw_penalty=0.0, applied_penalty=0.0)
+
+        fit = matcher._build_fit(core, final_score=0.75, penalty=penalty, negative_weights=NEGATIVE_KEYWORDS)
+
+        assert fit.confidence == "HIGH"
+
+    def test_build_fit_sets_confidence_medium(self):
+        """_build_fit() should set MEDIUM confidence for 0.4 <= score < 0.7."""
+        from utils.thesis_matcher import (
+            ThesisMatcher, _CoreScore, _PenaltyResult,
+            ConsumerThesis, NEGATIVE_KEYWORDS
+        )
+
+        matcher = ThesisMatcher(v2_enablement="disabled")
+        core = _CoreScore(
+            normalized="test",
+            scores={"consumer_cpg": 0.5},
+            all_matches={"consumer_cpg": ["food"]},
+            best_thesis=ConsumerThesis.CONSUMER_CPG,
+            base_score=0.5,
+            matched_kws=["food"],
+            intent_matches=[],
+            domain_match=False,
+        )
+        penalty = _PenaltyResult(matches=[], raw_penalty=0.0, applied_penalty=0.0)
+
+        fit = matcher._build_fit(core, final_score=0.5, penalty=penalty, negative_weights=NEGATIVE_KEYWORDS)
+
+        assert fit.confidence == "MEDIUM"
+
+    def test_build_fit_sets_confidence_low(self):
+        """_build_fit() should set LOW confidence for score < 0.4."""
+        from utils.thesis_matcher import (
+            ThesisMatcher, _CoreScore, _PenaltyResult,
+            ConsumerThesis, NEGATIVE_KEYWORDS
+        )
+
+        matcher = ThesisMatcher(v2_enablement="disabled")
+        core = _CoreScore(
+            normalized="test",
+            scores={"consumer_cpg": 0.2},
+            all_matches={"consumer_cpg": []},
+            best_thesis=ConsumerThesis.CONSUMER_CPG,
+            base_score=0.2,
+            matched_kws=[],
+            intent_matches=[],
+            domain_match=False,
+        )
+        penalty = _PenaltyResult(matches=[], raw_penalty=0.0, applied_penalty=0.0)
+
+        fit = matcher._build_fit(core, final_score=0.2, penalty=penalty, negative_weights=NEGATIVE_KEYWORDS)
+
+        assert fit.confidence == "LOW"
+
+    def test_build_fit_sets_unknown_thesis_for_low_score(self):
+        """_build_fit() should set UNKNOWN thesis when score <= 0.1."""
+        from utils.thesis_matcher import (
+            ThesisMatcher, _CoreScore, _PenaltyResult,
+            ConsumerThesis, NEGATIVE_KEYWORDS
+        )
+
+        matcher = ThesisMatcher(v2_enablement="disabled")
+        core = _CoreScore(
+            normalized="test",
+            scores={"consumer_cpg": 0.05},
+            all_matches={"consumer_cpg": []},
+            best_thesis=ConsumerThesis.CONSUMER_CPG,
+            base_score=0.05,
+            matched_kws=[],
+            intent_matches=[],
+            domain_match=False,
+        )
+        penalty = _PenaltyResult(matches=[], raw_penalty=0.0, applied_penalty=0.0)
+
+        fit = matcher._build_fit(core, final_score=0.05, penalty=penalty, negative_weights=NEGATIVE_KEYWORDS)
+
+        assert fit.thesis == ConsumerThesis.UNKNOWN
+
+    def test_build_fit_includes_trace(self):
+        """_build_fit() should include a trace."""
+        from utils.thesis_matcher import (
+            ThesisMatcher, _CoreScore, _PenaltyResult,
+            ConsumerThesis, NEGATIVE_KEYWORDS
+        )
+
+        matcher = ThesisMatcher(v2_enablement="disabled")
+        core = _CoreScore(
+            normalized="test",
+            scores={"consumer_cpg": 0.5},
+            all_matches={"consumer_cpg": ["food"]},
+            best_thesis=ConsumerThesis.CONSUMER_CPG,
+            base_score=0.5,
+            matched_kws=["food"],
+            intent_matches=[],
+            domain_match=False,
+        )
+        penalty = _PenaltyResult(matches=["enterprise"], raw_penalty=0.5, applied_penalty=0.25)
+
+        fit = matcher._build_fit(core, final_score=0.25, penalty=penalty, negative_weights=NEGATIVE_KEYWORDS)
+
+        assert fit.trace is not None
+        assert fit.trace.final_score == 0.25

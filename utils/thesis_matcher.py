@@ -813,6 +813,55 @@ class ThesisMatcher:
 
         return score
 
+    def _build_fit(
+        self,
+        core: _CoreScore,
+        final_score: float,
+        penalty: _PenaltyResult,
+        negative_weights: Dict[str, float],
+    ) -> ThesisFit:
+        """Build ThesisFit result from core scoring and penalty.
+
+        Args:
+            core: Core scoring results
+            final_score: Score after all adjustments
+            penalty: Penalty calculation results
+            negative_weights: Weights used for penalty (for trace)
+
+        Returns:
+            Complete ThesisFit object
+        """
+        # Determine confidence
+        if final_score >= 0.7:
+            confidence = "HIGH"
+        elif final_score >= 0.4:
+            confidence = "MEDIUM"
+        else:
+            confidence = "LOW"
+
+        # Generate trace
+        trace = self._generate_trace(
+            best_score=final_score,
+            matched_keywords=core.matched_kws,
+            negative_matches=penalty.matches,
+            intent_matches=core.intent_matches,
+            domain_match=core.domain_match,
+            negative_weights=negative_weights,
+        )
+
+        return ThesisFit(
+            thesis=core.best_thesis if final_score > 0.1 else ConsumerThesis.UNKNOWN,
+            score=final_score,
+            matched_keywords=core.matched_kws,
+            negative_keywords=penalty.matches,
+            all_scores=core.scores,
+            confidence=confidence,
+            intent_phrases_matched=core.intent_matches,
+            domain_match=core.domain_match,
+            domain_blacklisted=False,
+            trace=trace,
+        )
+
     def _find_intent_phrases(self, text: str) -> List[str]:
         """Find intent phrases that indicate commercial/consumer intent (Phase B)."""
         matches = []
@@ -873,6 +922,8 @@ class ThesisMatcher:
         negative_matches: List[str],
         intent_matches: List[str],
         domain_match: bool,
+        *,
+        negative_weights: Optional[Dict[str, float]] = None,
     ) -> ThesisFitTrace:
         """Generate explainability trace for thesis classification.
 
@@ -886,13 +937,18 @@ class ThesisMatcher:
             negative_matches: Negative keywords matched
             intent_matches: Intent phrases matched
             domain_match: Whether domain pattern matched
+            negative_weights: Optional dict of negative keyword weights for trace.
+                If None, uses NEGATIVE_KEYWORDS (v1 behavior).
 
         Returns:
             ThesisFitTrace with explanation
         """
+        # Use provided weights or fall back to NEGATIVE_KEYWORDS
+        weights = negative_weights if negative_weights is not None else NEGATIVE_KEYWORDS
+
         # Convert negative matches to soft negatives with penalties
         soft_negatives = [
-            (kw, NEGATIVE_KEYWORDS.get(kw, 0.2))
+            (kw, weights.get(kw, 0.2))
             for kw in negative_matches
         ]
 
