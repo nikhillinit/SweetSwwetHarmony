@@ -994,3 +994,67 @@ class TestScoreShadowModeIntegration:
         fit = matcher.score("enterprise b2b saas platform")
         assert "enterprise" in fit.negative_keywords
         assert "b2b" in fit.negative_keywords
+
+
+class TestPhase0B2Complete:
+    """Final integration tests for Phase 0B-2 completion."""
+
+    def test_shadow_mode_end_to_end_with_production_yaml(self):
+        """Shadow mode works with the actual production YAML policy."""
+        from utils.thesis_matcher import ThesisMatcher
+
+        # Use actual config/v2 directory (production YAML)
+        matcher = ThesisMatcher(v2_enablement="shadow")
+
+        # Should not raise, should work with production policy
+        fit = matcher.score("enterprise blockchain crypto startup")
+
+        assert fit.trace is not None
+        assert fit.trace.v2_shadow is not None
+        # Both v1 and v2 should find the same negative keywords
+        # (since production YAML mirrors NEGATIVE_KEYWORDS)
+        assert "enterprise" in fit.negative_keywords
+        assert "blockchain" in fit.negative_keywords
+
+    def test_v1_v2_parity_with_mirrored_yaml(self):
+        """When YAML mirrors NEGATIVE_KEYWORDS exactly, v1 == v2."""
+        from utils.thesis_matcher import ThesisMatcher
+
+        # Production YAML should mirror NEGATIVE_KEYWORDS
+        matcher = ThesisMatcher(v2_enablement="shadow")
+
+        fit = matcher.score("enterprise b2b saas platform for food delivery")
+
+        shadow = fit.trace.v2_shadow
+        # With mirrored weights, scores should be identical
+        assert shadow["v1"]["score"] == shadow["v2"]["score"]
+        assert shadow["delta_score"] == 0.0
+        assert shadow["would_change_is_fit"] is False
+        assert shadow["would_change_routing"] is False
+
+    def test_to_dict_serialization_with_v2_shadow(self, tmp_path):
+        """ThesisFit.to_dict() should include v2_shadow when present."""
+        policy_file = tmp_path / "negative_keyword_policy.yaml"
+        policy_file.write_text(
+            "version: '2.0'\n"
+            "schema: 'negative_keyword_policy_v1'\n"
+            "negative_keywords:\n"
+            "  enterprise:\n"
+            "    weight: 0.8\n"
+            "    category: B2B_ENTERPRISE\n"
+        )
+
+        from utils.thesis_matcher import ThesisMatcher
+        import json
+
+        matcher = ThesisMatcher(v2_enablement="shadow", config_path=str(tmp_path))
+        fit = matcher.score("enterprise software for meal delivery")
+
+        # Should be JSON-serializable
+        result = fit.to_dict()
+        json_str = json.dumps(result)
+        parsed = json.loads(json_str)
+
+        assert "trace" in parsed
+        assert "v2_shadow" in parsed["trace"]
+        assert "delta_score" in parsed["trace"]["v2_shadow"]
