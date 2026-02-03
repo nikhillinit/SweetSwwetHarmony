@@ -44,13 +44,26 @@ python run_pipeline.py health --json
 ```
 
 ## Reference Docs
-- Always-on constraints: `.claude/rules/invariants.md`
-- API key auto-update rule: `.claude/rules/api-key-coverage.md`
-- Collector inventory: `docs/claude/collectors-reference.md`
-- CLI commands + dev practices: `docs/claude/cli-commands.md`
-- Environment variables: `docs/claude/environment-variables.md`
-- Codex/Maestro workflow: `docs/claude/codex-collaboration.md`
-- Archived sprint history: `docs/archive/sprint-history.md`
+
+### Always-on (via `.claude/rules/`)
+- `invariants.md` — Core constraints and prohibitions
+- `api-key-coverage.md` — Auto-update rule for API key status
+
+### On-demand (load when needed)
+
+Deep reference material lives in `docs/claude/` and is **not** loaded by default.
+
+When needed for a task, temporarily paste one or more import lines near the top of this file (not inside a code block), e.g.:
+
+- @docs/claude/collectors-reference.md
+- @docs/claude/environment-variables.md
+- @docs/claude/cli-commands.md
+- @docs/claude/codex-collaboration.md
+
+After the task, remove those lines (or run `git restore CLAUDE.md`) so they don't become always-on.
+
+### Archive
+- `docs/archive/sprint-history.md` — Historical sprint notes
 
 
 ## API Key Coverage (Auto-Updated)
