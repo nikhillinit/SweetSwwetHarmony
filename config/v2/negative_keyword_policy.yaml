@@ -1,0 +1,24 @@
+# Negative Keyword Policy v2 - Marker File
+#
+# This file enables the v2 policy loader to discover the config/v2 directory.
+# Phase 0A: Marker file only (enables directory discovery)
+# Phase 0B-1: Will be populated with NegativeKeywordPolicy weights
+#
+# When V2_ENABLEMENT=shadow or V2_ENABLEMENT=live, ThesisMatcher will:
+# 1. Discover this file via resolve_policy_dir()
+# 2. Load this YAML into PolicyBundle.policies["negative_keyword_policy"]
+# 3. Use the weights below for v2 scoring (after Phase 0B-1)
+#
+# Schema (Phase 0B-1):
+#   version: "1.0"
+#   negative_keywords:
+#     <keyword>:
+#       weight: <float>  # 0.0-1.0, default 1.0
+#       category: <str>  # Optional: B2B, Developer, Enterprise, etc.
+
+version: "1.0"
+
+# Empty for Phase 0A - will be populated in Phase 0B-1 with:
+# - Current NEGATIVE_KEYWORDS from thesis_matcher.py constants
+# - Per-keyword weights for fine-tuning
+negative_keywords: {}
