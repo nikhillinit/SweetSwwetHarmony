@@ -615,3 +615,219 @@ class TestBuildFit:
 
         assert fit.trace is not None
         assert fit.trace.final_score == 0.25
+
+
+class TestAttachV2ShadowDiff:
+    """Test _attach_v2_shadow_diff() method."""
+
+    def test_attaches_v2_shadow_to_trace(self, tmp_path):
+        """_attach_v2_shadow_diff() should attach shadow diff to fit_v1.trace."""
+        policy_file = tmp_path / "negative_keyword_policy.yaml"
+        policy_file.write_text(
+            "version: '2.0'\n"
+            "schema: 'negative_keyword_policy_v1'\n"
+            "negative_keywords:\n"
+            "  enterprise:\n"
+            "    weight: 0.6\n"
+            "    category: B2B_ENTERPRISE\n"
+        )
+
+        from utils.thesis_matcher import (
+            ThesisMatcher, ThesisFit, ThesisFitTrace, _CoreScore, _PenaltyResult,
+            ConsumerThesis, NEGATIVE_KEYWORDS
+        )
+
+        matcher = ThesisMatcher(v2_enablement="shadow", config_path=str(tmp_path))
+
+        # Create mock fit objects
+        core = _CoreScore(
+            normalized="enterprise software",
+            scores={"consumer_cpg": 0.5},
+            all_matches={"consumer_cpg": []},
+            best_thesis=ConsumerThesis.CONSUMER_CPG,
+            base_score=0.5,
+            matched_kws=[],
+            intent_matches=[],
+            domain_match=False,
+        )
+
+        # v1: enterprise weight 0.5, applied 0.25, score = 0.5 - 0.25 = 0.25
+        p1 = _PenaltyResult(matches=["enterprise"], raw_penalty=0.5, applied_penalty=0.25)
+        fit_v1 = matcher._build_fit(core, final_score=0.25, penalty=p1, negative_weights=NEGATIVE_KEYWORDS)
+
+        # v2: enterprise weight 0.6, applied 0.30, score = 0.5 - 0.30 = 0.20
+        p2 = _PenaltyResult(matches=["enterprise"], raw_penalty=0.6, applied_penalty=0.30)
+        fit_v2 = matcher._build_fit(core, final_score=0.20, penalty=p2, negative_weights={"enterprise": 0.6})
+
+        # Attach diff
+        matcher._attach_v2_shadow_diff(fit_v1, fit_v2, p1, p2)
+
+        # Verify v2_shadow was attached
+        assert fit_v1.trace.v2_shadow is not None
+        assert "v1" in fit_v1.trace.v2_shadow
+        assert "v2" in fit_v1.trace.v2_shadow
+        assert "delta_score" in fit_v1.trace.v2_shadow
+
+    def test_shadow_diff_contains_correct_values(self, tmp_path):
+        """v2_shadow should contain correct v1/v2 comparison values."""
+        policy_file = tmp_path / "negative_keyword_policy.yaml"
+        policy_file.write_text(
+            "version: '2.0'\n"
+            "schema: 'negative_keyword_policy_v1'\n"
+            "negative_keywords: {}\n"
+        )
+
+        from utils.thesis_matcher import (
+            ThesisMatcher, _CoreScore, _PenaltyResult,
+            ConsumerThesis, NEGATIVE_KEYWORDS
+        )
+
+        matcher = ThesisMatcher(v2_enablement="shadow", config_path=str(tmp_path))
+
+        core = _CoreScore(
+            normalized="test",
+            scores={"consumer_cpg": 0.5},
+            all_matches={"consumer_cpg": []},
+            best_thesis=ConsumerThesis.CONSUMER_CPG,
+            base_score=0.5,
+            matched_kws=[],
+            intent_matches=[],
+            domain_match=False,
+        )
+
+        p1 = _PenaltyResult(matches=["enterprise"], raw_penalty=0.5, applied_penalty=0.25)
+        fit_v1 = matcher._build_fit(core, final_score=0.25, penalty=p1, negative_weights=NEGATIVE_KEYWORDS)
+
+        p2 = _PenaltyResult(matches=[], raw_penalty=0.0, applied_penalty=0.0)
+        fit_v2 = matcher._build_fit(core, final_score=0.50, penalty=p2, negative_weights={})
+
+        matcher._attach_v2_shadow_diff(fit_v1, fit_v2, p1, p2)
+
+        shadow = fit_v1.trace.v2_shadow
+        assert shadow["v1"]["score"] == 0.25
+        assert shadow["v2"]["score"] == 0.50
+        assert shadow["delta_score"] == pytest.approx(0.25)
+        assert shadow["v1"]["negative_keywords"] == ["enterprise"]
+        assert shadow["v2"]["negative_keywords"] == []
+
+    def test_shadow_diff_detects_would_change_is_fit(self, tmp_path):
+        """v2_shadow should detect when is_fit would change."""
+        policy_file = tmp_path / "negative_keyword_policy.yaml"
+        policy_file.write_text(
+            "version: '2.0'\n"
+            "schema: 'negative_keyword_policy_v1'\n"
+            "negative_keywords: {}\n"
+        )
+
+        from utils.thesis_matcher import (
+            ThesisMatcher, _CoreScore, _PenaltyResult,
+            ConsumerThesis, NEGATIVE_KEYWORDS
+        )
+
+        matcher = ThesisMatcher(v2_enablement="shadow", config_path=str(tmp_path))
+
+        core = _CoreScore(
+            normalized="test",
+            scores={"consumer_cpg": 0.5},
+            all_matches={},
+            best_thesis=ConsumerThesis.CONSUMER_CPG,
+            base_score=0.5,
+            matched_kws=[],
+            intent_matches=[],
+            domain_match=False,
+        )
+
+        # v1: score 0.35 (not fit, < 0.4)
+        p1 = _PenaltyResult(matches=["enterprise"], raw_penalty=0.3, applied_penalty=0.15)
+        fit_v1 = matcher._build_fit(core, final_score=0.35, penalty=p1, negative_weights=NEGATIVE_KEYWORDS)
+
+        # v2: score 0.50 (fit, >= 0.4)
+        p2 = _PenaltyResult(matches=[], raw_penalty=0.0, applied_penalty=0.0)
+        fit_v2 = matcher._build_fit(core, final_score=0.50, penalty=p2, negative_weights={})
+
+        matcher._attach_v2_shadow_diff(fit_v1, fit_v2, p1, p2)
+
+        assert fit_v1.trace.v2_shadow["would_change_is_fit"] is True
+
+    def test_shadow_diff_detects_would_change_routing(self, tmp_path):
+        """v2_shadow should detect when routing decision would change."""
+        policy_file = tmp_path / "negative_keyword_policy.yaml"
+        policy_file.write_text(
+            "version: '2.0'\n"
+            "schema: 'negative_keyword_policy_v1'\n"
+            "negative_keywords: {}\n"
+        )
+
+        from utils.thesis_matcher import (
+            ThesisMatcher, _CoreScore, _PenaltyResult,
+            ConsumerThesis, NEGATIVE_KEYWORDS
+        )
+
+        matcher = ThesisMatcher(v2_enablement="shadow", config_path=str(tmp_path))
+
+        core = _CoreScore(
+            normalized="test",
+            scores={"consumer_cpg": 0.3},
+            all_matches={},
+            best_thesis=ConsumerThesis.CONSUMER_CPG,
+            base_score=0.3,
+            matched_kws=[],
+            intent_matches=[],
+            domain_match=False,
+        )
+
+        # v1: score 0.25 (HELD, 0.1 <= score < 0.3)
+        p1 = _PenaltyResult(matches=["token"], raw_penalty=0.1, applied_penalty=0.05)
+        fit_v1 = matcher._build_fit(core, final_score=0.25, penalty=p1, negative_weights=NEGATIVE_KEYWORDS)
+
+        # v2: score 0.30 (QUALIFIED, >= 0.3)
+        p2 = _PenaltyResult(matches=[], raw_penalty=0.0, applied_penalty=0.0)
+        fit_v2 = matcher._build_fit(core, final_score=0.30, penalty=p2, negative_weights={})
+
+        matcher._attach_v2_shadow_diff(fit_v1, fit_v2, p1, p2)
+
+        assert fit_v1.trace.v2_shadow["would_change_routing"] is True
+
+    def test_no_attachment_when_trace_is_none(self, tmp_path):
+        """_attach_v2_shadow_diff() should do nothing if fit_v1.trace is None."""
+        policy_file = tmp_path / "negative_keyword_policy.yaml"
+        policy_file.write_text(
+            "version: '2.0'\n"
+            "schema: 'negative_keyword_policy_v1'\n"
+            "negative_keywords: {}\n"
+        )
+
+        from utils.thesis_matcher import (
+            ThesisMatcher, ThesisFit, _PenaltyResult, ConsumerThesis
+        )
+
+        matcher = ThesisMatcher(v2_enablement="shadow", config_path=str(tmp_path))
+
+        # Create fit with trace=None
+        fit_v1 = ThesisFit(
+            thesis=ConsumerThesis.CONSUMER_CPG,
+            score=0.5,
+            matched_keywords=[],
+            negative_keywords=[],
+            all_scores={},
+            confidence="MEDIUM",
+            trace=None,
+        )
+        fit_v2 = ThesisFit(
+            thesis=ConsumerThesis.CONSUMER_CPG,
+            score=0.6,
+            matched_keywords=[],
+            negative_keywords=[],
+            all_scores={},
+            confidence="MEDIUM",
+            trace=None,
+        )
+
+        p1 = _PenaltyResult(matches=[], raw_penalty=0.0, applied_penalty=0.0)
+        p2 = _PenaltyResult(matches=[], raw_penalty=0.0, applied_penalty=0.0)
+
+        # Should not raise
+        matcher._attach_v2_shadow_diff(fit_v1, fit_v2, p1, p2)
+
+        # trace is still None
+        assert fit_v1.trace is None

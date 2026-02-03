@@ -862,6 +862,66 @@ class ThesisMatcher:
             trace=trace,
         )
 
+    def _attach_v2_shadow_diff(
+        self,
+        fit_v1: ThesisFit,
+        fit_v2: ThesisFit,
+        p1: _PenaltyResult,
+        p2: _PenaltyResult,
+    ) -> None:
+        """Attach v2 shadow diff to fit_v1's trace for observability.
+
+        Computes diff between v1 and v2 results and attaches to trace.
+        Logs high-signal divergences (routing change, is_fit change, large delta).
+
+        Args:
+            fit_v1: The v1 result (will be modified to add v2_shadow)
+            fit_v2: The v2 result (for comparison)
+            p1: v1 penalty result
+            p2: v2 penalty result
+        """
+        if not fit_v1.trace:
+            return
+
+        def route(score: float) -> str:
+            """Determine routing decision from score."""
+            if score >= 0.3:
+                return "QUALIFIED"
+            if score >= 0.1:
+                return "HELD"
+            return "REJECTED"
+
+        diff = {
+            "v1": {
+                "score": fit_v1.score,
+                "penalty_raw": p1.raw_penalty,
+                "negative_keywords": p1.matches,
+                "routing": route(fit_v1.score),
+                "thesis": fit_v1.thesis.value,
+            },
+            "v2": {
+                "score": fit_v2.score,
+                "penalty_raw": p2.raw_penalty,
+                "negative_keywords": p2.matches,
+                "routing": route(fit_v2.score),
+                "thesis": fit_v2.thesis.value,
+            },
+            "delta_score": fit_v2.score - fit_v1.score,
+            "would_change_is_fit": (fit_v2.is_fit != fit_v1.is_fit),
+            "would_change_routing": (route(fit_v2.score) != route(fit_v1.score)),
+            "would_change_thesis": (fit_v2.thesis != fit_v1.thesis),
+        }
+
+        fit_v1.trace.v2_shadow = diff
+
+        # Log high-signal divergences only
+        if (
+            diff["would_change_routing"]
+            or diff["would_change_is_fit"]
+            or abs(diff["delta_score"]) >= 0.05
+        ):
+            logger.info("v2 shadow diff: %s", diff)
+
     def _find_intent_phrases(self, text: str) -> List[str]:
         """Find intent phrases that indicate commercial/consumer intent (Phase B)."""
         matches = []
