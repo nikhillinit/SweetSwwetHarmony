@@ -171,3 +171,72 @@ class TestComputeCore:
         core = matcher._compute_core("some text", domain_name="example.com")
 
         assert core.domain_match is False
+
+
+class TestFindNegativeKeywordsRefactor:
+    """Test _find_negative_keywords() with keyword-only vocab parameter."""
+
+    def test_default_path_equals_explicit_v1_vocab(self):
+        """Default path should equal explicit NEGATIVE_KEYWORDS vocab."""
+        from utils.thesis_matcher import ThesisMatcher, NEGATIVE_KEYWORDS
+
+        matcher = ThesisMatcher(v2_enablement="disabled")
+        text = "enterprise api platform logistics"
+
+        default_result = matcher._find_negative_keywords(text)
+        explicit_result = matcher._find_negative_keywords(text, negative_vocab=NEGATIVE_KEYWORDS)
+
+        assert default_result == explicit_result
+
+    def test_custom_vocab_limits_matches(self):
+        """Custom vocab should limit which keywords are matched."""
+        from utils.thesis_matcher import ThesisMatcher
+
+        matcher = ThesisMatcher(v2_enablement="disabled")
+        text = "enterprise crypto blockchain"
+
+        # Full vocab would match all three
+        full_result = matcher._find_negative_keywords(text)
+        assert "enterprise" in full_result
+        assert "crypto" in full_result
+
+        # Subset vocab only matches what's in the subset
+        subset = {"enterprise": 0.5}
+        subset_result = matcher._find_negative_keywords(text, negative_vocab=subset)
+        assert subset_result == ["enterprise"]
+
+    def test_passing_string_raises_type_error(self):
+        """Passing a single string instead of iterable should raise TypeError."""
+        from utils.thesis_matcher import ThesisMatcher
+
+        matcher = ThesisMatcher(v2_enablement="disabled")
+        text = "enterprise platform"
+
+        with pytest.raises(TypeError, match="iterable of keywords"):
+            matcher._find_negative_keywords(text, negative_vocab="enterprise")
+
+    def test_vocab_can_be_dict_keys(self):
+        """Vocab can be a dict (iterates keys)."""
+        from utils.thesis_matcher import ThesisMatcher
+
+        matcher = ThesisMatcher(v2_enablement="disabled")
+        text = "enterprise b2b platform"
+
+        vocab_dict = {"enterprise": 0.5, "b2b": 0.5}
+        result = matcher._find_negative_keywords(text, negative_vocab=vocab_dict)
+
+        assert "enterprise" in result
+        assert "b2b" in result
+        assert len(result) == 2
+
+    def test_vocab_can_be_list(self):
+        """Vocab can be a list of keywords."""
+        from utils.thesis_matcher import ThesisMatcher
+
+        matcher = ThesisMatcher(v2_enablement="disabled")
+        text = "enterprise b2b platform"
+
+        vocab_list = ["enterprise"]
+        result = matcher._find_negative_keywords(text, negative_vocab=vocab_list)
+
+        assert result == ["enterprise"]

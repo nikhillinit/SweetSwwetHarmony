@@ -39,7 +39,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Tuple
 
 if TYPE_CHECKING:
     from utils.policy_loader import PolicyBundle
@@ -697,10 +697,38 @@ class ThesisMatcher:
 
         return score, matches
 
-    def _find_negative_keywords(self, text: str) -> List[str]:
-        matches = []
-        for keyword in NEGATIVE_KEYWORDS:
-            pattern = r'\b' + re.escape(keyword) + r'\b'
+    def _find_negative_keywords(
+        self,
+        text: str,
+        *,
+        negative_vocab: Optional[Iterable[str]] = None,
+    ) -> List[str]:
+        """Find negative keywords in text.
+
+        Args:
+            text: Normalized text to search
+            negative_vocab: Optional iterable of keywords to search for.
+                If None, uses NEGATIVE_KEYWORDS (v1 behavior).
+                Can be a dict (iterates keys), list, or any iterable.
+
+        Returns:
+            List of matched negative keywords
+
+        Raises:
+            TypeError: If negative_vocab is a single string instead of iterable
+        """
+        # Preserve v1 behavior exactly: iterate the dict (keys) in insertion order
+        vocab = NEGATIVE_KEYWORDS if negative_vocab is None else negative_vocab
+
+        # Guardrail: passing a single string would iterate characters
+        if isinstance(vocab, str):
+            raise TypeError(
+                "negative_vocab must be an iterable of keywords, not a single string"
+            )
+
+        matches: List[str] = []
+        for keyword in vocab:
+            pattern = r"\b" + re.escape(keyword) + r"\b"
             if re.search(pattern, text):
                 matches.append(keyword)
         return matches
