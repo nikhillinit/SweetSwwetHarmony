@@ -1,3 +1,26 @@
+# Phase 0B-2: ThesisMatcher YAML Wiring Implementation Plan
+
+> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+
+**Goal:** Wire ThesisMatcher scoring to read negative keyword weights from YAML when v2 is enabled, with shadow mode comparison logging that never changes outward results.
+
+**Architecture:** Extract core scoring into composable helpers (`_compute_core`, `_compute_penalty`, `_apply_adjustments`, `_build_fit`). Shadow mode computes both v1 and v2 in parallel, attaches diff to trace, logs only high-signal divergences. Always returns v1 result in shadow mode.
+
+**Tech Stack:** Python dataclasses, pytest, existing YAML policy infrastructure from Phase 0B-1
+
+---
+
+## Task 1: Add `v2_shadow` field to ThesisFitTrace
+
+**Files:**
+- Modify: `utils/thesis_matcher.py:239-284` (ThesisFitTrace dataclass)
+- Test: `tests/utils/test_thesis_matcher_v2_shadow.py` (new file)
+
+**Step 1: Write the failing test**
+
+Create new test file `tests/utils/test_thesis_matcher_v2_shadow.py`:
+
+```python
 """Tests for ThesisMatcher v2 shadow mode (Phase 0B-2)."""
 
 import pytest
@@ -37,8 +60,80 @@ class TestThesisFitTraceV2Shadow:
         result = trace.to_dict()
 
         assert "v2_shadow" not in result
+```
 
+**Step 2: Run test to verify it fails**
 
+Run: `pytest tests/utils/test_thesis_matcher_v2_shadow.py::TestThesisFitTraceV2Shadow -v`
+Expected: FAIL with "AttributeError: 'ThesisFitTrace' object has no attribute 'v2_shadow'"
+
+**Step 3: Write minimal implementation**
+
+In `utils/thesis_matcher.py`, modify `ThesisFitTrace` dataclass (around line 239-284):
+
+```python
+@dataclass
+class ThesisFitTrace:
+    """Explainability trace for thesis classification debugging.
+    ...existing docstring...
+    """
+    matched_hard_negatives: List[str] = field(default_factory=list)
+    soft_negatives: List[Tuple[str, float]] = field(default_factory=list)
+    rescue_anchors_matched: Dict[str, List[str]] = field(default_factory=dict)
+    rescue_blocked_by: Optional[str] = None
+    aggregator_exception_triggered: bool = False
+    applied_ai_path: Optional[str] = None
+    final_score: float = 0.0
+    routing_decision: str = "UNKNOWN"
+    explanation: str = ""
+    # Phase 0B-2: Shadow mode comparison data
+    v2_shadow: Optional[Dict] = None
+
+    def to_dict(self) -> Dict:
+        """Convert trace to dictionary for serialization."""
+        result = {
+            "matched_hard_negatives": self.matched_hard_negatives,
+            "soft_negatives": [{"keyword": kw, "penalty": penalty}
+                              for kw, penalty in self.soft_negatives],
+            "rescue_anchors_matched": self.rescue_anchors_matched,
+            "rescue_blocked_by": self.rescue_blocked_by,
+            "aggregator_exception_triggered": self.aggregator_exception_triggered,
+            "applied_ai_path": self.applied_ai_path,
+            "final_score": round(self.final_score, 3),
+            "routing_decision": self.routing_decision,
+            "explanation": self.explanation,
+        }
+        # Phase 0B-2: Only include v2_shadow if present
+        if self.v2_shadow is not None:
+            result["v2_shadow"] = self.v2_shadow
+        return result
+```
+
+**Step 4: Run test to verify it passes**
+
+Run: `pytest tests/utils/test_thesis_matcher_v2_shadow.py::TestThesisFitTraceV2Shadow -v`
+Expected: PASS (3 tests)
+
+**Step 5: Commit**
+
+```bash
+git add tests/utils/test_thesis_matcher_v2_shadow.py utils/thesis_matcher.py
+git commit -m "feat(thesis): add v2_shadow field to ThesisFitTrace for shadow mode"
+```
+
+---
+
+## Task 2: Add internal `_CoreScore` and `_PenaltyResult` dataclasses
+
+**Files:**
+- Modify: `utils/thesis_matcher.py` (add after ThesisFit, before ThesisMatcher class)
+- Test: `tests/utils/test_thesis_matcher_v2_shadow.py` (append tests)
+
+**Step 1: Write the failing test**
+
+Append to `tests/utils/test_thesis_matcher_v2_shadow.py`:
+
+```python
 class TestInternalDataclasses:
     """Test internal dataclasses for scoring decomposition."""
 
@@ -106,8 +201,71 @@ class TestInternalDataclasses:
         assert penalty.matches == ["enterprise", "b2b"]
         assert penalty.raw_penalty == 1.0
         assert penalty.applied_penalty == 0.5
+```
+
+**Step 2: Run test to verify it fails**
+
+Run: `pytest tests/utils/test_thesis_matcher_v2_shadow.py::TestInternalDataclasses -v`
+Expected: FAIL with "cannot import name '_CoreScore' from 'utils.thesis_matcher'"
+
+**Step 3: Write minimal implementation**
+
+Add after `ThesisFit` class (around line 326) in `utils/thesis_matcher.py`:
+
+```python
+@dataclass(frozen=True)
+class _CoreScore:
+    """Internal: Core scoring result before penalty application.
+
+    Captures positive thesis scoring + intent/domain signals.
+    Shared between v1 and v2 paths to ensure differences only come from negatives.
+    """
+    normalized: str
+    scores: Dict[str, float]
+    all_matches: Dict[str, List[str]]
+    best_thesis: ConsumerThesis
+    base_score: float  # Best score BEFORE negative penalty + boosts
+    matched_kws: List[str]
+    intent_matches: List[str]
+    domain_match: bool
 
 
+@dataclass(frozen=True)
+class _PenaltyResult:
+    """Internal: Result of negative keyword penalty calculation.
+
+    Separates penalty computation from score adjustment for v1/v2 comparison.
+    """
+    matches: List[str]
+    raw_penalty: float  # sum(weights)
+    applied_penalty: float  # raw_penalty * 0.5 (current behavior)
+```
+
+**Step 4: Run test to verify it passes**
+
+Run: `pytest tests/utils/test_thesis_matcher_v2_shadow.py::TestInternalDataclasses -v`
+Expected: PASS (4 tests)
+
+**Step 5: Commit**
+
+```bash
+git add utils/thesis_matcher.py tests/utils/test_thesis_matcher_v2_shadow.py
+git commit -m "feat(thesis): add _CoreScore and _PenaltyResult internal dataclasses"
+```
+
+---
+
+## Task 3: Extract `_compute_core()` helper method
+
+**Files:**
+- Modify: `utils/thesis_matcher.py` (add method to ThesisMatcher)
+- Test: `tests/utils/test_thesis_matcher_v2_shadow.py` (append tests)
+
+**Step 1: Write the failing test**
+
+Append to `tests/utils/test_thesis_matcher_v2_shadow.py`:
+
+```python
 class TestComputeCore:
     """Test _compute_core() helper extraction."""
 
@@ -171,8 +329,95 @@ class TestComputeCore:
         core = matcher._compute_core("some text", domain_name="example.com")
 
         assert core.domain_match is False
+```
 
+**Step 2: Run test to verify it fails**
 
+Run: `pytest tests/utils/test_thesis_matcher_v2_shadow.py::TestComputeCore -v`
+Expected: FAIL with "AttributeError: 'ThesisMatcher' object has no attribute '_compute_core'"
+
+**Step 3: Write minimal implementation**
+
+Add method to `ThesisMatcher` class (after `__init__`, before `score`):
+
+```python
+def _compute_core(
+    self,
+    normalized: str,
+    domain_name: Optional[str],
+) -> _CoreScore:
+    """Compute core scoring: positive thesis scores + intent/domain signals.
+
+    This is shared between v1 and v2 paths so differences only come from negatives.
+
+    Args:
+        normalized: Normalized text to score
+        domain_name: Optional domain for pattern matching
+
+    Returns:
+        _CoreScore with all positive scoring results
+    """
+    # Score each thesis (existing logic)
+    scores: Dict[str, float] = {}
+    all_matches: Dict[str, List[str]] = {}
+
+    for thesis, keywords in self.keywords.items():
+        score, matches = self._score_thesis(normalized, keywords)
+        scores[thesis.value] = score
+        all_matches[thesis.value] = matches
+
+    # Find best thesis
+    if scores:
+        best_thesis_name = max(scores, key=scores.get)
+        base_score = scores[best_thesis_name]
+        best_thesis = ConsumerThesis(best_thesis_name)
+        matched_kws = all_matches.get(best_thesis_name, [])
+    else:
+        best_thesis = ConsumerThesis.UNKNOWN
+        base_score = 0.0
+        matched_kws = []
+
+    # Intent phrases and domain patterns
+    intent_matches = self._find_intent_phrases(normalized)
+    domain_match = self._check_domain_patterns(domain_name)
+
+    return _CoreScore(
+        normalized=normalized,
+        scores=scores,
+        all_matches=all_matches,
+        best_thesis=best_thesis,
+        base_score=base_score,
+        matched_kws=matched_kws,
+        intent_matches=intent_matches,
+        domain_match=domain_match,
+    )
+```
+
+**Step 4: Run test to verify it passes**
+
+Run: `pytest tests/utils/test_thesis_matcher_v2_shadow.py::TestComputeCore -v`
+Expected: PASS (6 tests)
+
+**Step 5: Commit**
+
+```bash
+git add utils/thesis_matcher.py tests/utils/test_thesis_matcher_v2_shadow.py
+git commit -m "feat(thesis): extract _compute_core() helper for shared scoring"
+```
+
+---
+
+## Task 4: Refactor `_find_negative_keywords()` with keyword-only vocab parameter
+
+**Files:**
+- Modify: `utils/thesis_matcher.py:614-620` (`_find_negative_keywords` method)
+- Test: `tests/utils/test_thesis_matcher_v2_shadow.py` (append tests)
+
+**Step 1: Write the failing test**
+
+Append to `tests/utils/test_thesis_matcher_v2_shadow.py`:
+
+```python
 class TestFindNegativeKeywordsRefactor:
     """Test _find_negative_keywords() with keyword-only vocab parameter."""
 
@@ -240,8 +485,91 @@ class TestFindNegativeKeywordsRefactor:
         result = matcher._find_negative_keywords(text, negative_vocab=vocab_list)
 
         assert result == ["enterprise"]
+```
 
+**Step 2: Run test to verify it fails**
 
+Run: `pytest tests/utils/test_thesis_matcher_v2_shadow.py::TestFindNegativeKeywordsRefactor -v`
+Expected: FAIL with "TypeError: _find_negative_keywords() got an unexpected keyword argument 'negative_vocab'"
+
+**Step 3: Write minimal implementation**
+
+Replace `_find_negative_keywords` method in `utils/thesis_matcher.py`:
+
+```python
+def _find_negative_keywords(
+    self,
+    text: str,
+    *,
+    negative_vocab: Optional[Iterable[str]] = None,
+) -> List[str]:
+    """Find negative keywords in text.
+
+    Args:
+        text: Normalized text to search
+        negative_vocab: Optional iterable of keywords to search for.
+            If None, uses NEGATIVE_KEYWORDS (v1 behavior).
+            Can be a dict (iterates keys), list, or any iterable.
+
+    Returns:
+        List of matched negative keywords
+
+    Raises:
+        TypeError: If negative_vocab is a single string instead of iterable
+    """
+    # Preserve v1 behavior exactly: iterate the dict (keys) in insertion order
+    vocab = NEGATIVE_KEYWORDS if negative_vocab is None else negative_vocab
+
+    # Guardrail: passing a single string would iterate characters
+    if isinstance(vocab, str):
+        raise TypeError(
+            "negative_vocab must be an iterable of keywords, not a single string"
+        )
+
+    matches: List[str] = []
+    for keyword in vocab:
+        pattern = r"\b" + re.escape(keyword) + r"\b"
+        if re.search(pattern, text):
+            matches.append(keyword)
+    return matches
+```
+
+Also add `Iterable` to the imports at the top of the file:
+
+```python
+from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Tuple
+```
+
+**Step 4: Run test to verify it passes**
+
+Run: `pytest tests/utils/test_thesis_matcher_v2_shadow.py::TestFindNegativeKeywordsRefactor -v`
+Expected: PASS (5 tests)
+
+**Step 5: Run existing tests to verify no regression**
+
+Run: `pytest tests/utils/test_thesis_matcher.py -v`
+Expected: All existing tests still pass
+
+**Step 6: Commit**
+
+```bash
+git add utils/thesis_matcher.py tests/utils/test_thesis_matcher_v2_shadow.py
+git commit -m "feat(thesis): add keyword-only negative_vocab param to _find_negative_keywords"
+```
+
+---
+
+## Task 5: Add `_compute_penalty()` helper method
+
+**Files:**
+- Modify: `utils/thesis_matcher.py` (add method to ThesisMatcher)
+- Test: `tests/utils/test_thesis_matcher_v2_shadow.py` (append tests)
+
+**Step 1: Write the failing test**
+
+Append to `tests/utils/test_thesis_matcher_v2_shadow.py`:
+
+```python
 class TestComputePenalty:
     """Test _compute_penalty() helper method."""
 
@@ -301,8 +629,63 @@ class TestComputePenalty:
         assert result.matches == []
         assert result.raw_penalty == 0.0
         assert result.applied_penalty == 0.0
+```
 
+**Step 2: Run test to verify it fails**
 
+Run: `pytest tests/utils/test_thesis_matcher_v2_shadow.py::TestComputePenalty -v`
+Expected: FAIL with "AttributeError: 'ThesisMatcher' object has no attribute '_compute_penalty'"
+
+**Step 3: Write minimal implementation**
+
+Add method to `ThesisMatcher` class:
+
+```python
+def _compute_penalty(
+    self,
+    normalized: str,
+    weights: Dict[str, float],
+) -> _PenaltyResult:
+    """Compute negative keyword penalty using specified weights.
+
+    Args:
+        normalized: Normalized text to search
+        weights: Dict mapping keywords to penalty weights
+
+    Returns:
+        _PenaltyResult with matches, raw penalty sum, and applied penalty
+    """
+    matches = self._find_negative_keywords(normalized, negative_vocab=weights)
+    raw = sum(weights.get(kw, 0.2) for kw in matches)
+    applied = raw * 0.5
+    return _PenaltyResult(matches=matches, raw_penalty=raw, applied_penalty=applied)
+```
+
+**Step 4: Run test to verify it passes**
+
+Run: `pytest tests/utils/test_thesis_matcher_v2_shadow.py::TestComputePenalty -v`
+Expected: PASS (5 tests)
+
+**Step 5: Commit**
+
+```bash
+git add utils/thesis_matcher.py tests/utils/test_thesis_matcher_v2_shadow.py
+git commit -m "feat(thesis): add _compute_penalty() helper for negative keyword scoring"
+```
+
+---
+
+## Task 6: Add `_apply_adjustments()` helper method
+
+**Files:**
+- Modify: `utils/thesis_matcher.py` (add method to ThesisMatcher)
+- Test: `tests/utils/test_thesis_matcher_v2_shadow.py` (append tests)
+
+**Step 1: Write the failing test**
+
+Append to `tests/utils/test_thesis_matcher_v2_shadow.py`:
+
+```python
 class TestApplyAdjustments:
     """Test _apply_adjustments() helper method."""
 
@@ -403,8 +786,84 @@ class TestApplyAdjustments:
         )
 
         assert result == pytest.approx(0.8)
+```
 
+**Step 2: Run test to verify it fails**
 
+Run: `pytest tests/utils/test_thesis_matcher_v2_shadow.py::TestApplyAdjustments -v`
+Expected: FAIL with "AttributeError: 'ThesisMatcher' object has no attribute '_apply_adjustments'"
+
+**Step 3: Write minimal implementation**
+
+Add method to `ThesisMatcher` class:
+
+```python
+def _apply_adjustments(
+    self,
+    base_score: float,
+    penalty: _PenaltyResult,
+    intent_matches: List[str],
+    domain_match: bool,
+) -> float:
+    """Apply penalty and boosts to base score.
+
+    Order preserved from original score():
+    1. Subtract penalty (if matches)
+    2. Add intent phrase boost (if matches)
+    3. Add domain pattern boost (if match)
+
+    Args:
+        base_score: Score before adjustments
+        penalty: Penalty result from _compute_penalty
+        intent_matches: Intent phrases matched
+        domain_match: Whether domain pattern matched
+
+    Returns:
+        Final score clamped to [0.0, 1.0]
+    """
+    score = base_score
+
+    # Apply negative penalty
+    if penalty.matches:
+        score = max(0.0, score - penalty.applied_penalty)
+
+    # Apply intent phrase boost
+    if intent_matches:
+        intent_boost = sum(INTENT_PHRASES.get(p, 0.1) for p in intent_matches)
+        score = min(1.0, score + intent_boost)
+
+    # Apply domain pattern boost
+    if domain_match:
+        score = min(1.0, score + 0.15)
+
+    return score
+```
+
+**Step 4: Run test to verify it passes**
+
+Run: `pytest tests/utils/test_thesis_matcher_v2_shadow.py::TestApplyAdjustments -v`
+Expected: PASS (6 tests)
+
+**Step 5: Commit**
+
+```bash
+git add utils/thesis_matcher.py tests/utils/test_thesis_matcher_v2_shadow.py
+git commit -m "feat(thesis): add _apply_adjustments() helper for score modifications"
+```
+
+---
+
+## Task 7: Add `_negative_weights_v1()` and `_negative_weights_v2()` accessors
+
+**Files:**
+- Modify: `utils/thesis_matcher.py` (add methods to ThesisMatcher)
+- Test: `tests/utils/test_thesis_matcher_v2_shadow.py` (append tests)
+
+**Step 1: Write the failing test**
+
+Append to `tests/utils/test_thesis_matcher_v2_shadow.py`:
+
+```python
 class TestNegativeWeightsAccessors:
     """Test _negative_weights_v1() and _negative_weights_v2() accessors."""
 
@@ -466,8 +925,65 @@ class TestNegativeWeightsAccessors:
         weights = matcher._negative_weights_v2()
 
         assert weights["test_keyword"] == 0.42
+```
 
+**Step 2: Run test to verify it fails**
 
+Run: `pytest tests/utils/test_thesis_matcher_v2_shadow.py::TestNegativeWeightsAccessors -v`
+Expected: FAIL with "AttributeError: 'ThesisMatcher' object has no attribute '_negative_weights_v1'"
+
+**Step 3: Write minimal implementation**
+
+Add methods to `ThesisMatcher` class:
+
+```python
+def _negative_weights_v1(self) -> Dict[str, float]:
+    """Get v1 negative keyword weights (hardcoded NEGATIVE_KEYWORDS).
+
+    Returns:
+        NEGATIVE_KEYWORDS dict (not a copy - callers should not mutate)
+    """
+    return NEGATIVE_KEYWORDS
+
+def _negative_weights_v2(self) -> Dict[str, float]:
+    """Get v2 negative keyword weights from YAML policy.
+
+    Returns:
+        Dict mapping keywords to weights, or empty dict if v2 not enabled
+    """
+    if not getattr(self, "_negative_keyword_policy", None):
+        return {}
+    return {
+        kw: entry.weight
+        for kw, entry in self._negative_keyword_policy.keywords.items()
+    }
+```
+
+**Step 4: Run test to verify it passes**
+
+Run: `pytest tests/utils/test_thesis_matcher_v2_shadow.py::TestNegativeWeightsAccessors -v`
+Expected: PASS (4 tests)
+
+**Step 5: Commit**
+
+```bash
+git add utils/thesis_matcher.py tests/utils/test_thesis_matcher_v2_shadow.py
+git commit -m "feat(thesis): add _negative_weights_v1/v2() accessors for weight sources"
+```
+
+---
+
+## Task 8: Add `_build_fit()` helper method
+
+**Files:**
+- Modify: `utils/thesis_matcher.py` (add method to ThesisMatcher)
+- Test: `tests/utils/test_thesis_matcher_v2_shadow.py` (append tests)
+
+**Step 1: Write the failing test**
+
+Append to `tests/utils/test_thesis_matcher_v2_shadow.py`:
+
+```python
 class TestBuildFit:
     """Test _build_fit() helper method."""
 
@@ -615,8 +1131,120 @@ class TestBuildFit:
 
         assert fit.trace is not None
         assert fit.trace.final_score == 0.25
+```
 
+**Step 2: Run test to verify it fails**
 
+Run: `pytest tests/utils/test_thesis_matcher_v2_shadow.py::TestBuildFit -v`
+Expected: FAIL with "AttributeError: 'ThesisMatcher' object has no attribute '_build_fit'"
+
+**Step 3: Write minimal implementation**
+
+First, update `_generate_trace` to accept `negative_weights` parameter. Find the method and update its signature:
+
+```python
+def _generate_trace(
+    self,
+    best_score: float,
+    matched_keywords: List[str],
+    negative_matches: List[str],
+    intent_matches: List[str],
+    domain_match: bool,
+    *,
+    negative_weights: Optional[Dict[str, float]] = None,
+) -> ThesisFitTrace:
+    """Generate explainability trace for thesis classification.
+    ...existing docstring...
+    """
+    # Use provided weights or fall back to NEGATIVE_KEYWORDS
+    weights = negative_weights if negative_weights is not None else NEGATIVE_KEYWORDS
+
+    # Convert negative matches to soft negatives with penalties
+    soft_negatives = [
+        (kw, weights.get(kw, 0.2))
+        for kw in negative_matches
+    ]
+    # ... rest of method unchanged ...
+```
+
+Then add `_build_fit` method:
+
+```python
+def _build_fit(
+    self,
+    core: _CoreScore,
+    final_score: float,
+    penalty: _PenaltyResult,
+    negative_weights: Dict[str, float],
+) -> ThesisFit:
+    """Build ThesisFit result from core scoring and penalty.
+
+    Args:
+        core: Core scoring results
+        final_score: Score after all adjustments
+        penalty: Penalty calculation results
+        negative_weights: Weights used for penalty (for trace)
+
+    Returns:
+        Complete ThesisFit object
+    """
+    # Determine confidence
+    if final_score >= 0.7:
+        confidence = "HIGH"
+    elif final_score >= 0.4:
+        confidence = "MEDIUM"
+    else:
+        confidence = "LOW"
+
+    # Generate trace
+    trace = self._generate_trace(
+        best_score=final_score,
+        matched_keywords=core.matched_kws,
+        negative_matches=penalty.matches,
+        intent_matches=core.intent_matches,
+        domain_match=core.domain_match,
+        negative_weights=negative_weights,
+    )
+
+    return ThesisFit(
+        thesis=core.best_thesis if final_score > 0.1 else ConsumerThesis.UNKNOWN,
+        score=final_score,
+        matched_keywords=core.matched_kws,
+        negative_keywords=penalty.matches,
+        all_scores=core.scores,
+        confidence=confidence,
+        intent_phrases_matched=core.intent_matches,
+        domain_match=core.domain_match,
+        domain_blacklisted=False,
+        trace=trace,
+    )
+```
+
+**Step 4: Run test to verify it passes**
+
+Run: `pytest tests/utils/test_thesis_matcher_v2_shadow.py::TestBuildFit -v`
+Expected: PASS (6 tests)
+
+**Step 5: Commit**
+
+```bash
+git add utils/thesis_matcher.py tests/utils/test_thesis_matcher_v2_shadow.py
+git commit -m "feat(thesis): add _build_fit() helper to construct ThesisFit"
+```
+
+---
+
+## Task 9: Implement `_attach_v2_shadow_diff()` method
+
+**Files:**
+- Modify: `utils/thesis_matcher.py` (add method to ThesisMatcher)
+- Test: `tests/utils/test_thesis_matcher_v2_shadow.py` (append tests)
+
+**Step 1: Write the failing test**
+
+Append to `tests/utils/test_thesis_matcher_v2_shadow.py`:
+
+```python
 class TestAttachV2ShadowDiff:
     """Test _attach_v2_shadow_diff() method."""
 
@@ -831,8 +1459,104 @@ class TestAttachV2ShadowDiff:
 
         # trace is still None
         assert fit_v1.trace is None
+```
 
+**Step 2: Run test to verify it fails**
 
+Run: `pytest tests/utils/test_thesis_matcher_v2_shadow.py::TestAttachV2ShadowDiff -v`
+Expected: FAIL with "AttributeError: 'ThesisMatcher' object has no attribute '_attach_v2_shadow_diff'"
+
+**Step 3: Write minimal implementation**
+
+Add method to `ThesisMatcher` class:
+
+```python
+def _attach_v2_shadow_diff(
+    self,
+    fit_v1: ThesisFit,
+    fit_v2: ThesisFit,
+    p1: _PenaltyResult,
+    p2: _PenaltyResult,
+) -> None:
+    """Attach v2 shadow diff to fit_v1's trace for observability.
+
+    Computes diff between v1 and v2 results and attaches to trace.
+    Logs high-signal divergences (routing change, is_fit change, large delta).
+
+    Args:
+        fit_v1: The v1 result (will be modified to add v2_shadow)
+        fit_v2: The v2 result (for comparison)
+        p1: v1 penalty result
+        p2: v2 penalty result
+    """
+    if not fit_v1.trace:
+        return
+
+    def route(score: float) -> str:
+        """Determine routing decision from score."""
+        if score >= 0.3:
+            return "QUALIFIED"
+        if score >= 0.1:
+            return "HELD"
+        return "REJECTED"
+
+    diff = {
+        "v1": {
+            "score": fit_v1.score,
+            "penalty_raw": p1.raw_penalty,
+            "negative_keywords": p1.matches,
+            "routing": route(fit_v1.score),
+            "thesis": fit_v1.thesis.value,
+        },
+        "v2": {
+            "score": fit_v2.score,
+            "penalty_raw": p2.raw_penalty,
+            "negative_keywords": p2.matches,
+            "routing": route(fit_v2.score),
+            "thesis": fit_v2.thesis.value,
+        },
+        "delta_score": fit_v2.score - fit_v1.score,
+        "would_change_is_fit": (fit_v2.is_fit != fit_v1.is_fit),
+        "would_change_routing": (route(fit_v2.score) != route(fit_v1.score)),
+        "would_change_thesis": (fit_v2.thesis != fit_v1.thesis),
+    }
+
+    fit_v1.trace.v2_shadow = diff
+
+    # Log high-signal divergences only
+    if (
+        diff["would_change_routing"]
+        or diff["would_change_is_fit"]
+        or abs(diff["delta_score"]) >= 0.05
+    ):
+        logger.info("v2 shadow diff: %s", diff)
+```
+
+**Step 4: Run test to verify it passes**
+
+Run: `pytest tests/utils/test_thesis_matcher_v2_shadow.py::TestAttachV2ShadowDiff -v`
+Expected: PASS (5 tests)
+
+**Step 5: Commit**
+
+```bash
+git add utils/thesis_matcher.py tests/utils/test_thesis_matcher_v2_shadow.py
+git commit -m "feat(thesis): add _attach_v2_shadow_diff() for shadow mode observability"
+```
+
+---
+
+## Task 10: Refactor `score()` to use new helpers and implement shadow mode
+
+**Files:**
+- Modify: `utils/thesis_matcher.py:453-585` (`score` method)
+- Test: `tests/utils/test_thesis_matcher_v2_shadow.py` (append integration tests)
+
+**Step 1: Write the failing test**
+
+Append to `tests/utils/test_thesis_matcher_v2_shadow.py`:
+
+```python
 class TestScoreShadowModeIntegration:
     """Integration tests for score() with shadow mode."""
 
@@ -963,10 +1687,9 @@ class TestScoreShadowModeIntegration:
 
         with caplog.at_level(logging.INFO):
             # "enterprise" in v1 has 0.5 penalty, v2 has 0 - delta >= 0.05
-            # Need text with positive keywords so there's a score to penalize
-            fit = matcher.score("enterprise food delivery meal kits")
+            fit = matcher.score("enterprise software")
 
-        # Should have logged the diff (delta >= 0.05 because v1 has penalty, v2 doesn't)
+        # Should have logged the diff
         assert any("v2 shadow diff" in record.message for record in caplog.records)
 
     def test_existing_score_behavior_unchanged(self):
@@ -994,120 +1717,155 @@ class TestScoreShadowModeIntegration:
         fit = matcher.score("enterprise b2b saas platform")
         assert "enterprise" in fit.negative_keywords
         assert "b2b" in fit.negative_keywords
+```
 
+**Step 2: Run test to verify it fails**
 
-class TestPolicyHash:
-    """Test policy_hash computation and inclusion in v2_shadow."""
+Run: `pytest tests/utils/test_thesis_matcher_v2_shadow.py::TestScoreShadowModeIntegration -v`
+Expected: Some tests will FAIL because `score()` hasn't been refactored yet to use the new helpers
 
-    def test_policy_hash_included_in_v2_shadow(self, tmp_path):
-        """v2_shadow should include policy_hash."""
-        policy_file = tmp_path / "negative_keyword_policy.yaml"
-        policy_file.write_text(
-            "version: '2.0'\n"
-            "schema: 'negative_keyword_policy_v1'\n"
-            "negative_keywords:\n"
-            "  enterprise:\n"
-            "    weight: 0.6\n"
-            "    category: B2B_ENTERPRISE\n"
+**Step 3: Write minimal implementation**
+
+Replace the `score()` method in `utils/thesis_matcher.py`:
+
+```python
+def score(
+    self,
+    text: str,
+    company_name: Optional[str] = None,
+    domain_name: Optional[str] = None,
+) -> ThesisFit:
+    """Score text against all Consumer thesis categories.
+
+    Args:
+        text: Company description or README content
+        company_name: Optional company name for additional context
+        domain_name: Optional domain for pattern matching (Phase B)
+
+    Returns:
+        ThesisFit with score, matched keywords, and domain analysis
+
+    Phase 0B-2: When v2 is enabled:
+    - shadow mode: computes v1 and v2, returns v1, attaches diff to trace
+    - live mode: returns v2 result
+    """
+    # Early return for empty text
+    if not text:
+        empty_trace = ThesisFitTrace(
+            final_score=0.0,
+            routing_decision="REJECTED",
+            explanation="Score: 0.00. Empty text provided. Routed to REJECTED.",
+        )
+        return ThesisFit(
+            thesis=ConsumerThesis.UNKNOWN,
+            score=0.0,
+            matched_keywords=[],
+            negative_keywords=[],
+            all_scores={},
+            confidence="LOW",
+            intent_phrases_matched=[],
+            domain_match=False,
+            domain_blacklisted=False,
+            trace=empty_trace,
         )
 
-        from utils.thesis_matcher import ThesisMatcher
+    normalized = self._normalize(text)
+    if company_name:
+        normalized += " " + self._normalize(company_name)
 
-        matcher = ThesisMatcher(v2_enablement="shadow", config_path=str(tmp_path))
-        fit = matcher.score("enterprise food delivery")
-
-        assert fit.trace is not None
-        assert fit.trace.v2_shadow is not None
-        assert "policy_hash" in fit.trace.v2_shadow
-
-    def test_policy_hash_is_consistent(self, tmp_path):
-        """Same policy should always produce same hash."""
-        policy_file = tmp_path / "negative_keyword_policy.yaml"
-        policy_file.write_text(
-            "version: '2.0'\n"
-            "schema: 'negative_keyword_policy_v1'\n"
-            "negative_keywords:\n"
-            "  enterprise:\n"
-            "    weight: 0.5\n"
-            "    category: B2B_ENTERPRISE\n"
+    # Early return for blacklisted domain
+    domain_blacklisted = self._check_domain_blacklist(domain_name)
+    if domain_blacklisted:
+        blacklist_trace = ThesisFitTrace(
+            final_score=0.0,
+            routing_decision="REJECTED",
+            explanation=f"Score: 0.00. Domain '{domain_name}' matched blacklist "
+                       f"(non-production). Routed to REJECTED.",
+        )
+        return ThesisFit(
+            thesis=ConsumerThesis.UNKNOWN,
+            score=0.0,
+            matched_keywords=[],
+            negative_keywords=[],
+            all_scores={},
+            confidence="LOW",
+            intent_phrases_matched=[],
+            domain_match=False,
+            domain_blacklisted=True,
+            trace=blacklist_trace,
         )
 
-        from utils.thesis_matcher import ThesisMatcher
+    # Compute core (shared between v1 and v2)
+    core = self._compute_core(normalized, domain_name)
 
-        matcher1 = ThesisMatcher(v2_enablement="shadow", config_path=str(tmp_path))
-        matcher2 = ThesisMatcher(v2_enablement="shadow", config_path=str(tmp_path))
+    # v1 path (always computed)
+    w1 = self._negative_weights_v1()
+    p1 = self._compute_penalty(core.normalized, w1)
+    s1 = self._apply_adjustments(core.base_score, p1, core.intent_matches, core.domain_match)
+    fit_v1 = self._build_fit(core, s1, p1, w1)
 
-        fit1 = matcher1.score("enterprise test")
-        fit2 = matcher2.score("enterprise test")
+    # If v2 disabled OR execution disabled => return v1
+    if (
+        not self._controls
+        or self._controls.v2_enablement == "disabled"
+        or not self._controls.v2_execution_enabled
+    ):
+        return fit_v1
 
-        assert fit1.trace.v2_shadow["policy_hash"] == fit2.trace.v2_shadow["policy_hash"]
+    # v2 path
+    w2 = self._negative_weights_v2()
 
-    def test_policy_hash_changes_with_policy(self, tmp_path):
-        """Different policy content should produce different hash."""
-        # First policy
-        policy_file = tmp_path / "negative_keyword_policy.yaml"
-        policy_file.write_text(
-            "version: '2.0'\n"
-            "schema: 'negative_keyword_policy_v1'\n"
-            "negative_keywords:\n"
-            "  enterprise:\n"
-            "    weight: 0.5\n"
-            "    category: B2B_ENTERPRISE\n"
+    # Safety: if v2 is live but weights are empty, warn and fall back to v1
+    if self._controls.v2_enablement == "live" and not w2:
+        logger.error(
+            "v2 enabled (live) but negative_keyword_policy is empty; "
+            "falling back to v1 to avoid silent penalty removal"
         )
+        return fit_v1
 
-        from utils.thesis_matcher import ThesisMatcher
+    p2 = self._compute_penalty(core.normalized, w2)
+    s2 = self._apply_adjustments(core.base_score, p2, core.intent_matches, core.domain_match)
+    fit_v2 = self._build_fit(core, s2, p2, w2)
 
-        matcher1 = ThesisMatcher(v2_enablement="shadow", config_path=str(tmp_path))
-        fit1 = matcher1.score("enterprise test")
-        hash1 = fit1.trace.v2_shadow["policy_hash"]
+    # Shadow mode: attach diff and return v1
+    if self._controls.v2_enablement == "shadow":
+        self._attach_v2_shadow_diff(fit_v1, fit_v2, p1, p2)
+        return fit_v1
 
-        # Modify policy
-        policy_file.write_text(
-            "version: '2.0'\n"
-            "schema: 'negative_keyword_policy_v1'\n"
-            "negative_keywords:\n"
-            "  enterprise:\n"
-            "    weight: 0.8\n"  # Different weight
-            "    category: B2B_ENTERPRISE\n"
-        )
+    # Live mode: return v2
+    return fit_v2
+```
 
-        matcher2 = ThesisMatcher(v2_enablement="shadow", config_path=str(tmp_path))
-        fit2 = matcher2.score("enterprise test")
-        hash2 = fit2.trace.v2_shadow["policy_hash"]
+**Step 4: Run test to verify it passes**
 
-        # Hashes should differ
-        assert hash1 != hash2
+Run: `pytest tests/utils/test_thesis_matcher_v2_shadow.py::TestScoreShadowModeIntegration -v`
+Expected: PASS (7 tests)
 
-    def test_policy_hash_is_stored_as_attribute(self, tmp_path):
-        """ThesisMatcher should store policy_hash as instance attribute."""
-        policy_file = tmp_path / "negative_keyword_policy.yaml"
-        policy_file.write_text(
-            "version: '2.0'\n"
-            "schema: 'negative_keyword_policy_v1'\n"
-            "negative_keywords:\n"
-            "  enterprise:\n"
-            "    weight: 0.5\n"
-            "    category: B2B_ENTERPRISE\n"
-        )
+**Step 5: Run all tests to verify no regression**
 
-        from utils.thesis_matcher import ThesisMatcher
+Run: `pytest tests/utils/test_thesis_matcher*.py -v`
+Expected: All tests pass
 
-        matcher = ThesisMatcher(v2_enablement="shadow", config_path=str(tmp_path))
+**Step 6: Commit**
 
-        assert hasattr(matcher, "_policy_hash")
-        assert matcher._policy_hash is not None
-        assert isinstance(matcher._policy_hash, str)
+```bash
+git add utils/thesis_matcher.py tests/utils/test_thesis_matcher_v2_shadow.py
+git commit -m "feat(thesis): refactor score() with shadow mode v1/v2 comparison"
+```
 
-    def test_policy_hash_none_when_disabled(self):
-        """policy_hash should be None when v2 is disabled."""
-        from utils.thesis_matcher import ThesisMatcher
+---
 
-        matcher = ThesisMatcher(v2_enablement="disabled")
+## Task 11: Final integration test and cleanup
 
-        assert hasattr(matcher, "_policy_hash")
-        assert matcher._policy_hash is None
+**Files:**
+- Test: `tests/utils/test_thesis_matcher_v2_shadow.py` (append final tests)
+- Modify: `utils/thesis_matcher.py` (cleanup any unused code)
 
+**Step 1: Write the final integration tests**
 
+Append to `tests/utils/test_thesis_matcher_v2_shadow.py`:
+
+```python
 class TestPhase0B2Complete:
     """Final integration tests for Phase 0B-2 completion."""
 
@@ -1170,3 +1928,45 @@ class TestPhase0B2Complete:
         assert "trace" in parsed
         assert "v2_shadow" in parsed["trace"]
         assert "delta_score" in parsed["trace"]["v2_shadow"]
+```
+
+**Step 2: Run the final tests**
+
+Run: `pytest tests/utils/test_thesis_matcher_v2_shadow.py::TestPhase0B2Complete -v`
+Expected: PASS (3 tests)
+
+**Step 3: Run full test suite**
+
+Run: `pytest tests/utils/test_thesis_matcher*.py tests/utils/test_negative_keyword_policy.py -v`
+Expected: All tests pass
+
+**Step 4: Commit**
+
+```bash
+git add tests/utils/test_thesis_matcher_v2_shadow.py
+git commit -m "test(thesis): add Phase 0B-2 final integration tests"
+```
+
+---
+
+## Summary
+
+**Total Tasks:** 11
+**Total Tests Added:** ~50 new tests across 11 test classes
+**Files Modified:**
+- `utils/thesis_matcher.py` - Added dataclasses, helpers, and refactored score()
+- `tests/utils/test_thesis_matcher_v2_shadow.py` - New test file
+
+**Key Deliverables:**
+1. `v2_shadow` field on `ThesisFitTrace`
+2. `_CoreScore` and `_PenaltyResult` internal dataclasses
+3. Helper methods: `_compute_core()`, `_compute_penalty()`, `_apply_adjustments()`, `_build_fit()`
+4. Weight accessors: `_negative_weights_v1()`, `_negative_weights_v2()`
+5. Shadow diff: `_attach_v2_shadow_diff()` with selective logging
+6. Refactored `score()` with shadow/live mode support
+
+**Shadow Mode Behavior:**
+- Always returns v1 result (no outward change)
+- Computes v2 in parallel for comparison
+- Attaches diff to `trace.v2_shadow`
+- Logs only high-signal divergences (routing change, is_fit change, delta >= 0.05)

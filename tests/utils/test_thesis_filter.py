@@ -449,6 +449,120 @@ class TestThesisFilterWithMockedLLM:
 # =============================================================================
 
 
+# =============================================================================
+# Phase 0B-3 Tests: v2_shadow wiring through ThesisFilterResult
+# =============================================================================
+
+
+class TestThesisFilterResultV2Shadow:
+    """Test v2_shadow field on ThesisFilterResult."""
+
+    def test_v2_shadow_field_exists_and_defaults_to_none(self):
+        """ThesisFilterResult should have v2_shadow field defaulting to None."""
+        result = ThesisFilterResult(
+            routing=RoutingDecision.QUALIFIED,
+            keyword_score=0.6,
+        )
+        assert hasattr(result, "v2_shadow")
+        assert result.v2_shadow is None
+
+    def test_v2_shadow_can_be_populated(self):
+        """v2_shadow can be set with shadow diff data."""
+        shadow_diff = {
+            "v1": {"score": 0.5, "routing": "QUALIFIED"},
+            "v2": {"score": 0.45, "routing": "QUALIFIED"},
+            "delta_score": -0.05,
+            "would_change_routing": False,
+        }
+        result = ThesisFilterResult(
+            routing=RoutingDecision.QUALIFIED,
+            keyword_score=0.6,
+            v2_shadow=shadow_diff,
+        )
+        assert result.v2_shadow == shadow_diff
+
+    def test_v2_shadow_included_in_to_dict_when_present(self):
+        """to_dict() should include v2_shadow when it has a value."""
+        shadow_diff = {"delta_score": -0.05}
+        result = ThesisFilterResult(
+            routing=RoutingDecision.QUALIFIED,
+            keyword_score=0.6,
+            v2_shadow=shadow_diff,
+        )
+        d = result.to_dict()
+        assert "v2_shadow" in d
+        assert d["v2_shadow"] == shadow_diff
+
+    def test_v2_shadow_excluded_from_to_dict_when_none(self):
+        """to_dict() should exclude v2_shadow when None."""
+        result = ThesisFilterResult(
+            routing=RoutingDecision.QUALIFIED,
+            keyword_score=0.6,
+        )
+        d = result.to_dict()
+        # Should not include v2_shadow if None to keep output clean
+        assert "v2_shadow" not in d
+
+
+class TestThesisFilterV2ShadowWiring:
+    """Test v2_shadow is wired from ThesisMatcher through classify()."""
+
+    @pytest.mark.asyncio
+    async def test_classify_populates_v2_shadow_from_trace(self, tmp_path):
+        """classify() should populate v2_shadow from keyword_fit.trace.v2_shadow."""
+        # Create policy file with different weights to trigger shadow diff
+        policy_file = tmp_path / "negative_keyword_policy.yaml"
+        policy_file.write_text(
+            "version: '2.0'\n"
+            "schema: 'negative_keyword_policy_v1'\n"
+            "negative_keywords:\n"
+            "  enterprise:\n"
+            "    weight: 0.8\n"  # Different from v1's 0.5
+            "    category: B2B_ENTERPRISE\n"
+        )
+
+        from utils.thesis_filter import ThesisFilter, ThesisFilterConfig
+        from utils.thesis_matcher import ThesisMatcher
+        import os
+
+        # Create filter with custom ThesisMatcher in shadow mode
+        config = ThesisFilterConfig()
+        thesis_filter = ThesisFilter(config)
+        thesis_filter._keyword_matcher = ThesisMatcher(
+            v2_enablement="shadow",
+            config_path=str(tmp_path)
+        )
+
+        result = await thesis_filter.classify(
+            "enterprise food delivery startup",
+            skip_llm=True,
+        )
+
+        # Should have v2_shadow populated
+        assert result.v2_shadow is not None
+        assert "v1" in result.v2_shadow
+        assert "v2" in result.v2_shadow
+        assert "delta_score" in result.v2_shadow
+
+    @pytest.mark.asyncio
+    async def test_classify_v2_shadow_none_when_disabled(self):
+        """classify() should have v2_shadow=None when v2 is disabled."""
+        from utils.thesis_filter import ThesisFilter, ThesisFilterConfig
+        from utils.thesis_matcher import ThesisMatcher
+
+        config = ThesisFilterConfig()
+        thesis_filter = ThesisFilter(config)
+        thesis_filter._keyword_matcher = ThesisMatcher(v2_enablement="disabled")
+
+        result = await thesis_filter.classify(
+            "enterprise food delivery startup",
+            skip_llm=True,
+        )
+
+        # Should NOT have v2_shadow when disabled
+        assert result.v2_shadow is None
+
+
 class TestThesisFilterPhaseB:
     """Test Phase B enhancements in ThesisFilter."""
 

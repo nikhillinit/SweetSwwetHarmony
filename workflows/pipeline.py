@@ -1642,10 +1642,10 @@ class DiscoveryPipeline:
                         logger.warning(f"Failed to save thesis classification (non-fatal): {e}")
 
                 # Phase B: SHADOW logging for thesis match details
+                # Phase 0B-3: Fixed double-encoding - pass dict directly, include v2_shadow
                 if self._feature_registry.is_enabled("thesis_match"):
                     try:
-                        import json
-                        shadow_value = json.dumps({
+                        shadow_data = {
                             "keyword_score": thesis_result.keyword_score,
                             "keyword_category": thesis_result.keyword_category,
                             "keyword_matches": thesis_result.keyword_matches,
@@ -1655,11 +1655,13 @@ class DiscoveryPipeline:
                             "domain_blacklisted": thesis_result.domain_blacklisted,
                             "routing": thesis_result.routing.value,
                             "confidence_adjustment": thesis_result.confidence_adjustment,
-                        })
+                            # Phase 0B-3: Include v2_shadow for shadow mode comparison
+                            "v2_shadow": thesis_result.v2_shadow,
+                        }
                         await self._store.log_shadow_computation(
                             feature_name="thesis_match",
                             canonical_key=canonical_key,
-                            computed_value=shadow_value,
+                            computed_value=shadow_data,  # Pass dict, not JSON string
                             signal_id=signals[0].id if signals else None,
                         )
                         self._run_stats.shadow_logs_written += 1
