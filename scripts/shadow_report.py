@@ -525,8 +525,8 @@ async def cmd_gate_check(args: argparse.Namespace) -> int:
         print(f"Min N Required: {result.min_n_required}")
 
         if result.total_records < result.min_n_required:
-            print(f"\n⚠️  INSUFFICIENT SAMPLES")
-            print(f"   Need {result.min_n_required}, have {result.total_records}")
+            print(f"\n[!] INSUFFICIENT SAMPLES")
+            print(f"    Need {result.min_n_required}, have {result.total_records}")
             return 3
 
         print("\nMetrics:")
@@ -537,9 +537,9 @@ async def cmd_gate_check(args: argparse.Namespace) -> int:
                 print(f"  {key}: {value}")
 
         if result.passed:
-            print(f"\n✅ GATE PASSED")
+            print(f"\n[PASS] GATE PASSED")
         else:
-            print(f"\n❌ GATE FAILED")
+            print(f"\n[FAIL] GATE FAILED")
             for failure in result.failures:
                 print(f"   - {failure}")
 
