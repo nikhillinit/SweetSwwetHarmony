@@ -1,127 +1,195 @@
-# Codex / OpenAI collaboration
+# Codex Collaboration & Forensic Engineer Workflow
 
-Maestro workflow and multi-LLM collaboration guidance.
+Multi-LLM collaboration patterns for Claude Code + Codex CLI.
 
-## OpenAI/Codex Integration
-
-Multi-LLM strategy iteration for thesis refinement using your ChatGPT Pro subscription.
-
-### Architecture
+## Architecture
 
 ```
-┌─────────────────┐     ┌─────────────────┐
-│   Claude Code   │────▶│  OpenAI/Codex   │
-│  (Orchestrator) │◀────│  (Perspectives) │
-└─────────────────┘     └─────────────────┘
-         │
-         ▼
-┌─────────────────┐
-│    Consensus    │
-│   Synthesizer   │
-└─────────────────┘
++------------------+     task      +------------------+
+|   Claude Code    |-------------->|    Codex CLI     |
+|  (Orchestrator   |               |    (Sandbox)     |
+|   + Critic)      |<--------------|                  |
++------------------+    proposal   +------------------+
+         |                               ^
+         | critique                      |
+         +-------------------------------+
+              (iterate until consensus)
 ```
 
 - **Claude Code** orchestrates all actions
-- **OpenAI/Codex** provides alternative perspectives in sandbox
-- **Consensus patterns** reduce hallucinations
+- **Codex CLI** provides sandbox-isolated proposals (read-only mode)
+- **Consensus patterns** reduce hallucinations via iterative critique
 
-### Key Files
+## Key Files
 
 | File | Purpose |
 |------|---------|
-| `integrations/maestro.py` | **Iterative consensus orchestrator** (Claude + Codex) |
+| `integrations/maestro.py` | Iterative consensus orchestrator (collaborate + forensic) |
 | `integrations/codex_wrapper.py` | Codex CLI wrapper (sandbox execution) |
-| `integrations/openai_mcp.py` | OpenAI MCP server (prompts + tools) |
-| `integrations/strategy_iterator.py` | Legacy multi-LLM consensus |
-| `scripts/setup_openai_integration.sh` | Setup and verification script |
 
-### Setup
+## Setup
 
 ```bash
-# 1. Run setup script
-./scripts/setup_openai_integration.sh
-
-# 2. (Required) Install Codex CLI with ChatGPT Pro
+# Install Codex CLI with ChatGPT Pro
 npm install -g @openai/codex
 codex login
 ```
 
-### Maestro Workflow (Iterative Consensus)
+## Workflows
 
-The Maestro pattern enables iterative collaboration:
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│                                                              │
-│  ┌──────────────┐    task     ┌──────────────┐              │
-│  │ Claude Code  │────────────▶│  Codex CLI   │              │
-│  │ (Orchestrator│             │  (Sandbox)   │              │
-│  │  + Critic)   │◀────────────│              │              │
-│  └──────────────┘   proposal  └──────────────┘              │
-│         │                            ▲                       │
-│         │ critique                   │                       │
-│         └────────────────────────────┘                       │
-│              (iterate until consensus)                       │
-│                                                              │
-└──────────────────────────────────────────────────────────────┘
-```
-
-**Claude's critique focuses on:**
-- **Feasibility**: Will this actually work? What assumptions are fragile?
-- **Efficiency**: Is there a simpler/faster approach?
-- **Sophistication**: What edge cases are missed? How to make it robust?
-
-**Codex is instructed to:**
-- Use existing Codex skills when helpful (`/edit`, `/review`, `/test`)
-- Create new skills for reusable patterns
-- Propose concrete, implementable solutions
-
-### Usage
+### 1. Standard Collaboration (iterate until consensus)
 
 ```bash
-# CLI: Iterative collaboration
 python -m integrations.maestro collaborate \
     "Improve thesis matcher false positive rate" \
-    --context "Currently at 30% FP, mostly B2B tools slipping through" \
+    --context "Currently at 30% FP, mostly B2B tools" \
     --max-iterations 5
+```
 
-# CLI: Review with consensus
-python -m integrations.maestro review collectors/github.py \
-    --focus "rate limiting"
-
-# Python: Direct usage
-from integrations import Maestro
+```python
+from integrations.maestro import Maestro
 
 maestro = Maestro(max_iterations=5)
 result = await maestro.collaborate(
-    task="Reduce false positives in GitHub signals",
-    context="30% FP rate, B2B tools passing thesis filter",
+    task="Reduce false positives",
+    context="30% FP rate, B2B tools passing filter",
     context_files=["utils/thesis_matcher.py"]
 )
-
-print(f"State: {result.state}")
-print(f"Iterations: {result.iterations}")
-print(f"Skills used: {result.skills_employed}")
-print(f"Final proposal:\n{result.final_proposal}")
 ```
 
-### When Claude Should Use Maestro
+### 2. Forensic Engineer Workflow (4-phase structured)
 
-When working on complex tasks, Claude should:
-1. Send the task + context to Codex via Maestro
-2. Receive Codex's proposal
-3. **Critically evaluate** (not blindly accept):
-   - What could fail? (feasibility)
-   - What's overcomplicated? (efficiency)
-   - What's missing? (sophistication)
-4. Send critique back to Codex
-5. Iterate until consensus or identify remaining disagreements
-6. Present final agreed solution to user
+The Forensic Engineer pattern provides structured collaboration through 4 mandatory phases:
 
-### Benefits
+```
++------------+     +------------+     +------------+     +------------+
+| ANALYZE    |---->|   PLAN     |---->|  EXECUTE   |---->|   VERIFY   |
+| (Iteration |     | (Iteration |     | (Iteration |     | (Iteration |
+|    0)      |     |    1)      |     |    2)      |     |    3)      |
++------------+     +------------+     +------------+     +------------+
+     |                  |                  |                  |
+     v                  v                  v                  v
+  Validate          Refine plan       Step-by-step      Check requirements
+  assumptions       with findings     execution         are met
+```
+
+#### Phase Objectives
+
+| Phase | Iteration | Objective | Claude's Critique Focus |
+|-------|-----------|-----------|------------------------|
+| ANALYZE | 0 | Validate assumptions against codebase | Accuracy, file references |
+| PLAN | 1 | Convert to concrete, executable steps | Feasibility, specificity |
+| EXECUTE | 2 | Execute steps with verification | Safety, preconditions |
+| VERIFY | 3 | Confirm requirements are met | Coverage, regressions |
+
+#### CLI Usage
+
+```bash
+python -m integrations.maestro forensic \
+    "Add rate limiting to GitHub collector" \
+    --context "Currently no rate limiting, hitting 403s" \
+    --requirements "1. Respect 5000 req/hr limit 2. Exponential backoff 3. Tests pass" \
+    --files collectors/github.py \
+    --docs docs/forensic-rate-limiting.md
+```
+
+#### Python Usage
+
+```python
+from integrations.maestro import Maestro
+
+maestro = Maestro()
+result = await maestro.forensic_collaborate(
+    task="Add rate limiting to GitHub collector",
+    context="Currently no rate limiting, hitting 403 errors",
+    requirements="""
+    1. Respect GitHub's 5000 requests/hour limit
+    2. Implement exponential backoff on 429/403
+    3. All existing tests pass
+    4. Add rate limit tests
+    """,
+    context_files=["collectors/github.py"],
+    docs_path="docs/forensic-rate-limiting.md",
+)
+
+print(f"Final state: {result.final_state}")
+for iteration in result.iterations:
+    print(f"  {iteration.phase}: {len(iteration.findings)} findings")
+```
+
+## Claude's Critique Categories
+
+Each Codex proposal is evaluated on:
+
+| Category | Question | Example Issues |
+|----------|----------|----------------|
+| **Feasibility** | Will this actually work? | Missing dependencies, invalid APIs |
+| **Efficiency** | Is there a simpler way? | N+1 queries, unnecessary complexity |
+| **Sophistication** | What edge cases are missed? | No error handling, no tests |
+| **Correctness** | Is the logic sound? | Wrong assumptions, flawed reasoning |
+
+## Severity Levels
+
+| Severity | Meaning | Action |
+|----------|---------|--------|
+| `blocking` | Must fix before proceeding | Iterate until resolved |
+| `important` | Should fix, but can proceed after N iterations | Document if not fixed |
+| `minor` | Nice to have | Note but don't block |
+
+## Output Types
+
+### ConsensusResult (collaborate)
+
+```python
+{
+    "state": "agreed",           # agreed, partial, disagreed
+    "final_proposal": "...",
+    "iterations": 3,
+    "history": [...],
+    "agreed_points": [...],
+    "remaining_disagreements": [...],
+    "skills_employed": ["edit", "review"]
+}
+```
+
+### ForensicResult (forensic_collaborate)
+
+```python
+{
+    "task": "Add rate limiting...",
+    "iterations": [
+        {
+            "phase": "analyze",
+            "iteration_number": 0,
+            "objective": "Validate assumptions...",
+            "codex_response": "...",
+            "claude_critique": {...},
+            "findings": ["GitHub uses token bucket...", ...],
+            "decisions": ["Use tenacity library...", ...]
+        },
+        # ... plan, execute, verify
+    ],
+    "final_state": "agreed",
+    "agreed_points": [...],
+    "remaining_issues": [...],
+    "forensic_docs_path": "docs/forensic-rate-limiting.md"
+}
+```
+
+## When to Use Each Workflow
+
+| Scenario | Workflow | Why |
+|----------|----------|-----|
+| Open-ended strategy question | `collaborate` | Flexible iteration count |
+| Code review | `collaborate` (or `review`) | Focus on specific file |
+| New feature implementation | `forensic` | Structured phases prevent mistakes |
+| Bug fix with root cause unknown | `forensic` | ANALYZE phase validates assumptions |
+| Refactoring | `forensic` | VERIFY ensures no regressions |
+
+## Benefits
 
 - **No API costs** - Uses ChatGPT Pro subscription via Codex CLI
 - **Sandbox isolation** - Codex runs in read-only mode
 - **Iterative refinement** - Multiple rounds improve quality
-- **Skill leverage** - Codex uses/creates skills for efficiency
 - **Critical evaluation** - Claude scrutinizes, doesn't blindly accept
+- **Audit trail** - Forensic docs capture the decision process
