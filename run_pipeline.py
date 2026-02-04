@@ -2704,6 +2704,64 @@ Examples:
         help="Path to signals database",
     )
 
+    # --- shadow-backfill command ---
+    shadow_backfill_parser = subparsers.add_parser(
+        "shadow-backfill",
+        help="Backfill shadow logs for v1/v2 comparison (Phase 0C)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="""
+Backfill shadow logs from existing signals with stratified sampling.
+
+Generates thesis_match shadow logs for v1/v2 comparison without mutating
+signal status or triggering Notion pushes.
+
+Features:
+  - Stratified sampling by (source, month) for diverse coverage
+  - Forced v2 execution for shadow comparison
+  - Run isolation with UUID run_id
+  - Policy hash tracking from v2_shadow
+
+Examples:
+  # Preview sampling distribution (dry run)
+  python run_pipeline.py shadow-backfill --dry-run
+
+  # Run with default settings (20 per bucket, 90 day lookback)
+  python run_pipeline.py shadow-backfill
+
+  # Custom sampling
+  python run_pipeline.py shadow-backfill --per-bucket 50 --lookback-days 180
+""",
+    )
+    shadow_backfill_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Preview sampling distribution without writing to database",
+    )
+    shadow_backfill_parser.add_argument(
+        "--per-bucket",
+        type=int,
+        default=20,
+        help="Samples per (source, month) bucket (default: 20)",
+    )
+    shadow_backfill_parser.add_argument(
+        "--lookback-days",
+        type=int,
+        default=90,
+        help="Days to look back for signals (default: 90)",
+    )
+    shadow_backfill_parser.add_argument(
+        "--max-candidates",
+        type=int,
+        default=20000,
+        help="Max candidates to fetch (default: 20000)",
+    )
+    shadow_backfill_parser.add_argument(
+        "--db-path",
+        type=str,
+        default=os.getenv("DISCOVERY_DB_PATH", "signals.db"),
+        help="Path to signals database",
+    )
+
     # --- import-emails command ---
     import_emails_parser = subparsers.add_parser(
         "import-emails",
@@ -3885,6 +3943,189 @@ async def cmd_outbox_drain(args):
         await store.close()
 
 
+async def cmd_shadow_backfill(args):
+    """Backfill shadow logs with stratified sampling for v1/v2 comparison.
+
+    Phase 0C: Parity validation on real corpus.
+    """
+    import json
+    import uuid
+    from collections import defaultdict
+    from datetime import datetime, timedelta
+
+    from storage.signal_store import SignalStore
+    from utils.thesis_matcher import ThesisMatcher
+    from utils.text_extraction import extract_text
+
+    logger = logging.getLogger(__name__)
+
+    db_path = args.db_path
+    dry_run = args.dry_run
+    per_bucket = args.per_bucket
+    lookback_days = args.lookback_days
+    max_candidates = args.max_candidates
+
+    # Generate run_id for this backfill session
+    run_id = str(uuid.uuid4())[:8]
+
+    print(f"Shadow Backfill (Phase 0C)")
+    print(f"  Run ID:         {run_id}")
+    print(f"  DB path:        {db_path}")
+    print(f"  Lookback days:  {lookback_days}")
+    print(f"  Per bucket:     {per_bucket}")
+    print(f"  Max candidates: {max_candidates}")
+    print(f"  Dry run:        {dry_run}")
+    print()
+
+    store = SignalStore(db_path)
+    await store.initialize()
+
+    try:
+        # Create matcher in shadow mode with v2 execution ENABLED
+        matcher = ThesisMatcher(
+            v2_enablement="shadow",
+            v2_execution_enabled=True,
+        )
+
+        policy_hash = matcher._policy_hash[:8] if matcher._policy_hash else "N/A"
+        print(f"ThesisMatcher: v2_enablement=shadow, policy_hash={policy_hash}")
+        print()
+
+        # Calculate cutoff date
+        cutoff_date = datetime.utcnow() - timedelta(days=lookback_days)
+        cutoff_str = cutoff_date.strftime("%Y-%m-%d")
+
+        # Fetch candidates (raw query - read-only, safe)
+        async with store.transaction() as conn:
+            cursor = await conn.execute(
+                """
+                SELECT id, canonical_key, company_name, source_api, raw_data, created_at
+                FROM signals
+                WHERE created_at >= ?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (cutoff_str, max_candidates),
+            )
+            rows = await cursor.fetchall()
+
+        print(f"Fetched {len(rows)} candidate signals (since {cutoff_str})")
+
+        if not rows:
+            print("No signals found in date range.")
+            return
+
+        # Group by (source, month) buckets for stratified sampling
+        buckets = defaultdict(list)
+        for row in rows:
+            signal_id, canonical_key, company_name, source_api, raw_data_json, created_at = row
+
+            # Parse month from created_at (format: YYYY-MM-DD or ISO timestamp)
+            try:
+                if "T" in str(created_at):
+                    month = str(created_at)[:7]  # "2024-01"
+                else:
+                    month = str(created_at)[:7]
+            except:
+                month = "unknown"
+
+            source = source_api or "unknown"
+            bucket_key = (source, month)
+            buckets[bucket_key].append(row)
+
+        print(f"Found {len(buckets)} (source, month) buckets:")
+
+        # Sort buckets for consistent output
+        sorted_buckets = sorted(buckets.keys())
+
+        # Sample from each bucket
+        sampled = []
+        for bucket_key in sorted_buckets:
+            bucket_rows = buckets[bucket_key]
+            sample_count = min(per_bucket, len(bucket_rows))
+            # Take first N (already sorted by created_at DESC)
+            sampled.extend(bucket_rows[:sample_count])
+            print(f"  {bucket_key[0]:20} {bucket_key[1]:10} -> {len(bucket_rows):4} signals, sampling {sample_count}")
+
+        print(f"\nTotal sampled: {len(sampled)} signals")
+        print()
+
+        if dry_run:
+            print("[DRY RUN] Would process these signals. Exiting.")
+            return
+
+        # Process sampled signals
+        logged = 0
+        skipped_no_text = 0
+        skipped_no_v2_shadow = 0
+        errors = 0
+
+        for row in sampled:
+            signal_id, canonical_key, company_name, source_api, raw_data_json, created_at = row
+
+            # Parse raw_data
+            try:
+                raw_data = json.loads(raw_data_json) if raw_data_json else {}
+            except (json.JSONDecodeError, TypeError):
+                errors += 1
+                continue
+
+            # Extract text using source-aware extraction
+            text = extract_text(raw_data, source=source_api or "_default")
+            if len(text) < 20:
+                skipped_no_text += 1
+                continue
+
+            # Run thesis matching in shadow mode
+            try:
+                fit = matcher.score(text, company_name=company_name)
+            except Exception as e:
+                logger.warning(f"Scoring failed for signal {signal_id}: {e}")
+                errors += 1
+                continue
+
+            # Check if v2_shadow was generated
+            if not fit.trace or not fit.trace.v2_shadow:
+                skipped_no_v2_shadow += 1
+                continue
+
+            # Build computed_value dict for shadow log
+            fit_dict = fit.to_dict()
+            computed_value = {
+                "keyword_score": fit.score,
+                "keyword_category": fit.thesis.value,
+                "v2_shadow": fit.trace.v2_shadow,
+                "run_id": run_id,
+                "fit": fit_dict,
+            }
+
+            # Log to shadow_log table
+            await store.log_shadow_computation(
+                feature_name="thesis_match",
+                canonical_key=canonical_key,
+                computed_value=computed_value,
+                signal_id=signal_id,
+            )
+
+            logged += 1
+
+            # Progress logging
+            if logged % 50 == 0:
+                print(f"  Progress: {logged} shadow logs created...")
+
+        # Summary
+        print()
+        print(f"Shadow backfill complete:")
+        print(f"  Run ID:             {run_id}")
+        print(f"  Logged:             {logged}")
+        print(f"  Skipped (no text):  {skipped_no_text}")
+        print(f"  Skipped (no v2):    {skipped_no_v2_shadow}")
+        print(f"  Errors:             {errors}")
+
+    finally:
+        await store.close()
+
+
 async def main():
     """Main entry point"""
 
@@ -4042,6 +4283,8 @@ async def main():
             else:
                 print("Outbox command requires a subcommand (drain)")
                 sys.exit(1)
+        elif args.command == "shadow-backfill":
+            await cmd_shadow_backfill(args)
         else:
             print(f"Unknown command: {args.command}")
             parser.print_help()
