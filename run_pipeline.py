@@ -87,6 +87,13 @@ from pathlib import Path
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
+# Load environment variables from .env
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass  # dotenv not installed, rely on system env vars
+
 from typing import Optional
 
 from workflows.pipeline import (
@@ -2762,6 +2769,48 @@ Examples:
         help="Path to signals database",
     )
 
+    # --- ground-truth command ---
+    ground_truth_parser = subparsers.add_parser(
+        "ground-truth",
+        help="Export ground truth labels from Notion CRM (Phase 0C)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="""
+Export labeled deals from Notion CRM for thesis matcher evaluation.
+
+Exports companies with human-assigned labels for ground truth comparison:
+  - Positive (thesis fit): Source, Initial Meeting, Dilligence, Committed, Funded, Tracking
+  - Negative (thesis reject): Passed
+
+Output format: JSONL with company_name, status, sector, description, canonical_key
+
+Examples:
+  # Export all labeled deals
+  python run_pipeline.py ground-truth --out ground_truth.jsonl
+
+  # Export only positive labels
+  python run_pipeline.py ground-truth --positive-only --out positives.jsonl
+
+  # Export with specific statuses
+  python run_pipeline.py ground-truth --statuses Funded,Passed --out eval_set.jsonl
+""",
+    )
+    ground_truth_parser.add_argument(
+        "--out",
+        type=str,
+        default="ground_truth.jsonl",
+        help="Output JSONL file path (default: ground_truth.jsonl)",
+    )
+    ground_truth_parser.add_argument(
+        "--positive-only",
+        action="store_true",
+        help="Export only positive labels (excludes Passed)",
+    )
+    ground_truth_parser.add_argument(
+        "--statuses",
+        type=str,
+        help="Comma-separated list of statuses to export (overrides defaults)",
+    )
+
     # --- import-emails command ---
     import_emails_parser = subparsers.add_parser(
         "import-emails",
@@ -4126,6 +4175,118 @@ async def cmd_shadow_backfill(args):
         await store.close()
 
 
+async def cmd_ground_truth(args):
+    """Export ground truth labels from Notion CRM for evaluation.
+
+    Phase 0C: Data-driven tuning - ground truth export.
+    """
+    import json
+
+    from connectors.notion_connector_v2 import NotionConnector
+
+    logger = logging.getLogger(__name__)
+
+    out_path = args.out
+    positive_only = args.positive_only
+    custom_statuses = args.statuses
+
+    # Define label categories
+    POSITIVE_STATUSES = [
+        "Source",
+        "Initial Meeting / Call",
+        "Dilligence",
+        "Committed",
+        "Funded",
+        "Tracking",
+    ]
+    NEGATIVE_STATUSES = ["Passed"]
+
+    # Determine which statuses to export
+    if custom_statuses:
+        statuses = [s.strip() for s in custom_statuses.split(",")]
+    elif positive_only:
+        statuses = POSITIVE_STATUSES
+    else:
+        statuses = POSITIVE_STATUSES + NEGATIVE_STATUSES
+
+    print(f"Ground Truth Export (Phase 0C)")
+    print(f"  Output:   {out_path}")
+    print(f"  Statuses: {', '.join(statuses)}")
+    print()
+
+    # Initialize Notion connector
+    notion = NotionConnector(
+        api_key=os.environ["NOTION_API_KEY"],
+        database_id=os.environ["NOTION_DATABASE_ID"],
+    )
+
+    # Query all deals with specified statuses
+    print("Querying Notion CRM...")
+    pages = await notion._query_by_statuses(statuses)
+    print(f"Found {len(pages)} deals")
+
+    # Extract relevant fields
+    records = []
+    for page in pages:
+        props = page.get("properties", {})
+
+        company_name = notion._extract_title(props.get("Company Name", {}))
+        status = notion._extract_select(props.get("Status", {})) or ""
+        sector = notion._extract_select(props.get("Sector", {})) or ""
+        description = notion._extract_text(props.get("Short Description", {})) or ""
+        discovery_id = notion._extract_text(props.get("Discovery ID", {})) or ""
+        canonical_key = notion._extract_text(props.get("Canonical Key", {})) or ""
+        website = props.get("Website", {}).get("url", "") or ""
+
+        # Determine ground truth label
+        if status in POSITIVE_STATUSES:
+            label = "POSITIVE"
+        elif status in NEGATIVE_STATUSES:
+            label = "NEGATIVE"
+        else:
+            label = "UNKNOWN"
+
+        records.append({
+            "company_name": company_name,
+            "status": status,
+            "label": label,
+            "sector": sector,
+            "description": description,
+            "discovery_id": discovery_id,
+            "canonical_key": canonical_key,
+            "website": website,
+            "page_id": page["id"],
+        })
+
+    # Write to JSONL
+    with open(out_path, "w", encoding="utf-8") as f:
+        for record in records:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+    # Summary by status
+    print()
+    print("Export complete:")
+    print(f"  Total records: {len(records)}")
+
+    status_counts = {}
+    for r in records:
+        status_counts[r["status"]] = status_counts.get(r["status"], 0) + 1
+
+    for status, count in sorted(status_counts.items(), key=lambda x: -x[1]):
+        print(f"  {status:25} {count:4}")
+
+    label_counts = {}
+    for r in records:
+        label_counts[r["label"]] = label_counts.get(r["label"], 0) + 1
+
+    print()
+    print("By label:")
+    for label, count in sorted(label_counts.items()):
+        print(f"  {label:10} {count:4}")
+
+    print(f"\nWritten to: {out_path}")
+
+
 async def main():
     """Main entry point"""
 
@@ -4285,6 +4446,8 @@ async def main():
                 sys.exit(1)
         elif args.command == "shadow-backfill":
             await cmd_shadow_backfill(args)
+        elif args.command == "ground-truth":
+            await cmd_ground_truth(args)
         else:
             print(f"Unknown command: {args.command}")
             parser.print_help()
