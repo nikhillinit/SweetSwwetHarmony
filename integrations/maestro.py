@@ -122,6 +122,72 @@ class ConsensusResult:
         }
 
 
+# =============================================================================
+# FORENSIC ENGINEER WORKFLOW TYPES
+# =============================================================================
+
+class ForensicPhase(str, Enum):
+    """Forensic Engineer workflow phases."""
+    ANALYZE = "analyze"   # Iteration 0: Forensic Audit & Validation
+    PLAN = "plan"         # Iteration 1: Strategy Refinement
+    EXECUTE = "execute"   # Iteration 2: Step-by-Step Execution
+    VERIFY = "verify"     # Iteration 3: Final Verification
+
+
+@dataclass
+class ForensicIteration:
+    """A single forensic workflow iteration."""
+    phase: ForensicPhase
+    iteration_number: int  # 0, 1, 2, 3
+    objective: str
+    codex_response: Optional[str]
+    claude_critique: Optional[CritiqueResponse]
+    findings: list[str] = field(default_factory=list)
+    decisions: list[str] = field(default_factory=list)
+    docs_updated: list[str] = field(default_factory=list)
+    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "phase": self.phase.value,
+            "iteration_number": self.iteration_number,
+            "objective": self.objective,
+            "codex_response": self.codex_response,
+            "claude_critique": {
+                "critiques": [c.__dict__ for c in self.claude_critique.critiques],
+                "overall_assessment": self.claude_critique.overall_assessment,
+                "ready_to_accept": self.claude_critique.ready_to_accept,
+            } if self.claude_critique else None,
+            "findings": self.findings,
+            "decisions": self.decisions,
+            "docs_updated": self.docs_updated,
+            "timestamp": self.timestamp,
+        }
+
+
+@dataclass
+class ForensicResult:
+    """Result of complete forensic workflow."""
+    task: str
+    iterations: list[ForensicIteration]
+    final_state: ConsensusState
+    agreed_points: list[str]
+    remaining_issues: list[str]
+    forensic_docs_path: Optional[str]
+    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "task": self.task,
+            "iterations": [i.to_dict() for i in self.iterations],
+            "final_state": self.final_state.value,
+            "agreed_points": self.agreed_points,
+            "remaining_issues": self.remaining_issues,
+            "forensic_docs_path": self.forensic_docs_path,
+            "timestamp": self.timestamp,
+        }
+
+
 # System prompt for Codex to understand its role and use skills
 CODEX_SYSTEM_PROMPT = """You are a coding collaborator working with Claude Code on the Discovery Engine project.
 Your role is to propose solutions that Claude will critically evaluate.
@@ -300,6 +366,459 @@ class Maestro:
             ],
             skills_employed=list(set(skills_employed)),
         )
+
+    async def forensic_collaborate(
+        self,
+        task: str,
+        context: str,
+        requirements: str,
+        context_files: Optional[list[str]] = None,
+        docs_path: Optional[str] = None,
+    ) -> ForensicResult:
+        """
+        Run Forensic Engineer workflow with Codex.
+
+        The Forensic Engineer pattern executes 4 structured phases:
+        - Iteration 0 (ANALYZE): Forensic audit - validate assumptions against codebase
+        - Iteration 1 (PLAN): Strategy refinement - convert to executable steps
+        - Iteration 2 (EXECUTE): Step-by-step execution with verification
+        - Iteration 3 (VERIFY): Final verification against requirements
+
+        Each phase:
+        1. Codex proposes (in sandbox)
+        2. Claude critiques (feasibility, efficiency, sophistication)
+        3. Iterate until no blocking issues or max sub-iterations reached
+        4. Capture findings/decisions before moving to next phase
+
+        Args:
+            task: The task/goal to accomplish
+            context: Current state, constraints, observations
+            requirements: Success criteria for verification phase
+            context_files: Optional files to provide as context
+            docs_path: Optional path to write forensic documentation
+
+        Returns:
+            ForensicResult with all phase iterations and final state
+        """
+        iterations: list[ForensicIteration] = []
+        agreed_points: list[str] = []
+        remaining_issues: list[str] = []
+
+        # Track accumulated findings across phases
+        accumulated_findings: list[str] = []
+        accumulated_decisions: list[str] = []
+        implementation_summary: list[str] = []
+
+        logger.info(f"Starting Forensic Engineer workflow for: {task}")
+
+        # =================================================================
+        # ITERATION 0: ANALYZE - Forensic Audit & Validation
+        # =================================================================
+        logger.info("Phase 0: ANALYZE - Forensic Audit")
+
+        analyze_iteration = await self._run_forensic_phase(
+            phase=ForensicPhase.ANALYZE,
+            iteration_number=0,
+            objective="Validate assumptions against actual codebase state",
+            codex_method=lambda: self.codex.analyze(task, context_files),
+            context_files=context_files,
+        )
+        iterations.append(analyze_iteration)
+
+        # Extract findings for next phase
+        if analyze_iteration.codex_response:
+            accumulated_findings.extend(analyze_iteration.findings)
+            # Parse findings from response for plan phase
+            findings_text = analyze_iteration.codex_response
+        else:
+            findings_text = "No findings from analyze phase"
+            remaining_issues.append("Analyze phase failed to produce findings")
+
+        # Check for blocking issues before proceeding
+        if analyze_iteration.claude_critique and analyze_iteration.claude_critique.has_blocking_issues:
+            logger.warning("Analyze phase has blocking issues - proceeding with caution")
+
+        # =================================================================
+        # ITERATION 1: PLAN - Strategy Refinement
+        # =================================================================
+        logger.info("Phase 1: PLAN - Strategy Refinement")
+
+        plan_iteration = await self._run_forensic_phase(
+            phase=ForensicPhase.PLAN,
+            iteration_number=1,
+            objective="Convert high-level plan into concrete, executable steps",
+            codex_method=lambda: self.codex.plan(task, findings_text, context_files),
+            context_files=context_files,
+        )
+        iterations.append(plan_iteration)
+
+        # Extract plan for execute phase
+        if plan_iteration.codex_response:
+            accumulated_decisions.extend(plan_iteration.decisions)
+            plan_text = plan_iteration.codex_response
+        else:
+            plan_text = "No plan generated"
+            remaining_issues.append("Plan phase failed to produce executable steps")
+
+        # =================================================================
+        # ITERATION 2: EXECUTE - Step-by-Step Execution
+        # =================================================================
+        logger.info("Phase 2: EXECUTE - Step-by-Step Execution")
+
+        # For execute phase, we pass the plan as context
+        execute_iteration = await self._run_forensic_phase(
+            phase=ForensicPhase.EXECUTE,
+            iteration_number=2,
+            objective="Execute plan steps safely with verification",
+            codex_method=lambda: self.codex.execute(
+                step=f"Execute the plan for: {task}",
+                plan_context=plan_text,
+                context_files=context_files,
+            ),
+            context_files=context_files,
+        )
+        iterations.append(execute_iteration)
+
+        # Capture implementation for verify phase
+        if execute_iteration.codex_response:
+            implementation_summary.append(execute_iteration.codex_response)
+        else:
+            remaining_issues.append("Execute phase failed to produce implementation")
+
+        # =================================================================
+        # ITERATION 3: VERIFY - Final Verification
+        # =================================================================
+        logger.info("Phase 3: VERIFY - Final Verification")
+
+        impl_summary = "\n\n".join(implementation_summary) if implementation_summary else "No implementation captured"
+
+        verify_iteration = await self._run_forensic_phase(
+            phase=ForensicPhase.VERIFY,
+            iteration_number=3,
+            objective="Verify implementation meets all requirements",
+            codex_method=lambda: self.codex.verify(
+                task=task,
+                implementation_summary=impl_summary,
+                requirements=requirements,
+            ),
+            context_files=context_files,
+        )
+        iterations.append(verify_iteration)
+
+        # Extract final verification results
+        if verify_iteration.codex_response:
+            # Parse agreed points from verification
+            agreed_points = self._extract_agreed_points(verify_iteration.codex_response)
+
+        if verify_iteration.claude_critique:
+            remaining_issues.extend([
+                c.issue for c in verify_iteration.claude_critique.critiques
+                if c.severity in ("blocking", "important")
+            ])
+
+        # =================================================================
+        # DETERMINE FINAL STATE
+        # =================================================================
+        blocking_count = sum(
+            1 for it in iterations
+            if it.claude_critique and it.claude_critique.has_blocking_issues
+        )
+
+        if blocking_count == 0 and not remaining_issues:
+            final_state = ConsensusState.AGREED
+        elif blocking_count == 0:
+            final_state = ConsensusState.PARTIAL
+        else:
+            final_state = ConsensusState.DISAGREED
+
+        logger.info(f"Forensic workflow complete: {final_state.value} ({len(iterations)} phases)")
+
+        # Write documentation if path provided
+        if docs_path:
+            self._write_forensic_docs(docs_path, task, iterations, final_state)
+
+        return ForensicResult(
+            task=task,
+            iterations=iterations,
+            final_state=final_state,
+            agreed_points=agreed_points,
+            remaining_issues=remaining_issues,
+            forensic_docs_path=docs_path,
+        )
+
+    async def _run_forensic_phase(
+        self,
+        phase: ForensicPhase,
+        iteration_number: int,
+        objective: str,
+        codex_method: callable,
+        context_files: Optional[list[str]] = None,
+        max_sub_iterations: int = 3,
+    ) -> ForensicIteration:
+        """
+        Run a single forensic phase with critique loop.
+
+        Args:
+            phase: Which forensic phase (ANALYZE, PLAN, EXECUTE, VERIFY)
+            iteration_number: Phase number (0-3)
+            objective: What this phase aims to achieve
+            codex_method: Async callable that invokes the Codex forensic method
+            context_files: Files for context
+            max_sub_iterations: Max critique loops within this phase
+
+        Returns:
+            ForensicIteration with phase results
+        """
+        findings: list[str] = []
+        decisions: list[str] = []
+        docs_updated: list[str] = []
+
+        codex_response: Optional[str] = None
+        claude_critique: Optional[CritiqueResponse] = None
+
+        for sub_iter in range(max_sub_iterations):
+            logger.debug(f"  {phase.value} sub-iteration {sub_iter + 1}/{max_sub_iterations}")
+
+            # Get Codex's response for this phase
+            response = await codex_method()
+
+            if not response.success:
+                logger.error(f"Codex error in {phase.value}: {response.error}")
+                codex_response = f"Error: {response.error}"
+                break
+
+            codex_response = response.content
+
+            # Generate Claude's critique
+            proposal = Proposal(content=codex_response, iteration=sub_iter)
+            claude_critique = self._generate_forensic_critique(proposal, phase, sub_iter)
+
+            # Extract findings and decisions from response
+            findings.extend(self._extract_findings(codex_response))
+            decisions.extend(self._extract_decisions(codex_response))
+
+            # Check if we can proceed (no blocking issues)
+            if not claude_critique.has_blocking_issues:
+                logger.debug(f"  {phase.value} approved after {sub_iter + 1} sub-iterations")
+                break
+
+            # If blocking issues remain and not last iteration, log and continue
+            if sub_iter < max_sub_iterations - 1:
+                logger.debug(f"  {phase.value} has blocking issues, iterating...")
+
+        return ForensicIteration(
+            phase=phase,
+            iteration_number=iteration_number,
+            objective=objective,
+            codex_response=codex_response,
+            claude_critique=claude_critique,
+            findings=findings,
+            decisions=decisions,
+            docs_updated=docs_updated,
+        )
+
+    def _generate_forensic_critique(
+        self,
+        proposal: Proposal,
+        phase: ForensicPhase,
+        sub_iteration: int,
+    ) -> CritiqueResponse:
+        """
+        Generate phase-specific critique for forensic workflow.
+
+        Each phase has different critique priorities:
+        - ANALYZE: Focus on accuracy and completeness of findings
+        - PLAN: Focus on feasibility and specificity of steps
+        - EXECUTE: Focus on safety and verification
+        - VERIFY: Focus on requirement coverage
+        """
+        critiques = []
+        content = proposal.content.lower()
+
+        # Phase-specific checks
+        if phase == ForensicPhase.ANALYZE:
+            # Analyze phase: check for ground truth verification
+            if "file:" not in content and "line" not in content:
+                critiques.append(Critique(
+                    category=CritiqueCategory.CORRECTNESS,
+                    issue="Findings lack specific file:line references",
+                    severity="important",
+                    suggestion="Include exact file paths and line numbers for each finding",
+                ))
+            if "assumption" not in content and "verify" not in content:
+                critiques.append(Critique(
+                    category=CritiqueCategory.SOPHISTICATION,
+                    issue="No explicit assumption validation",
+                    severity="important",
+                    suggestion="List assumptions and verify each against codebase",
+                ))
+
+        elif phase == ForensicPhase.PLAN:
+            # Plan phase: check for actionable steps
+            if "step" not in content and "phase" not in content:
+                critiques.append(Critique(
+                    category=CritiqueCategory.FEASIBILITY,
+                    issue="Plan lacks clear step breakdown",
+                    severity="blocking",
+                    suggestion="Break into numbered steps with specific actions",
+                ))
+            if "verify" not in content and "test" not in content:
+                critiques.append(Critique(
+                    category=CritiqueCategory.SOPHISTICATION,
+                    issue="No verification steps defined",
+                    severity="important",
+                    suggestion="Add verification command for each step",
+                ))
+
+        elif phase == ForensicPhase.EXECUTE:
+            # Execute phase: check for safety
+            if "precondition" not in content:
+                critiques.append(Critique(
+                    category=CritiqueCategory.FEASIBILITY,
+                    issue="No precondition checks mentioned",
+                    severity="important",
+                    suggestion="Verify preconditions before each change",
+                ))
+            if "diff" not in content and "change" not in content:
+                critiques.append(Critique(
+                    category=CritiqueCategory.CORRECTNESS,
+                    issue="No specific changes documented",
+                    severity="blocking",
+                    suggestion="Show exact diff or change description",
+                ))
+
+        elif phase == ForensicPhase.VERIFY:
+            # Verify phase: check for requirement coverage
+            if "requirement" not in content and "[x]" not in content:
+                critiques.append(Critique(
+                    category=CritiqueCategory.CORRECTNESS,
+                    issue="No requirement checklist provided",
+                    severity="blocking",
+                    suggestion="List each requirement with verification status",
+                ))
+            if "regression" not in content and "test" not in content:
+                critiques.append(Critique(
+                    category=CritiqueCategory.SOPHISTICATION,
+                    issue="No regression testing mentioned",
+                    severity="important",
+                    suggestion="Run existing tests to check for regressions",
+                ))
+
+        # Common checks for all phases
+        if "todo" in content or "placeholder" in content:
+            critiques.append(Critique(
+                category=CritiqueCategory.FEASIBILITY,
+                issue="Contains TODOs or placeholders",
+                severity="blocking",
+                suggestion="Complete all sections before proceeding",
+            ))
+
+        # Determine readiness
+        blocking_count = len([c for c in critiques if c.severity == "blocking"])
+        ready = blocking_count == 0
+
+        if blocking_count > 0:
+            assessment = f"{phase.value.upper()} has {blocking_count} blocking issue(s)"
+        elif critiques:
+            assessment = f"{phase.value.upper()} acceptable with {len(critiques)} minor issue(s)"
+        else:
+            assessment = f"{phase.value.upper()} looks solid"
+
+        return CritiqueResponse(
+            critiques=critiques,
+            iteration=sub_iteration,
+            overall_assessment=assessment,
+            ready_to_accept=ready,
+        )
+
+    def _extract_findings(self, content: str) -> list[str]:
+        """Extract findings from Codex response."""
+        findings = []
+        lines = content.split('\n')
+        in_findings = False
+
+        for line in lines:
+            line_lower = line.lower().strip()
+            if 'finding' in line_lower or 'ground truth' in line_lower:
+                in_findings = True
+                continue
+            if in_findings and line.strip().startswith(('-', '*', '1', '2', '3')):
+                clean = line.strip().lstrip('-*0123456789.) ').strip()
+                if clean and len(clean) > 5:
+                    findings.append(clean[:300])
+            if in_findings and line.strip() == '' and findings:
+                in_findings = False
+
+        return findings[:10]
+
+    def _extract_decisions(self, content: str) -> list[str]:
+        """Extract decisions from Codex response."""
+        decisions = []
+        lines = content.split('\n')
+        in_decisions = False
+
+        for line in lines:
+            line_lower = line.lower().strip()
+            if 'decision' in line_lower:
+                in_decisions = True
+                continue
+            if in_decisions and line.strip().startswith(('-', '*', 'D')):
+                clean = line.strip().lstrip('-*D0123456789:.) ').strip()
+                if clean and len(clean) > 5:
+                    decisions.append(clean[:300])
+            if in_decisions and line.strip() == '' and decisions:
+                in_decisions = False
+
+        return decisions[:10]
+
+    def _write_forensic_docs(
+        self,
+        docs_path: str,
+        task: str,
+        iterations: list[ForensicIteration],
+        final_state: ConsensusState,
+    ) -> None:
+        """Write forensic documentation to file."""
+        import os
+        from datetime import datetime, timezone
+
+        content = f"""# Forensic Engineer Report
+Generated: {datetime.now(timezone.utc).isoformat()}
+
+## Task
+{task}
+
+## Final State
+{final_state.value}
+
+## Phase Summary
+"""
+        for it in iterations:
+            critique_status = "approved" if (it.claude_critique and it.claude_critique.ready_to_accept) else "issues remain"
+            content += f"""
+### {it.phase.value.upper()} (Iteration {it.iteration_number})
+**Objective:** {it.objective}
+**Status:** {critique_status}
+
+**Findings:**
+"""
+            for f in it.findings:
+                content += f"- {f}\n"
+
+            content += "\n**Decisions:**\n"
+            for d in it.decisions:
+                content += f"- {d}\n"
+
+            if it.claude_critique:
+                content += f"\n**Critique:** {it.claude_critique.overall_assessment}\n"
+
+        try:
+            os.makedirs(os.path.dirname(docs_path), exist_ok=True)
+            with open(docs_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+            logger.info(f"Forensic docs written to: {docs_path}")
+        except Exception as e:
+            logger.error(f"Failed to write forensic docs: {e}")
 
     def _build_initial_prompt(self, task: str, context: str) -> str:
         """Build the initial prompt for Codex."""
@@ -577,6 +1096,24 @@ def main():
     review_parser.add_argument("file", help="File to review")
     review_parser.add_argument("--focus", help="Focus area")
 
+    # Forensic command
+    forensic_parser = subparsers.add_parser(
+        "forensic",
+        help="Run Forensic Engineer workflow (4-phase structured collaboration)"
+    )
+    forensic_parser.add_argument("task", help="Task description")
+    forensic_parser.add_argument("--context", required=True, help="Context/constraints")
+    forensic_parser.add_argument(
+        "--requirements",
+        required=True,
+        help="Success criteria for verification"
+    )
+    forensic_parser.add_argument("--files", nargs="*", help="Context files")
+    forensic_parser.add_argument(
+        "--docs",
+        help="Path to write forensic documentation (e.g., docs/forensic-report.md)"
+    )
+
     args = parser.parse_args()
 
     async def run():
@@ -591,6 +1128,50 @@ def main():
 
         elif args.command == "review":
             result = await review_with_consensus(args.file, args.focus)
+            print(json.dumps(result.to_dict(), indent=2))
+
+        elif args.command == "forensic":
+            maestro = Maestro()
+            print(f"Starting Forensic Engineer workflow...")
+            print(f"  Task: {args.task}")
+            print(f"  Phases: ANALYZE -> PLAN -> EXECUTE -> VERIFY")
+            print()
+
+            result = await maestro.forensic_collaborate(
+                task=args.task,
+                context=args.context,
+                requirements=args.requirements,
+                context_files=args.files,
+                docs_path=args.docs,
+            )
+
+            # Print phase summary
+            print(f"\n{'='*60}")
+            print(f"FORENSIC WORKFLOW COMPLETE")
+            print(f"{'='*60}")
+            print(f"Final State: {result.final_state.value}")
+            print(f"Phases Completed: {len(result.iterations)}")
+
+            for it in result.iterations:
+                status = "OK" if (it.claude_critique and it.claude_critique.ready_to_accept) else "ISSUES"
+                print(f"  [{status}] {it.phase.value.upper()}: {it.objective[:50]}...")
+
+            if result.agreed_points:
+                print(f"\nAgreed Points:")
+                for p in result.agreed_points[:5]:
+                    print(f"  - {p[:80]}...")
+
+            if result.remaining_issues:
+                print(f"\nRemaining Issues:")
+                for i in result.remaining_issues[:5]:
+                    print(f"  - {i[:80]}...")
+
+            if args.docs:
+                print(f"\nDocumentation written to: {args.docs}")
+
+            # Also output full JSON for programmatic use
+            print(f"\n{'='*60}")
+            print("FULL RESULT (JSON):")
             print(json.dumps(result.to_dict(), indent=2))
 
         else:

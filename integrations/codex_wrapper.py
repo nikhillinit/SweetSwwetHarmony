@@ -70,13 +70,21 @@ class ApprovalMode(str, Enum):
 
 
 class ReasoningLevel(str, Enum):
-    """Codex reasoning effort levels."""
+    """Codex reasoning effort levels (mapped to Codex CLI if supported)."""
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
 
 
-# Default model configuration - use GPT-5-2 exclusively with highest reasoning
+class ForensicPhase(str, Enum):
+    """Forensic Engineer workflow phases."""
+    ANALYZE = "analyze"   # Iteration 0: Forensic Audit & Validation
+    PLAN = "plan"         # Iteration 1: Strategy Refinement
+    EXECUTE = "execute"   # Iteration 2: Step-by-Step Execution
+    VERIFY = "verify"     # Iteration 3: Final Verification
+
+
+# Default model configuration
 DEFAULT_MODEL = "gpt5-2"
 DEFAULT_REASONING_LEVEL = ReasoningLevel.HIGH
 
@@ -365,6 +373,239 @@ Be specific and constructive. Focus on facts and evidence."""
 
         return await self.exec(prompt, sandbox=SandboxMode.READ_ONLY)
 
+    # =========================================================================
+    # FORENSIC ENGINEER WORKFLOW METHODS
+    # =========================================================================
+    # These methods wrap exec() with phase-specific prompts for the
+    # Forensic Engineer workflow pattern (analyze → plan → execute → verify)
+
+    async def analyze(
+        self,
+        task: str,
+        context_files: Optional[list[str]] = None,
+    ) -> CodexResponse:
+        """
+        Iteration 0: Forensic Audit & Validation.
+
+        Validate assumptions against actual codebase state.
+        Codex runs in sandbox (read-only), proposes findings for Claude to critique.
+
+        Args:
+            task: What to audit/analyze
+            context_files: Files to examine
+
+        Returns:
+            CodexResponse with audit findings for Claude to critique
+        """
+        prompt = f"""## FORENSIC AUDIT - Iteration 0
+
+### Objective
+Validate assumptions against actual codebase state. Do NOT assume the plan is perfect.
+
+### Task
+{task}
+
+### Instructions
+1. Verify the current state of relevant files/modules
+2. Check for discrepancies between plan assumptions and reality
+3. Identify existing infrastructure that can be reused
+4. Flag potential risks or missing dependencies
+5. Document exact file paths and line numbers for findings
+
+### Output Format
+**Ground Truth Findings:**
+1. [Finding with file:line reference]
+
+**Discrepancies Found:**
+- [Assumption vs Reality]
+
+**Existing Infrastructure:**
+- [Reusable component with path]
+
+**Risks Identified:**
+- [Risk with severity]
+"""
+        return await self.exec(prompt, sandbox=SandboxMode.READ_ONLY, context_files=context_files)
+
+    async def plan(
+        self,
+        task: str,
+        findings: str,
+        context_files: Optional[list[str]] = None,
+    ) -> CodexResponse:
+        """
+        Iteration 1: Strategy Refinement.
+
+        Convert high-level plan into concrete, executable steps based on audit findings.
+        Codex proposes revised plan for Claude to critique.
+
+        Args:
+            task: The goal to achieve
+            findings: Findings from Iteration 0 (analyze phase)
+            context_files: Relevant files
+
+        Returns:
+            CodexResponse with refined plan for Claude to critique
+        """
+        prompt = f"""## STRATEGY REFINEMENT - Iteration 1
+
+### Objective
+Refine the execution plan based on audit findings. Address identified risks.
+
+### Task
+{task}
+
+### Audit Findings (from Iteration 0)
+{findings}
+
+### Instructions
+1. Break down the task into atomic, verifiable steps
+2. Define exact commands or code changes for each step
+3. Identify verification steps for each stage
+4. Address the risks identified in the audit
+5. Note any blocking dependencies
+
+### Output Format
+**Revised Plan:**
+
+**Phase 1: [Name]**
+- Task 1.1: [Specific action]
+  - File: [path]
+  - Change: [what to modify]
+  - Verify: [how to test]
+
+**Decisions Made:**
+- D1: [Decision with rationale]
+
+**Risks Addressed:**
+- R1: [How risk is mitigated]
+
+**Open Questions:**
+- [Questions needing human input]
+"""
+        return await self.exec(prompt, sandbox=SandboxMode.READ_ONLY, context_files=context_files)
+
+    async def execute(
+        self,
+        step: str,
+        plan_context: str,
+        context_files: Optional[list[str]] = None,
+    ) -> CodexResponse:
+        """
+        Iteration 2: Step-by-Step Execution.
+
+        Execute a specific step from the plan safely, verifying intermediate states.
+        Codex proposes implementation for Claude to critique and apply.
+
+        Args:
+            step: The specific step to execute
+            plan_context: Relevant context from the plan
+            context_files: Files involved in this step
+
+        Returns:
+            CodexResponse with implementation proposal for Claude to critique
+        """
+        prompt = f"""## STEP EXECUTION - Iteration 2
+
+### Objective
+Execute this step safely, verifying preconditions and postconditions.
+
+### Step to Execute
+{step}
+
+### Plan Context
+{plan_context}
+
+### Instructions
+1. Verify preconditions are met
+2. Propose the exact code changes (with file paths and line numbers)
+3. Provide verification command to confirm success
+4. Note any side effects or dependent changes needed
+
+### Output Format
+**Preconditions Check:**
+- [x] [Condition verified]
+
+**Proposed Changes:**
+```diff
+--- a/path/to/file.py
++++ b/path/to/file.py
+@@ -line,count +line,count @@
+ context
+-old line
++new line
+ context
+```
+
+**Verification Command:**
+```bash
+[command to verify success]
+```
+
+**Side Effects:**
+- [Any additional changes needed]
+"""
+        return await self.exec(prompt, sandbox=SandboxMode.READ_ONLY, context_files=context_files)
+
+    async def verify(
+        self,
+        task: str,
+        implementation_summary: str,
+        requirements: str,
+    ) -> CodexResponse:
+        """
+        Iteration 3: Final Verification & Cleanup.
+
+        Prove the task is complete and meets all requirements.
+        Codex proposes verification results for Claude to review.
+
+        Args:
+            task: The original task
+            implementation_summary: What was implemented
+            requirements: Success criteria
+
+        Returns:
+            CodexResponse with verification analysis for Claude to review
+        """
+        prompt = f"""## FINAL VERIFICATION - Iteration 3
+
+### Objective
+Verify the implementation meets all requirements. Identify any remaining issues.
+
+### Original Task
+{task}
+
+### Implementation Summary
+{implementation_summary}
+
+### Success Requirements
+{requirements}
+
+### Instructions
+1. Verify each requirement is met
+2. Check for regressions or side effects
+3. Identify any cleanup needed (temp files, debug code)
+4. Document final metrics/state
+
+### Output Format
+**Requirements Check:**
+- [x] [Requirement]: [Evidence it's met]
+- [ ] [Requirement]: [Why not met / what's needed]
+
+**Regression Check:**
+- [Tests run and results]
+
+**Cleanup Needed:**
+- [Items to clean up]
+
+**Final Metrics:**
+- [Before/after comparison]
+
+**Remaining Issues:**
+- [Any open items]
+"""
+        return await self.exec(prompt, sandbox=SandboxMode.READ_ONLY)
+
     async def _run_command(
         self,
         args: list[str],
@@ -378,11 +619,11 @@ Be specific and constructive. Focus on facts and evidence."""
         Returns:
             CodexResponse with command output
         """
-        # Build base command with model and reasoning flags
+        # Build base command with model flag
+        # Note: --reasoning-effort is not a valid Codex CLI flag
         full_command = [
             self.codex_path,
             "--model", self.model,
-            "--reasoning-effort", self.reasoning_level.value,
         ] + args
         command_str = " ".join(full_command)
 
