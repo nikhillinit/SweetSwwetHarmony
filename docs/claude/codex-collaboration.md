@@ -52,24 +52,24 @@ python -m integrations.kimi_client check
 ### 1. Standard Collaboration (iterate until consensus)
 
 ```bash
-# Using Codex (default)
+# Auto mode (default) - Kimi used if context is large
 python -m integrations.maestro collaborate \
     "Improve thesis matcher false positive rate" \
     --context "Currently at 30% FP, mostly B2B tools" \
     --max-iterations 5
 
-# Using Kimi
+# Force Kimi for all phases
 python -m integrations.maestro collaborate \
     "Improve thesis matcher false positive rate" \
     --context "Currently at 30% FP, mostly B2B tools" \
     --max-iterations 5 \
-    --use-kimi
+    --kimi-mode always
 ```
 
 ```python
-from integrations.maestro import Maestro
+from integrations.maestro import Maestro, KimiMode
 
-# Using Codex (default)
+# Auto mode (default) - smart selection based on context size
 maestro = Maestro(max_iterations=5)
 result = await maestro.collaborate(
     task="Reduce false positives",
@@ -77,8 +77,8 @@ result = await maestro.collaborate(
     context_files=["utils/thesis_matcher.py"]
 )
 
-# Using Kimi
-maestro = Maestro(max_iterations=5, use_kimi=True)
+# Force Kimi
+maestro = Maestro(max_iterations=5, kimi_mode=KimiMode.ALWAYS)
 result = await maestro.collaborate(...)
 ```
 
@@ -110,7 +110,7 @@ The Forensic Engineer pattern provides structured collaboration through 4 mandat
 #### CLI Usage
 
 ```bash
-# Using Codex (default)
+# Auto mode (default) - Kimi auto-selected if >= 5 files or >= 20K tokens
 python -m integrations.maestro forensic \
     "Add rate limiting to GitHub collector" \
     --context "Currently no rate limiting, hitting 403s" \
@@ -118,22 +118,29 @@ python -m integrations.maestro forensic \
     --files collectors/github.py \
     --docs docs/forensic-rate-limiting.md
 
-# Using Kimi (256K context for large codebases)
+# Force Kimi for all phases
 python -m integrations.maestro forensic \
     "Add rate limiting to GitHub collector" \
-    --context "Currently no rate limiting, hitting 403s" \
-    --requirements "1. Respect 5000 req/hr limit 2. Exponential backoff 3. Tests pass" \
-    --files collectors/github.py \
-    --docs docs/forensic-rate-limiting.md \
-    --use-kimi
+    --context "..." \
+    --requirements "..." \
+    --files collectors/github.py storage/signal_store.py workflows/pipeline.py \
+    --kimi-mode always
+
+# Dual mode - both Kimi + Codex for ANALYZE phase
+python -m integrations.maestro forensic \
+    "Refactor signal pipeline" \
+    --context "..." \
+    --requirements "..." \
+    --files collectors/*.py \
+    --kimi-mode dual
 ```
 
 #### Python Usage
 
 ```python
-from integrations.maestro import Maestro
+from integrations.maestro import Maestro, KimiMode
 
-# Using Codex (default)
+# Auto mode (default) - smart selection per phase
 maestro = Maestro()
 result = await maestro.forensic_collaborate(
     task="Add rate limiting to GitHub collector",
@@ -148,8 +155,12 @@ result = await maestro.forensic_collaborate(
     docs_path="docs/forensic-rate-limiting.md",
 )
 
-# Using Kimi
-maestro = Maestro(use_kimi=True)
+# Force Kimi for all phases
+maestro = Maestro(kimi_mode=KimiMode.ALWAYS)
+result = await maestro.forensic_collaborate(...)
+
+# Dual mode for critical decisions
+maestro = Maestro(kimi_mode=KimiMode.DUAL)
 result = await maestro.forensic_collaborate(...)
 
 print(f"Final state: {result.final_state}")
@@ -226,16 +237,57 @@ Each Codex proposal is evaluated on:
 | Bug fix with root cause unknown | `forensic` | ANALYZE phase validates assumptions |
 | Refactoring | `forensic` | VERIFY ensures no regressions |
 
-## Codex vs Kimi: When to Use Each
+## Kimi Modes
 
-| Scenario | Backend | Why |
-|----------|---------|-----|
-| Sandbox execution needed | Codex | Kimi has no sandbox isolation |
-| Large codebase analysis | Kimi | 256K context window |
-| Cost-sensitive | Kimi | $0.60/M input vs ChatGPT Pro |
-| Offline/no ChatGPT Pro | Kimi | API-only, no CLI required |
-| Complex reasoning chains | Kimi (kimi-k2-thinking) | Extended reasoning model |
-| Default dev/debug | Either | Both work well for forensic workflow |
+The `--kimi-mode` flag controls how Kimi is used in the workflow:
+
+| Mode | Behavior | Best For |
+|------|----------|----------|
+| `auto` (default) | Smart selection based on context size | Balanced usage, budget preservation |
+| `always` | Always use Kimi for all phases | When you want Kimi's perspective |
+| `never` | Always use Codex (Kimi disabled) | When Codex sandbox is required |
+| `dual` | Both Kimi + Codex for ANALYZE phase | Critical decisions needing consensus |
+
+### Auto-Selection Rules
+
+In `auto` mode, Kimi is used when:
+- **>= 5 context files** provided
+- **>= 20K estimated tokens** in context
+
+```bash
+# Examples
+python -m integrations.maestro forensic "task" --context "..." --kimi-mode auto   # Smart selection
+python -m integrations.maestro forensic "task" --context "..." --kimi-mode always # Force Kimi
+python -m integrations.maestro forensic "task" --context "..." --kimi-mode never  # Force Codex
+```
+
+## Budget Management
+
+Kimi API usage is tracked to prevent quota exhaustion:
+
+```bash
+# Check budget status
+python -m integrations.maestro budget
+
+# Output:
+# Kimi API Budget Status
+# ========================================
+# Daily tokens:        45,230 / 1,500,000
+# Daily remaining:  1,454,770 (97.0%)
+# Monthly tokens:      180,500
+# Request count:            12
+
+# Reset daily counter (if needed)
+python -m integrations.maestro budget --reset
+```
+
+### Budget Thresholds
+
+| Threshold | Value | Action |
+|-----------|-------|--------|
+| Daily limit | 1,500,000 tokens | Tier0 hard cap |
+| Warning level | 500,000 tokens (33%) | Logs warning, suggests Codex |
+| Budget file | `.kimi_budget.json` | Auto-created in project root |
 
 ## Kimi Models
 
@@ -256,6 +308,11 @@ Each Codex proposal is evaluated on:
 - **Large context** - Up to 256K tokens for whole-repo analysis
 - **Cost-effective** - $0.60/M input, $2.50/M output
 - **No CLI required** - Pure API, works anywhere
+
+### Auto Mode (Recommended)
+- **Balanced usage** - Uses Kimi only when it adds value
+- **Budget preservation** - Avoids exhaustion before month end
+- **Smart selection** - Large contexts get Kimi's 256K window
 
 ### Both
 - **Iterative refinement** - Multiple rounds improve quality
