@@ -1,23 +1,24 @@
-# Codex Collaboration & Forensic Engineer Workflow
+# Codex/Kimi Collaboration & Forensic Engineer Workflow
 
-Multi-LLM collaboration patterns for Claude Code + Codex CLI.
+Multi-LLM collaboration patterns for Claude Code + Codex CLI or Kimi API.
 
 ## Architecture
 
 ```
 +------------------+     task      +------------------+
-|   Claude Code    |-------------->|    Codex CLI     |
+|   Claude Code    |-------------->|  Codex CLI       |
 |  (Orchestrator   |               |    (Sandbox)     |
-|   + Critic)      |<--------------|                  |
-+------------------+    proposal   +------------------+
-         |                               ^
-         | critique                      |
-         +-------------------------------+
+|   + Critic)      |<--------------|       OR         |
++------------------+    proposal   |  Kimi API        |
+         |                         |  (256K context)  |
+         | critique                +------------------+
+         +-------------------------------^
               (iterate until consensus)
 ```
 
 - **Claude Code** orchestrates all actions
 - **Codex CLI** provides sandbox-isolated proposals (read-only mode)
+- **Kimi API** provides alternative backend with 256K context window
 - **Consensus patterns** reduce hallucinations via iterative critique
 
 ## Key Files
@@ -26,13 +27,24 @@ Multi-LLM collaboration patterns for Claude Code + Codex CLI.
 |------|---------|
 | `integrations/maestro.py` | Iterative consensus orchestrator (collaborate + forensic) |
 | `integrations/codex_wrapper.py` | Codex CLI wrapper (sandbox execution) |
+| `integrations/kimi_client.py` | Kimi API client (large context, cost-effective) |
 
 ## Setup
 
+### Codex (default)
 ```bash
 # Install Codex CLI with ChatGPT Pro
 npm install -g @openai/codex
 codex login
+```
+
+### Kimi (alternative)
+```bash
+# Add to .env
+KIMI_API_KEY=sk-xxx  # Get at https://platform.moonshot.cn/console/api-keys
+
+# Test connection
+python -m integrations.kimi_client check
 ```
 
 ## Workflows
@@ -40,21 +52,34 @@ codex login
 ### 1. Standard Collaboration (iterate until consensus)
 
 ```bash
+# Using Codex (default)
 python -m integrations.maestro collaborate \
     "Improve thesis matcher false positive rate" \
     --context "Currently at 30% FP, mostly B2B tools" \
     --max-iterations 5
+
+# Using Kimi
+python -m integrations.maestro collaborate \
+    "Improve thesis matcher false positive rate" \
+    --context "Currently at 30% FP, mostly B2B tools" \
+    --max-iterations 5 \
+    --use-kimi
 ```
 
 ```python
 from integrations.maestro import Maestro
 
+# Using Codex (default)
 maestro = Maestro(max_iterations=5)
 result = await maestro.collaborate(
     task="Reduce false positives",
     context="30% FP rate, B2B tools passing filter",
     context_files=["utils/thesis_matcher.py"]
 )
+
+# Using Kimi
+maestro = Maestro(max_iterations=5, use_kimi=True)
+result = await maestro.collaborate(...)
 ```
 
 ### 2. Forensic Engineer Workflow (4-phase structured)
@@ -85,12 +110,22 @@ The Forensic Engineer pattern provides structured collaboration through 4 mandat
 #### CLI Usage
 
 ```bash
+# Using Codex (default)
 python -m integrations.maestro forensic \
     "Add rate limiting to GitHub collector" \
     --context "Currently no rate limiting, hitting 403s" \
     --requirements "1. Respect 5000 req/hr limit 2. Exponential backoff 3. Tests pass" \
     --files collectors/github.py \
     --docs docs/forensic-rate-limiting.md
+
+# Using Kimi (256K context for large codebases)
+python -m integrations.maestro forensic \
+    "Add rate limiting to GitHub collector" \
+    --context "Currently no rate limiting, hitting 403s" \
+    --requirements "1. Respect 5000 req/hr limit 2. Exponential backoff 3. Tests pass" \
+    --files collectors/github.py \
+    --docs docs/forensic-rate-limiting.md \
+    --use-kimi
 ```
 
 #### Python Usage
@@ -98,6 +133,7 @@ python -m integrations.maestro forensic \
 ```python
 from integrations.maestro import Maestro
 
+# Using Codex (default)
 maestro = Maestro()
 result = await maestro.forensic_collaborate(
     task="Add rate limiting to GitHub collector",
@@ -111,6 +147,10 @@ result = await maestro.forensic_collaborate(
     context_files=["collectors/github.py"],
     docs_path="docs/forensic-rate-limiting.md",
 )
+
+# Using Kimi
+maestro = Maestro(use_kimi=True)
+result = await maestro.forensic_collaborate(...)
 
 print(f"Final state: {result.final_state}")
 for iteration in result.iterations:
@@ -186,10 +226,38 @@ Each Codex proposal is evaluated on:
 | Bug fix with root cause unknown | `forensic` | ANALYZE phase validates assumptions |
 | Refactoring | `forensic` | VERIFY ensures no regressions |
 
+## Codex vs Kimi: When to Use Each
+
+| Scenario | Backend | Why |
+|----------|---------|-----|
+| Sandbox execution needed | Codex | Kimi has no sandbox isolation |
+| Large codebase analysis | Kimi | 256K context window |
+| Cost-sensitive | Kimi | $0.60/M input vs ChatGPT Pro |
+| Offline/no ChatGPT Pro | Kimi | API-only, no CLI required |
+| Complex reasoning chains | Kimi (kimi-k2-thinking) | Extended reasoning model |
+| Default dev/debug | Either | Both work well for forensic workflow |
+
+## Kimi Models
+
+| Model | Best For | Context |
+|-------|----------|---------|
+| `kimi-k2.5` | General analysis (default) | Standard |
+| `kimi-k2-thinking` | Complex reasoning | Extended |
+| `moonshot-v1-128k` | Large context analysis | 128K tokens |
+| `moonshot-v1-32k` | Balanced tasks | 32K tokens |
+
 ## Benefits
 
+### Codex
 - **No API costs** - Uses ChatGPT Pro subscription via Codex CLI
 - **Sandbox isolation** - Codex runs in read-only mode
+
+### Kimi
+- **Large context** - Up to 256K tokens for whole-repo analysis
+- **Cost-effective** - $0.60/M input, $2.50/M output
+- **No CLI required** - Pure API, works anywhere
+
+### Both
 - **Iterative refinement** - Multiple rounds improve quality
 - **Critical evaluation** - Claude scrutinizes, doesn't blindly accept
 - **Audit trail** - Forensic docs capture the decision process
