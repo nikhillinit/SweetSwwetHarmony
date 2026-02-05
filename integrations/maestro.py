@@ -226,10 +226,14 @@ Be specific and actionable. Claude will critique your proposals for:
 
 class Maestro:
     """
-    Iterative consensus orchestrator for Claude + Codex collaboration.
+    Iterative consensus orchestrator for Claude + Codex/Kimi collaboration.
 
     Implements the Maestro pattern where Claude critically evaluates
-    Codex proposals until reaching consensus or max iterations.
+    Codex or Kimi proposals until reaching consensus or max iterations.
+
+    Supports two LLM backends:
+    - Codex CLI (default): Sandbox-isolated, uses ChatGPT Pro subscription
+    - Kimi: API-based, supports up to 256K context, cost-effective
     """
 
     def __init__(
@@ -237,6 +241,7 @@ class Maestro:
         max_iterations: int = 5,
         sandbox_mode: str = "read-only",
         auto_accept_threshold: int = 0,  # Accept if no blocking issues after N iterations
+        use_kimi: bool = False,  # Use Kimi instead of Codex for forensic workflow
     ):
         """
         Initialize Maestro orchestrator.
@@ -245,11 +250,14 @@ class Maestro:
             max_iterations: Maximum critique iterations before forcing decision
             sandbox_mode: Codex sandbox isolation level
             auto_accept_threshold: Auto-accept after N iterations with no blocking issues
+            use_kimi: Use Kimi API instead of Codex CLI (default: False)
         """
         self.max_iterations = max_iterations
         self.sandbox_mode = sandbox_mode
         self.auto_accept_threshold = auto_accept_threshold
+        self.use_kimi = use_kimi
         self._codex = None
+        self._kimi = None
         self._history: list[dict[str, Any]] = []
 
     @property
@@ -263,6 +271,24 @@ class Maestro:
                 reasoning_level=DEFAULT_REASONING_LEVEL,
             )
         return self._codex
+
+    @property
+    def kimi(self):
+        """Lazy-load Kimi client for forensic workflow."""
+        if self._kimi is None:
+            from .kimi_client import KimiClient
+            self._kimi = KimiClient()
+        return self._kimi
+
+    @property
+    def llm_backend(self):
+        """Get the active LLM backend (Kimi or Codex) based on use_kimi flag."""
+        return self.kimi if self.use_kimi else self.codex
+
+    @property
+    def backend_name(self) -> str:
+        """Get the name of the active backend."""
+        return "Kimi" if self.use_kimi else "Codex"
 
     async def collaborate(
         self,
@@ -410,6 +436,7 @@ class Maestro:
         implementation_summary: list[str] = []
 
         logger.info(f"Starting Forensic Engineer workflow for: {task}")
+        logger.info(f"Using LLM backend: {self.backend_name}")
 
         # =================================================================
         # ITERATION 0: ANALYZE - Forensic Audit & Validation
@@ -420,7 +447,7 @@ class Maestro:
             phase=ForensicPhase.ANALYZE,
             iteration_number=0,
             objective="Validate assumptions against actual codebase state",
-            codex_method=lambda: self.codex.analyze(task, context_files),
+            codex_method=lambda: self.llm_backend.analyze(task, context_files),
             context_files=context_files,
         )
         iterations.append(analyze_iteration)
@@ -447,7 +474,7 @@ class Maestro:
             phase=ForensicPhase.PLAN,
             iteration_number=1,
             objective="Convert high-level plan into concrete, executable steps",
-            codex_method=lambda: self.codex.plan(task, findings_text, context_files),
+            codex_method=lambda: self.llm_backend.plan(task, findings_text, context_files),
             context_files=context_files,
         )
         iterations.append(plan_iteration)
@@ -470,7 +497,7 @@ class Maestro:
             phase=ForensicPhase.EXECUTE,
             iteration_number=2,
             objective="Execute plan steps safely with verification",
-            codex_method=lambda: self.codex.execute(
+            codex_method=lambda: self.llm_backend.execute(
                 step=f"Execute the plan for: {task}",
                 plan_context=plan_text,
                 context_files=context_files,
@@ -496,7 +523,7 @@ class Maestro:
             phase=ForensicPhase.VERIFY,
             iteration_number=3,
             objective="Verify implementation meets all requirements",
-            codex_method=lambda: self.codex.verify(
+            codex_method=lambda: self.llm_backend.verify(
                 task=task,
                 implementation_summary=impl_summary,
                 requirements=requirements,
@@ -1080,7 +1107,7 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Maestro: Iterative Claude + Codex Collaboration"
+        description="Maestro: Iterative Claude + Codex/Kimi Collaboration"
     )
     subparsers = parser.add_subparsers(dest="command", help="Commands")
 
@@ -1090,6 +1117,11 @@ def main():
     collab_parser.add_argument("--context", required=True, help="Context/constraints")
     collab_parser.add_argument("--max-iterations", type=int, default=5)
     collab_parser.add_argument("--files", nargs="*", help="Context files")
+    collab_parser.add_argument(
+        "--use-kimi",
+        action="store_true",
+        help="Use Kimi API instead of Codex CLI"
+    )
 
     # Review command
     review_parser = subparsers.add_parser("review", help="Review a file")
@@ -1113,12 +1145,18 @@ def main():
         "--docs",
         help="Path to write forensic documentation (e.g., docs/forensic-report.md)"
     )
+    forensic_parser.add_argument(
+        "--use-kimi",
+        action="store_true",
+        help="Use Kimi API instead of Codex CLI"
+    )
 
     args = parser.parse_args()
 
     async def run():
         if args.command == "collaborate":
-            maestro = Maestro(max_iterations=args.max_iterations)
+            use_kimi = getattr(args, 'use_kimi', False)
+            maestro = Maestro(max_iterations=args.max_iterations, use_kimi=use_kimi)
             result = await maestro.collaborate(
                 task=args.task,
                 context=args.context,
@@ -1131,9 +1169,12 @@ def main():
             print(json.dumps(result.to_dict(), indent=2))
 
         elif args.command == "forensic":
-            maestro = Maestro()
+            use_kimi = getattr(args, 'use_kimi', False)
+            maestro = Maestro(use_kimi=use_kimi)
+            backend = "Kimi" if use_kimi else "Codex"
             print(f"Starting Forensic Engineer workflow...")
             print(f"  Task: {args.task}")
+            print(f"  Backend: {backend}")
             print(f"  Phases: ANALYZE -> PLAN -> EXECUTE -> VERIFY")
             print()
 
