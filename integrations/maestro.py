@@ -54,6 +54,20 @@ class ConsensusState(str, Enum):
     PARTIAL = "partial"          # Agreed on some points, not others
 
 
+class KimiMode(str, Enum):
+    """Kimi usage modes for forensic workflow."""
+    AUTO = "auto"        # Smart selection based on context size (default)
+    ALWAYS = "always"    # Always use Kimi
+    NEVER = "never"      # Never use Kimi (Codex only)
+    DUAL = "dual"        # Run both for ANALYZE, synthesize findings
+
+
+# Thresholds for auto-selection
+KIMI_AUTO_FILE_THRESHOLD = 5       # Use Kimi if >= 5 context files
+KIMI_AUTO_TOKEN_THRESHOLD = 20000  # Use Kimi if >= 20K estimated tokens
+KIMI_DAILY_TOKEN_WARNING = 500000  # Warn if daily usage exceeds 500K
+
+
 @dataclass
 class Critique:
     """Structured critique of a proposal."""
@@ -231,9 +245,15 @@ class Maestro:
     Implements the Maestro pattern where Claude critically evaluates
     Codex or Kimi proposals until reaching consensus or max iterations.
 
-    Supports two LLM backends:
+    Supports two LLM backends with smart selection:
     - Codex CLI (default): Sandbox-isolated, uses ChatGPT Pro subscription
     - Kimi: API-based, supports up to 256K context, cost-effective
+
+    Kimi Modes:
+    - auto: Smart selection based on context size (>=5 files or >=20K tokens)
+    - always: Always use Kimi
+    - never: Never use Kimi (Codex only)
+    - dual: Run both for ANALYZE phase, synthesize findings
     """
 
     def __init__(
@@ -241,7 +261,8 @@ class Maestro:
         max_iterations: int = 5,
         sandbox_mode: str = "read-only",
         auto_accept_threshold: int = 0,  # Accept if no blocking issues after N iterations
-        use_kimi: bool = False,  # Use Kimi instead of Codex for forensic workflow
+        kimi_mode: KimiMode = KimiMode.AUTO,  # Smart Kimi selection mode
+        use_kimi: bool = False,  # DEPRECATED: Use kimi_mode instead
     ):
         """
         Initialize Maestro orchestrator.
@@ -250,15 +271,23 @@ class Maestro:
             max_iterations: Maximum critique iterations before forcing decision
             sandbox_mode: Codex sandbox isolation level
             auto_accept_threshold: Auto-accept after N iterations with no blocking issues
-            use_kimi: Use Kimi API instead of Codex CLI (default: False)
+            kimi_mode: How to use Kimi (auto, always, never, dual)
+            use_kimi: DEPRECATED - kept for backwards compatibility, use kimi_mode
         """
         self.max_iterations = max_iterations
         self.sandbox_mode = sandbox_mode
         self.auto_accept_threshold = auto_accept_threshold
-        self.use_kimi = use_kimi
+
+        # Handle backwards compatibility: use_kimi=True maps to kimi_mode=ALWAYS
+        if use_kimi and kimi_mode == KimiMode.AUTO:
+            self.kimi_mode = KimiMode.ALWAYS
+        else:
+            self.kimi_mode = kimi_mode
+
         self._codex = None
         self._kimi = None
         self._history: list[dict[str, Any]] = []
+        self._kimi_used_this_session = False
 
     @property
     def codex(self):
@@ -280,15 +309,109 @@ class Maestro:
             self._kimi = KimiClient()
         return self._kimi
 
+    def _estimate_context_size(self, context_files: Optional[list[str]]) -> tuple[int, int]:
+        """
+        Estimate context size for smart Kimi selection.
+
+        Returns:
+            Tuple of (file_count, estimated_tokens)
+        """
+        if not context_files:
+            return 0, 0
+
+        file_count = len(context_files)
+        estimated_tokens = 0
+
+        for file_path in context_files:
+            if os.path.exists(file_path):
+                try:
+                    size = os.path.getsize(file_path)
+                    # Rough estimate: 4 chars per token
+                    estimated_tokens += size // 4
+                except OSError:
+                    pass
+
+        return file_count, estimated_tokens
+
+    def _should_use_kimi(
+        self,
+        context_files: Optional[list[str]],
+        phase: Optional[ForensicPhase] = None,
+    ) -> bool:
+        """
+        Determine if Kimi should be used based on mode and context.
+
+        Auto-selection rules:
+        - Use Kimi if >= 5 context files
+        - Use Kimi if >= 20K estimated tokens
+        - Always use Kimi for ANALYZE phase in dual mode
+
+        Args:
+            context_files: Files to be analyzed
+            phase: Current forensic phase (for dual mode)
+
+        Returns:
+            True if Kimi should be used
+        """
+        if self.kimi_mode == KimiMode.ALWAYS:
+            return True
+
+        if self.kimi_mode == KimiMode.NEVER:
+            return False
+
+        if self.kimi_mode == KimiMode.DUAL:
+            # In dual mode, use Kimi for ANALYZE phase
+            return phase == ForensicPhase.ANALYZE
+
+        # AUTO mode: smart selection based on context size
+        file_count, estimated_tokens = self._estimate_context_size(context_files)
+
+        should_use = (
+            file_count >= KIMI_AUTO_FILE_THRESHOLD or
+            estimated_tokens >= KIMI_AUTO_TOKEN_THRESHOLD
+        )
+
+        if should_use:
+            logger.info(
+                f"Auto-selecting Kimi: {file_count} files, ~{estimated_tokens:,} tokens "
+                f"(thresholds: {KIMI_AUTO_FILE_THRESHOLD} files, {KIMI_AUTO_TOKEN_THRESHOLD:,} tokens)"
+            )
+
+        return should_use
+
+    def _get_backend_for_phase(
+        self,
+        phase: ForensicPhase,
+        context_files: Optional[list[str]],
+    ):
+        """Get the appropriate backend for a forensic phase."""
+        use_kimi = self._should_use_kimi(context_files, phase)
+
+        if use_kimi:
+            self._kimi_used_this_session = True
+            return self.kimi, "Kimi"
+        else:
+            return self.codex, "Codex"
+
     @property
     def llm_backend(self):
-        """Get the active LLM backend (Kimi or Codex) based on use_kimi flag."""
-        return self.kimi if self.use_kimi else self.codex
+        """Get the active LLM backend. DEPRECATED: Use _get_backend_for_phase instead."""
+        # Kept for backwards compatibility with collaborate()
+        if self.kimi_mode == KimiMode.ALWAYS:
+            return self.kimi
+        return self.codex
 
     @property
     def backend_name(self) -> str:
         """Get the name of the active backend."""
-        return "Kimi" if self.use_kimi else "Codex"
+        if self.kimi_mode == KimiMode.ALWAYS:
+            return "Kimi"
+        elif self.kimi_mode == KimiMode.NEVER:
+            return "Codex"
+        elif self.kimi_mode == KimiMode.DUAL:
+            return "Dual (Kimi+Codex)"
+        else:
+            return "Auto (context-dependent)"
 
     async def collaborate(
         self,
@@ -436,18 +559,25 @@ class Maestro:
         implementation_summary: list[str] = []
 
         logger.info(f"Starting Forensic Engineer workflow for: {task}")
-        logger.info(f"Using LLM backend: {self.backend_name}")
+        logger.info(f"Kimi mode: {self.kimi_mode.value}")
+
+        # Estimate context size for auto-selection logging
+        file_count, est_tokens = self._estimate_context_size(context_files)
+        logger.info(f"Context: {file_count} files, ~{est_tokens:,} estimated tokens")
 
         # =================================================================
         # ITERATION 0: ANALYZE - Forensic Audit & Validation
         # =================================================================
-        logger.info("Phase 0: ANALYZE - Forensic Audit")
+        analyze_backend, analyze_backend_name = self._get_backend_for_phase(
+            ForensicPhase.ANALYZE, context_files
+        )
+        logger.info(f"Phase 0: ANALYZE - Forensic Audit (using {analyze_backend_name})")
 
         analyze_iteration = await self._run_forensic_phase(
             phase=ForensicPhase.ANALYZE,
             iteration_number=0,
             objective="Validate assumptions against actual codebase state",
-            codex_method=lambda: self.llm_backend.analyze(task, context_files),
+            codex_method=lambda: analyze_backend.analyze(task, context_files),
             context_files=context_files,
         )
         iterations.append(analyze_iteration)
@@ -468,13 +598,16 @@ class Maestro:
         # =================================================================
         # ITERATION 1: PLAN - Strategy Refinement
         # =================================================================
-        logger.info("Phase 1: PLAN - Strategy Refinement")
+        plan_backend, plan_backend_name = self._get_backend_for_phase(
+            ForensicPhase.PLAN, context_files
+        )
+        logger.info(f"Phase 1: PLAN - Strategy Refinement (using {plan_backend_name})")
 
         plan_iteration = await self._run_forensic_phase(
             phase=ForensicPhase.PLAN,
             iteration_number=1,
             objective="Convert high-level plan into concrete, executable steps",
-            codex_method=lambda: self.llm_backend.plan(task, findings_text, context_files),
+            codex_method=lambda: plan_backend.plan(task, findings_text, context_files),
             context_files=context_files,
         )
         iterations.append(plan_iteration)
@@ -490,14 +623,17 @@ class Maestro:
         # =================================================================
         # ITERATION 2: EXECUTE - Step-by-Step Execution
         # =================================================================
-        logger.info("Phase 2: EXECUTE - Step-by-Step Execution")
+        execute_backend, execute_backend_name = self._get_backend_for_phase(
+            ForensicPhase.EXECUTE, context_files
+        )
+        logger.info(f"Phase 2: EXECUTE - Step-by-Step Execution (using {execute_backend_name})")
 
         # For execute phase, we pass the plan as context
         execute_iteration = await self._run_forensic_phase(
             phase=ForensicPhase.EXECUTE,
             iteration_number=2,
             objective="Execute plan steps safely with verification",
-            codex_method=lambda: self.llm_backend.execute(
+            codex_method=lambda: execute_backend.execute(
                 step=f"Execute the plan for: {task}",
                 plan_context=plan_text,
                 context_files=context_files,
@@ -515,7 +651,10 @@ class Maestro:
         # =================================================================
         # ITERATION 3: VERIFY - Final Verification
         # =================================================================
-        logger.info("Phase 3: VERIFY - Final Verification")
+        verify_backend, verify_backend_name = self._get_backend_for_phase(
+            ForensicPhase.VERIFY, context_files
+        )
+        logger.info(f"Phase 3: VERIFY - Final Verification (using {verify_backend_name})")
 
         impl_summary = "\n\n".join(implementation_summary) if implementation_summary else "No implementation captured"
 
@@ -523,7 +662,7 @@ class Maestro:
             phase=ForensicPhase.VERIFY,
             iteration_number=3,
             objective="Verify implementation meets all requirements",
-            codex_method=lambda: self.llm_backend.verify(
+            codex_method=lambda: verify_backend.verify(
                 task=task,
                 implementation_summary=impl_summary,
                 requirements=requirements,
@@ -1118,9 +1257,10 @@ def main():
     collab_parser.add_argument("--max-iterations", type=int, default=5)
     collab_parser.add_argument("--files", nargs="*", help="Context files")
     collab_parser.add_argument(
-        "--use-kimi",
-        action="store_true",
-        help="Use Kimi API instead of Codex CLI"
+        "--kimi-mode",
+        choices=["auto", "always", "never", "dual"],
+        default="auto",
+        help="Kimi usage mode: auto (smart selection), always, never, dual (both for analyze)"
     )
 
     # Review command
@@ -1146,17 +1286,26 @@ def main():
         help="Path to write forensic documentation (e.g., docs/forensic-report.md)"
     )
     forensic_parser.add_argument(
-        "--use-kimi",
+        "--kimi-mode",
+        choices=["auto", "always", "never", "dual"],
+        default="auto",
+        help="Kimi usage mode: auto (smart selection), always, never, dual (both for analyze)"
+    )
+
+    # Budget command
+    budget_parser = subparsers.add_parser("budget", help="Show Kimi API budget status")
+    budget_parser.add_argument(
+        "--reset",
         action="store_true",
-        help="Use Kimi API instead of Codex CLI"
+        help="Reset daily budget counter (use with caution)"
     )
 
     args = parser.parse_args()
 
     async def run():
         if args.command == "collaborate":
-            use_kimi = getattr(args, 'use_kimi', False)
-            maestro = Maestro(max_iterations=args.max_iterations, use_kimi=use_kimi)
+            kimi_mode = KimiMode(getattr(args, 'kimi_mode', 'auto'))
+            maestro = Maestro(max_iterations=args.max_iterations, kimi_mode=kimi_mode)
             result = await maestro.collaborate(
                 task=args.task,
                 context=args.context,
@@ -1168,13 +1317,41 @@ def main():
             result = await review_with_consensus(args.file, args.focus)
             print(json.dumps(result.to_dict(), indent=2))
 
+        elif args.command == "budget":
+            from .kimi_client import get_budget_status, _load_budget, _save_budget, DAILY_TOKEN_LIMIT
+            status = get_budget_status()
+            print(f"Kimi API Budget Status")
+            print(f"{'='*40}")
+            print(f"Daily tokens:   {status['daily_tokens']:>10,} / {status['daily_limit']:,}")
+            print(f"Daily remaining:{status['daily_remaining']:>10,} ({100-status['daily_percent']:.1f}%)")
+            print(f"Monthly tokens: {status['monthly_tokens']:>10,}")
+            print(f"Request count:  {status['request_count']:>10}")
+            if status['warning']:
+                print(f"\n[WARNING] Daily usage at {status['daily_percent']:.1f}% - consider using Codex")
+            if getattr(args, 'reset', False):
+                budget = _load_budget()
+                budget.daily_tokens = 0
+                _save_budget()
+                print(f"\n[RESET] Daily budget counter reset to 0")
+
         elif args.command == "forensic":
-            use_kimi = getattr(args, 'use_kimi', False)
-            maestro = Maestro(use_kimi=use_kimi)
-            backend = "Kimi" if use_kimi else "Codex"
+            kimi_mode = KimiMode(getattr(args, 'kimi_mode', 'auto'))
+            maestro = Maestro(kimi_mode=kimi_mode)
+
+            # Show budget warning if applicable
+            try:
+                from .kimi_client import get_budget_status
+                status = get_budget_status()
+                if status['warning']:
+                    print(f"[BUDGET WARNING] Kimi at {status['daily_percent']:.1f}% daily limit")
+                    print(f"                 {status['daily_remaining']:,} tokens remaining")
+                    print()
+            except Exception:
+                pass
+
             print(f"Starting Forensic Engineer workflow...")
             print(f"  Task: {args.task}")
-            print(f"  Backend: {backend}")
+            print(f"  Kimi mode: {kimi_mode.value}")
             print(f"  Phases: ANALYZE -> PLAN -> EXECUTE -> VERIFY")
             print()
 

@@ -23,6 +23,7 @@ Models:
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 from dataclasses import dataclass, field
@@ -51,6 +52,115 @@ class KimiModel(str, Enum):
 
 # Default model for forensic workflows
 DEFAULT_MODEL = KimiModel.K2_5
+
+# Budget limits (Tier0)
+DAILY_TOKEN_LIMIT = 1_500_000
+DAILY_TOKEN_WARNING = 500_000  # Warn at 33% of daily limit
+MONTHLY_BUDGET_FILE = ".kimi_budget.json"
+
+
+@dataclass
+class KimiBudget:
+    """Track Kimi API usage for budget management."""
+    daily_tokens: int = 0
+    monthly_tokens: int = 0
+    last_reset_date: str = ""
+    last_reset_month: str = ""
+    request_count: int = 0
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "daily_tokens": self.daily_tokens,
+            "monthly_tokens": self.monthly_tokens,
+            "last_reset_date": self.last_reset_date,
+            "last_reset_month": self.last_reset_month,
+            "request_count": self.request_count,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "KimiBudget":
+        return cls(
+            daily_tokens=data.get("daily_tokens", 0),
+            monthly_tokens=data.get("monthly_tokens", 0),
+            last_reset_date=data.get("last_reset_date", ""),
+            last_reset_month=data.get("last_reset_month", ""),
+            request_count=data.get("request_count", 0),
+        )
+
+
+# Global budget tracker (persisted across sessions)
+_budget: Optional[KimiBudget] = None
+
+
+def _get_budget_path() -> str:
+    """Get path to budget file in project root."""
+    return os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        MONTHLY_BUDGET_FILE
+    )
+
+
+def _load_budget() -> KimiBudget:
+    """Load budget from file or create new."""
+    global _budget
+    if _budget is not None:
+        return _budget
+
+    budget_path = _get_budget_path()
+    if os.path.exists(budget_path):
+        try:
+            with open(budget_path, "r") as f:
+                data = json.load(f)
+            _budget = KimiBudget.from_dict(data)
+        except Exception as e:
+            logger.warning(f"Could not load budget file: {e}")
+            _budget = KimiBudget()
+    else:
+        _budget = KimiBudget()
+
+    # Reset daily/monthly counters if needed
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    month = datetime.now(timezone.utc).strftime("%Y-%m")
+
+    if _budget.last_reset_date != today:
+        logger.info(f"Resetting daily Kimi budget (was {_budget.daily_tokens:,} tokens)")
+        _budget.daily_tokens = 0
+        _budget.last_reset_date = today
+
+    if _budget.last_reset_month != month:
+        logger.info(f"Resetting monthly Kimi budget (was {_budget.monthly_tokens:,} tokens)")
+        _budget.monthly_tokens = 0
+        _budget.last_reset_month = month
+
+    return _budget
+
+
+def _save_budget() -> None:
+    """Save budget to file."""
+    if _budget is None:
+        return
+
+    try:
+        budget_path = _get_budget_path()
+        with open(budget_path, "w") as f:
+            json.dump(_budget.to_dict(), f, indent=2)
+    except Exception as e:
+        logger.warning(f"Could not save budget file: {e}")
+
+
+def get_budget_status() -> dict[str, Any]:
+    """Get current budget status for display."""
+    budget = _load_budget()
+    daily_pct = (budget.daily_tokens / DAILY_TOKEN_LIMIT) * 100
+    return {
+        "daily_tokens": budget.daily_tokens,
+        "daily_limit": DAILY_TOKEN_LIMIT,
+        "daily_remaining": DAILY_TOKEN_LIMIT - budget.daily_tokens,
+        "daily_percent": round(daily_pct, 1),
+        "monthly_tokens": budget.monthly_tokens,
+        "request_count": budget.request_count,
+        "warning": budget.daily_tokens >= DAILY_TOKEN_WARNING,
+    }
 
 
 @dataclass
@@ -176,6 +286,15 @@ class KimiClient:
         model_name = (model or self.model).value
         start_time = datetime.now()
 
+        # Check budget before request
+        budget = _load_budget()
+        if budget.daily_tokens >= DAILY_TOKEN_WARNING:
+            remaining = DAILY_TOKEN_LIMIT - budget.daily_tokens
+            logger.warning(
+                f"Kimi daily budget warning: {budget.daily_tokens:,} tokens used, "
+                f"{remaining:,} remaining ({(budget.daily_tokens/DAILY_TOKEN_LIMIT)*100:.1f}% of limit)"
+            )
+
         async with self._semaphore:  # Enforce concurrency limit
             try:
                 response = await self.client.chat.completions.create(
@@ -187,6 +306,18 @@ class KimiClient:
 
                 end_time = datetime.now()
                 execution_time_ms = int((end_time - start_time).total_seconds() * 1000)
+
+                # Track token usage
+                total_tokens = response.usage.total_tokens if response.usage else 0
+                budget.daily_tokens += total_tokens
+                budget.monthly_tokens += total_tokens
+                budget.request_count += 1
+                _save_budget()
+
+                logger.info(
+                    f"Kimi request: {total_tokens:,} tokens "
+                    f"(daily: {budget.daily_tokens:,}/{DAILY_TOKEN_LIMIT:,})"
+                )
 
                 choice = response.choices[0]
                 return KimiResponse(
