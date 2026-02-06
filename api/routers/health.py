@@ -9,14 +9,18 @@ Provides detailed health and monitoring endpoints:
 - GET /health/database - Database stats and integrity
 """
 
+import logging
 import os
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
 from storage.signal_store import SignalStore
+
+logger = logging.getLogger(__name__)
 
 # Try to import health monitoring utilities
 try:
@@ -444,3 +448,92 @@ async def get_job_health(
             "status": "unknown",
             "error": str(e),
         }
+
+
+# =============================================================================
+# OPS HEALTH ENDPOINTS
+# =============================================================================
+
+def _get_ops_collector():
+    """Try to create an OpsMetricsCollector. Returns None if ops tables missing."""
+    try:
+        from ops.storage import OpsStorage
+        from ops.monitoring.metrics import OpsMetricsCollector
+        db_path = os.getenv("DISCOVERY_DB_PATH", "signals.db")
+        storage = OpsStorage(db_path)
+        return OpsMetricsCollector(storage)
+    except Exception as e:
+        logger.warning("Could not init OpsMetricsCollector: %s", e)
+        return None
+
+
+def _get_ops_alert_engine():
+    """Create AlertEngine instance."""
+    try:
+        from ops.monitoring.alerts import AlertEngine
+        return AlertEngine()
+    except Exception:
+        return None
+
+
+class OpsHealthResponse(BaseModel):
+    status: str
+    overall_health_pct: float
+    components: Dict[str, Any]
+    open_incidents: int
+    extractions_24h: int
+    active_alerts: List[Dict[str, Any]]
+
+
+@router.get("/ops", response_model=OpsHealthResponse)
+async def get_ops_health():
+    """Ops layer health summary."""
+    collector = _get_ops_collector()
+    if collector is None:
+        raise HTTPException(status_code=503, detail={"error": "Ops tables not initialized"})
+
+    snapshot = await run_in_threadpool(collector.collect)
+
+    engine = _get_ops_alert_engine()
+    alerts = []
+    if engine:
+        alerts = await run_in_threadpool(engine.evaluate, snapshot)
+
+    # Determine status
+    if any(a.severity == "critical" for a in alerts):
+        status = "unhealthy"
+    elif alerts:
+        status = "degraded"
+    else:
+        status = "healthy"
+
+    return OpsHealthResponse(
+        status=status,
+        overall_health_pct=snapshot.overall_health_pct,
+        components=snapshot.health_summary,
+        open_incidents=snapshot.open_incidents,
+        extractions_24h=snapshot.extractions_24h,
+        active_alerts=[
+            {"rule": a.rule_name, "severity": a.severity, "message": a.message}
+            for a in alerts
+        ],
+    )
+
+
+@router.get("/ops/metrics")
+async def get_ops_metrics(window_hours: int = 24, history_days: int = 0):
+    """Full ops metrics snapshot with optional daily history."""
+    collector = _get_ops_collector()
+    if collector is None:
+        raise HTTPException(status_code=503, detail={"error": "Ops tables not initialized"})
+
+    snapshot = await run_in_threadpool(collector.collect)
+    result = snapshot.to_dict()
+
+    if history_days > 0:
+        history = await run_in_threadpool(collector.get_daily_history, history_days)
+        result["daily_history"] = history
+    else:
+        result["daily_history"] = []
+
+    return result

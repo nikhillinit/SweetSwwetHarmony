@@ -262,6 +262,21 @@ class OpsStorage:
                 conn.execute("ROLLBACK")
                 raise
 
+    @contextmanager
+    def read_transaction(self):
+        """Read-only transaction using plain BEGIN (not IMMEDIATE).
+
+        Use this for consistent read snapshots without write-lock contention.
+        """
+        with self.pool.get_connection() as conn:
+            conn.execute("BEGIN")
+            try:
+                yield conn
+                conn.execute("COMMIT")
+            except Exception:
+                conn.execute("ROLLBACK")
+                raise
+
     def search_facts(self, query: str, limit: int = 15, type_filter: Optional[str] = None) -> List[dict]:
         safe_query = self.escape_fts_query(query)
         if not safe_query.strip():
@@ -321,9 +336,17 @@ class OpsStorage:
                     (fact_id, signal_id, context),
                 )
 
-    def get_health_summary(self, hours: int = 24) -> dict:
-        with self.transaction() as conn:
-            conn.row_factory = sqlite3.Row
+    def get_health_summary(self, hours: int = 24, conn=None) -> dict:
+        if conn is not None:
+            return self._health_summary_query(conn, hours)
+        with self.transaction() as c:
+            return self._health_summary_query(c, hours)
+
+    def _health_summary_query(self, conn, hours: int) -> dict:
+        """Execute the health summary query on a given connection."""
+        old_factory = conn.row_factory
+        conn.row_factory = sqlite3.Row
+        try:
             cursor = conn.execute(
                 """
                 SELECT
@@ -350,6 +373,31 @@ class OpsStorage:
                     "avg_latency_ms": row["avg_latency_ms"],
                 }
             return result
+        finally:
+            conn.row_factory = old_factory
+
+    def log_audit(self, operation: str, target_type: str,
+                  target_id: Optional[int] = None, user: str = "system",
+                  before_state: Optional[str] = None,
+                  after_state: Optional[str] = None,
+                  reason: Optional[str] = None, conn=None) -> None:
+        """Insert a row into the audit_log table.
+
+        Args:
+            conn: Optional connection. If None, opens its own transaction.
+        """
+        sql = """
+            INSERT INTO audit_log
+            (operation, target_type, target_id, user, before_state, after_state, reason)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """
+        params = (operation, target_type, target_id, user,
+                  before_state, after_state, reason)
+        if conn is not None:
+            conn.execute(sql, params)
+        else:
+            with self.transaction() as c:
+                c.execute(sql, params)
 
     def log_health(self, component: str, status: str, latency_ms: float = 0, error: Optional[str] = None) -> None:
         """Log a health check entry."""
