@@ -82,6 +82,7 @@ class TestEnvEmptyWhitespaceTreatedAsUnset:
 
     def test_empty_policy_loader_mode_env_uses_derived(self, monkeypatch):
         """POLICY_LOADER_MODE='' with disabled enablement uses 'permissive'."""
+        monkeypatch.delenv("V2_ENABLEMENT", raising=False)
         monkeypatch.setenv("POLICY_LOADER_MODE", "")
 
         controls = RuntimeControls.from_env()
