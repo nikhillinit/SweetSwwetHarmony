@@ -76,3 +76,6 @@ metaphone>=0.6
 
 # Phase 0A: Policy Loading
 pyyaml>=6.0
+
+# Phase 3: Pipeline Scheduler
+croniter>=2.0.0

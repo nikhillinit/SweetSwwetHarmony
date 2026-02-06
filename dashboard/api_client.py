@@ -123,6 +123,54 @@ class APIClient:
         return response.json()
 
     # -------------------------------------------------------------------------
+    # Generic HTTP Methods
+    # -------------------------------------------------------------------------
+
+    def get(self, path: str, params: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+        """Generic GET request."""
+        try:
+            with httpx.Client(base_url=self.base_url, timeout=self.timeout) as client:
+                response = client.get(path, params=params, headers=self._get_headers())
+                return self._handle_response(response)
+        except httpx.ConnectError:
+            return {"error": True, "message": "Cannot connect to API server"}
+        except Exception as e:
+            return {"error": True, "message": str(e)}
+
+    def post(self, path: str, json: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+        """Generic POST request."""
+        try:
+            with httpx.Client(base_url=self.base_url, timeout=self.timeout) as client:
+                response = client.post(path, json=json, headers=self._get_headers())
+                return self._handle_response(response)
+        except httpx.ConnectError:
+            return {"error": True, "message": "Cannot connect to API server"}
+        except Exception as e:
+            return {"error": True, "message": str(e)}
+
+    def put(self, path: str, json: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+        """Generic PUT request."""
+        try:
+            with httpx.Client(base_url=self.base_url, timeout=self.timeout) as client:
+                response = client.put(path, json=json, headers=self._get_headers())
+                return self._handle_response(response)
+        except httpx.ConnectError:
+            return {"error": True, "message": "Cannot connect to API server"}
+        except Exception as e:
+            return {"error": True, "message": str(e)}
+
+    def delete(self, path: str) -> Optional[Dict[str, Any]]:
+        """Generic DELETE request."""
+        try:
+            with httpx.Client(base_url=self.base_url, timeout=self.timeout) as client:
+                response = client.delete(path, headers=self._get_headers())
+                return self._handle_response(response)
+        except httpx.ConnectError:
+            return {"error": True, "message": "Cannot connect to API server"}
+        except Exception as e:
+            return {"error": True, "message": str(e)}
+
+    # -------------------------------------------------------------------------
     # Auth Endpoints
     # -------------------------------------------------------------------------
 
