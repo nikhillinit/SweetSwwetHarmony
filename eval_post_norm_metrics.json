@@ -1,0 +1,47 @@
+{
+  "total": 582,
+  "positive_count": 418,
+  "negative_count": 164,
+  "is_fit": {
+    "precision": 0.889,
+    "recall": 0.038,
+    "f1": 0.073,
+    "tp": 16,
+    "fp": 2,
+    "fn": 402,
+    "tn": 162
+  },
+  "routing": {
+    "precision": 0.648,
+    "recall": 0.136,
+    "f1": 0.225,
+    "tp": 57,
+    "fp": 31,
+    "fn": 361,
+    "tn": 133
+  },
+  "confusion": {
+    "POSITIVE": {
+      "REJECTED": 361,
+      "QUALIFIED": 33,
+      "HELD": 24
+    },
+    "NEGATIVE": {
+      "REJECTED": 133,
+      "QUALIFIED": 11,
+      "HELD": 20
+    }
+  },
+  "positive_scores": {
+    "mean": 0.045,
+    "min": 0.0,
+    "max": 0.577
+  },
+  "negative_scores": {
+    "mean": 0.051,
+    "min": 0.0,
+    "max": 0.577
+  },
+  "skipped_no_desc": 1,
+  "evaluated": 582
+}

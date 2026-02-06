@@ -1,32 +1,51 @@
-# Findings: Skills & Visualization Implementation
+# Ops Layer Phase 1 — Findings
 
-## Key Discoveries
+## Existing Module Inventory
 
-### 1. Anthropic Skills Best Practices
-- YAML frontmatter MUST include `name` (kebab-case) and `description` (what + when)
-- Skills should be under 5,000 words (progressive disclosure)
-- Three categories: Document Creation, Workflow Automation, MCP Enhancement
+### ops/maintenance/incident.py (4.3KB)
+- MaintenanceIncident dataclass: incident_id, component, error_type, error_message, status, traceback_text, context, repair_attempts
+- Status values: open | investigating | resolved | wont_fix
+- create_incident(), load_incident(), update_incident_status(), list_incidents()
+- Tested in test_e2e_integration.py (lines 205-237)
 
-### 2. Current Codebase
-- 8 existing skills are domain knowledge (not executable workflows)
-- Pipeline has comprehensive stats (`PipelineStats`, `CollectorMetrics`)
-- 15+ CLI commands available
-- Streamlit dashboard exists but lacks pipeline metrics
+### ops/maintenance/claude_code_cli.py (3KB)
+- ClaudeCodeCLI class wrapping `claude -p` for non-interactive use
+- `.available` property checks CLI installation
+- `.call()` method: prompt, session_id, output_format, allowed_tools, timeout_s=300
+- Returns dict: {success, output, error}
+- NOT tested
 
-### 3. Collector Patterns  
-**Universal 5-Step Workflow:**
-1. INITIALIZE - API client, auth, rate limiting
-2. FETCH - Rate-limited HTTP, pagination
-3. ENRICH - Extract, normalize, classify
-4. CONVERT - Transform to Signal objects
-5. PERSIST - Dedupe via canonical keys
+### ops/maintenance/repair_agent.py (3.4KB)
+- RepairAgent class using ClaudeCodeCLI
+- _build_repair_prompt(): constructs repair prompt from incident artifacts
+- repair_incident(): orchestrates repair for specific incident
+- repair_latest(): repairs most recent open incident
+- NOT tested
 
-### 4. Visualization Architecture
-**Three-Tier Hybrid:**
-- Tier 1: Terminal progress (rich library)
-- Tier 2: HTML reports (plotly)
-- Tier 3: Dashboard trends (altair)
+### ops/cli.py (24KB, 9 commands)
+Existing subcommands: list, approve, retire, list-actions, reset-action, audit-unused, stats, run-extraction, cleanup
+- Uses argparse with subparsers
+- Transaction-safe stats (nested transaction bug fixed in Phase 0)
+- Windows encoding: sys.stdout.reconfigure(errors='replace')
 
-### 5. Windows Compatibility
-- Approved: rich, plotly, altair
-- Avoid: curses (Unix-only)
+### ops/infra/ (empty)
+- __init__.py only, no modules yet
+
+## Architecture Decisions
+
+### Docker Manager: subprocess over SDK
+Use `subprocess.run(["docker", ...])` rather than the `docker` Python SDK. Rationale:
+- No extra dependency to install
+- Graceful degradation when Docker not installed (catch FileNotFoundError)
+- Simpler for the 4 commands we need (ps, restart, stop, network prune)
+- Consistent with ClaudeCodeCLI pattern (also subprocess-based)
+
+### CLI Structure: Nested subparsers
+Use `add_subparsers()` on a `maint` parent parser for `list-incidents`, `show`, `repair-latest`, `repair`.
+Same pattern for `docker` parent with `status`, `restart`, `stop`, `prune-networks`.
+
+### Test Strategy: Mock external processes
+- Mock `subprocess.run` for Docker commands
+- Mock `ClaudeCodeCLI.call()` for repair agent tests
+- Use real filesystem (tmp_path) for incident capsule tests
+- No actual Docker or Claude CLI invocations in tests
