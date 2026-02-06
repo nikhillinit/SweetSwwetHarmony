@@ -309,20 +309,21 @@ class Maestro:
             self._kimi = KimiClient()
         return self._kimi
 
-    def _estimate_context_size(self, context_files: Optional[list[str]]) -> tuple[int, int]:
+    def _estimate_context_size(
+        self,
+        context_files: Optional[list[str]] = None,
+        context_text: Optional[str] = None,
+    ) -> tuple[int, int]:
         """
         Estimate context size for smart Kimi selection.
 
         Returns:
             Tuple of (file_count, estimated_tokens)
         """
-        if not context_files:
-            return 0, 0
-
-        file_count = len(context_files)
+        file_count = len(context_files) if context_files else 0
         estimated_tokens = 0
 
-        for file_path in context_files:
+        for file_path in (context_files or []):
             if os.path.exists(file_path):
                 try:
                     size = os.path.getsize(file_path)
@@ -331,12 +332,17 @@ class Maestro:
                 except OSError:
                     pass
 
+        # Count context_text tokens (critical fix for text-only routing)
+        if context_text:
+            estimated_tokens += len(context_text) // 4
+
         return file_count, estimated_tokens
 
     def _should_use_kimi(
         self,
         context_files: Optional[list[str]],
         phase: Optional[ForensicPhase] = None,
+        context_text: Optional[str] = None,
     ) -> bool:
         """
         Determine if Kimi should be used based on mode and context.
@@ -349,6 +355,7 @@ class Maestro:
         Args:
             context_files: Files to be analyzed
             phase: Current forensic phase (for dual mode)
+            context_text: Raw text context to include in token estimation
 
         Returns:
             True if Kimi should be used
@@ -364,7 +371,7 @@ class Maestro:
             return phase == ForensicPhase.ANALYZE
 
         # AUTO mode: smart selection based on context size
-        file_count, estimated_tokens = self._estimate_context_size(context_files)
+        file_count, estimated_tokens = self._estimate_context_size(context_files, context_text)
 
         should_use = (
             file_count >= KIMI_AUTO_FILE_THRESHOLD or
@@ -383,9 +390,10 @@ class Maestro:
         self,
         phase: ForensicPhase,
         context_files: Optional[list[str]],
+        context_text: Optional[str] = None,
     ):
         """Get the appropriate backend for a forensic phase."""
-        use_kimi = self._should_use_kimi(context_files, phase)
+        use_kimi = self._should_use_kimi(context_files, phase, context_text)
 
         if use_kimi:
             self._kimi_used_this_session = True
@@ -522,6 +530,8 @@ class Maestro:
         context: str,
         requirements: str,
         context_files: Optional[list[str]] = None,
+        context_text: Optional[str] = None,
+        mode_override: Optional[KimiMode] = None,
         docs_path: Optional[str] = None,
     ) -> ForensicResult:
         """
@@ -544,11 +554,19 @@ class Maestro:
             context: Current state, constraints, observations
             requirements: Success criteria for verification phase
             context_files: Optional files to provide as context
+            context_text: Optional raw text context for token estimation
+            mode_override: Optional per-request Kimi mode override
             docs_path: Optional path to write forensic documentation
 
         Returns:
             ForensicResult with all phase iterations and final state
         """
+        # Resolve effective mode (override takes precedence)
+        effective_mode = mode_override if mode_override else self.kimi_mode
+        original_mode = self.kimi_mode
+        if mode_override:
+            self.kimi_mode = mode_override  # Temporarily set for _get_backend_for_phase
+
         iterations: list[ForensicIteration] = []
         agreed_points: list[str] = []
         remaining_issues: list[str] = []
@@ -569,7 +587,7 @@ class Maestro:
         # ITERATION 0: ANALYZE - Forensic Audit & Validation
         # =================================================================
         analyze_backend, analyze_backend_name = self._get_backend_for_phase(
-            ForensicPhase.ANALYZE, context_files
+            ForensicPhase.ANALYZE, context_files, context_text
         )
         logger.info(f"Phase 0: ANALYZE - Forensic Audit (using {analyze_backend_name})")
 
@@ -599,7 +617,7 @@ class Maestro:
         # ITERATION 1: PLAN - Strategy Refinement
         # =================================================================
         plan_backend, plan_backend_name = self._get_backend_for_phase(
-            ForensicPhase.PLAN, context_files
+            ForensicPhase.PLAN, context_files, context_text
         )
         logger.info(f"Phase 1: PLAN - Strategy Refinement (using {plan_backend_name})")
 
@@ -624,7 +642,7 @@ class Maestro:
         # ITERATION 2: EXECUTE - Step-by-Step Execution
         # =================================================================
         execute_backend, execute_backend_name = self._get_backend_for_phase(
-            ForensicPhase.EXECUTE, context_files
+            ForensicPhase.EXECUTE, context_files, context_text
         )
         logger.info(f"Phase 2: EXECUTE - Step-by-Step Execution (using {execute_backend_name})")
 
@@ -652,7 +670,7 @@ class Maestro:
         # ITERATION 3: VERIFY - Final Verification
         # =================================================================
         verify_backend, verify_backend_name = self._get_backend_for_phase(
-            ForensicPhase.VERIFY, context_files
+            ForensicPhase.VERIFY, context_files, context_text
         )
         logger.info(f"Phase 3: VERIFY - Final Verification (using {verify_backend_name})")
 
@@ -702,6 +720,10 @@ class Maestro:
         # Write documentation if path provided
         if docs_path:
             self._write_forensic_docs(docs_path, task, iterations, final_state)
+
+        # Restore original mode if it was overridden
+        if mode_override:
+            self.kimi_mode = original_mode
 
         return ForensicResult(
             task=task,
