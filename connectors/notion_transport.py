@@ -11,6 +11,7 @@ from typing import Any, Dict, Optional
 import httpx
 
 from utils.rate_limiter import get_rate_limiter, AsyncRateLimiter
+from utils.circuit_breaker import CircuitBreaker
 
 
 class NotionTransport:
@@ -48,6 +49,11 @@ class NotionTransport:
         )
         self._client: Optional[httpx.AsyncClient] = None
         self._start_lock = asyncio.Lock()
+        self._circuit_breaker = CircuitBreaker(
+            name="notion",
+            failure_threshold=5,
+            recovery_timeout=30.0,
+        )
 
     async def start(self) -> None:
         """Initialize the shared HTTP client."""
@@ -79,7 +85,19 @@ class NotionTransport:
         json: Optional[Dict[str, Any]] = None,
         params: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        """Send a request to Notion and return the parsed JSON response."""
+        """Send a request to Notion, guarded by the circuit breaker."""
+        return await self._circuit_breaker.call(
+            self._do_request, method, path, json, params
+        )
+
+    async def _do_request(
+        self,
+        method: str,
+        path: str,
+        json: Optional[Dict[str, Any]] = None,
+        params: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Internal retry loop (called through circuit breaker)."""
         if not self._client or self._client.is_closed:
             await self.start()
 
