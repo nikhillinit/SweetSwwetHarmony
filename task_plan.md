@@ -1,130 +1,89 @@
-# Ops Layer Phase 1 — Self-Healing Infrastructure
+# Task Plan: Ops Layer Phase 3 — Scheduled Pipeline Runs & Advanced Dashboards
 
-**Goal:** Complete Phase 1 by adding CLI maintenance commands, Docker orchestration, and comprehensive tests for all self-healing components.
-**Started:** 2026-02-05
-**Status:** IN PROGRESS
+## Goal
+Add scheduled, automated discovery pipeline runs with idempotent execution, CLI controls, API endpoints, and advanced Streamlit dashboards for monitoring pipeline health, costs, and scheduling.
 
----
+## Current Phase
+Phase 3
 
-## Current State (Verified)
-
-### Existing (from Phase 0)
-- ops/maintenance/incident.py — incident capsule management (tested in e2e)
-- ops/maintenance/claude_code_cli.py — Claude CLI wrapper (untested)
-- ops/maintenance/repair_agent.py — repair orchestrator (untested)
-- ops/cli.py — 9 subcommands, missing `maint` and `docker` groups
-- ops/infra/ — empty directory, no docker_manager yet
-- 26 ops tests passing, 31 migration tests, 33 CRUD tests
-
-### Missing
-1. CLI `maint` subcommand group (list-incidents, repair-latest, show)
-2. CLI `docker` subcommand group (status, restart, prune-networks)
-3. ops/infra/docker_manager.py module
-4. Tests for maintenance CLI commands
-5. Tests for Claude CLI wrapper (mocked)
-6. Tests for repair agent (mocked)
-7. Tests for docker manager (mocked)
-
----
+## Architecture Decisions
+| Decision | Rationale |
+|----------|-----------|
+| No APScheduler/Celery | Follow existing cron-friendly pattern from DigestScheduler |
+| Outbox-based job queue | Reuse notion_outbox table with new event_type `pipeline_run` |
+| Sync ops/storage.py for scheduler state | Scheduler config + history tables in ops DB (not signal_store) |
+| `CREATE TABLE IF NOT EXISTS` for new tables | Match existing ops/storage.py migration pattern (no versioned migrations) |
+| Cron expressions via `croniter` | Lightweight, well-maintained, pip-installable |
+| No daemon loop | User triggers via Windows Task Scheduler / cron / manual CLI |
 
 ## Phases
 
-### Phase 1.1: Maintenance CLI Commands
-**Status:** `pending`
-**Files:** ops/cli.py
-**Tasks:**
-- [ ] Add `maint` subparser with sub-subcommands
-- [ ] Implement `list_incidents_cmd()` — list incidents with optional --status filter
-- [ ] Implement `show_incident_cmd()` — show incident details + artifact paths
-- [ ] Implement `repair_latest_cmd()` — trigger repair agent on most recent open incident
-- [ ] Implement `repair_cmd()` — trigger repair on specific incident_id
-**Estimated:** 20 min
+### Phase 1: Pipeline Scheduler Core Module
+- [x] Create `ops/scheduler.py` with `ScheduleConfig` dataclass and `PipelineScheduler` class
+- [x] Add `pipeline_schedules` and `pipeline_run_history` tables to `ops/storage.py`
+- [x] Implement: create_schedule, list_schedules, get_schedule, pause/resume, delete
+- [x] Implement: enqueue_run (idempotent), execute_run, record_history
+- [x] Add `croniter` to requirements.txt
+- [x] Write `tests/ops/test_scheduler.py` (TDD: RED first)
+- **Status:** COMPLETE (37 tests, 164 ops tests green)
 
-### Phase 1.2: Maintenance CLI Tests (TDD)
-**Status:** `pending`
-**Files:** tests/ops/test_maintenance_cli.py
-**Tasks:**
-- [ ] Write failing tests first for each maint subcommand
-- [ ] Test list-incidents with empty dir, with incidents, with --status filter
-- [ ] Test show-incident with valid and invalid incident IDs
-- [ ] Test repair-latest with mocked ClaudeCodeCLI
-- [ ] Test repair with mocked ClaudeCodeCLI
-- [ ] Verify all tests pass after Phase 1.1 implementation
-**Estimated:** 30 min
+### Phase 2: Scheduler CLI Commands
+- [x] Add `schedule` subparser group to `ops/cli.py`
+- [x] Implement: `schedule add`, `schedule list`, `schedule status`, `schedule run`, `schedule pause`, `schedule resume`, `schedule history`, `schedule delete`
+- [x] ASCII-safe output (Windows console)
+- [x] Write `tests/ops/test_scheduler_cli.py`
+- **Status:** COMPLETE (28 tests, 192 ops tests green)
 
-### Phase 1.3: Docker Orchestration Module
-**Status:** `pending`
-**Files:** ops/infra/docker_manager.py
-**Tasks:**
-- [ ] Create DockerManager class with graceful degradation (no docker SDK required)
-- [ ] Implement service_status() — check running containers via `docker ps`
-- [ ] Implement restart_service() — restart named container
-- [ ] Implement stop_service() — stop named container
-- [ ] Implement prune_networks() — clean up unused Docker networks
-- [ ] Implement health_check() — check Docker daemon availability
-- [ ] All methods return structured results, never raise on missing Docker
-**Estimated:** 30 min
+### Phase 3: Scheduler API Endpoints
+- [x] Create `api/routers/scheduler.py` with CRUD + trigger endpoints
+- [x] Pydantic request/response models (ScheduleCreateRequest, ScheduleResponse, MessageResponse, TriggerResponse)
+- [x] Register router in `api/app.py`
+- [x] Write `tests/api/test_scheduler_endpoints.py` (25 tests)
+- **Status:** COMPLETE (25 tests, 31 API tests green, 192 ops tests green)
 
-### Phase 1.4: Docker CLI Commands
-**Status:** `pending`
-**Files:** ops/cli.py
-**Tasks:**
-- [ ] Add `docker` subparser with sub-subcommands
-- [ ] Implement `docker_status_cmd()` — show container status
-- [ ] Implement `docker_restart_cmd()` — restart a service
-- [ ] Implement `docker_prune_cmd()` — prune unused networks
-**Estimated:** 15 min
+### Phase 4: Advanced Dashboards
+- [x] Add generic `get/post/put/delete` methods to `dashboard/api_client.py`
+- [x] Create `dashboard/views/scheduler.py` — schedule management + run history
+- [x] Create `dashboard/views/cost_analysis.py` — cost attribution, forecasting
+- [x] Enhance `dashboard/views/ops_health.py` — cost summary, collector breakdown
+- [x] Register new pages in `dashboard/app.py` and `dashboard/views/__init__.py`
+- [x] Write tests: test_api_client.py (+6), test_scheduler_view.py (14), test_cost_analysis_view.py (11), test_ops_health_enhanced.py (4)
+- **Status:** COMPLETE (35 new tests, 52 dashboard tests green, 31 API tests green, 192 ops tests green)
 
-### Phase 1.5: Docker Tests (TDD)
-**Status:** `pending`
-**Files:** tests/ops/test_docker_manager.py
-**Tasks:**
-- [ ] Mock subprocess.run for all docker commands
-- [ ] Test graceful degradation when Docker not installed
-- [ ] Test service status parsing
-- [ ] Test restart/stop with success and failure cases
-- [ ] Test prune output parsing
-**Estimated:** 30 min
+### Phase 5: Advanced Monitoring Rules
+- [ ] Add scheduler-aware alert rules to `ops/monitoring/alerts.py`
+  - `schedule_missed` — scheduled run didn't execute on time
+  - `schedule_failed` — run completed with errors
+  - `cost_budget_exceeded` — daily/monthly cost over threshold
+  - `collector_degradation` — success rate declining
+- [ ] Update `OpsMetricsSnapshot` with scheduler fields
+- [ ] Write `tests/ops/test_scheduler_alerts.py`
+- **Status:** pending
 
-### Phase 1.6: Repair Agent & Claude CLI Tests
-**Status:** `pending`
-**Files:** tests/ops/test_repair_agent.py
-**Tasks:**
-- [ ] Mock ClaudeCodeCLI.call() for repair scenarios
-- [ ] Test _build_repair_prompt() sanitization
-- [ ] Test repair_incident() status transitions (pending → investigating → resolved)
-- [ ] Test repair_incident() failure handling (pending → investigating → failed)
-- [ ] Test repair_latest() with no open incidents
-- [ ] Test ClaudeCodeCLI.available property
-- [ ] Test ClaudeCodeCLI.call() timeout handling
-**Estimated:** 30 min
+### Phase 6: Integration Testing & Hardening
+- [ ] End-to-end test: create schedule → enqueue → execute → verify history
+- [ ] Test Windows Task Scheduler integration (document setup)
+- [ ] Run full test suite — confirm no regressions
+- [ ] Update MEMORY.md, docs
+- **Status:** pending
 
-### Phase 1.7: Integration Verification
-**Status:** `pending`
-**Tasks:**
-- [ ] Run full test suite: pytest tests/ops/ -v
-- [ ] Run full test suite: pytest tests/storage/ -v
-- [ ] Verify zero regressions in existing tests
-- [ ] Manual smoke test: python -m ops.cli maint list-incidents
-- [ ] Manual smoke test: python -m ops.cli docker status
-- [ ] Update progress.md with final counts
-**Estimated:** 10 min
-
----
-
-## Completion Criteria
-
-- [ ] `python -m ops.cli maint list-incidents` works
-- [ ] `python -m ops.cli maint show <id>` works
-- [ ] `python -m ops.cli maint repair-latest` works (with Claude CLI available)
-- [ ] `python -m ops.cli docker status` works (graceful if no Docker)
-- [ ] All new tests pass
-- [ ] All existing tests still pass (zero regressions)
-- [ ] Checkpoint saved to memory-keeper
-
----
+## Key Questions
+1. Should scheduled runs use `run_pipeline.py` subprocess or direct Python import?
+   → **Decision**: Direct import via `workflows/pipeline.py` (avoids subprocess overhead)
+2. Where to store schedule configs — DB or config file?
+   → **Decision**: DB (`pipeline_schedules` table) — runtime modifiable via CLI/API
+3. Retry strategy on failure?
+   → **Decision**: Record failure, skip to next scheduled slot. Manual `schedule run` for immediate retry.
+4. Cost tracking granularity?
+   → **Decision**: Per-run cost from `extraction_runs.estimated_cost`. Collector breakdown via pipeline stats.
 
 ## Errors Encountered
 | Error | Attempt | Resolution |
 |-------|---------|------------|
 | (none yet) | | |
+
+## Notes
+- DigestScheduler (`distribution/scheduler.py`) is the blueprint — idempotent, outbox-based, cron-friendly
+- ops/cli.py already has `maint`, `docker`, `monitor` subparser groups — add `schedule` as 4th
+- ops/storage.py uses `CREATE TABLE IF NOT EXISTS` — no versioned migrations needed
+- 4124 tests passing as baseline (checkpoint: `full-suite-4124-green`)

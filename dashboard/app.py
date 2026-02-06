@@ -55,6 +55,9 @@ from dashboard.api_client import (
 )
 from dashboard.views.login import render_login_page
 from dashboard.views.health import render_health_page
+from dashboard.views.ops_health import render_ops_health_page
+from dashboard.views.scheduler import render_scheduler_page
+from dashboard.views.cost_analysis import render_cost_analysis_page
 
 # =============================================================================
 # CONFIG
@@ -2115,16 +2118,19 @@ def main():
             "Mini-Scout": "Search all companies",
             "URL Profiler": "Profile any company by URL",
             "Analytics": "Deal flow insights & trends",
-            "Monitoring": "Website change tracking"
+            "Monitoring": "Website change tracking",
+            "Schedules": "Manage pipeline schedules",
+            "Cost Analysis": "Cost tracking & forecasting",
+            "Ops Monitoring": "Ops health & metrics",
         }
 
         # Add Health view at the start, then existing views
         if has_notion and has_db:
-            view_options = ["Health", "Inbox", "Pipeline", "Signals", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring"]
+            view_options = ["Health", "Inbox", "Pipeline", "Signals", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring", "Schedules", "Cost Analysis", "Ops Monitoring"]
         elif has_notion:
-            view_options = ["Health", "Inbox", "Pipeline", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring"]
+            view_options = ["Health", "Inbox", "Pipeline", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring", "Schedules", "Cost Analysis", "Ops Monitoring"]
         else:
-            view_options = ["Health", "Inbox", "Signals", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring"]
+            view_options = ["Health", "Inbox", "Signals", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring", "Schedules", "Cost Analysis", "Ops Monitoring"]
 
         view = st.radio(
             "View",
@@ -2379,6 +2385,24 @@ def main():
     elif view == "Monitoring":
         render_welcome_banner("Website Monitoring")
         render_monitoring_page(DB_PATH)
+
+    # ==========================================================================
+    # SCHEDULES VIEW
+    # ==========================================================================
+    elif view == "Schedules":
+        render_scheduler_page()
+
+    # ==========================================================================
+    # COST ANALYSIS VIEW
+    # ==========================================================================
+    elif view == "Cost Analysis":
+        render_cost_analysis_page()
+
+    # ==========================================================================
+    # OPS MONITORING VIEW
+    # ==========================================================================
+    elif view == "Ops Monitoring":
+        render_ops_health_page()
 
     # Footer
     st.markdown("""
