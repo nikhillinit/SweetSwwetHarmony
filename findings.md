@@ -1,197 +1,98 @@
-# Findings & Decisions — Phase 5: Advanced Monitoring Rules
+# Findings & Decisions — Phase 7: Production Hardening
 
 ## Requirements
-- Configurable alert rules stored in DB (not just hardcoded)
-- JSON DSL for rule conditions (safe, serializable, user-editable)
-- Composite rules (AND/OR/NOT)
-- Trend-based rules (detect metric direction over time window)
-- Scheduler-aware rules (missed runs, failed runs, cost budget)
-- Metric history persistence for trend analysis
-- Rule CRUD: CLI, API, and dashboard
-- Full backward compat with existing 8 builtin rules
+- Harden the Discovery Engine for production reliability
+- Add circuit breakers, structured error handling, graceful degradation
+- Improve API resilience (middleware, rate limiting, request validation)
+- Add production configuration management
+- Ensure pipeline survives partial failures cleanly
 
 ## Research Findings
 
-### Extension Points in Existing Code
+### What's Already Solid
+- **Retry logic**: `collectors/retry_strategy.py` — exponential backoff, jitter, Retry-After parsing
+- **Timeout config**: `collectors/timeout_config.py` — per-operation timeouts (search/enrich/download)
+- **Base collector**: `collectors/base.py` — rate limiting, retry, timeout telemetry, batch error handling
+- **Pipeline isolation**: `workflows/pipeline.py:912` — `asyncio.gather(*tasks, return_exceptions=True)` — collector failures don't crash pipeline
+- **Ops monitoring**: Full Phase 0-5 ops layer with metrics, alerts, rules engine
+- **Health endpoints**: `/health/detailed`, `/health/collectors`, `/health/database`, `/health/ops`
 
-**AlertEngine (`ops/monitoring/alerts.py`)**
-- Constructor: `__init__(self, rules=None)` — accepts custom rule list or falls back to `default_rules()`
-- Key method: `evaluate(snapshot) -> list[Alert]` — iterates rules, calls `rule.check(snapshot)`
-- AlertRule has `check: Callable[[OpsMetricsSnapshot], bool]` — Python callable, not serializable
-- **Extension plan**: Add `load_custom_rules(storage)` that converts JSON DSL → AlertRule callables, merge with builtins
+### Gap 1: No Global Exception Middleware in API (HIGH)
+- `api/main.py` has NO exception handler middleware
+- Unhandled exceptions in routers will return raw 500s with stack traces
+- No request ID tracking for correlating errors
+- **Fix**: `ExceptionHandlerMiddleware` + `RequestIdMiddleware` in `api/middleware.py`
 
-**OpsMetricsSnapshot (`ops/monitoring/metrics.py`)**
-- 14 fields: health, extraction, facts, incidents, audit
-- Missing: scheduler fields (active schedules, missed runs, last run status)
-- **Extension plan**: Add `active_schedules`, `missed_schedules`, `failed_runs_24h` fields
-- Frozen dataclass → must add fields with defaults for backward compat
+### Gap 2: No Circuit Breakers for External Services (HIGH)
+- Collectors retry on failure but never "trip" to prevent cascading load
+- If Notion API is down, pipeline keeps hammering it (retry per signal)
+- No backpressure mechanism when downstream services are degraded
+- **Fix**: `CircuitBreaker` class in `utils/circuit_breaker.py`
 
-**OpsStorage (`ops/storage.py`)**
-- `_create_ops_tables_fallback()` uses `conn.executescript(...)` with `CREATE TABLE IF NOT EXISTS`
-- Existing tables: user_actions, memory_facts, memory_action_state, extraction_runs, audit_log, system_health, fact_citations, pipeline_schedules, pipeline_run_history
-- **Extension plan**: Add 3 tables in same `executescript()` block
+### Gap 3: Store Created Per Request in Health Router (MEDIUM)
+- `health.py:107-111` — `get_store()` creates a NEW `SignalStore()` + `initialize()` per request
+- `_get_ops_storage()` / `_get_ops_collector()` also create fresh instances per call
+- **Fix**: Use `request.app.state.store` from lifespan, cache ops instances
 
-**PipelineScheduler (`ops/scheduler.py`)**
-- `list_schedules()`, `get_schedule()`, `get_run_history()` — can query for missed/failed
-- `should_run()` computes next fire time — can detect missed windows
-- Uses `croniter` for cron parsing
+### Gap 4: No Query Parameter Bounds (MEDIUM)
+- `hours`, `limit`, `window_hours` params in health endpoints have no upper bounds
+- `GET /health/ops/history?hours=999999&limit=999999` can trigger expensive queries
+- **Fix**: Pydantic `Query(ge=1, le=720)` / `Query(ge=1, le=1000)` bounds
 
-### New DB Schema Design
+### Gap 5: No Health Check Caching (MEDIUM)
+- `/health/detailed`, `/health/collectors`, `/health/ops` run full DB queries every call
+- Monitoring tools polling every 10-30s will hammer the DB unnecessarily
+- **Fix**: In-memory TTL cache decorator (30s TTL)
 
-```sql
--- Custom alert rules (user-defined via CLI/API)
-CREATE TABLE IF NOT EXISTS alert_rules (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL UNIQUE,
-    condition_json TEXT NOT NULL,  -- JSON DSL
-    severity TEXT CHECK(severity IN ('critical', 'warning', 'info')) NOT NULL DEFAULT 'warning',
-    component TEXT,  -- optional grouping
-    message_template TEXT NOT NULL,
-    enabled INTEGER DEFAULT 1,  -- 0=disabled, 1=enabled
-    is_builtin INTEGER DEFAULT 0,  -- 1=system rule, cannot delete
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
+### Gap 6: No Request ID Tracking (MEDIUM)
+- Can't correlate errors across log entries in production
+- No way to trace a single request through multiple log lines
+- **Fix**: UUID per request in middleware, injected into logging context
 
--- Metric snapshots for trend analysis (30-day retention)
-CREATE TABLE IF NOT EXISTS metric_snapshots (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    snapshot_json TEXT NOT NULL  -- Full OpsMetricsSnapshot.to_dict()
-);
-CREATE INDEX IF NOT EXISTS idx_metric_snapshots_ts ON metric_snapshots(timestamp DESC);
+### Gap 7: No Structured Logging (MEDIUM)
+- Mix of `logger.info/warning/error` with string formatting
+- No JSON logging option for log aggregation tools (ELK, CloudWatch, etc.)
+- `print()` usage in bootstrap and CLI files
+- **Fix**: `utils/logging_config.py` with `LOG_FORMAT=json` toggle
 
--- Alert evaluation history (when rules fired/resolved)
-CREATE TABLE IF NOT EXISTS alert_evaluations (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    rule_name TEXT NOT NULL,  -- matches AlertRule.name or alert_rules.name
-    fingerprint TEXT NOT NULL,
-    severity TEXT NOT NULL,
-    message TEXT,
-    fired_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    resolved_at TIMESTAMP,
-    snapshot_id INTEGER,
-    FOREIGN KEY(snapshot_id) REFERENCES metric_snapshots(id) ON DELETE SET NULL
-);
-CREATE INDEX IF NOT EXISTS idx_alert_evals_rule ON alert_evaluations(rule_name, fired_at DESC);
-CREATE INDEX IF NOT EXISTS idx_alert_evals_fingerprint ON alert_evaluations(fingerprint);
-```
+### Gap 8: No Graceful Shutdown (MEDIUM)
+- `api/main.py` lifespan closes store but doesn't drain in-flight requests
+- Pipeline has no cancellation/signal handling (SIGTERM, SIGINT)
+- **Fix**: Signal handler + drain timeout in lifespan shutdown
 
-### JSON DSL Condition Format
+### Gap 9: Hardcoded Schema Version (LOW)
+- `health.py:148` — `"schema_version": 16` is hardcoded instead of dynamically queried
+- **Fix**: Query from `schema_migrations` table (already done in `/health/database`)
 
-**Simple condition:**
-```json
-{"field": "total_cost_24h", "op": ">", "value": 5.0}
-```
-
-**Supported operators:** `>`, `>=`, `<`, `<=`, `==`, `!=`
-
-**Supported fields:** All OpsMetricsSnapshot fields (flat access) + nested dot notation for dicts:
-- `total_cost_24h`, `extractions_24h`, `open_incidents`, `overall_health_pct`
-- `health_summary.db.health_percent` (dot-path into dicts)
-
-**Composite:**
-```json
-{"all": [
-    {"field": "total_cost_24h", "op": ">", "value": 5.0},
-    {"field": "extractions_24h", "op": "==", "value": 0}
-]}
-```
-
-**Any (OR):**
-```json
-{"any": [
-    {"field": "open_incidents", "op": ">", "value": 5},
-    {"field": "overall_health_pct", "op": "<", "value": 50}
-]}
-```
-
-**Not:**
-```json
-{"not": {"field": "extractions_24h", "op": ">", "value": 0}}
-```
-
-**Trend:**
-```json
-{"trend": {"field": "total_cost_24h", "direction": "increasing", "window": 3}}
-```
-- `direction`: `"increasing"` or `"decreasing"`
-- `window`: number of recent snapshots to compare (min 3)
-- Evaluates: fetches last N snapshots, checks monotonic direction
-
-### Integration Points
-
-**CLI (`ops/cli.py`):**
-- Add `rules` sub-subparser under `monitor`: `monitor rules list|add|enable|disable|delete|test`
-- Add `monitor history` command
-- Pattern: same as `schedule` subparser group
-
-**API (`api/routers/health.py`):**
-- Add endpoints under existing `/health/ops/` prefix
-- `/health/ops/rules` — CRUD
-- `/health/ops/history` — metric snapshots
-
-**Dashboard (`dashboard/views/ops_health.py`):**
-- Add "Alert Rules" tab alongside existing tabs
-- Add "Metric History" tab with Altair charts
+### Gap 10: API Has No Rate Limiting (LOW for now)
+- Internal-facing API, but risky if ever exposed
+- **Defer**: Not critical for initial production hardening; can add later via nginx or middleware
 
 ## Technical Decisions
 | Decision | Rationale |
 |----------|-----------|
-| JSON DSL (not Python lambdas) | Safe serialization, no eval(), API-editable |
-| Builtins coexist with custom rules | Never lose baseline monitoring |
-| 30-day metric retention | ~60KB/day, covers monthly trends |
-| Min 3 snapshots for trend rules | Prevents false positives on sparse data |
-| Dot-notation field access | Enables nested dict access (health_summary.db.health_percent) |
-| rule_name in alert_evaluations | Links to both builtin names and custom DB rules |
-
-## Phase 6: Dashboard Integration — Research
-
-### Existing Dashboard Patterns
-1. **Streamlit mock pattern**: `sys.modules['streamlit'] = MagicMock()` at module top, configure `st.tabs()`, `st.columns()`, `st.expander()`, `st.form()` as context managers in `setup_method`
-2. **API calls**: All through `APIClient.get/post/put/delete()` — mock via `@patch('dashboard.views.X.APIClient')`
-3. **Altair charts**: Import `pandas` + `altair` inside function, call `st.altair_chart(chart, use_container_width=True)` — tests just verify `st.altair_chart` was called
-4. **Tab pattern**: `st.tabs(["TAB1", "TAB2"])` returns list of context managers, each used with `with tab:`
-5. **Error handling**: Check `metrics.get("error")` → `st.warning()`, early return
-
-### Phase 6 Design: 3 New Tabs in ops_health.py
-
-**Tab 1: "ALERT RULES"** (rule management)
-- List all rules (GET `/health/ops/rules`) in a table
-- Each rule: name, severity badge, enabled toggle, condition preview
-- Toggle enable/disable (PUT `/health/ops/rules/{id}`)
-- Delete button for custom rules (DELETE `/health/ops/rules/{id}`)
-- "Create Rule" form: name, severity select, condition JSON textarea, message template
-- POST to `/health/ops/rules`
-
-**Tab 2: "METRIC HISTORY"** (time series)
-- Fetch snapshots from GET `/health/ops/history?hours=N`
-- Altair line charts for key metrics: `overall_health_pct`, `extractions_24h`, `total_cost_24h`, `open_incidents`
-- Hours selector in sidebar (6h, 12h, 24h, 48h, 168h)
-
-**Tab 3: "EVALUATION LOG"** (alert timeline)
-- Show recent alert evaluations (from rule detail endpoint or new query)
-- Table: rule_name, severity, message, fired_at, resolved_at
-- Color-coded severity badges
-
-### Integration Approach
-- Modify `render_ops_health_page()` to use `st.tabs()` wrapping existing content + 3 new tabs
-- Existing content (overview, components, alerts, extraction trends, facts, cost, collector) goes in "OVERVIEW" tab
-- New functions: `_render_rules_tab()`, `_render_metric_history_tab()`, `_render_evaluation_log_tab()`
-- API endpoints already exist from Phase 5
-
-### Test Plan (TDD)
-- New test file: `tests/dashboard/test_ops_rules_dashboard.py`
-- ~20 tests covering:
-  - `_render_rules_tab`: list empty, list with rules, toggle enable/disable, delete, create form
-  - `_render_metric_history_tab`: empty, with data, chart rendered
-  - `_render_evaluation_log_tab`: empty, with data, severity badges
-  - `render_ops_health_page`: tabs created, error handling, all tabs render
+| Middleware pattern for exception handling | Non-invasive, applies globally, consistent error format |
+| Circuit breaker as utility class | Reusable, composable with existing retry strategy |
+| Per-service circuit breakers | One CB for Notion, one for GitHub — matches API boundaries |
+| Lifespan-managed store singletons | Eliminates per-request connection churn |
+| In-memory TTL cache (no Redis) | No new deps, single-process API, 30s TTL |
+| Query param bounds via Pydantic `Query()` | FastAPI-native, auto 422 response |
+| `LOG_FORMAT=json` env toggle | Human-readable default for dev, JSON for prod |
+| Graceful shutdown with drain timeout | Prevents data corruption on restart |
 
 ## Issues Encountered
 | Issue | Resolution |
 |-------|------------|
 | (none yet) | |
+
+## Resources
+- `collectors/retry_strategy.py` — existing retry infrastructure
+- `collectors/base.py` — base collector with rate limiting + timeout telemetry
+- `workflows/pipeline.py` — pipeline orchestrator (lines 661-760, 887-946)
+- `api/main.py` — FastAPI app setup (lifespan, CORS, routers)
+- `api/routers/health.py` — health endpoints (get_store creates new per request)
+- `ops/storage.py` — ops storage layer
+- `ops/monitoring/` — monitoring infrastructure
 
 ---
 *Update this file after every 2 view/browser/search operations*
