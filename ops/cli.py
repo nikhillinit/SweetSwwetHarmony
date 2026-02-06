@@ -840,6 +840,181 @@ def monitor_history(args):
     print()
 
 
+def rules_list_cmd(args):
+    """List all alert rules (builtin DB rows + custom)."""
+    storage = get_storage(args)
+    rules = storage.list_alert_rules()
+
+    print("\nALERT RULES")
+    print("=" * 78)
+
+    if not rules:
+        print("  No rules configured.")
+    else:
+        print(
+            f"  {'ID':<5s} {'Name':<25s} {'Severity':<10s} {'Enabled':<8s} "
+            f"{'Builtin':<8s} {'Component'}"
+        )
+        print(
+            f"  {'-'*5} {'-'*25} {'-'*10} {'-'*8} {'-'*8} {'-'*12}"
+        )
+        for r in rules:
+            enabled = "Yes" if r["enabled"] else "No"
+            builtin = "Yes" if r.get("is_builtin") else "No"
+            comp = r.get("component") or "-"
+            name = r["name"][:25]
+            print(
+                f"  {r['id']:<5d} {name:<25s} {r['severity']:<10s} "
+                f"{enabled:<8s} {builtin:<8s} {comp}"
+            )
+
+    print()
+
+
+def rules_add_cmd(args):
+    """Create a new custom alert rule."""
+    # Validate JSON condition
+    try:
+        condition = json.loads(args.condition)
+    except json.JSONDecodeError as e:
+        print(f"Error: invalid JSON condition: {e}")
+        sys.exit(1)
+
+    if not isinstance(condition, dict):
+        print("Error: condition must be a JSON object")
+        sys.exit(1)
+
+    storage = get_storage(args)
+
+    try:
+        rid = storage.create_alert_rule(
+            name=args.name,
+            condition=condition,
+            severity=args.severity,
+            message_template=args.message,
+            component=getattr(args, "component", None),
+        )
+    except Exception as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+
+    print(f"Rule created: id={rid} name={args.name} severity={args.severity}")
+
+
+def rules_enable_cmd(args):
+    """Enable a rule by ID."""
+    storage = get_storage(args)
+    rule = storage.get_alert_rule(args.rule_id)
+    if not rule:
+        print(f"Error: rule {args.rule_id} not found")
+        sys.exit(1)
+
+    storage.update_alert_rule(args.rule_id, enabled=True)
+    print(f"Rule {args.rule_id} ({rule['name']}) enabled")
+
+
+def rules_disable_cmd(args):
+    """Disable a rule by ID."""
+    storage = get_storage(args)
+    rule = storage.get_alert_rule(args.rule_id)
+    if not rule:
+        print(f"Error: rule {args.rule_id} not found")
+        sys.exit(1)
+
+    storage.update_alert_rule(args.rule_id, enabled=False)
+    print(f"Rule {args.rule_id} ({rule['name']}) disabled")
+
+
+def rules_delete_cmd(args):
+    """Delete a custom rule by ID."""
+    storage = get_storage(args)
+    success = storage.delete_alert_rule(args.rule_id)
+    if not success:
+        rule = storage.get_alert_rule(args.rule_id)
+        if rule and rule.get("is_builtin"):
+            print(f"Error: cannot delete builtin rule {args.rule_id}")
+        else:
+            print(f"Error: rule {args.rule_id} not found")
+        sys.exit(1)
+
+    print(f"Rule {args.rule_id} deleted")
+
+
+def rules_test_cmd(args):
+    """Dry-run evaluate a single rule against the current snapshot."""
+    storage = get_storage(args)
+    rule = storage.get_alert_rule(args.rule_id)
+    if not rule:
+        print(f"Error: rule {args.rule_id} not found")
+        sys.exit(1)
+
+    from ops.monitoring.metrics import OpsMetricsCollector
+    from ops.monitoring.rule_evaluator import evaluate_condition
+
+    collector = OpsMetricsCollector(storage)
+    snap = collector.collect()
+    snapshot_dict = snap.to_dict()
+
+    # Enrich with scheduler metrics
+    from ops.monitoring.alerts import AlertEngine
+    sched_metrics = AlertEngine.collect_scheduler_metrics(storage)
+    enriched = {**snapshot_dict, **sched_metrics}
+
+    # Get history for trend rules
+    history_rows = storage.get_metric_snapshots(hours=24 * 7, limit=20)
+    history = [row["snapshot"] for row in history_rows]
+
+    try:
+        condition = json.loads(rule["condition_json"])
+        fired = evaluate_condition(condition, enriched, history)
+    except Exception as e:
+        print(f"Error evaluating rule: {e}")
+        sys.exit(1)
+
+    print(f"\nRule: {rule['name']} (id={rule['id']}, severity={rule['severity']})")
+    if fired:
+        print(f"Result: FIRED - {rule['message_template']}")
+    else:
+        print(f"Result: OK (did not fire)")
+
+    print()
+
+
+def monitor_snapshots_cmd(args):
+    """Show metric snapshot history."""
+    storage = get_storage(args)
+    hours = getattr(args, "hours", 24)
+    snapshots = storage.get_metric_snapshots(hours=hours)
+
+    print(f"\nMETRIC SNAPSHOTS (last {hours} hours)")
+    print("=" * 70)
+
+    if not snapshots:
+        print("  No snapshots recorded.")
+    else:
+        print(
+            f"  {'ID':<6s} {'Timestamp':<22s} {'Health%':>8s} "
+            f"{'Cost':>8s} {'Incidents':>10s}"
+        )
+        print(
+            f"  {'-'*6} {'-'*22} {'-'*8} {'-'*8} {'-'*10}"
+        )
+        for s in snapshots:
+            snap = s["snapshot"]
+            ts = s["timestamp"]
+            if ts and len(str(ts)) > 22:
+                ts = str(ts)[:22]
+            health = snap.get("overall_health_pct", "-")
+            cost = snap.get("total_cost_24h", "-")
+            incidents = snap.get("open_incidents", "-")
+            print(
+                f"  {s['id']:<6d} {str(ts):<22s} {str(health):>8s} "
+                f"{str(cost):>8s} {str(incidents):>10s}"
+            )
+
+    print()
+
+
 def docker_status_cmd(args):
     from ops.infra.docker_manager import DockerManager
 
@@ -1179,6 +1354,46 @@ Tip:
     monitor_history_p = monitor_sub.add_parser("history", help="Extraction trends")
     monitor_history_p.add_argument("--days", type=int, default=7, help="Number of days")
     monitor_history_p.set_defaults(func=monitor_history)
+
+    # ── monitor rules sub-sub-commands ──────────────────────────────
+    rules_parser = monitor_sub.add_parser("rules", help="Alert rule management")
+    rules_sub = rules_parser.add_subparsers(dest="rules_command", help="Rules sub-command")
+    rules_sub.required = True
+
+    rules_list_p = rules_sub.add_parser("list", help="List all alert rules")
+    rules_list_p.set_defaults(func=rules_list_cmd)
+
+    rules_add_p = rules_sub.add_parser("add", help="Create a custom alert rule")
+    rules_add_p.add_argument("--name", required=True, help="Rule name (unique)")
+    rules_add_p.add_argument("--condition", required=True, help="JSON DSL condition")
+    rules_add_p.add_argument(
+        "--severity", required=True, choices=["critical", "warning", "info"],
+        help="Alert severity",
+    )
+    rules_add_p.add_argument("--message", required=True, help="Alert message template")
+    rules_add_p.add_argument("--component", default=None, help="Component tag (optional)")
+    rules_add_p.set_defaults(func=rules_add_cmd)
+
+    rules_enable_p = rules_sub.add_parser("enable", help="Enable a rule")
+    rules_enable_p.add_argument("rule_id", type=int, help="Rule ID")
+    rules_enable_p.set_defaults(func=rules_enable_cmd)
+
+    rules_disable_p = rules_sub.add_parser("disable", help="Disable a rule")
+    rules_disable_p.add_argument("rule_id", type=int, help="Rule ID")
+    rules_disable_p.set_defaults(func=rules_disable_cmd)
+
+    rules_delete_p = rules_sub.add_parser("delete", help="Delete a custom rule")
+    rules_delete_p.add_argument("rule_id", type=int, help="Rule ID")
+    rules_delete_p.set_defaults(func=rules_delete_cmd)
+
+    rules_test_p = rules_sub.add_parser("test", help="Dry-run evaluate a rule")
+    rules_test_p.add_argument("rule_id", type=int, help="Rule ID")
+    rules_test_p.set_defaults(func=rules_test_cmd)
+
+    # ── monitor snapshots ───────────────────────────────────────────
+    monitor_snap_p = monitor_sub.add_parser("snapshots", help="Metric snapshot history")
+    monitor_snap_p.add_argument("--hours", type=int, default=24, help="Hours to look back")
+    monitor_snap_p.set_defaults(func=monitor_snapshots_cmd)
 
     # ── maint (maintenance / incident) commands ──────────────────────
     maint_parser = subparsers.add_parser("maint", help="Maintenance / incident commands")
