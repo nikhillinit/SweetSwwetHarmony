@@ -1,108 +1,147 @@
-# Progress Log — Phase 3
+# Progress Log — Phase 5: Advanced Monitoring Rules
 
-## Session: 2026-02-05
+## Session: 2026-02-06
 
-### Phase 0: Research & Planning
-- **Status:** complete
+### Phase 1: Research & Architecture Design
+- **Status:** in_progress
 - Actions taken:
-  - Read `docs/INTEGRATED_OPS_LAYER_PROCEDURE.md` — understood Phase 0-5 structure
-  - Explored full ops/ directory tree via subagent
-  - Read `distribution/scheduler.py` — DigestScheduler blueprint (idempotent, outbox-based)
-  - Read `ops/cli.py` — identified subparser pattern (line 922+)
-  - Read `ops/storage.py` — understood table creation pattern (`CREATE TABLE IF NOT EXISTS`)
-  - Checked `storage/signal_store.py` — outbox methods (enqueue, claim, finalize)
-  - Created `task_plan.md`, `findings.md`, `progress.md`
+  - Pulled PR #20 (Phases 3+4) to main — 22 files, 3707 insertions
+  - Read `ops/monitoring/alerts.py` — 8 builtin rules, AlertEngine, AlertRule with Callable check
+  - Read `ops/monitoring/metrics.py` — OpsMetricsSnapshot (14 fields), OpsMetricsCollector
+  - Read `ops/monitoring/notifier.py` — Slack + audit_log dedup
+  - Read `ops/storage.py` — ConnectionPool, OpsStorage, _create_ops_tables_fallback()
+  - Read `ops/scheduler.py` — PipelineScheduler, ScheduleConfig, RunRecord
+  - Read `api/routers/health.py` — /health/ops and /health/ops/metrics endpoints
+  - Read `dashboard/views/ops_health.py` — Streamlit ops monitoring page
+  - Read `tests/ops/test_monitoring_alerts.py` — 12 test classes covering all 8 rules
+  - Designed JSON DSL condition format (field/op/value, all/any/not, trend)
+  - Designed 3 new tables: alert_rules, metric_snapshots, alert_evaluations
+  - Created task_plan.md, findings.md, progress.md
 - Files reviewed:
-  - docs/INTEGRATED_OPS_LAYER_PROCEDURE.md
-  - distribution/scheduler.py
-  - ops/cli.py (first 50 lines + subparser grep)
-  - ops/storage.py (lines 85-200)
-  - storage/signal_store.py (outbox methods)
+  - ops/monitoring/alerts.py, metrics.py, notifier.py
+  - ops/storage.py (lines 1-235)
+  - ops/scheduler.py (lines 1-60)
+  - ops/cli.py (lines 1-230)
+  - api/routers/health.py (full)
+  - dashboard/views/ops_health.py (lines 1-60)
+  - tests/ops/test_monitoring_alerts.py (full)
+  - docs/INTEGRATED_OPS_LAYER_PROCEDURE.md (full)
 
-### Phase 1: Pipeline Scheduler Core Module
+### Phase 2: Schema & Storage Layer (TDD)
+- **Status:** COMPLETE
+- 3 new tables, 10 CRUD methods, 43 tests — all green
+
+### Phase 3: Advanced Rule Engine (TDD)
 - **Status:** COMPLETE
 - Actions taken:
-  - Created `ops/scheduler.py` — ScheduleConfig, PipelineScheduler, RunStatus, RunRecord
-  - Added `pipeline_schedules` + `pipeline_run_history` tables to `ops/storage.py`
-  - Added `croniter>=2.0.0` to `requirements.txt`
-  - TDD: wrote 37 tests first (RED), then implemented (GREEN)
-  - All 164 ops tests passing, zero regressions
-- Files created/modified:
-  - `ops/scheduler.py` (new — ~320 lines)
-  - `ops/storage.py` (added 2 tables + indexes)
-  - `tests/ops/test_scheduler.py` (new — 37 tests)
-  - `requirements.txt` (added croniter)
+  - Created `ops/monitoring/rule_evaluator.py` — pure-function JSON DSL evaluator
+    - `evaluate_condition()` — simple (field/op/value), composite (all/any/not), trend
+    - `_resolve_field()` — dot-notation access into nested dicts
+    - `_coerce_numeric()` — handles Decimal strings from snapshot serialization
+    - `condition_to_check()` — converts JSON DSL to AlertRule-compatible callable
+  - Enhanced `ops/monitoring/alerts.py` — AlertEngine Phase 5 methods
+    - `load_custom_rules(storage)` — loads enabled rules from DB, converts to AlertRule objects
+    - `collect_scheduler_metrics(storage)` — queries active_schedules, failed_runs_24h
+    - `evaluate_all(snapshot, storage)` — full pipeline: persist snapshot, enrich with scheduler, evaluate builtins + custom, record audit trail
+  - Created `tests/ops/test_rule_evaluator.py` — 48 TDD tests across 9 test classes
+    - TestSimpleConditions (11): all 6 operators, edge cases
+    - TestDotNotation (4): nested field access, missing paths
+    - TestCompositeConditions (8): all/any/not, nesting, error handling
+    - TestTrendConditions (8): increasing/decreasing, windowing, edge cases
+    - TestConditionToCheck (3): DSL-to-callable conversion
+    - TestAlertEngineLoadCustomRules (4): DB loading, disabled skipping
+    - TestAlertEngineEvaluateAll (6): builtins+custom, audit trail, snapshot persist
+    - TestSchedulerMetrics (4): scheduler data collection and enrichment
+- Test results: 48 new tests, 366 total (283 ops + 31 API + 52 dashboard), 0 regressions
 
-### Phase 2: Scheduler CLI Commands
+### Phase 4: CLI Commands (TDD)
 - **Status:** COMPLETE
 - Actions taken:
-  - TDD RED: wrote 28 tests in `tests/ops/test_scheduler_cli.py` (subprocess pattern from test_monitor_cli.py)
-  - Implemented 8 schedule CLI commands in `ops/cli.py`: add, list, status, run, pause, resume, history, delete
-  - Cron validation on `schedule add` via croniter.is_valid()
-  - ASCII-safe output on all commands (no emoji, no box-drawing)
-  - All 28 tests GREEN, 192 ops tests green, zero regressions
-- Files modified:
-  - `ops/cli.py` (added ~160 lines: 8 command functions + schedule subparser registration)
-  - `tests/ops/test_scheduler_cli.py` (new — 28 tests)
+  - Created `tests/ops/test_rules_cli.py` — 22 TDD tests across 6 test classes
+    - TestMonitorRulesList (4): empty, builtins, custom, ASCII-safe
+    - TestMonitorRulesAdd (4): simple, component, invalid JSON, composite
+    - TestMonitorRulesEnableDisable (4): enable, disable, not-found errors
+    - TestMonitorRulesDelete (3): custom, not-found, builtin-blocked
+    - TestMonitorRulesTest (3): fires, passes, not-found
+    - TestMonitorSnapshots (4): empty, with data, hours flag, ASCII-safe
+  - Added 7 CLI handler functions to `ops/cli.py`:
+    - `rules_list_cmd` — tabular listing of all DB rules
+    - `rules_add_cmd` — JSON condition validation + create
+    - `rules_enable_cmd` / `rules_disable_cmd` — toggle enabled state
+    - `rules_delete_cmd` — delete with builtin protection
+    - `rules_test_cmd` — dry-run evaluate against live snapshot (enriched with scheduler metrics)
+    - `monitor_snapshots_cmd` — metric snapshot history table
+  - Added argparse wiring: `monitor rules` sub-sub-parser (6 commands) + `monitor snapshots`
+- Test results: 22 new tests, 388 total (305 ops + 31 API + 52 dashboard), 0 regressions
 
-### Phase 3: Scheduler API Endpoints
+### Phase 5: API Endpoints (TDD)
 - **Status:** COMPLETE
 - Actions taken:
-  - TDD RED: wrote 25 tests in `tests/api/test_scheduler_endpoints.py` (mock/patch pattern from test_ops_health_endpoints.py)
-  - Implemented `api/routers/scheduler.py` with 9 endpoints: list, create, get, status, pause, resume, delete, trigger, history
-  - Pydantic models: ScheduleCreateRequest (with cron validation), ScheduleResponse, MessageResponse, TriggerResponse
-  - Dependency injection via `get_scheduler()` with `app.dependency_overrides` in tests
-  - All sync scheduler methods wrapped in `run_in_threadpool`
-  - Registered router in `api/main.py` at `/api/v1/schedules`
-  - All 25 tests GREEN, 31 API tests green, 192 ops tests green, zero regressions
-- Files created/modified:
-  - `api/routers/scheduler.py` (new — ~175 lines)
-  - `api/main.py` (added import + router registration)
-  - `tests/api/test_scheduler_endpoints.py` (new — 25 tests)
+  - Created `tests/api/test_rules_endpoints.py` — 21 TDD tests across 6 test classes
+    - TestListRules (3): empty, with data, 503 no storage
+    - TestCreateRule (5): success, component, invalid condition, invalid severity, composite
+    - TestGetRule (2): found with evaluations, not found
+    - TestUpdateRule (5): severity, condition, enable/disable, not found, invalid severity
+    - TestDeleteRule (3): custom delete, builtin rejected (403), not found
+    - TestMetricHistory (3): default 24h, custom range, 503 no storage
+  - Added to `api/routers/health.py`:
+    - `_get_ops_storage()` — DI helper for OpsStorage
+    - `_validate_condition()` — recursive JSON DSL validator (simple/composite/trend)
+    - `RuleCreateRequest` — Pydantic model with severity + condition validators
+    - `RuleUpdateRequest` — Pydantic model with optional fields + validators
+    - `RuleDetailResponse` — rule + evaluations response model
+    - 6 endpoints: list, create, get, update, delete rules + metric history
+    - All use `run_in_threadpool` for sync OpsStorage calls
+    - Boolean normalization for is_builtin/enabled in responses
+- Test results: 21 new tests, 409 total (305 ops + 52 API + 52 dashboard), 0 regressions
 
-### Phase 4: Advanced Dashboards
+### Phase 6: Dashboard Integration (TDD)
 - **Status:** COMPLETE
 - Actions taken:
-  - Added generic `get/post/put/delete` methods to `dashboard/api_client.py` (+40 lines)
-  - Created `dashboard/views/scheduler.py` — schedule management with KPI metrics, schedule cards, create form, run history tab with bar chart + dataframe (~260 lines)
-  - Created `dashboard/views/cost_analysis.py` — cost tracking with overview KPIs, daily trends (Altair area+bar), linear forecasting with projected dashed lines (~230 lines)
-  - Enhanced `dashboard/views/ops_health.py` — added `_render_cost_summary()` (3-col KPIs) and `_render_collector_breakdown()` (daily cost bar chart) (+40 lines)
-  - Updated `dashboard/views/__init__.py` with 3 new exports
-  - Updated `dashboard/app.py` — 3 new view descriptions, view_options entries, and routing blocks
-  - TDD: wrote 35 tests first (RED), then implemented (GREEN)
-  - All 52 dashboard tests, 31 API tests, 192 ops tests passing
-- Files created/modified:
-  - `dashboard/api_client.py` (modified — added 4 generic HTTP methods)
-  - `dashboard/views/scheduler.py` (new — ~260 lines)
-  - `dashboard/views/cost_analysis.py` (new — ~230 lines)
-  - `dashboard/views/ops_health.py` (modified — +40 lines)
-  - `dashboard/views/__init__.py` (modified — 3 new exports)
-  - `dashboard/app.py` (modified — 3 new views registered)
-  - `tests/dashboard/test_api_client.py` (modified — +6 tests)
-  - `tests/dashboard/test_scheduler_view.py` (new — 14 tests)
-  - `tests/dashboard/test_cost_analysis_view.py` (new — 11 tests)
-  - `tests/dashboard/test_ops_health_enhanced.py` (new — 4 tests)
+  - Created `tests/dashboard/test_ops_rules_dashboard.py` — 22 TDD tests across 12 test classes
+    - TestRenderRulesTabEmpty (2): info message, create form still shown
+    - TestRenderRulesTabWithData (3): dataframe, builtin badge, severity badges
+    - TestRenderRulesTabToggle (1): checkbox toggle renders
+    - TestRenderRulesTabDelete (2): delete for custom, no delete for builtin
+    - TestRenderRulesTabCreate (3): form rendered, submit POSTs, API error handling
+    - TestRenderMetricHistoryEmpty (1): info message on empty
+    - TestRenderMetricHistoryWithData (3): Altair chart, KPI metrics, hours param
+    - TestRenderEvaluationLogEmpty (1): info message on empty
+    - TestRenderEvaluationLogWithData (3): evaluation table, severity colors, open vs resolved
+    - TestRenderOpsHealthPageWithTabs (3): tabs created, API error, overview content preserved
+  - Modified `dashboard/views/ops_health.py`:
+    - Refactored `render_ops_health_page()` to use 4-tab layout: OVERVIEW, ALERT RULES, METRIC HISTORY, EVALUATION LOG
+    - Added `_render_overview_tab()` — wraps existing overview content
+    - Added `_render_rules_tab()` — rules table (pandas), per-rule actions (toggle/delete), create form with JSON DSL validation
+    - Added `_render_metric_history_tab()` — parses snapshot_json, KPI cards, Altair faceted line charts
+    - Added `_render_evaluation_log_tab()` — fetches evaluations via rule detail endpoints, severity-colored markdown + dataframe
+    - Added `import json` for JSON DSL parsing
+    - Backward compatible: all existing _render_* functions unchanged
+- Test results: 22 new tests, 431 total (305 ops + 52 API + 74 dashboard), 0 regressions
 
-### Phase 5: Advanced Monitoring Rules
-- **Status:** pending
-
-### Phase 6: Integration Testing & Hardening
-- **Status:** pending
+### Phase 7: Verification & Cleanup
+- **Status:** COMPLETE
+- Actions taken:
+  - Ran full ops test suite: 305 passed, 0 regressions
+  - Ran full API test suite: 52 passed, 0 regressions
+  - Ran full dashboard test suite: 74 passed, 0 regressions
+  - Verified 8 builtin rules fire identically (test_monitoring_alerts.py: 13/13 passed)
+  - Updated MEMORY.md with Phase 5 completion state
+  - Updated progress.md with final test counts
 
 ## Test Results
 | Test | Input | Expected | Actual | Status |
 |------|-------|----------|--------|--------|
-| Baseline checkpoint | full-suite-4124-green | 4124 pass, 0 fail | 4124 passed, 1 skipped | PASS |
-| Ops tests (Phase 1) | test_scheduler.py | 37 pass | 37 passed | PASS |
-| Ops regression | tests/ops/ | 164 pass | 164 passed | PASS |
-| CLI tests (Phase 2) | test_scheduler_cli.py | 28 pass | 28 passed | PASS |
-| Ops regression (Phase 2) | tests/ops/ | 192 pass | 192 passed | PASS |
-| API tests (Phase 3) | test_scheduler_endpoints.py | 25 pass | 25 passed | PASS |
-| All API tests (Phase 3) | tests/api/ | 31 pass | 31 passed | PASS |
-| Ops regression (Phase 3) | tests/ops/ | 192 pass | 192 passed | PASS |
-| Dashboard tests (Phase 4) | tests/dashboard/ | 52 pass | 52 passed | PASS |
-| API regression (Phase 4) | tests/api/ | 31 pass | 31 passed | PASS |
-| Ops regression (Phase 4) | tests/ops/ | 192 pass | 192 passed | PASS |
+| Baseline (pre-Phase 5) | ops+api+dashboard | 275 pass | 275 pass | GREEN |
+| Phase 2 (storage) | test_advanced_rules_storage | 43 pass | 43 pass | GREEN |
+| Phase 3 (rule engine) | test_rule_evaluator | 48 pass | 48 pass | GREEN |
+| Full suite post-Phase 3 | ops+api+dashboard | 366 pass | 366 pass | GREEN |
+| Phase 4 (CLI) | test_rules_cli | 22 pass | 22 pass | GREEN |
+| Full suite post-Phase 4 | ops+api+dashboard | 388 pass | 388 pass | GREEN |
+| Phase 5 (API) | test_rules_endpoints | 21 pass | 21 pass | GREEN |
+| Full suite post-Phase 5 | ops+api+dashboard | 409 pass | 409 pass | GREEN |
+| Phase 6 (dashboard) | test_ops_rules_dashboard | 22 pass | 22 pass | GREEN |
+| Full suite post-Phase 6 | ops+api+dashboard | 431 pass | 431 pass | GREEN |
 
 ## Error Log
 | Timestamp | Error | Attempt | Resolution |
@@ -112,11 +151,11 @@
 ## 5-Question Reboot Check
 | Question | Answer |
 |----------|--------|
-| Where am I? | Phase 4 complete, ready for Phase 5 |
-| Where am I going? | Build scheduler module → CLI → API → dashboards → alerts → integration |
-| What's the goal? | Scheduled pipeline runs + advanced dashboards (Phase 3 of ops layer) |
-| What have I learned? | DigestScheduler is the blueprint; ops/storage uses IF NOT EXISTS pattern |
-| What have I done? | Full codebase exploration, created planning files |
+| Where am I? | Phase 7 COMPLETE — all verification passed, ready for PR |
+| Where am I going? | PR creation |
+| What's the goal? | Configurable alert rules with JSON DSL, trend detection, scheduler-aware alerts |
+| What have I learned? | Streamlit mock `form_submit_button` returns truthy MagicMock by default; must set `return_value=False` and `text_input/text_area` to `""` to prevent `json.loads(MagicMock)`. Evaluation log needs multi-path mock (rules list + per-rule detail) |
+| What have I done? | Schema+storage (P2), Rule evaluator (P3), CLI commands (P4), API endpoints (P5), Dashboard tabs (P6), 431 tests green |
 
 ---
 *Update after completing each phase or encountering errors*

@@ -1,89 +1,139 @@
-# Task Plan: Ops Layer Phase 3 — Scheduled Pipeline Runs & Advanced Dashboards
+# Task Plan: Ops Layer Phase 5 — Advanced Monitoring Rules
 
 ## Goal
-Add scheduled, automated discovery pipeline runs with idempotent execution, CLI controls, API endpoints, and advanced Streamlit dashboards for monitoring pipeline health, costs, and scheduling.
+Extend the ops monitoring layer with configurable alert rules (DB-stored, JSON DSL), scheduler-aware alerts, metric history persistence for trend detection, rule CRUD (CLI + API + dashboard), and backward-compatible integration with the existing 8 builtin rules.
 
 ## Current Phase
-Phase 3
+Phase 5
 
-## Architecture Decisions
-| Decision | Rationale |
-|----------|-----------|
-| No APScheduler/Celery | Follow existing cron-friendly pattern from DigestScheduler |
-| Outbox-based job queue | Reuse notion_outbox table with new event_type `pipeline_run` |
-| Sync ops/storage.py for scheduler state | Scheduler config + history tables in ops DB (not signal_store) |
-| `CREATE TABLE IF NOT EXISTS` for new tables | Match existing ops/storage.py migration pattern (no versioned migrations) |
-| Cron expressions via `croniter` | Lightweight, well-maintained, pip-installable |
-| No daemon loop | User triggers via Windows Task Scheduler / cron / manual CLI |
+## Context: Existing Baseline (Phases 0-4 Complete)
+
+| Component | File | Key Details |
+|-----------|------|-------------|
+| AlertRule + AlertEngine | `ops/monitoring/alerts.py` | 8 hardcoded default rules, `evaluate(snapshot)`, `AlertRule.fingerprint` |
+| OpsMetricsSnapshot | `ops/monitoring/metrics.py` | 14-field frozen dataclass, `OpsMetricsCollector.collect()` in single read_transaction |
+| OpsAlertNotifier | `ops/monitoring/notifier.py` | Slack + audit_log dedup, cooldown, retry |
+| OpsStorage | `ops/storage.py` | SQLite/WAL, `transaction()` / `read_transaction()`, `_create_ops_tables_fallback()` |
+| PipelineScheduler | `ops/scheduler.py` | ScheduleConfig, RunRecord, cron-based, idempotent |
+| CLI | `ops/cli.py` | `maint`, `docker`, `monitor`, `schedule` subparser groups |
+| API `/health/ops` | `api/routers/health.py` | Snapshot + alerts via `run_in_threadpool` |
+| API `/api/v1/schedules` | `api/routers/scheduler.py` | 9 CRUD + trigger endpoints |
+| Dashboard | `dashboard/views/ops_health.py` | Streamlit: overview, alerts, cost, collector breakdown |
+| Dashboard | `dashboard/views/scheduler.py` | Schedule management + run history |
+| Dashboard | `dashboard/views/cost_analysis.py` | Cost tracking + forecasting |
+
+### Current Test Counts
+- 192 ops tests, 31 API tests, 52 dashboard tests — 275 total, all green
+
+### What Phase 5 Adds (Limitations to Fix)
+1. **Rules are hardcoded** — cannot add/edit/disable without code changes
+2. **No composite rules** — cannot express "A AND B"
+3. **No trend detection** — cannot detect "metric increasing over N runs"
+4. **No metric history** — snapshots are ephemeral
+5. **No scheduler-aware alerts** — missed/failed runs go unnoticed
+6. **Dashboard shows alerts but cannot manage rules** — read-only
 
 ## Phases
 
-### Phase 1: Pipeline Scheduler Core Module
-- [x] Create `ops/scheduler.py` with `ScheduleConfig` dataclass and `PipelineScheduler` class
-- [x] Add `pipeline_schedules` and `pipeline_run_history` tables to `ops/storage.py`
-- [x] Implement: create_schedule, list_schedules, get_schedule, pause/resume, delete
-- [x] Implement: enqueue_run (idempotent), execute_run, record_history
-- [x] Add `croniter` to requirements.txt
-- [x] Write `tests/ops/test_scheduler.py` (TDD: RED first)
-- **Status:** COMPLETE (37 tests, 164 ops tests green)
+### Phase 1: Research & Architecture Design
+- [ ] Audit existing alert/metric code for extension points
+- [ ] Define new DB schema for rules, metric history, rule evaluations
+- [ ] Design JSON DSL for rule conditions (field/op/value + composites + trends)
+- [ ] Map integration points: CLI commands, API endpoints, dashboard tabs
+- [ ] Document architecture in findings.md
+- **Status:** in_progress
 
-### Phase 2: Scheduler CLI Commands
-- [x] Add `schedule` subparser group to `ops/cli.py`
-- [x] Implement: `schedule add`, `schedule list`, `schedule status`, `schedule run`, `schedule pause`, `schedule resume`, `schedule history`, `schedule delete`
-- [x] ASCII-safe output (Windows console)
-- [x] Write `tests/ops/test_scheduler_cli.py`
-- **Status:** COMPLETE (28 tests, 192 ops tests green)
+### Phase 2: Schema & Storage Layer (TDD)
+- [x] Add `alert_rules` table (name, condition_json, severity, enabled, component, message_template, created_at, updated_at)
+- [x] Add `metric_snapshots` table (timestamp, snapshot_json) for trend queries
+- [x] Add `alert_evaluations` table (rule_name, fired_at, snapshot_id, resolved_at, fingerprint)
+- [x] Tables via `CREATE TABLE IF NOT EXISTS` in `_create_ops_tables_fallback()`
+- [x] CRUD methods on OpsStorage: create_alert_rule, update_alert_rule, delete_alert_rule, list_alert_rules, get_alert_rule
+- [x] Metric history: save_metric_snapshot, get_metric_snapshots(hours=N), purge_old_snapshots
+- [x] Alert evaluations: record_alert_evaluation, get_alert_evaluations, resolve_alert_evaluation
+- [x] 43 RED tests → all GREEN, 0 regressions (318 total)
+- **Status:** COMPLETE
 
-### Phase 3: Scheduler API Endpoints
-- [x] Create `api/routers/scheduler.py` with CRUD + trigger endpoints
-- [x] Pydantic request/response models (ScheduleCreateRequest, ScheduleResponse, MessageResponse, TriggerResponse)
-- [x] Register router in `api/app.py`
-- [x] Write `tests/api/test_scheduler_endpoints.py` (25 tests)
-- **Status:** COMPLETE (25 tests, 31 API tests green, 192 ops tests green)
+### Phase 3: Advanced Rule Engine (TDD)
+- [x] JSON DSL condition evaluator: `{"field": "total_cost_24h", "op": ">", "value": 5.0}`
+- [x] Composite conditions: `{"all": [c1, c2]}`, `{"any": [c1, c2]}`, `{"not": c1}`
+- [x] Trend conditions: `{"trend": {"field": "...", "direction": "increasing", "window": 3}}`
+- [x] Scheduler-aware metrics: `collect_scheduler_metrics()` → enriches snapshot with `active_schedules`, `missed_schedules`, `failed_runs_24h`
+- [x] Custom rules reference scheduler fields via standard JSON DSL (e.g. `{"field": "failed_runs_24h", "op": ">", "value": 0}`)
+- [x] Refactor AlertEngine: `load_custom_rules(storage)`, `evaluate_all(snapshot, storage)` merges builtins + custom
+- [x] Rule evaluation audit trail → `alert_evaluations` table (with snapshot_id FK)
+- [x] Backward compat: `evaluate()` unchanged, 8 builtin rules untouched
+- [x] New file: `ops/monitoring/rule_evaluator.py` — pure-function JSON DSL evaluator
+- [x] 48 RED tests → all GREEN, 0 regressions (366 total: 283 ops + 31 API + 52 dashboard)
+- **Status:** COMPLETE
 
-### Phase 4: Advanced Dashboards
-- [x] Add generic `get/post/put/delete` methods to `dashboard/api_client.py`
-- [x] Create `dashboard/views/scheduler.py` — schedule management + run history
-- [x] Create `dashboard/views/cost_analysis.py` — cost attribution, forecasting
-- [x] Enhance `dashboard/views/ops_health.py` — cost summary, collector breakdown
-- [x] Register new pages in `dashboard/app.py` and `dashboard/views/__init__.py`
-- [x] Write tests: test_api_client.py (+6), test_scheduler_view.py (14), test_cost_analysis_view.py (11), test_ops_health_enhanced.py (4)
-- **Status:** COMPLETE (35 new tests, 52 dashboard tests green, 31 API tests green, 192 ops tests green)
+### Phase 4: CLI Commands (TDD)
+- [x] `monitor rules list` — show all rules (builtin + custom, with enabled status)
+- [x] `monitor rules add --name X --condition '{"field":"...","op":">","value":5}' --severity warning`
+- [x] `monitor rules enable/disable <id>`
+- [x] `monitor rules delete <id>`
+- [x] `monitor rules test <id>` — dry-run evaluate single rule against current snapshot
+- [x] `monitor snapshots --hours 24` — metric snapshot history summary
+- [x] ASCII-safe output, Windows console compatible
+- [x] 22 RED tests → all GREEN, 0 regressions (388 total: 305 ops + 31 API + 52 dashboard)
+- **Status:** COMPLETE
 
-### Phase 5: Advanced Monitoring Rules
-- [ ] Add scheduler-aware alert rules to `ops/monitoring/alerts.py`
-  - `schedule_missed` — scheduled run didn't execute on time
-  - `schedule_failed` — run completed with errors
-  - `cost_budget_exceeded` — daily/monthly cost over threshold
-  - `collector_degradation` — success rate declining
-- [ ] Update `OpsMetricsSnapshot` with scheduler fields
-- [ ] Write `tests/ops/test_scheduler_alerts.py`
-- **Status:** pending
+### Phase 5: API Endpoints (TDD)
+- [x] `GET /health/ops/rules` — list all rules
+- [x] `POST /health/ops/rules` — create custom rule (validate condition JSON)
+- [x] `GET /health/ops/rules/{id}` — get rule details + evaluation history
+- [x] `PUT /health/ops/rules/{id}` — update rule (condition, severity, enabled)
+- [x] `DELETE /health/ops/rules/{id}` — delete custom rule (cannot delete builtins)
+- [x] `GET /health/ops/history` — metric snapshot history (with time range filter)
+- [x] Pydantic request/response models (RuleCreateRequest, RuleUpdateRequest, RuleDetailResponse)
+- [x] `_validate_condition()` — recursive JSON DSL validator for simple/composite/trend
+- [x] `_get_ops_storage()` helper for DI
+- [x] 21 RED tests → all GREEN, 0 regressions (409 total: 305 ops + 52 API + 52 dashboard)
+- **Status:** COMPLETE
 
-### Phase 6: Integration Testing & Hardening
-- [ ] End-to-end test: create schedule → enqueue → execute → verify history
-- [ ] Test Windows Task Scheduler integration (document setup)
-- [ ] Run full test suite — confirm no regressions
-- [ ] Update MEMORY.md, docs
-- **Status:** pending
+### Phase 6: Dashboard Integration (TDD)
+- [x] "Alert Rules" tab in ops_health page — list rules, toggle enable/disable, create new
+- [x] "Metric History" tab — Altair faceted line charts for key metrics over time
+- [x] "Evaluation Log" tab — alert evaluation timeline (when rules fired, when resolved)
+- [x] 4-tab layout: OVERVIEW, ALERT RULES, METRIC HISTORY, EVALUATION LOG
+- [x] Write RED tests (22 Streamlit mock tests), then GREEN
+- [x] 22 new tests, 431 total (305 ops + 52 API + 74 dashboard), 0 regressions
+- **Status:** COMPLETE
+
+### Phase 7: Verification & Cleanup
+- [x] Run full ops test suite → expect 0 regressions ✓ 305 passed
+- [x] Run API + dashboard tests → expect 0 regressions ✓ 52 + 74 passed
+- [x] Verify 8 builtin rules fire identically to Phase 2 ✓ 13/13 passed
+- [x] Update MEMORY.md with Phase 5 completion state ✓
+- [x] Update progress.md with final test counts ✓
+- [ ] PR-ready: clean branch, meaningful commit
+- **Status:** COMPLETE (pending commit + PR)
 
 ## Key Questions
-1. Should scheduled runs use `run_pipeline.py` subprocess or direct Python import?
-   → **Decision**: Direct import via `workflows/pipeline.py` (avoids subprocess overhead)
-2. Where to store schedule configs — DB or config file?
-   → **Decision**: DB (`pipeline_schedules` table) — runtime modifiable via CLI/API
-3. Retry strategy on failure?
-   → **Decision**: Record failure, skip to next scheduled slot. Manual `schedule run` for immediate retry.
-4. Cost tracking granularity?
-   → **Decision**: Per-run cost from `extraction_runs.estimated_cost`. Collector breakdown via pipeline stats.
+1. Should custom rules override builtins or coexist? → **Coexist** (builtins always present; custom rules additive; builtins can be individually disabled via DB flag)
+2. Rule condition format? → **JSON DSL** (serializable, no eval(), safe for API/DB)
+3. Metric history retention? → **30 days default**, `OPS_METRIC_RETENTION_DAYS` env var
+4. Trend rules minimum data points? → **3 snapshots** before trend rule fires
+5. Full snapshot or key metrics in history? → **Full snapshot JSON** (enables future analytics, ~2KB/row)
+6. Where do scheduler-aware rules get schedule data? → **OpsMetricsSnapshot extended** with scheduler fields (or separate query in rule evaluator)
+
+## Decisions Made
+| Decision | Rationale |
+|----------|-----------|
+| JSON DSL for conditions | Serializable to SQLite, no eval() risk, user-editable via API |
+| Coexist builtins + custom | Prevents accidental loss of baseline monitoring |
+| 30-day metric retention | Balances storage (~60KB/day) vs. trend needs |
+| Min 3 snapshots for trends | Prevents false positives on sparse data |
+| Separate alert_evaluations table | Per-rule history without overloading audit_log |
+| CREATE TABLE IF NOT EXISTS | Follows existing ops/storage.py migration pattern |
 
 ## Errors Encountered
 | Error | Attempt | Resolution |
 |-------|---------|------------|
-| (none yet) | | |
 
 ## Notes
-- DigestScheduler (`distribution/scheduler.py`) is the blueprint — idempotent, outbox-based, cron-friendly
-- ops/cli.py already has `maint`, `docker`, `monitor` subparser groups — add `schedule` as 4th
-- ops/storage.py uses `CREATE TABLE IF NOT EXISTS` — no versioned migrations needed
-- 4124 tests passing as baseline (checkpoint: `full-suite-4124-green`)
+- Never nest `transaction()` calls — use `read_transaction()` for reads
+- Windows console: `sys.stdout.reconfigure(errors='replace')` in CLI
+- Streamlit mocks: `sys.modules['streamlit'] = MagicMock()` pattern
+- FK constraints in standalone tests: `PRAGMA foreign_keys = OFF`
+- Test baseline: 192 ops + 31 API + 52 dashboard = 275 total
