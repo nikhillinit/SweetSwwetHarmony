@@ -733,6 +733,113 @@ def repair_cmd(args):
         sys.exit(1)
 
 
+def monitor_status(args):
+    """Quick ops health summary — ASCII-safe output."""
+    storage = get_storage(args)
+
+    from ops.monitoring.metrics import OpsMetricsCollector
+    collector = OpsMetricsCollector(storage)
+    snap = collector.collect()
+
+    print("\nOPS MONITOR STATUS")
+    print("=" * 60)
+    print(f"  Overall Health: {snap.overall_health_pct:.1f}%")
+    print(f"  Extractions (24h): {snap.extractions_24h}")
+    print(f"  Total Cost (24h): ${snap.total_cost_24h}")
+    print(f"  Total Facts: {snap.total_facts}")
+    print(f"  Open Incidents: {snap.open_incidents}")
+    print(f"  Audit Entries (24h): {snap.audit_entries_24h}")
+
+    if snap.health_summary:
+        print("\nComponents:")
+        print("-" * 60)
+        for comp, metrics in snap.health_summary.items():
+            pct = metrics["health_percent"]
+            if pct >= 90:
+                tag = "[OK]"
+            elif pct >= 70:
+                tag = "[WARN]"
+            else:
+                tag = "[CRIT]"
+            latency = metrics.get("avg_latency_ms", 0)
+            print(f"  {tag:6s} {comp:20s} {pct:5.1f}% healthy  ({latency:.1f}ms avg)")
+    else:
+        print("\n  No health data recorded yet.")
+
+    if snap.facts_by_status:
+        print("\nFacts by Status:")
+        for status, count in sorted(snap.facts_by_status.items()):
+            print(f"  {status:10s}: {count}")
+
+    print()
+
+
+def monitor_alerts(args):
+    """Check alert rules and optionally send notifications."""
+    storage = get_storage(args)
+
+    from ops.monitoring.metrics import OpsMetricsCollector
+    from ops.monitoring.alerts import AlertEngine
+
+    collector = OpsMetricsCollector(storage)
+    snap = collector.collect()
+    engine = AlertEngine()
+    alerts = engine.evaluate(snap)
+
+    if not alerts:
+        print("\nNo alerts fired. All systems nominal.")
+    else:
+        print(f"\n{len(alerts)} alert(s) fired:")
+        print("-" * 60)
+        for alert in alerts:
+            sev = alert.severity.upper()
+            if sev == "CRITICAL":
+                tag = "[CRIT]"
+            elif sev == "WARNING":
+                tag = "[WARN]"
+            else:
+                tag = "[INFO]"
+            print(f"  {tag:6s} {alert.rule_name}: {alert.message}")
+
+    if getattr(args, "send", False) and alerts:
+        try:
+            from ops.monitoring.notifier import OpsAlertNotifier
+            notifier = OpsAlertNotifier(storage)
+            result = notifier.send_alerts(alerts)
+            sent = result.get("sent", 0)
+            suppressed = result.get("suppressed", 0)
+            print(f"\nNotifications: {sent} sent, {suppressed} suppressed (cooldown)")
+        except Exception as e:
+            print(f"\nNotification failed (graceful): {e}")
+
+    print()
+
+
+def monitor_history(args):
+    """Show extraction history trends."""
+    storage = get_storage(args)
+
+    from ops.monitoring.metrics import OpsMetricsCollector
+    collector = OpsMetricsCollector(storage)
+    history = collector.get_daily_history(days=args.days)
+
+    print(f"\nEXTRACTION HISTORY (last {args.days} days)")
+    print("=" * 60)
+
+    if not history:
+        print("  No extraction runs recorded.")
+    else:
+        print(f"  {'Date':<12s} {'Runs':>5s} {'Cost':>10s} {'Avg Duration':>14s}")
+        print(f"  {'-'*12} {'-'*5} {'-'*10} {'-'*14}")
+        for entry in history:
+            print(
+                f"  {entry['date']:<12s} {entry['runs']:>5d} "
+                f"${entry['cost']:>8s} {entry['avg_duration_s']:>12.1f}s"
+            )
+
+    print()
+
+
 def docker_status_cmd(args):
     from ops.infra.docker_manager import DockerManager
 
@@ -865,6 +972,22 @@ Tip:
     cleanup_parser.add_argument("--no-archive", action="store_true", help="Do not archive facts/citations before deletion")
     cleanup_parser.add_argument("--vacuum", action="store_true", help="Run VACUUM after cleanup (can be slow)")
     cleanup_parser.set_defaults(func=cleanup)
+
+    # ── monitor commands ────────────────────────────────────────────
+    monitor_parser = subparsers.add_parser("monitor", help="Monitoring commands")
+    monitor_sub = monitor_parser.add_subparsers(dest="monitor_command", help="Monitor sub-command")
+    monitor_sub.required = True
+
+    monitor_status_p = monitor_sub.add_parser("status", help="Quick health summary")
+    monitor_status_p.set_defaults(func=monitor_status)
+
+    monitor_alerts_p = monitor_sub.add_parser("alerts", help="Check alert rules")
+    monitor_alerts_p.add_argument("--send", action="store_true", help="Send alerts via notifier (for cron)")
+    monitor_alerts_p.set_defaults(func=monitor_alerts)
+
+    monitor_history_p = monitor_sub.add_parser("history", help="Extraction trends")
+    monitor_history_p.add_argument("--days", type=int, default=7, help="Number of days")
+    monitor_history_p.set_defaults(func=monitor_history)
 
     # ── maint (maintenance / incident) commands ──────────────────────
     maint_parser = subparsers.add_parser("maint", help="Maintenance / incident commands")
