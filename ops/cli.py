@@ -898,6 +898,193 @@ def docker_prune_cmd(args):
         sys.exit(1)
 
 
+def schedule_add_cmd(args):
+    """Create a new pipeline schedule."""
+    from croniter import croniter as _croniter
+
+    # Validate cron expression
+    if not _croniter.is_valid(args.cron_expression):
+        print(f"Error: invalid cron expression: {args.cron_expression}")
+        sys.exit(1)
+
+    storage = get_storage(args)
+    from ops.scheduler import PipelineScheduler, ScheduleConfig
+
+    scheduler = PipelineScheduler(storage)
+    collectors = [c.strip() for c in args.collectors.split(",") if c.strip()] if args.collectors else []
+
+    config = ScheduleConfig(
+        name=args.name,
+        cron_expression=args.cron_expression,
+        collectors=collectors,
+        mode=args.mode,
+        dry_run=args.dry_run,
+    )
+
+    try:
+        sid = scheduler.create_schedule(config)
+    except Exception as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+
+    print(f"Schedule created: id={sid} name={config.name} cron={config.cron_expression}")
+
+
+def schedule_list_cmd(args):
+    """List all pipeline schedules."""
+    storage = get_storage(args)
+    from ops.scheduler import PipelineScheduler
+
+    scheduler = PipelineScheduler(storage)
+    schedules = scheduler.list_schedules()
+
+    if not schedules:
+        print("\nNo schedules configured.")
+        return
+
+    print(f"\nPIPELINE SCHEDULES ({len(schedules)})")
+    print("=" * 70)
+    print(f"  {'ID':<5s} {'Name':<20s} {'Cron':<16s} {'Mode':<10s} {'Enabled':<8s}")
+    print(f"  {'-'*5} {'-'*20} {'-'*16} {'-'*10} {'-'*8}")
+
+    for s in schedules:
+        enabled = "Yes" if s["enabled"] else "No"
+        name = s["name"][:20]
+        cron = s["cron_expression"][:16]
+        print(f"  {s['id']:<5d} {name:<20s} {cron:<16s} {s['mode']:<10s} {enabled:<8s}")
+
+    print()
+
+
+def schedule_status_cmd(args):
+    """Show detailed status for a schedule."""
+    storage = get_storage(args)
+    from ops.scheduler import PipelineScheduler
+
+    scheduler = PipelineScheduler(storage)
+
+    try:
+        status = scheduler.get_schedule_status(args.schedule_id)
+    except ValueError:
+        print(f"Error: schedule {args.schedule_id} not found")
+        sys.exit(1)
+
+    print(f"\nSCHEDULE STATUS: {status['name']}")
+    print("=" * 60)
+    print(f"  ID:              {status['id']}")
+    print(f"  Cron:            {status['cron_expression']}")
+    print(f"  Enabled:         {'Yes' if status['enabled'] else 'No'}")
+    print(f"  Next Run:        {status['next_run'] or 'N/A'}")
+    print(f"  Total Runs:      {status['total_runs']}")
+    print(f"  Success Rate:    {status['success_rate']:.1f}%")
+
+    if status["last_run"]:
+        lr = status["last_run"]
+        print(f"  Last Run:        {lr.get('status', 'N/A')} at {lr.get('started_at', 'N/A')}")
+    else:
+        print(f"  Last Run:        None")
+
+    print()
+
+
+def schedule_run_cmd(args):
+    """Manually enqueue a pipeline run for a schedule."""
+    storage = get_storage(args)
+    from ops.scheduler import PipelineScheduler
+
+    scheduler = PipelineScheduler(storage)
+
+    try:
+        run_id = scheduler.enqueue_run(args.schedule_id)
+    except ValueError as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+
+    print(f"Run enqueued: run_id={run_id} schedule_id={args.schedule_id}")
+
+
+def schedule_pause_cmd(args):
+    """Pause a schedule (disable)."""
+    storage = get_storage(args)
+    from ops.scheduler import PipelineScheduler
+
+    scheduler = PipelineScheduler(storage)
+
+    try:
+        scheduler.pause_schedule(args.schedule_id)
+    except ValueError as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+
+    print(f"Schedule {args.schedule_id} paused")
+
+
+def schedule_resume_cmd(args):
+    """Resume a paused schedule (enable)."""
+    storage = get_storage(args)
+    from ops.scheduler import PipelineScheduler
+
+    scheduler = PipelineScheduler(storage)
+
+    try:
+        scheduler.resume_schedule(args.schedule_id)
+    except ValueError as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+
+    print(f"Schedule {args.schedule_id} resumed (enabled)")
+
+
+def schedule_history_cmd(args):
+    """Show run history for a schedule."""
+    storage = get_storage(args)
+    from ops.scheduler import PipelineScheduler
+
+    scheduler = PipelineScheduler(storage)
+
+    schedule = scheduler.get_schedule(args.schedule_id)
+    if not schedule:
+        print(f"Error: schedule {args.schedule_id} not found")
+        sys.exit(1)
+
+    history = scheduler.get_run_history(args.schedule_id, limit=args.limit)
+
+    print(f"\nRUN HISTORY: {schedule['name']} (id={args.schedule_id})")
+    print("=" * 70)
+
+    if not history:
+        print("  No run history recorded.")
+    else:
+        print(f"  {'ID':<6s} {'Status':<10s} {'Started':<22s} {'Signals':<10s} {'Errors':<8s}")
+        print(f"  {'-'*6} {'-'*10} {'-'*22} {'-'*10} {'-'*8}")
+        for run in history:
+            started = run.get("started_at", "N/A")
+            if started and len(str(started)) > 22:
+                started = str(started)[:22]
+            signals = run.get("signals_found", 0) or 0
+            errors = run.get("errors", 0) or 0
+            status_str = run.get("status", "N/A")
+            print(f"  {run['id']:<6d} {status_str:<10s} {str(started):<22s} {signals:<10d} {errors:<8d}")
+
+    print()
+
+
+def schedule_delete_cmd(args):
+    """Delete a schedule."""
+    storage = get_storage(args)
+    from ops.scheduler import PipelineScheduler
+
+    scheduler = PipelineScheduler(storage)
+
+    try:
+        scheduler.delete_schedule(args.schedule_id)
+    except ValueError as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+
+    print(f"Schedule {args.schedule_id} deleted")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Ops CLI - Internal Team Tool",
@@ -910,6 +1097,10 @@ Examples:
   python3 ops/cli.py audit-unused --days 30 --min-confidence 0.8
   python3 ops/cli.py run-extraction --limit 5
   python3 ops/cli.py stats
+  python3 ops/cli.py schedule add nightly "0 2 * * *" --collectors github,sec_edgar
+  python3 ops/cli.py schedule list
+  python3 ops/cli.py schedule status 1
+  python3 ops/cli.py schedule run 1
 
 Tip:
   If you prefer module execution, this also works:
@@ -1028,6 +1219,47 @@ Tip:
 
     docker_prune_p = docker_sub.add_parser("prune-networks", help="Remove unused Docker networks")
     docker_prune_p.set_defaults(func=docker_prune_cmd)
+
+    # ── schedule commands ───────────────────────────────────────────
+    schedule_parser = subparsers.add_parser("schedule", help="Pipeline schedule commands")
+    schedule_sub = schedule_parser.add_subparsers(dest="schedule_command", help="Schedule sub-command")
+    schedule_sub.required = True
+
+    sched_add_p = schedule_sub.add_parser("add", help="Create a new schedule")
+    sched_add_p.add_argument("name", help="Schedule name (unique)")
+    sched_add_p.add_argument("cron_expression", help="Cron expression (e.g. '0 2 * * *')")
+    sched_add_p.add_argument("--collectors", default="", help="Comma-separated collector names")
+    sched_add_p.add_argument("--mode", choices=["full", "collect", "process"], default="full", help="Pipeline mode")
+    sched_add_p.add_argument("--dry-run", action="store_true", help="Enable dry-run mode")
+    sched_add_p.set_defaults(func=schedule_add_cmd)
+
+    sched_list_p = schedule_sub.add_parser("list", help="List all schedules")
+    sched_list_p.set_defaults(func=schedule_list_cmd)
+
+    sched_status_p = schedule_sub.add_parser("status", help="Show schedule status")
+    sched_status_p.add_argument("schedule_id", type=int, help="Schedule ID")
+    sched_status_p.set_defaults(func=schedule_status_cmd)
+
+    sched_run_p = schedule_sub.add_parser("run", help="Manually enqueue a pipeline run")
+    sched_run_p.add_argument("schedule_id", type=int, help="Schedule ID")
+    sched_run_p.set_defaults(func=schedule_run_cmd)
+
+    sched_pause_p = schedule_sub.add_parser("pause", help="Pause a schedule")
+    sched_pause_p.add_argument("schedule_id", type=int, help="Schedule ID")
+    sched_pause_p.set_defaults(func=schedule_pause_cmd)
+
+    sched_resume_p = schedule_sub.add_parser("resume", help="Resume a paused schedule")
+    sched_resume_p.add_argument("schedule_id", type=int, help="Schedule ID")
+    sched_resume_p.set_defaults(func=schedule_resume_cmd)
+
+    sched_history_p = schedule_sub.add_parser("history", help="Show run history")
+    sched_history_p.add_argument("schedule_id", type=int, help="Schedule ID")
+    sched_history_p.add_argument("--limit", type=int, default=20, help="Max entries to show")
+    sched_history_p.set_defaults(func=schedule_history_cmd)
+
+    sched_delete_p = schedule_sub.add_parser("delete", help="Delete a schedule")
+    sched_delete_p.add_argument("schedule_id", type=int, help="Schedule ID")
+    sched_delete_p.set_defaults(func=schedule_delete_cmd)
 
     args = parser.parse_args()
 

@@ -196,6 +196,40 @@ class OpsStorage:
             CREATE INDEX IF NOT EXISTS idx_citations_fact ON fact_citations(fact_id, cited_at DESC);
             CREATE INDEX IF NOT EXISTS idx_citations_signal ON fact_citations(signal_id);
             CREATE INDEX IF NOT EXISTS idx_citations_fact_signal ON fact_citations(fact_id, signal_id, cited_at DESC);
+
+            CREATE TABLE IF NOT EXISTS pipeline_schedules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                cron_expression TEXT NOT NULL,
+                collectors TEXT DEFAULT '[]',
+                mode TEXT DEFAULT 'full' CHECK(mode IN ('full', 'collect', 'process')),
+                dry_run INTEGER DEFAULT 0,
+                enabled INTEGER DEFAULT 1,
+                max_retries INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_schedules_enabled ON pipeline_schedules(enabled);
+
+            CREATE TABLE IF NOT EXISTS pipeline_run_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                schedule_id INTEGER NOT NULL,
+                status TEXT NOT NULL CHECK(status IN ('pending', 'running', 'success', 'failed', 'cancelled')),
+                idempotency_key TEXT UNIQUE,
+                started_at TIMESTAMP,
+                finished_at TIMESTAMP,
+                signals_found INTEGER DEFAULT 0,
+                signals_processed INTEGER DEFAULT 0,
+                signals_pushed INTEGER DEFAULT 0,
+                errors INTEGER DEFAULT 0,
+                error_message TEXT,
+                cost REAL DEFAULT 0.0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(schedule_id) REFERENCES pipeline_schedules(id) ON DELETE CASCADE
+            );
+            CREATE INDEX IF NOT EXISTS idx_run_history_schedule ON pipeline_run_history(schedule_id, created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_run_history_status ON pipeline_run_history(status);
+            CREATE INDEX IF NOT EXISTS idx_run_history_idempotency ON pipeline_run_history(idempotency_key);
         """)
 
         self._ensure_fts_and_triggers(conn)

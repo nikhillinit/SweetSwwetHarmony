@@ -298,3 +298,110 @@ class TestCheckAPIConnection:
         mock_client_class.return_value = mock_client
 
         assert check_api_connection() is False
+
+
+class TestGenericHTTPMethods:
+    """Test generic get/post/put/delete methods."""
+
+    def setup_method(self):
+        mock_st.session_state = MockSessionState()
+
+    @patch('httpx.Client')
+    def test_generic_get(self, mock_client_class):
+        """Test generic GET request."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"schedules": []}
+
+        mock_client = MagicMock()
+        mock_client.__enter__.return_value = mock_client
+        mock_client.__exit__.return_value = None
+        mock_client.get.return_value = mock_response
+        mock_client_class.return_value = mock_client
+
+        client = APIClient()
+        result = client.get("/schedules")
+        assert result == {"schedules": []}
+
+    @patch('httpx.Client')
+    def test_generic_get_with_params(self, mock_client_class):
+        """Test generic GET with query params."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"data": "ok"}
+
+        mock_client = MagicMock()
+        mock_client.__enter__.return_value = mock_client
+        mock_client.__exit__.return_value = None
+        mock_client.get.return_value = mock_response
+        mock_client_class.return_value = mock_client
+
+        client = APIClient()
+        result = client.get("/metrics", params={"days": 7})
+        assert result == {"data": "ok"}
+        mock_client.get.assert_called_once()
+
+    @patch('httpx.Client')
+    def test_generic_post(self, mock_client_class):
+        """Test generic POST request."""
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+        mock_response.json.return_value = {"id": 1, "name": "daily"}
+
+        mock_client = MagicMock()
+        mock_client.__enter__.return_value = mock_client
+        mock_client.__exit__.return_value = None
+        mock_client.post.return_value = mock_response
+        mock_client_class.return_value = mock_client
+
+        client = APIClient()
+        result = client.post("/schedules", json={"name": "daily", "cron": "0 * * * *"})
+        assert result["id"] == 1
+
+    @patch('httpx.Client')
+    def test_generic_put(self, mock_client_class):
+        """Test generic PUT request."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"message": "paused"}
+
+        mock_client = MagicMock()
+        mock_client.__enter__.return_value = mock_client
+        mock_client.__exit__.return_value = None
+        mock_client.put.return_value = mock_response
+        mock_client_class.return_value = mock_client
+
+        client = APIClient()
+        result = client.put("/schedules/1/pause")
+        assert result["message"] == "paused"
+
+    @patch('httpx.Client')
+    def test_generic_delete(self, mock_client_class):
+        """Test generic DELETE request."""
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"message": "deleted"}
+
+        mock_client = MagicMock()
+        mock_client.__enter__.return_value = mock_client
+        mock_client.__exit__.return_value = None
+        mock_client.delete.return_value = mock_response
+        mock_client_class.return_value = mock_client
+
+        client = APIClient()
+        result = client.delete("/schedules/1")
+        assert result["message"] == "deleted"
+
+    @patch('httpx.Client')
+    def test_generic_get_connect_error(self, mock_client_class):
+        """Test generic GET handles ConnectError."""
+        import httpx
+        mock_client = MagicMock()
+        mock_client.__enter__.return_value = mock_client
+        mock_client.__exit__.return_value = None
+        mock_client.get.side_effect = httpx.ConnectError("Connection refused")
+        mock_client_class.return_value = mock_client
+
+        client = APIClient()
+        result = client.get("/schedules")
+        assert result["error"] is True
