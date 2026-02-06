@@ -61,6 +61,8 @@ def render_ops_health_page():
         if metrics:
             _render_extraction_trends(metrics)
             _render_fact_stats(metrics)
+            _render_cost_summary(metrics)
+            _render_collector_breakdown(metrics)
     except Exception as e:
         st.warning(f"Could not fetch metrics: {e}")
 
@@ -176,3 +178,41 @@ def _render_fact_stats(metrics: Dict[str, Any]):
         st.metric("Avg Confidence", f"{metrics.get('avg_fact_confidence', 0):.2f}")
     with col4:
         st.metric("Unused HC", metrics.get("unused_high_confidence_facts", 0))
+
+
+def _render_cost_summary(metrics: Dict[str, Any]):
+    """Render cost summary KPI row: Cost 24h, Avg Duration, All-Time Runs."""
+    st.subheader("Cost Summary")
+
+    cost_24h = float(metrics.get("api_cost_24h", 0))
+    avg_duration = float(metrics.get("avg_run_duration_sec", 0))
+    total_runs = int(metrics.get("total_pipeline_runs", 0))
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Cost (24h)", f"${cost_24h:.2f}")
+    with col2:
+        if avg_duration >= 60:
+            dur_str = f"{avg_duration / 60:.1f}m"
+        else:
+            dur_str = f"{avg_duration:.0f}s"
+        st.metric("Avg Duration", dur_str)
+    with col3:
+        st.metric("All-Time Runs", total_runs)
+
+
+def _render_collector_breakdown(metrics: Dict[str, Any]):
+    """Render daily cost bar chart from daily_history."""
+    history = metrics.get("daily_history", [])
+    if not history:
+        st.info("No daily cost data available yet.")
+        return
+
+    st.subheader("Daily Cost Breakdown")
+
+    import pandas as pd
+    df = pd.DataFrame(history)
+    if "date" in df.columns and "cost" in df.columns:
+        df["cost"] = df["cost"].astype(float)
+        df = df.sort_values("date")
+        st.bar_chart(df.set_index("date")["cost"])

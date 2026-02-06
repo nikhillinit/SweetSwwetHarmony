@@ -24,7 +24,7 @@ from datetime import datetime, timezone
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routers import actions, companies, public, auth, health, jobs, entities
+from api.routers import actions, companies, public, auth, health, jobs, entities, scheduler
 from api.auth.jwt_auth import seed_default_users
 from storage.signal_store import SignalStore
 
@@ -99,6 +99,7 @@ app.include_router(entities.router, prefix="/api/v1")
 app.include_router(actions.router, prefix="/api/v1")
 app.include_router(companies.router, prefix="/api/v1")
 app.include_router(public.router, prefix="/api/v1")
+app.include_router(scheduler.router, prefix="/api/v1")
 
 
 # =============================================================================
