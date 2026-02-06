@@ -213,7 +213,7 @@ class KimiClient:
         self,
         api_key: Optional[str] = None,
         model: KimiModel = DEFAULT_MODEL,
-        timeout_seconds: int = 120,
+        timeout_seconds: int = 300,  # CHANGED: 120 -> 300 (5 min for large context)
         max_concurrent: int = 3,
     ):
         """
@@ -636,6 +636,25 @@ Verify the implementation meets all requirements. Identify any remaining issues.
                 contents.append(f"**{file_path}:** File not found")
 
         return "\n\n".join(contents) if contents else "No context files provided."
+
+    async def _build_context(
+        self,
+        context_files: Optional[list[str]] = None,
+        context_text: Optional[str] = None,
+    ) -> str:
+        """Build context with clear delimiters between sources."""
+        parts = []
+
+        # Source files section
+        file_context = await self._read_context_files(context_files)
+        if file_context and file_context != "No context files provided.":
+            parts.append(f"=== SOURCE FILES ===\n{file_context}")
+
+        # Reference context section
+        if context_text:
+            parts.append(f"=== REFERENCE CONTEXT ===\n{context_text}")
+
+        return "\n\n".join(parts) if parts else "No context provided."
 
 
 # =============================================================================
