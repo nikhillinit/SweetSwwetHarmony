@@ -1476,6 +1476,15 @@ Tip:
     sched_delete_p.add_argument("schedule_id", type=int, help="Schedule ID")
     sched_delete_p.set_defaults(func=schedule_delete_cmd)
 
+    # ── quality ops commands ────────────────────────────────────────
+    try:
+        from ops.quality_cli import register_quality_commands
+        register_quality_commands(subparsers)
+    except ImportError:
+        pass  # Quality ops module not installed
+    except Exception as e:
+        print(f"Warning: Quality ops CLI registration failed: {e}", file=sys.stderr)
+
     args = parser.parse_args()
 
     try:

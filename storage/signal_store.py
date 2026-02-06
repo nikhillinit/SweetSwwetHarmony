@@ -52,6 +52,8 @@ from typing import Any, Dict, List, Optional, AsyncIterator, TYPE_CHECKING
 
 import aiosqlite
 
+from storage.migrations.quality_tables import QUALITY_TABLES_DDL
+
 if TYPE_CHECKING:
     from workflows.pipeline import PipelineStats, CollectorMetrics
     from utils.exit_predictor import ExitPrediction
@@ -63,7 +65,7 @@ logger = logging.getLogger(__name__)
 # SCHEMA VERSION
 # =============================================================================
 
-CURRENT_SCHEMA_VERSION = 24
+CURRENT_SCHEMA_VERSION = 25
 
 # SQL for creating tables (migrations applied in order)
 MIGRATIONS = {
@@ -1689,6 +1691,7 @@ MIGRATIONS = {
     CREATE INDEX IF NOT EXISTS idx_citations_signal ON fact_citations(signal_id);
     CREATE INDEX IF NOT EXISTS idx_citations_fact_signal ON fact_citations(fact_id, signal_id, cited_at DESC);
     """,
+    25: QUALITY_TABLES_DDL,
 }
 
 
