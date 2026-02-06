@@ -17,6 +17,7 @@ Usage:
 """
 
 import asyncio
+import logging
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
@@ -24,9 +25,16 @@ from datetime import datetime, timezone
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
+from api.middleware import ExceptionHandlerMiddleware, RequestIdMiddleware
+from utils.logging_config import configure_logging, startup_check
+
 from api.routers import actions, companies, public, auth, health, jobs, entities, scheduler
 from api.auth.jwt_auth import seed_default_users
 from storage.signal_store import SignalStore
+
+# Configure structured logging at import time (before any loggers are used)
+configure_logging()
+logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -42,10 +50,16 @@ async def lifespan(app: FastAPI):
     - Seed default users for development
     - Clean up resources on shutdown
     """
-    # Startup
+    # Startup checks
+    issues = startup_check()
+    for issue in issues:
+        logger.warning("Startup check: %s", issue)
+
+    # Initialize store
     store = SignalStore()
     await store.initialize()
     app.state.store = store
+    logger.info("SignalStore initialized")
 
     # Write lock for single-writer pattern (SQLite concurrency)
     app.state.write_lock = asyncio.Lock()
@@ -54,10 +68,13 @@ async def lifespan(app: FastAPI):
     if os.getenv("PRODUCTION", "false").lower() != "true":
         seed_default_users()
 
+    logger.info("Discovery Engine API started")
     yield
 
-    # Shutdown
+    # Graceful shutdown
+    logger.info("Shutting down — closing store")
     await store.close()
+    logger.info("Shutdown complete")
 
 
 # =============================================================================
@@ -73,6 +90,12 @@ app = FastAPI(
     redoc_url="/api/redoc",
     openapi_url="/api/openapi.json",
 )
+
+# Production middleware (order matters: outermost executes first)
+# 1. RequestId — assigns X-Request-ID to every request
+# 2. ExceptionHandler — catches unhandled exceptions, returns clean JSON 500
+app.add_middleware(ExceptionHandlerMiddleware)
+app.add_middleware(RequestIdMiddleware)
 
 # CORS configuration for Streamlit frontend
 app.add_middleware(

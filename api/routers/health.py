@@ -14,11 +14,12 @@ import os
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, field_validator
 
 from storage.signal_store import SignalStore
+from api.health_bounds import BoundedParams
 
 logger = logging.getLogger(__name__)
 
@@ -104,8 +105,16 @@ class DetailedHealthResponse(BaseModel):
 # DEPENDENCY INJECTION
 # =============================================================================
 
-async def get_store() -> SignalStore:
-    """Get initialized SignalStore."""
+async def get_store(request: Request) -> SignalStore:
+    """Get the lifespan-managed SignalStore from app state.
+
+    Falls back to creating a new store if app.state.store is unavailable
+    (e.g., in tests that don't use the full app lifespan).
+    """
+    store = getattr(request.app.state, "store", None)
+    if store is not None:
+        return store
+    # Fallback for isolated test apps that don't set up lifespan
     store = SignalStore()
     await store.initialize()
     return store
@@ -454,36 +463,53 @@ async def get_job_health(
 # OPS HEALTH ENDPOINTS
 # =============================================================================
 
-def _get_ops_collector():
-    """Try to create an OpsMetricsCollector. Returns None if ops tables missing."""
+_cached_ops_storage = None
+_cached_ops_collector = None
+_cached_ops_alert_engine = None
+
+
+def _get_ops_storage():
+    """Get or create a cached OpsStorage instance. Returns None if unavailable."""
+    global _cached_ops_storage
+    if _cached_ops_storage is not None:
+        return _cached_ops_storage
     try:
         from ops.storage import OpsStorage
-        from ops.monitoring.metrics import OpsMetricsCollector
         db_path = os.getenv("DISCOVERY_DB_PATH", "signals.db")
-        storage = OpsStorage(db_path)
-        return OpsMetricsCollector(storage)
+        _cached_ops_storage = OpsStorage(db_path)
+        return _cached_ops_storage
+    except Exception as e:
+        logger.warning("Could not init OpsStorage: %s", e)
+        return None
+
+
+def _get_ops_collector():
+    """Get or create a cached OpsMetricsCollector. Returns None if ops tables missing."""
+    global _cached_ops_collector
+    if _cached_ops_collector is not None:
+        return _cached_ops_collector
+    try:
+        from ops.monitoring.metrics import OpsMetricsCollector
+        storage = _get_ops_storage()
+        if storage is None:
+            return None
+        _cached_ops_collector = OpsMetricsCollector(storage)
+        return _cached_ops_collector
     except Exception as e:
         logger.warning("Could not init OpsMetricsCollector: %s", e)
         return None
 
 
 def _get_ops_alert_engine():
-    """Create AlertEngine instance."""
+    """Get or create a cached AlertEngine instance."""
+    global _cached_ops_alert_engine
+    if _cached_ops_alert_engine is not None:
+        return _cached_ops_alert_engine
     try:
         from ops.monitoring.alerts import AlertEngine
-        return AlertEngine()
+        _cached_ops_alert_engine = AlertEngine()
+        return _cached_ops_alert_engine
     except Exception:
-        return None
-
-
-def _get_ops_storage():
-    """Try to create an OpsStorage instance. Returns None if unavailable."""
-    try:
-        from ops.storage import OpsStorage
-        db_path = os.getenv("DISCOVERY_DB_PATH", "signals.db")
-        return OpsStorage(db_path)
-    except Exception as e:
-        logger.warning("Could not init OpsStorage: %s", e)
         return None
 
 
@@ -618,7 +644,10 @@ async def get_ops_health():
 
 
 @router.get("/ops/metrics")
-async def get_ops_metrics(window_hours: int = 24, history_days: int = 0):
+async def get_ops_metrics(
+    window_hours: int = BoundedParams.window_hours(),
+    history_days: int = BoundedParams.history_days(),
+):
     """Full ops metrics snapshot with optional daily history."""
     collector = _get_ops_collector()
     if collector is None:
@@ -750,7 +779,10 @@ async def delete_rule(rule_id: int):
 # =============================================================================
 
 @router.get("/ops/history", response_model=List[Dict[str, Any]])
-async def get_metric_history(hours: int = 24, limit: int = 100):
+async def get_metric_history(
+    hours: int = BoundedParams.hours(),
+    limit: int = BoundedParams.limit(),
+):
     """Get metric snapshot history with time range filter."""
     storage = _get_ops_storage()
     if storage is None:
