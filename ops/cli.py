@@ -653,6 +653,144 @@ def cleanup(args):
         print("  VACUUM completed")
 
 
+def list_incidents_cmd(args):
+    from ops.maintenance.incident import list_incidents as _list_incidents
+
+    incidents = _list_incidents(status_filter=args.status)
+    if not incidents:
+        print("No incidents found.")
+        return
+
+    print(f"\n{'ID':<40s} {'Status':<14s} {'Component':<20s} {'Error'}")
+    print("=" * 100)
+    for inc in incidents:
+        err_short = inc.error_message[:50] + "..." if len(inc.error_message) > 50 else inc.error_message
+        print(f"{inc.incident_id:<40s} {inc.status:<14s} {inc.component:<20s} {err_short}")
+
+
+def show_incident_cmd(args):
+    from ops.maintenance.incident import load_incident
+
+    incident = load_incident(args.incident_id)
+    if not incident:
+        print(f"Incident {args.incident_id} not found")
+        sys.exit(1)
+
+    print(f"\nIncident: {incident.incident_id}")
+    print(f"Component: {incident.component}")
+    print(f"Status: {incident.status}")
+    print(f"Error Type: {incident.error_type}")
+    print(f"Error: {incident.error_message}")
+    print(f"Created: {incident.created_at}")
+    print(f"Updated: {incident.updated_at}")
+    if incident.artifact_dir:
+        print(f"Artifacts: {incident.artifact_dir}")
+    if incident.traceback_text:
+        print(f"\nTraceback:\n{incident.traceback_text}")
+    if incident.repair_attempts:
+        print(f"\nRepair Attempts ({len(incident.repair_attempts)}):")
+        for attempt in incident.repair_attempts:
+            print(f"  [{attempt.get('timestamp', '?')}] {attempt.get('status', '?')}: {attempt.get('notes', '')[:100]}")
+
+
+def repair_latest_cmd(args):
+    from ops.maintenance.repair_agent import RepairAgent
+
+    agent = RepairAgent()
+    if not agent.available:
+        print("claude CLI not available. Install with: npm install -g @anthropic-ai/claude")
+        sys.exit(1)
+
+    result = agent.repair_latest()
+    if result.get("message"):
+        print(result["message"])
+    elif result.get("success"):
+        print("Repair completed successfully")
+        if result.get("output"):
+            print(result["output"][:500])
+    else:
+        print(f"Repair failed: {result.get('error', 'unknown')}")
+        sys.exit(1)
+
+
+def repair_cmd(args):
+    from ops.maintenance.repair_agent import RepairAgent
+
+    agent = RepairAgent()
+    if not agent.available:
+        print("claude CLI not available. Install with: npm install -g @anthropic-ai/claude")
+        sys.exit(1)
+
+    result = agent.repair_incident(args.incident_id)
+    if result.get("message"):
+        print(result["message"])
+    elif result.get("success"):
+        print("Repair completed successfully")
+        if result.get("output"):
+            print(result["output"][:500])
+    else:
+        print(f"Repair failed: {result.get('error', 'unknown')}")
+        sys.exit(1)
+
+
+def docker_status_cmd(args):
+    from ops.infra.docker_manager import DockerManager
+
+    mgr = DockerManager()
+    if not mgr.available:
+        print("Docker CLI not found on PATH")
+        sys.exit(1)
+
+    result = mgr.service_status(name=args.name)
+    if not result["success"]:
+        print(f"Error: {result.get('error', 'unknown')}")
+        sys.exit(1)
+
+    containers = result.get("containers", [])
+    if not containers:
+        print("No running containers found.")
+        return
+
+    print(f"\n{'Name':<30s} {'Status':<20s} {'Image'}")
+    print("=" * 80)
+    for c in containers:
+        print(f"{c.get('Names', 'N/A'):<30s} {c.get('Status', 'N/A'):<20s} {c.get('Image', 'N/A')}")
+
+
+def docker_restart_cmd(args):
+    from ops.infra.docker_manager import DockerManager
+
+    mgr = DockerManager()
+    if not mgr.available:
+        print("Docker CLI not found on PATH")
+        sys.exit(1)
+
+    result = mgr.restart_service(args.name)
+    if result["success"]:
+        print(f"Restarted: {args.name}")
+    else:
+        print(f"Restart failed: {result.get('error', 'unknown')}")
+        sys.exit(1)
+
+
+def docker_prune_cmd(args):
+    from ops.infra.docker_manager import DockerManager
+
+    mgr = DockerManager()
+    if not mgr.available:
+        print("Docker CLI not found on PATH")
+        sys.exit(1)
+
+    result = mgr.prune_networks()
+    if result["success"]:
+        print("Network prune completed")
+        if result.get("output"):
+            print(result["output"].strip())
+    else:
+        print(f"Prune failed: {result.get('error', 'unknown')}")
+        sys.exit(1)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Ops CLI - Internal Team Tool",
@@ -727,6 +865,46 @@ Tip:
     cleanup_parser.add_argument("--no-archive", action="store_true", help="Do not archive facts/citations before deletion")
     cleanup_parser.add_argument("--vacuum", action="store_true", help="Run VACUUM after cleanup (can be slow)")
     cleanup_parser.set_defaults(func=cleanup)
+
+    # ── maint (maintenance / incident) commands ──────────────────────
+    maint_parser = subparsers.add_parser("maint", help="Maintenance / incident commands")
+    maint_sub = maint_parser.add_subparsers(dest="maint_command", help="Maintenance sub-command")
+    maint_sub.required = True
+
+    maint_list = maint_sub.add_parser("list-incidents", help="List incident capsules")
+    maint_list.add_argument(
+        "--status",
+        choices=["open", "investigating", "resolved", "wont_fix"],
+        help="Filter by status",
+    )
+    maint_list.set_defaults(func=list_incidents_cmd)
+
+    maint_show = maint_sub.add_parser("show", help="Show incident details")
+    maint_show.add_argument("incident_id", help="Incident ID")
+    maint_show.set_defaults(func=show_incident_cmd)
+
+    maint_repair_latest = maint_sub.add_parser("repair-latest", help="Repair most recent open incident")
+    maint_repair_latest.set_defaults(func=repair_latest_cmd)
+
+    maint_repair = maint_sub.add_parser("repair", help="Repair a specific incident")
+    maint_repair.add_argument("incident_id", help="Incident ID")
+    maint_repair.set_defaults(func=repair_cmd)
+
+    # ── docker commands ──────────────────────────────────────────────
+    docker_parser = subparsers.add_parser("docker", help="Docker management commands")
+    docker_sub = docker_parser.add_subparsers(dest="docker_command", help="Docker sub-command")
+    docker_sub.required = True
+
+    docker_status_p = docker_sub.add_parser("status", help="Show running containers")
+    docker_status_p.add_argument("name", nargs="?", default=None, help="Filter by container name")
+    docker_status_p.set_defaults(func=docker_status_cmd)
+
+    docker_restart_p = docker_sub.add_parser("restart", help="Restart a container")
+    docker_restart_p.add_argument("name", help="Container name")
+    docker_restart_p.set_defaults(func=docker_restart_cmd)
+
+    docker_prune_p = docker_sub.add_parser("prune-networks", help="Remove unused Docker networks")
+    docker_prune_p.set_defaults(func=docker_prune_cmd)
 
     args = parser.parse_args()
 
