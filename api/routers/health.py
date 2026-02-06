@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.concurrency import run_in_threadpool
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from storage.signal_store import SignalStore
 
@@ -476,6 +476,17 @@ def _get_ops_alert_engine():
         return None
 
 
+def _get_ops_storage():
+    """Try to create an OpsStorage instance. Returns None if unavailable."""
+    try:
+        from ops.storage import OpsStorage
+        db_path = os.getenv("DISCOVERY_DB_PATH", "signals.db")
+        return OpsStorage(db_path)
+    except Exception as e:
+        logger.warning("Could not init OpsStorage: %s", e)
+        return None
+
+
 class OpsHealthResponse(BaseModel):
     status: str
     overall_health_pct: float
@@ -483,6 +494,92 @@ class OpsHealthResponse(BaseModel):
     open_incidents: int
     extractions_24h: int
     active_alerts: List[Dict[str, Any]]
+
+
+# =============================================================================
+# ALERT RULES PYDANTIC MODELS
+# =============================================================================
+
+_VALID_SEVERITIES = {"critical", "warning", "info"}
+_VALID_OPS = {">", ">=", "<", "<=", "==", "!="}
+
+
+def _validate_condition(condition: dict) -> None:
+    """Validate a JSON DSL condition dict. Raises ValueError on invalid input."""
+    if "field" in condition and "op" in condition:
+        if condition["op"] not in _VALID_OPS:
+            raise ValueError(f"Unknown operator: {condition['op']}")
+        if "value" not in condition:
+            raise ValueError("Simple condition requires 'value'")
+        return
+    if "all" in condition:
+        for c in condition["all"]:
+            _validate_condition(c)
+        return
+    if "any" in condition:
+        for c in condition["any"]:
+            _validate_condition(c)
+        return
+    if "not" in condition:
+        _validate_condition(condition["not"])
+        return
+    if "trend" in condition:
+        trend = condition["trend"]
+        if "field" not in trend or "direction" not in trend:
+            raise ValueError("Trend requires 'field' and 'direction'")
+        if trend["direction"] not in ("increasing", "decreasing"):
+            raise ValueError(f"Invalid trend direction: {trend['direction']}")
+        return
+    raise ValueError(f"Unknown condition type: {list(condition.keys())}")
+
+
+class RuleCreateRequest(BaseModel):
+    name: str
+    condition: Dict[str, Any]
+    severity: str
+    message_template: str
+    component: Optional[str] = None
+    enabled: bool = True
+
+    @field_validator("severity")
+    @classmethod
+    def validate_severity(cls, v: str) -> str:
+        if v not in _VALID_SEVERITIES:
+            raise ValueError(f"severity must be one of {_VALID_SEVERITIES}")
+        return v
+
+    @field_validator("condition")
+    @classmethod
+    def validate_condition_field(cls, v: dict) -> dict:
+        _validate_condition(v)
+        return v
+
+
+class RuleUpdateRequest(BaseModel):
+    severity: Optional[str] = None
+    condition: Optional[Dict[str, Any]] = None
+    message_template: Optional[str] = None
+    component: Optional[str] = None
+    enabled: Optional[bool] = None
+
+    @field_validator("severity")
+    @classmethod
+    def validate_severity(cls, v):
+        if v is not None and v not in _VALID_SEVERITIES:
+            raise ValueError(f"severity must be one of {_VALID_SEVERITIES}")
+        return v
+
+    @field_validator("condition")
+    @classmethod
+    def validate_condition_field(cls, v):
+        if v is not None:
+            _validate_condition(v)
+        return v
+
+
+class RuleDetailResponse(BaseModel):
+    rule: Dict[str, Any]
+    evaluations: List[Dict[str, Any]]
 
 
 @router.get("/ops", response_model=OpsHealthResponse)
@@ -537,3 +634,127 @@ async def get_ops_metrics(window_hours: int = 24, history_days: int = 0):
         result["daily_history"] = []
 
     return result
+
+
+# =============================================================================
+# ALERT RULES CRUD ENDPOINTS
+# =============================================================================
+
+@router.get("/ops/rules", response_model=List[Dict[str, Any]])
+async def list_rules():
+    """List all alert rules (builtin + custom)."""
+    storage = _get_ops_storage()
+    if storage is None:
+        raise HTTPException(status_code=503, detail={"error": "Ops tables not initialized"})
+
+    rules = await run_in_threadpool(storage.list_alert_rules)
+    # Normalize is_builtin to bool for JSON
+    for r in rules:
+        r["is_builtin"] = bool(r.get("is_builtin"))
+        r["enabled"] = bool(r.get("enabled"))
+    return rules
+
+
+@router.post("/ops/rules", status_code=201, response_model=Dict[str, Any])
+async def create_rule(body: RuleCreateRequest):
+    """Create a custom alert rule with JSON DSL condition."""
+    storage = _get_ops_storage()
+    if storage is None:
+        raise HTTPException(status_code=503, detail={"error": "Ops tables not initialized"})
+
+    rule_id = await run_in_threadpool(
+        storage.create_alert_rule,
+        name=body.name,
+        condition=body.condition,
+        severity=body.severity,
+        message_template=body.message_template,
+        component=body.component,
+        enabled=body.enabled,
+    )
+    rule = await run_in_threadpool(storage.get_alert_rule, rule_id)
+    if rule:
+        rule["is_builtin"] = bool(rule.get("is_builtin"))
+        rule["enabled"] = bool(rule.get("enabled"))
+    return rule
+
+
+@router.get("/ops/rules/{rule_id}", response_model=RuleDetailResponse)
+async def get_rule(rule_id: int):
+    """Get a single rule with its evaluation history."""
+    storage = _get_ops_storage()
+    if storage is None:
+        raise HTTPException(status_code=503, detail={"error": "Ops tables not initialized"})
+
+    rule = await run_in_threadpool(storage.get_alert_rule, rule_id)
+    if rule is None:
+        raise HTTPException(status_code=404, detail=f"Rule {rule_id} not found")
+
+    rule["is_builtin"] = bool(rule.get("is_builtin"))
+    rule["enabled"] = bool(rule.get("enabled"))
+    evaluations = await run_in_threadpool(
+        storage.get_alert_evaluations, rule_name=rule["name"], limit=20,
+    )
+    return {"rule": rule, "evaluations": evaluations}
+
+
+@router.put("/ops/rules/{rule_id}", response_model=Dict[str, Any])
+async def update_rule(rule_id: int, body: RuleUpdateRequest):
+    """Update a rule's condition, severity, enabled, etc."""
+    storage = _get_ops_storage()
+    if storage is None:
+        raise HTTPException(status_code=503, detail={"error": "Ops tables not initialized"})
+
+    kwargs = {}
+    if body.severity is not None:
+        kwargs["severity"] = body.severity
+    if body.condition is not None:
+        kwargs["condition"] = body.condition
+    if body.message_template is not None:
+        kwargs["message_template"] = body.message_template
+    if body.component is not None:
+        kwargs["component"] = body.component
+    if body.enabled is not None:
+        kwargs["enabled"] = body.enabled
+
+    updated = await run_in_threadpool(storage.update_alert_rule, rule_id, **kwargs)
+    if not updated:
+        raise HTTPException(status_code=404, detail=f"Rule {rule_id} not found")
+
+    rule = await run_in_threadpool(storage.get_alert_rule, rule_id)
+    if rule:
+        rule["is_builtin"] = bool(rule.get("is_builtin"))
+        rule["enabled"] = bool(rule.get("enabled"))
+    return rule
+
+
+@router.delete("/ops/rules/{rule_id}", response_model=Dict[str, str])
+async def delete_rule(rule_id: int):
+    """Delete a custom alert rule. Builtin rules cannot be deleted."""
+    storage = _get_ops_storage()
+    if storage is None:
+        raise HTTPException(status_code=503, detail={"error": "Ops tables not initialized"})
+
+    deleted = await run_in_threadpool(storage.delete_alert_rule, rule_id)
+    if not deleted:
+        # Check if it exists but is builtin
+        rule = await run_in_threadpool(storage.get_alert_rule, rule_id)
+        if rule and rule.get("is_builtin"):
+            raise HTTPException(status_code=403, detail="Cannot delete builtin rules")
+        raise HTTPException(status_code=404, detail=f"Rule {rule_id} not found")
+
+    return {"message": f"Rule {rule_id} deleted"}
+
+
+# =============================================================================
+# METRIC HISTORY ENDPOINT
+# =============================================================================
+
+@router.get("/ops/history", response_model=List[Dict[str, Any]])
+async def get_metric_history(hours: int = 24, limit: int = 100):
+    """Get metric snapshot history with time range filter."""
+    storage = _get_ops_storage()
+    if storage is None:
+        raise HTTPException(status_code=503, detail={"error": "Ops tables not initialized"})
+
+    snapshots = await run_in_threadpool(storage.get_metric_snapshots, hours=hours, limit=limit)
+    return snapshots

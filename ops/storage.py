@@ -8,6 +8,7 @@ which are added via v24 migration in signal_store.py.
 Uses synchronous sqlite3 (not aiosqlite) for CLI and extraction workflows.
 """
 
+import json
 import sqlite3
 import logging
 import re
@@ -230,6 +231,40 @@ class OpsStorage:
             CREATE INDEX IF NOT EXISTS idx_run_history_schedule ON pipeline_run_history(schedule_id, created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_run_history_status ON pipeline_run_history(status);
             CREATE INDEX IF NOT EXISTS idx_run_history_idempotency ON pipeline_run_history(idempotency_key);
+
+            CREATE TABLE IF NOT EXISTS alert_rules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                condition_json TEXT NOT NULL,
+                severity TEXT CHECK(severity IN ('critical', 'warning', 'info')) NOT NULL DEFAULT 'warning',
+                component TEXT,
+                message_template TEXT NOT NULL,
+                enabled INTEGER DEFAULT 1,
+                is_builtin INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS metric_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                snapshot_json TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_metric_snapshots_ts ON metric_snapshots(timestamp DESC);
+
+            CREATE TABLE IF NOT EXISTS alert_evaluations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                rule_name TEXT NOT NULL,
+                fingerprint TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                message TEXT,
+                fired_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                resolved_at TIMESTAMP,
+                snapshot_id INTEGER,
+                FOREIGN KEY(snapshot_id) REFERENCES metric_snapshots(id) ON DELETE SET NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_alert_evals_rule ON alert_evaluations(rule_name, fired_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_alert_evals_fingerprint ON alert_evaluations(fingerprint);
         """)
 
         self._ensure_fts_and_triggers(conn)
@@ -443,3 +478,194 @@ class OpsStorage:
                 """,
                 (component, status, latency_ms, error),
             )
+
+    # ── Alert Rules CRUD ─────────────────────────────────────────────
+
+    def create_alert_rule(
+        self,
+        name: str,
+        condition: dict,
+        severity: str,
+        message_template: str,
+        component: Optional[str] = None,
+        enabled: bool = True,
+        is_builtin: bool = False,
+    ) -> int:
+        """Create a custom alert rule. Returns the new rule ID."""
+        with self.transaction() as conn:
+            conn.execute(
+                """
+                INSERT INTO alert_rules
+                    (name, condition_json, severity, component, message_template, enabled, is_builtin)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (name, json.dumps(condition), severity, component,
+                 message_template, int(enabled), int(is_builtin)),
+            )
+            return conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+
+    def get_alert_rule(self, rule_id: int) -> Optional[dict]:
+        """Get a single alert rule by ID. Returns None if not found."""
+        with self.read_transaction() as conn:
+            conn.row_factory = sqlite3.Row
+            row = conn.execute(
+                "SELECT * FROM alert_rules WHERE id = ?", (rule_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    def list_alert_rules(self, enabled_only: bool = False) -> List[dict]:
+        """List all alert rules, optionally filtering to enabled only."""
+        with self.read_transaction() as conn:
+            conn.row_factory = sqlite3.Row
+            sql = "SELECT * FROM alert_rules"
+            if enabled_only:
+                sql += " WHERE enabled = 1"
+            sql += " ORDER BY id"
+            return [dict(row) for row in conn.execute(sql).fetchall()]
+
+    def update_alert_rule(
+        self,
+        rule_id: int,
+        severity: Optional[str] = None,
+        condition: Optional[dict] = None,
+        message_template: Optional[str] = None,
+        component: Optional[str] = None,
+        enabled: Optional[bool] = None,
+    ) -> bool:
+        """Update fields on an alert rule. Returns True if row was found."""
+        sets = []
+        params = []
+        if severity is not None:
+            sets.append("severity = ?")
+            params.append(severity)
+        if condition is not None:
+            sets.append("condition_json = ?")
+            params.append(json.dumps(condition))
+        if message_template is not None:
+            sets.append("message_template = ?")
+            params.append(message_template)
+        if component is not None:
+            sets.append("component = ?")
+            params.append(component)
+        if enabled is not None:
+            sets.append("enabled = ?")
+            params.append(int(enabled))
+        if not sets:
+            return False
+        sets.append("updated_at = CURRENT_TIMESTAMP")
+        params.append(rule_id)
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                f"UPDATE alert_rules SET {', '.join(sets)} WHERE id = ?",
+                params,
+            )
+            return cursor.rowcount > 0
+
+    def delete_alert_rule(self, rule_id: int) -> bool:
+        """Delete a custom alert rule. Builtin rules cannot be deleted."""
+        with self.transaction() as conn:
+            row = conn.execute(
+                "SELECT is_builtin FROM alert_rules WHERE id = ?", (rule_id,)
+            ).fetchone()
+            if row is None:
+                return False
+            if row[0]:
+                return False
+            conn.execute("DELETE FROM alert_rules WHERE id = ?", (rule_id,))
+            return True
+
+    # ── Metric Snapshots ─────────────────────────────────────────────
+
+    def save_metric_snapshot(self, snapshot: dict) -> int:
+        """Persist a metrics snapshot. Returns the new row ID."""
+        with self.transaction() as conn:
+            conn.execute(
+                "INSERT INTO metric_snapshots (snapshot_json) VALUES (?)",
+                (json.dumps(snapshot),),
+            )
+            return conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+
+    def get_metric_snapshots(
+        self, hours: int = 24, limit: int = 100
+    ) -> List[dict]:
+        """Get recent metric snapshots, newest first."""
+        with self.read_transaction() as conn:
+            conn.row_factory = sqlite3.Row
+            rows = conn.execute(
+                """
+                SELECT id, timestamp, snapshot_json
+                FROM metric_snapshots
+                WHERE timestamp >= datetime('now', ?)
+                ORDER BY timestamp DESC, id DESC
+                LIMIT ?
+                """,
+                (f"-{hours} hours", limit),
+            ).fetchall()
+            return [
+                {
+                    "id": row["id"],
+                    "timestamp": row["timestamp"],
+                    "snapshot": json.loads(row["snapshot_json"]),
+                }
+                for row in rows
+            ]
+
+    def purge_old_snapshots(self, retention_days: int = 30) -> int:
+        """Delete metric snapshots older than retention_days. Returns count deleted."""
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                "DELETE FROM metric_snapshots WHERE timestamp < datetime('now', ?)",
+                (f"-{retention_days} days",),
+            )
+            return cursor.rowcount
+
+    # ── Alert Evaluations ────────────────────────────────────────────
+
+    def record_alert_evaluation(
+        self,
+        rule_name: str,
+        fingerprint: str,
+        severity: str,
+        message: str,
+        snapshot_id: Optional[int] = None,
+    ) -> int:
+        """Record that a rule fired. Returns the evaluation ID."""
+        with self.transaction() as conn:
+            conn.execute(
+                """
+                INSERT INTO alert_evaluations
+                    (rule_name, fingerprint, severity, message, snapshot_id)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (rule_name, fingerprint, severity, message, snapshot_id),
+            )
+            return conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+
+    def get_alert_evaluations(
+        self,
+        rule_name: Optional[str] = None,
+        limit: int = 100,
+        unresolved_only: bool = False,
+    ) -> List[dict]:
+        """Get alert evaluations, newest first."""
+        with self.read_transaction() as conn:
+            conn.row_factory = sqlite3.Row
+            sql = "SELECT * FROM alert_evaluations WHERE 1=1"
+            params: list = []
+            if rule_name is not None:
+                sql += " AND rule_name = ?"
+                params.append(rule_name)
+            if unresolved_only:
+                sql += " AND resolved_at IS NULL"
+            sql += " ORDER BY fired_at DESC, id DESC LIMIT ?"
+            params.append(limit)
+            return [dict(row) for row in conn.execute(sql, params).fetchall()]
+
+    def resolve_alert_evaluation(self, evaluation_id: int) -> bool:
+        """Mark an alert evaluation as resolved. Returns True if found."""
+        with self.transaction() as conn:
+            cursor = conn.execute(
+                "UPDATE alert_evaluations SET resolved_at = CURRENT_TIMESTAMP WHERE id = ?",
+                (evaluation_id,),
+            )
+            return cursor.rowcount > 0
