@@ -69,3 +69,8 @@ tmpclaude-*
 
 #Ignore vscode AI rules
 .github\instructions\codacy.instructions.md
+
+# Phase 0C: Shadow analysis artifacts
+shadow_logs.jsonl
+artifacts/shadow/
+datasets/thesis_ground_truth.jsonl

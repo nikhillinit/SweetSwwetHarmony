@@ -644,7 +644,9 @@ class ThesisMatcher:
         return fit_v2
 
     def _normalize(self, text: str) -> str:
-        return text.lower().strip()
+        normalized = re.sub(r"[-/_]", " ", text)
+        normalized = re.sub(r"\s+", " ", normalized)
+        return normalized.lower().strip()
 
     def _score_thesis(
         self,

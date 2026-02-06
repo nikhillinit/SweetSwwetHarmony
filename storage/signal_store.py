@@ -63,7 +63,7 @@ logger = logging.getLogger(__name__)
 # SCHEMA VERSION
 # =============================================================================
 
-CURRENT_SCHEMA_VERSION = 23
+CURRENT_SCHEMA_VERSION = 24
 
 # SQL for creating tables (migrations applied in order)
 MIGRATIONS = {
@@ -1574,7 +1574,121 @@ MIGRATIONS = {
     CREATE INDEX IF NOT EXISTS idx_shadow_log_canonical_key ON shadow_log(canonical_key);
     CREATE INDEX IF NOT EXISTS idx_shadow_log_logged_at ON shadow_log(logged_at);
     CREATE INDEX IF NOT EXISTS idx_shadow_log_feature_logged ON shadow_log(feature_name, logged_at);
-    """
+    """,
+    24: """
+    -- =============================================================================
+    -- OPS LAYER: Memory & Intelligence Subsystem
+    -- =============================================================================
+    -- Adds learning memory, user actions, health monitoring, and audit trail.
+    -- All new tables — NO modifications to existing tables.
+
+    -- 24.1: user_actions — User decisions on signals (approve/reject/defer/bookmark)
+    CREATE TABLE IF NOT EXISTS user_actions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        signal_id INTEGER NOT NULL,
+        action TEXT CHECK(action IN ('approve', 'reject', 'defer', 'bookmark')) NOT NULL,
+        rejection_reason TEXT,
+        rejection_notes TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(signal_id) REFERENCES signals(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_user_actions_signal ON user_actions(signal_id);
+    CREATE INDEX IF NOT EXISTS idx_user_actions_created ON user_actions(created_at DESC);
+
+    -- 24.2: memory_facts — Investment insight memory with confidence + lifecycle
+    CREATE TABLE IF NOT EXISTS memory_facts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        type TEXT CHECK(type IN ('constraint', 'nuance', 'example')) NOT NULL,
+        content TEXT NOT NULL,
+        confidence REAL CHECK(confidence >= 0 AND confidence <= 1) NOT NULL,
+        source_action_id INTEGER,
+        source_signal_id INTEGER,
+        status TEXT CHECK(status IN ('active', 'pending', 'retired')) DEFAULT 'pending',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        superseded_by INTEGER,
+        used_count INTEGER DEFAULT 0,
+        last_used_at TIMESTAMP,
+        FOREIGN KEY(source_action_id) REFERENCES user_actions(id) ON DELETE SET NULL,
+        FOREIGN KEY(source_signal_id) REFERENCES signals(id) ON DELETE SET NULL,
+        FOREIGN KEY(superseded_by) REFERENCES memory_facts(id) ON DELETE SET NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_memory_dedupe
+        ON memory_facts(source_action_id, type, content)
+        WHERE source_action_id IS NOT NULL;
+    CREATE INDEX IF NOT EXISTS idx_memory_active
+        ON memory_facts(type) WHERE superseded_by IS NULL AND status = 'active';
+    CREATE INDEX IF NOT EXISTS idx_memory_pending
+        ON memory_facts(type) WHERE superseded_by IS NULL AND status = 'pending';
+    CREATE INDEX IF NOT EXISTS idx_memory_status_created
+        ON memory_facts(status, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_memory_source_signal
+        ON memory_facts(source_signal_id);
+    CREATE INDEX IF NOT EXISTS idx_memory_used_count
+        ON memory_facts(used_count DESC, last_used_at DESC);
+
+    -- 24.3: memory_action_state — Processing state machine for extraction jobs
+    CREATE TABLE IF NOT EXISTS memory_action_state (
+        action_id INTEGER PRIMARY KEY,
+        status TEXT CHECK(status IN ('processing', 'processed', 'no_facts', 'failed', 'failed_permanent', 'suspicious')) NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0,
+        last_attempt_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_error TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(action_id) REFERENCES user_actions(id) ON DELETE CASCADE
+    );
+    CREATE INDEX IF NOT EXISTS idx_action_state_status ON memory_action_state(status);
+    CREATE INDEX IF NOT EXISTS idx_action_state_attempts ON memory_action_state(attempts);
+
+    -- 24.4: extraction_runs — LLM extraction run metrics (cost tracking)
+    CREATE TABLE IF NOT EXISTS extraction_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        decisions_processed INTEGER NOT NULL,
+        facts_created INTEGER NOT NULL,
+        llm_failures INTEGER NOT NULL,
+        duration_seconds REAL NOT NULL,
+        estimated_cost REAL DEFAULT 0.0
+    );
+
+    -- 24.5: audit_log — Full before/after state audit trail
+    CREATE TABLE IF NOT EXISTS audit_log (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        operation TEXT NOT NULL,
+        target_type TEXT NOT NULL,
+        target_id INTEGER,
+        user TEXT NOT NULL,
+        before_state TEXT,
+        after_state TEXT,
+        reason TEXT
+    );
+
+    -- 24.6: system_health — Per-component health monitoring
+    CREATE TABLE IF NOT EXISTS system_health (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        component TEXT NOT NULL,
+        status TEXT CHECK(status IN ('healthy', 'degraded', 'unhealthy')) NOT NULL,
+        latency_ms REAL,
+        error TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_health_timestamp ON system_health(timestamp DESC);
+    CREATE INDEX IF NOT EXISTS idx_health_component ON system_health(component, timestamp DESC);
+
+    -- 24.7: fact_citations — Track which facts were used in classifications
+    CREATE TABLE IF NOT EXISTS fact_citations (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        fact_id INTEGER NOT NULL,
+        signal_id INTEGER,
+        cited_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        context TEXT,
+        FOREIGN KEY(fact_id) REFERENCES memory_facts(id) ON DELETE CASCADE,
+        FOREIGN KEY(signal_id) REFERENCES signals(id) ON DELETE SET NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_citations_fact ON fact_citations(fact_id, cited_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_citations_signal ON fact_citations(signal_id);
+    CREATE INDEX IF NOT EXISTS idx_citations_fact_signal ON fact_citations(fact_id, signal_id, cited_at DESC);
+    """,
 }
 
 
@@ -1838,6 +1952,9 @@ class SignalStore:
         # Create filter presets table
         await self._create_filter_presets_table()
 
+        # Create memory_facts FTS5 table and triggers (ops layer v24)
+        await self._create_memory_facts_fts()
+
         logger.info(f"SignalStore initialized: {self.db_path}")
 
     async def close(self) -> None:
@@ -1975,6 +2092,58 @@ class SignalStore:
         """)
         await self._db.execute(
             "CREATE INDEX IF NOT EXISTS idx_presets_name ON filter_presets(name)"
+        )
+        await self._db.commit()
+
+    async def _create_memory_facts_fts(self) -> None:
+        """Create FTS5 virtual table and sync triggers for memory_facts (ops layer v24)."""
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        # Only create if memory_facts table exists (v24 migration applied)
+        cursor = await self._db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='memory_facts'"
+        )
+        if not await cursor.fetchone():
+            return
+
+        # FTS5 virtual table
+        await self._db.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS memory_facts_fts USING fts5(
+                content,
+                type UNINDEXED,
+                confidence UNINDEXED,
+                content='memory_facts',
+                content_rowid='id',
+                tokenize='porter unicode61'
+            )
+        """)
+
+        # Auto-sync triggers (idempotent via IF NOT EXISTS)
+        await self._db.execute("""
+            CREATE TRIGGER IF NOT EXISTS memory_facts_ai AFTER INSERT ON memory_facts BEGIN
+                INSERT INTO memory_facts_fts(rowid, content, type, confidence)
+                VALUES (new.id, new.content, new.type, new.confidence);
+            END
+        """)
+        await self._db.execute("""
+            CREATE TRIGGER IF NOT EXISTS memory_facts_ad AFTER DELETE ON memory_facts BEGIN
+                INSERT INTO memory_facts_fts(memory_facts_fts, rowid, content, type, confidence)
+                VALUES('delete', old.id, old.content, old.type, old.confidence);
+            END
+        """)
+        await self._db.execute("""
+            CREATE TRIGGER IF NOT EXISTS memory_facts_au AFTER UPDATE ON memory_facts BEGIN
+                INSERT INTO memory_facts_fts(memory_facts_fts, rowid, content, type, confidence)
+                VALUES('delete', old.id, old.content, old.type, old.confidence);
+                INSERT INTO memory_facts_fts(rowid, content, type, confidence)
+                VALUES (new.id, new.content, new.type, new.confidence);
+            END
+        """)
+
+        # Rebuild FTS index to sync with any existing data
+        await self._db.execute(
+            "INSERT INTO memory_facts_fts(memory_facts_fts) VALUES('rebuild')"
         )
         await self._db.commit()
 

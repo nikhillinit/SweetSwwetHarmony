@@ -1,0 +1,9 @@
+# Core LLM
+google-genai>=0.3.0
+
+# HTTP requests
+requests>=2.31.0
+
+# YouTube processing
+yt-dlp>=2024.4.9
+webvtt-py>=0.4.6
