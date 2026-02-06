@@ -22,6 +22,12 @@ from collectors.news_api import (
 # FIXTURES
 # =============================================================================
 
+@pytest.fixture(autouse=True)
+def _clear_gnews_env(monkeypatch):
+    """Ensure GNEWS_API_KEY is unset for all tests in this module."""
+    monkeypatch.delenv("GNEWS_API_KEY", raising=False)
+
+
 @pytest.fixture
 def collector():
     """Create a news API collector without API key (test mode)."""
