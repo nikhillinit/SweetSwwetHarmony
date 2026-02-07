@@ -44,6 +44,16 @@ class OpsMetricsSnapshot:
     # Audit
     audit_entries_24h: int
 
+    # Phase 9: LLM Thesis Classification Metrics
+    llm_calls_today: int = 0
+    llm_calls_last_hour: int = 0
+    llm_rate_limited_today: int = 0
+    llm_timeouts_today: int = 0
+    llm_errors_today: int = 0
+    llm_circuit_breaker_tripped: int = 0
+    thesis_disagreement_count: int = 0
+    thesis_disagreement_rate: float = 0.0
+
     def to_dict(self) -> dict:
         """Serialize to dict, converting Decimal to string."""
         d = asdict(self)
@@ -75,6 +85,9 @@ class OpsMetricsCollector:
             recent_incidents = self._get_recent_incidents_24h(conn)
             audit_24h = self._get_audit_entries_24h(conn)
 
+            # Phase 9: LLM metrics (query signals DB if available)
+            llm_metrics = self._get_llm_metrics()
+
         return OpsMetricsSnapshot(
             timestamp=datetime.now(timezone.utc).isoformat(),
             health_summary=health_summary,
@@ -91,6 +104,15 @@ class OpsMetricsCollector:
             open_incidents=open_incidents,
             recent_incidents_24h=recent_incidents,
             audit_entries_24h=audit_24h,
+            # Phase 9: LLM metrics
+            llm_calls_today=llm_metrics.get("calls_today", 0),
+            llm_calls_last_hour=llm_metrics.get("calls_last_hour", 0),
+            llm_rate_limited_today=llm_metrics.get("rate_limited_today", 0),
+            llm_timeouts_today=llm_metrics.get("timeouts_today", 0),
+            llm_errors_today=llm_metrics.get("errors_today", 0),
+            llm_circuit_breaker_tripped=llm_metrics.get("circuit_breaker_tripped", 0),
+            thesis_disagreement_count=llm_metrics.get("disagreement_count", 0),
+            thesis_disagreement_rate=llm_metrics.get("disagreement_rate", 0.0),
         )
 
     def get_daily_history(self, days: int = 7) -> list:
@@ -223,3 +245,141 @@ class OpsMetricsCollector:
             "SELECT COUNT(*) FROM audit_log WHERE timestamp >= datetime('now', '-24 hours')"
         ).fetchone()
         return row[0]
+
+    def _get_llm_metrics(self) -> dict:
+        """
+        Phase 9: Collect LLM thesis classification metrics from signals DB.
+
+        Returns dict with:
+        - calls_today: Total LLM calls today
+        - calls_last_hour: LLM calls in last hour
+        - rate_limited_today: Rate limit failures
+        - timeouts_today: Timeout failures
+        - errors_today: Other errors
+        - circuit_breaker_tripped: Circuit breaker trips
+        - disagreement_count: Keyword-LLM disagreements today
+        - disagreement_rate: % of classifications with disagreement
+        """
+        try:
+            import os
+            import sqlite3
+            from pathlib import Path
+
+            # Get signals DB path
+            signals_db = os.getenv("DISCOVERY_DB_PATH", "signals.db")
+            if not Path(signals_db).exists():
+                logger.warning(f"Signals DB not found: {signals_db}")
+                return {}
+
+            # Connect to signals DB (separate connection)
+            conn = sqlite3.connect(signals_db)
+            conn.row_factory = sqlite3.Row
+
+            # Check if thesis_classifications table exists
+            table_check = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='thesis_classifications'"
+            ).fetchone()
+
+            if not table_check:
+                conn.close()
+                return {}
+
+            # Calls today (where LLM actually ran)
+            calls_today = conn.execute(
+                """
+                SELECT COUNT(*) FROM thesis_classifications
+                WHERE thesis_fit_score IS NOT NULL
+                AND classified_at >= datetime('now', '-24 hours')
+                """
+            ).fetchone()[0]
+
+            # Calls last hour
+            calls_last_hour = conn.execute(
+                """
+                SELECT COUNT(*) FROM thesis_classifications
+                WHERE thesis_fit_score IS NOT NULL
+                AND classified_at >= datetime('now', '-1 hour')
+                """
+            ).fetchone()[0]
+
+            # Get error metrics from rationale field (heuristic)
+            rate_limited = conn.execute(
+                """
+                SELECT COUNT(*) FROM thesis_classifications
+                WHERE rationale LIKE '%rate limit%'
+                AND classified_at >= datetime('now', '-24 hours')
+                """
+            ).fetchone()[0]
+
+            timeouts = conn.execute(
+                """
+                SELECT COUNT(*) FROM thesis_classifications
+                WHERE rationale LIKE '%timeout%'
+                AND classified_at >= datetime('now', '-24 hours')
+                """
+            ).fetchone()[0]
+
+            errors = conn.execute(
+                """
+                SELECT COUNT(*) FROM thesis_classifications
+                WHERE rationale LIKE '%failed%' OR rationale LIKE '%error%'
+                AND classified_at >= datetime('now', '-24 hours')
+                """
+            ).fetchone()[0]
+
+            circuit_breaker = conn.execute(
+                """
+                SELECT COUNT(*) FROM thesis_classifications
+                WHERE rationale LIKE '%circuit breaker%'
+                AND classified_at >= datetime('now', '-24 hours')
+                """
+            ).fetchone()[0]
+
+            # Disagreements (need migration 26 for disagreement_detected column)
+            # For now, compute heuristically
+            disagreement_count = 0
+            disagreement_rate = 0.0
+
+            try:
+                # Check if disagreement_detected column exists (migration 26)
+                conn.execute("SELECT disagreement_detected FROM thesis_classifications LIMIT 1")
+
+                disagreement_count = conn.execute(
+                    """
+                    SELECT COUNT(*) FROM thesis_classifications
+                    WHERE disagreement_detected = 1
+                    AND classified_at >= datetime('now', '-24 hours')
+                    """
+                ).fetchone()[0]
+
+                total_with_llm = conn.execute(
+                    """
+                    SELECT COUNT(*) FROM thesis_classifications
+                    WHERE thesis_fit_score IS NOT NULL
+                    AND classified_at >= datetime('now', '-24 hours')
+                    """
+                ).fetchone()[0]
+
+                if total_with_llm > 0:
+                    disagreement_rate = round(disagreement_count / total_with_llm, 4)
+
+            except sqlite3.OperationalError:
+                # Column doesn't exist yet (migration 26 not run)
+                pass
+
+            conn.close()
+
+            return {
+                "calls_today": calls_today,
+                "calls_last_hour": calls_last_hour,
+                "rate_limited_today": rate_limited,
+                "timeouts_today": timeouts,
+                "errors_today": errors,
+                "circuit_breaker_tripped": circuit_breaker,
+                "disagreement_count": disagreement_count,
+                "disagreement_rate": disagreement_rate,
+            }
+
+        except Exception as e:
+            logger.error(f"Failed to collect LLM metrics: {e}")
+            return {}
