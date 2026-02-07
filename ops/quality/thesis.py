@@ -17,6 +17,7 @@ import sqlite3
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from utils.thesis_matcher import ThesisMatcher
@@ -121,6 +122,13 @@ def store_thesis_classification(
 
     classified_at = classified_at or utc_now_iso()
 
+    # Compute disagreement flag (Phase 9 Quality Ops)
+    disagreement_detected = 0
+    if keyword_score is not None and thesis_fit_score is not None:
+        if (keyword_score >= 0.7 and thesis_fit_score < 0.4) or \
+           (keyword_score < 0.4 and thesis_fit_score >= 0.7):
+            disagreement_detected = 1
+
     cur = conn.execute(
         """
         INSERT INTO thesis_classifications (
@@ -130,9 +138,10 @@ def store_thesis_classification(
             rationale, key_signals,
             prompt_version, model, input_tokens, output_tokens, latency_ms,
             competitor_flag, competitor_match,
+            disagreement_detected,
             classified_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             signal_id,
@@ -154,6 +163,7 @@ def store_thesis_classification(
             latency_ms,
             1 if competitor_flag else 0,
             json.dumps(competitor_match, ensure_ascii=False) if competitor_match else None,
+            disagreement_detected,
             classified_at,
         ),
     )
@@ -316,14 +326,17 @@ def generate_disagreement_report(
     """
     Compare keyword_score vs LLM thesis_match and output a markdown report.
 
+    Uses the disagreement_detected column (migration 26) for efficient filtering.
+
     Disagreements:
     - Keyword says match (>= threshold) but LLM says no -> keyword false positives
     - Keyword says no (< threshold) but LLM says yes -> keyword false negatives
     """
     since = _iso_days_ago(days)
 
-    rows = conn.execute(
-        f"""
+    # Query all classified signals
+    all_rows = conn.execute(
+        """
         WITH latest_tc AS (
             SELECT tc.*
             FROM thesis_classifications tc
@@ -343,7 +356,8 @@ def generate_disagreement_report(
             tc.thesis_match,
             tc.thesis_fit_score,
             tc.category AS thesis_category,
-            tc.confidence AS llm_confidence
+            tc.confidence AS llm_confidence,
+            COALESCE(tc.disagreement_detected, 0) AS disagreement_detected
         FROM signals s
         JOIN latest_tc tc ON tc.signal_id = s.id
         WHERE s.detected_at >= ?
@@ -352,16 +366,26 @@ def generate_disagreement_report(
         (since,),
     ).fetchall()
 
-    kw_fp: List[sqlite3.Row] = []
-    kw_fn: List[sqlite3.Row] = []
-    for r in rows:
+    # Filter for disagreements using the column
+    disagreement_rows = [r for r in all_rows if r["disagreement_detected"] == 1]
+
+    # Categorize disagreements
+    kw_fp: List[sqlite3.Row] = []  # keyword high, LLM low
+    kw_fn: List[sqlite3.Row] = []  # keyword low, LLM high
+
+    for r in disagreement_rows:
         kw = float(r["keyword_score"] or 0.0)
-        llm_match = bool(r["thesis_match"])
-        kw_match = kw >= keyword_threshold
-        if kw_match and not llm_match:
+        llm_fit = float(r["thesis_fit_score"] or 0.0)
+
+        if kw >= 0.7 and llm_fit < 0.4:
             kw_fp.append(r)
-        elif (not kw_match) and llm_match:
+        elif kw < 0.4 and llm_fit >= 0.7:
             kw_fn.append(r)
+
+    # Compute statistics by category
+    from collections import Counter
+    kw_fp_by_category = Counter(r["keyword_category"] for r in kw_fp if r["keyword_category"])
+    kw_fn_by_category = Counter(r["thesis_category"] for r in kw_fn if r["thesis_category"])
 
     def _fmt_row(r: sqlite3.Row) -> str:
         return (
@@ -373,23 +397,58 @@ def generate_disagreement_report(
             f"company='{(r['company_name'] or '')[:80]}'"
         )
 
+    # Build report
+    total_classified = len(all_rows)
+    total_disagreements = len(disagreement_rows)
+    disagreement_rate = (total_disagreements / total_classified * 100) if total_classified > 0 else 0.0
+
     md = []
     md.append(f"# Thesis Disagreement Report (last {days} days)")
     md.append("")
-    md.append(f"- keyword_threshold: {keyword_threshold}")
-    md.append(f"- total_classified: {len(rows)}")
-    md.append(f"- keyword_false_positives: {len(kw_fp)}")
-    md.append(f"- keyword_false_negatives: {len(kw_fn)}")
+    md.append("## Summary")
     md.append("")
-    md.append("## Keyword false positives (keyword>=threshold, LLM says no)")
+    md.append(f"- **Total classified**: {total_classified}")
+    md.append(f"- **Total disagreements**: {total_disagreements} ({disagreement_rate:.1f}%)")
+    md.append(f"- **Keyword false positives**: {len(kw_fp)} (keyword says yes, LLM says no)")
+    md.append(f"- **Keyword false negatives**: {len(kw_fn)} (keyword says no, LLM says yes)")
     md.append("")
-    for r in kw_fp[:200]:
-        md.append(_fmt_row(r))
+
+    # False positives by category
+    if kw_fp_by_category:
+        md.append("### False Positives by Keyword Category")
+        md.append("")
+        for cat, count in kw_fp_by_category.most_common():
+            pct = (count / len(kw_fp) * 100) if kw_fp else 0
+            md.append(f"- {cat}: {count} ({pct:.1f}%)")
+        md.append("")
+
+    # False negatives by LLM category
+    if kw_fn_by_category:
+        md.append("### False Negatives by LLM Category")
+        md.append("")
+        for cat, count in kw_fn_by_category.most_common():
+            pct = (count / len(kw_fn) * 100) if kw_fn else 0
+            md.append(f"- {cat}: {count} ({pct:.1f}%)")
+        md.append("")
+
+    md.append("## Details")
     md.append("")
-    md.append("## Keyword false negatives (keyword<threshold, LLM says yes)")
+    md.append("### Keyword False Positives (keyword >= 0.7, LLM < 0.4)")
     md.append("")
-    for r in kw_fn[:200]:
-        md.append(_fmt_row(r))
+    if kw_fp:
+        for r in kw_fp[:200]:
+            md.append(_fmt_row(r))
+    else:
+        md.append("*(none)*")
+
+    md.append("")
+    md.append("### Keyword False Negatives (keyword < 0.4, LLM >= 0.7)")
+    md.append("")
+    if kw_fn:
+        for r in kw_fn[:200]:
+            md.append(_fmt_row(r))
+    else:
+        md.append("*(none)*")
 
     report = "\n".join(md) + "\n"
     if out_path:

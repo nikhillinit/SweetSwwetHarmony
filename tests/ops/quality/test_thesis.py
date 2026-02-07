@@ -189,7 +189,7 @@ class TestGenerateDisagreementReport:
 
         assert isinstance(report, str)
         assert "Thesis Disagreement Report" in report
-        assert "total_classified: 0" in report
+        assert "**Total classified**: 0" in report
 
         conn.close()
 
@@ -212,11 +212,11 @@ class TestGenerateDisagreementReport:
             conn,
             signal_id=sid_kw_fp,
             canonical_key="domain:kwfp.com",
-            keyword_score=0.65,  # above threshold
+            keyword_score=0.85,  # High keyword score (>= 0.7)
             keyword_category="consumer_cpg",
             negative_keywords=[],
             thesis_match=False,  # LLM says no
-            thesis_fit_score=0.15,
+            thesis_fit_score=0.15,  # Low LLM score (< 0.4)
             category="none",
             stage_estimate="Unknown",
             confidence="low",
@@ -265,11 +265,12 @@ class TestGenerateDisagreementReport:
             conn, days=30, keyword_threshold=0.40
         )
 
-        assert "keyword_false_positives: 1" in report
-        assert "keyword_false_negatives: 1" in report
-        assert "Keyword false positives" in report
-        assert "Keyword false negatives" in report
-        assert "total_classified: 2" in report
+        assert "**Keyword false positives**: 1" in report
+        assert "**Keyword false negatives**: 1" in report
+        assert "Keyword False Positives" in report
+        assert "Keyword False Negatives" in report
+        assert "**Total classified**: 2" in report
+        assert "**Total disagreements**: 2" in report  # Both are disagreements
 
         conn.close()
 
