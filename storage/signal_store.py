@@ -65,7 +65,7 @@ logger = logging.getLogger(__name__)
 # SCHEMA VERSION
 # =============================================================================
 
-CURRENT_SCHEMA_VERSION = 25
+CURRENT_SCHEMA_VERSION = 26
 
 # SQL for creating tables (migrations applied in order)
 MIGRATIONS = {
@@ -1692,6 +1692,13 @@ MIGRATIONS = {
     CREATE INDEX IF NOT EXISTS idx_citations_fact_signal ON fact_citations(fact_id, signal_id, cited_at DESC);
     """,
     25: QUALITY_TABLES_DDL,
+    26: """
+    -- Add disagreement_detected flag to thesis_classifications
+    -- Tracks when keyword and LLM classifiers disagree on thesis fit
+    -- Logic: disagreement = (keyword_score >= 0.7 AND thesis_fit_score < 0.4)
+    --                    OR (keyword_score < 0.4 AND thesis_fit_score >= 0.7)
+    ALTER TABLE thesis_classifications ADD COLUMN disagreement_detected BOOLEAN DEFAULT 0;
+    """,
 }
 
 
@@ -4101,6 +4108,14 @@ class SignalStore:
 
         now = datetime.now(timezone.utc).isoformat()
 
+        # Compute disagreement flag (Phase 9 Quality Ops)
+        # Disagreement = (keyword says yes, LLM says no) OR (keyword says no, LLM says yes)
+        disagreement_detected = 0
+        if keyword_score is not None and thesis_fit_score is not None:
+            if (keyword_score >= 0.7 and thesis_fit_score < 0.4) or \
+               (keyword_score < 0.4 and thesis_fit_score >= 0.7):
+                disagreement_detected = 1
+
         async with self.transaction() as conn:
             cursor = await conn.execute(
                 """
@@ -4112,8 +4127,9 @@ class SignalStore:
                     prompt_version, model, input_tokens, output_tokens, latency_ms,
                     competitor_flag, competitor_match,
                     cot_enabled, reasoning_trace,
+                    disagreement_detected,
                     classified_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     signal_id,
@@ -4137,6 +4153,7 @@ class SignalStore:
                     json.dumps(competitor_match) if competitor_match else None,
                     1 if cot_enabled else 0,
                     json.dumps(reasoning_trace) if reasoning_trace else None,
+                    disagreement_detected,
                     now,
                 ),
             )
@@ -4166,6 +4183,7 @@ class SignalStore:
                    stage_estimate, confidence, rationale, key_signals,
                    prompt_version, model, input_tokens, output_tokens, latency_ms,
                    competitor_flag, competitor_match,
+                   disagreement_detected,
                    classified_at
             FROM thesis_classifications
             WHERE canonical_key = ?
@@ -4199,7 +4217,8 @@ class SignalStore:
             "latency_ms": row[16],
             "competitor_flag": bool(row[17]),
             "competitor_match": json.loads(row[18]) if row[18] else None,
-            "classified_at": row[19],
+            "disagreement_detected": bool(row[19]),
+            "classified_at": row[20],
         }
 
     async def get_recent_classification(
