@@ -90,4 +90,40 @@ CREATE INDEX IF NOT EXISTS idx_signal_quality_labeled_at
 
 CREATE INDEX IF NOT EXISTS idx_signal_quality_key
     ON signal_quality_metrics(canonical_key);
+
+-- 4) thesis_ml_predictions
+-- ML model shadow/live predictions for offline analysis and shadow→live promotion.
+-- One row per signal per thesis evaluation.
+-- Includes gating_reason for observability (Review 3 requirement).
+CREATE TABLE IF NOT EXISTS thesis_ml_predictions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    signal_id INTEGER,
+    canonical_key TEXT NOT NULL,
+    keyword_score REAL,               -- ThesisMatcher keyword score
+    ml_score REAL,                    -- ML model probability
+    ml_would_rescue INTEGER,          -- 0 or 1
+    ml_rescued_score REAL,            -- What score would be if rescued
+    ml_enablement TEXT NOT NULL,      -- 'shadow' or 'live'
+    gating_reason TEXT,               -- e.g., 'rescued', 'keyword_sufficient', 'ml_not_confident'
+    model_id TEXT,                    -- SHA-256 hash (first 16 chars) of model file
+    model_version TEXT,               -- MLThesisModel.__version__
+    created_at TEXT NOT NULL,         -- ISO 8601 (UTC)
+    FOREIGN KEY(signal_id) REFERENCES signals(id) ON DELETE SET NULL
+);
+
+-- Index for analysis script joins
+CREATE INDEX IF NOT EXISTS idx_ml_predictions_signal
+    ON thesis_ml_predictions(signal_id);
+
+-- Index for time-range queries and retention
+CREATE INDEX IF NOT EXISTS idx_ml_predictions_created
+    ON thesis_ml_predictions(created_at DESC);
+
+-- Index for model version analysis
+CREATE INDEX IF NOT EXISTS idx_ml_predictions_model
+    ON thesis_ml_predictions(model_id);
+
+-- Index for rescue rate computation
+CREATE INDEX IF NOT EXISTS idx_ml_predictions_enablement_rescue
+    ON thesis_ml_predictions(ml_enablement, ml_would_rescue);
 """
