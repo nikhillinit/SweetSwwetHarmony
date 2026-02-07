@@ -50,6 +50,15 @@ python -m ops.cli quality stats --db signals.db --days 30
 python -m ops.cli quality label 123 FP --reason "B2B SaaS"
 python -m ops.cli quality find-patterns --days 30 --out patterns.json
 python -m ops.cli quality export --days 90 --format csv --out dataset.csv
+
+# Quality ops with LLM classification
+LLM_THESIS_MODE=active python run_pipeline.py full --collectors github
+LLM_THESIS_MODE=shadow python run_pipeline.py process
+
+# Quality scheduler management
+python -m ops.cli schedule create quality-sync --cron "0 */6 * * *"
+python -m ops.cli schedule create quality-classify --cron "0 2 * * *"
+python -m ops.cli schedule create quality-patterns --cron "0 3 * * 0"
 ```
 
 ## Reference Docs
