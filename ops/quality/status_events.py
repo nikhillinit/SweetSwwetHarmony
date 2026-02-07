@@ -167,7 +167,7 @@ def sync_status_events(db_path: str) -> int:
 
     try:
         # Ensure quality tables exist
-        from ops.quality.schema import ensure_quality_tables
+        from ops.quality.db import ensure_quality_tables
         ensure_quality_tables(conn)
 
         # Run async sync
