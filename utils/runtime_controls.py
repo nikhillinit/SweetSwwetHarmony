@@ -1,12 +1,13 @@
 """
-Runtime Controls for Negative Keyword Policy v2.
+Runtime Controls for Negative Keyword Policy v2 and ML Thesis Model.
 
 Centralized parsing and normalization of environment variables and kwargs
-for v2 policy enablement. Handles:
+for v2 policy enablement and ML model integration. Handles:
 - Normalization: empty/whitespace → unset, case normalization
 - Membership validation: loader_mode, enablement values
 - Invariant enforcement: shadow/live → strict, live → execution enabled
 - Legacy mapping: enable_v2_policy → v2_enablement
+- ML model enablement: disabled/shadow/live with model path
 
 Bug hazards addressed:
 - #4: env var casing/whitespace/empty string pitfalls
@@ -20,6 +21,13 @@ Usage:
     )
     print(controls.v2_enablement)  # "shadow"
     print(controls.policy_loader_mode)  # "strict" (derived)
+
+    # ML model controls
+    controls = RuntimeControls.from_env(
+        ml_enablement="shadow",
+        ml_model_path="models/thesis_classifier.joblib",
+    )
+    print(controls.ml_enablement)  # "shadow"
 """
 
 from __future__ import annotations
@@ -34,6 +42,7 @@ logger = logging.getLogger(__name__)
 # Valid membership values
 VALID_LOADER_MODES = frozenset({"permissive", "strict"})
 VALID_ENABLEMENTS = frozenset({"disabled", "shadow", "live"})
+VALID_ML_ENABLEMENTS = frozenset({"disabled", "shadow", "live"})
 
 # Boolean parsing values
 TRUTHY_VALUES = frozenset({"true", "1", "yes", "on"})
@@ -108,12 +117,14 @@ def _parse_bool_env(
 
 @dataclass
 class RuntimeControls:
-    """Runtime controls for v2 policy behavior.
+    """Runtime controls for v2 policy behavior and ML model integration.
 
     Fields:
         policy_loader_mode: "permissive" or "strict"
         v2_enablement: "disabled", "shadow", or "live"
         v2_execution_enabled: Whether v2 scoring is active
+        ml_enablement: "disabled", "shadow", or "live" (ML thesis model)
+        ml_model_path: Path to trained ML model file (joblib)
 
     Invariants (enforced at construction):
         - enablement in {shadow, live} → loader_mode must be "strict"
@@ -123,6 +134,8 @@ class RuntimeControls:
     policy_loader_mode: str
     v2_enablement: str
     v2_execution_enabled: bool
+    ml_enablement: str = "disabled"
+    ml_model_path: Optional[str] = None
 
     def __post_init__(self):
         """Validate membership after initialization."""
@@ -137,6 +150,11 @@ class RuntimeControls:
                 f"Invalid v2_enablement: '{self.v2_enablement}'. "
                 f"Must be one of: {sorted(VALID_ENABLEMENTS)}"
             )
+        if self.ml_enablement not in VALID_ML_ENABLEMENTS:
+            raise ValueError(
+                f"Invalid ml_enablement: '{self.ml_enablement}'. "
+                f"Must be one of: {sorted(VALID_ML_ENABLEMENTS)}"
+            )
 
     @classmethod
     def from_env(
@@ -146,6 +164,8 @@ class RuntimeControls:
         policy_loader_mode: Optional[str] = None,
         v2_execution_enabled: Optional[bool] = None,
         enable_v2_policy: Optional[bool] = None,
+        ml_enablement: Optional[str] = None,
+        ml_model_path: Optional[str] = None,
     ) -> "RuntimeControls":
         """Create RuntimeControls from kwargs and environment variables.
 
@@ -154,6 +174,11 @@ class RuntimeControls:
         2. Legacy kwarg (enable_v2_policy) - only if modern not provided
         3. Environment variables (V2_ENABLEMENT, POLICY_LOADER_MODE, V2_EXECUTION_ENABLED)
         4. Defaults (disabled, permissive/strict derived, derived from enablement)
+
+        ML controls:
+        1. Explicit kwargs (ml_enablement, ml_model_path)
+        2. Environment variables (ML_ENABLEMENT, ML_MODEL_PATH)
+        3. Defaults (disabled, None)
 
         Legacy mapping:
         - enable_v2_policy=True → v2_enablement="shadow"
@@ -191,18 +216,27 @@ class RuntimeControls:
             execution_enabled=resolved_execution,
         )
 
+        # Step 5: Resolve ML controls
+        resolved_ml_enablement = cls._resolve_ml_enablement(ml_enablement)
+        resolved_ml_model_path = cls._resolve_ml_model_path(ml_model_path)
+
         # Log resolved values at DEBUG level
         logger.debug(
-            "RuntimeControls resolved: enablement=%s, loader_mode=%s, execution=%s",
+            "RuntimeControls resolved: enablement=%s, loader_mode=%s, execution=%s, "
+            "ml_enablement=%s, ml_model_path=%s",
             resolved_enablement,
             resolved_loader_mode,
             resolved_execution,
+            resolved_ml_enablement,
+            resolved_ml_model_path,
         )
 
         return cls(
             policy_loader_mode=resolved_loader_mode,
             v2_enablement=resolved_enablement,
             v2_execution_enabled=resolved_execution,
+            ml_enablement=resolved_ml_enablement,
+            ml_model_path=resolved_ml_model_path,
         )
 
     @classmethod
@@ -365,6 +399,78 @@ class RuntimeControls:
             corrected_execution = True
 
         return corrected_loader_mode, corrected_execution
+
+    @classmethod
+    def _resolve_ml_enablement(cls, ml_enablement: Optional[str]) -> str:
+        """Resolve ml_enablement from args and env.
+
+        Precedence:
+        1. Explicit ml_enablement kwarg
+        2. Env ML_ENABLEMENT
+        3. Default "disabled"
+        """
+        # 1. Explicit kwarg
+        if ml_enablement is not None:
+            normalized = _normalize_string(ml_enablement)
+            if normalized is None:
+                pass  # Empty → fall through
+            elif normalized not in VALID_ML_ENABLEMENTS:
+                raise ValueError(
+                    f"Invalid ml_enablement: '{ml_enablement}'. "
+                    f"Must be one of: {sorted(VALID_ML_ENABLEMENTS)}"
+                )
+            else:
+                return normalized
+
+        # 2. Environment variable
+        env_value = os.environ.get("ML_ENABLEMENT")
+        normalized_env = _normalize_string(env_value)
+        if normalized_env is not None:
+            if normalized_env not in VALID_ML_ENABLEMENTS:
+                logger.warning(
+                    "Invalid ML_ENABLEMENT env value: '%s'. "
+                    "Expected one of: %s. Using default 'disabled'.",
+                    env_value,
+                    sorted(VALID_ML_ENABLEMENTS),
+                )
+            else:
+                return normalized_env
+
+        # 3. Default
+        return "disabled"
+
+    @classmethod
+    def _resolve_ml_model_path(cls, ml_model_path: Optional[str]) -> Optional[str]:
+        """Resolve ml_model_path from args and env.
+
+        Precedence:
+        1. Explicit ml_model_path kwarg
+        2. Env ML_MODEL_PATH
+        3. Default None (model loader will use default path)
+        """
+        if ml_model_path is not None:
+            return ml_model_path
+
+        env_value = os.environ.get("ML_MODEL_PATH")
+        if env_value and env_value.strip():
+            return env_value.strip()
+
+        return None
+
+    @property
+    def is_ml_active(self) -> bool:
+        """Check if ML model is active (not disabled)."""
+        return self.ml_enablement != "disabled"
+
+    @property
+    def is_ml_shadow(self) -> bool:
+        """Check if ML is in shadow mode."""
+        return self.ml_enablement == "shadow"
+
+    @property
+    def is_ml_live(self) -> bool:
+        """Check if ML is in live mode."""
+        return self.ml_enablement == "live"
 
     @property
     def is_v2_active(self) -> bool:
