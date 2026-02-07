@@ -1560,10 +1560,15 @@ class DiscoveryPipeline:
             try:
                 # Join descriptions list into single string for thesis matching
                 description = " ".join(consolidated.descriptions) if consolidated.descriptions else ""
+
+                # Check LLM mode (off/shadow/active)
+                llm_mode = os.getenv("LLM_THESIS_MODE", "off").lower()
+                skip_llm = (llm_mode == "off")  # Shadow and active both call LLM
+
                 thesis_result = await self._thesis_filter.classify(
                     description,
                     company_name=consolidated.company_name,
-                    skip_llm=True,  # Use keyword-only for now
+                    skip_llm=skip_llm,
                 )
                 thesis_routing = thesis_result.routing
 
