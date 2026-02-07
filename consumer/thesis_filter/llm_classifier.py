@@ -20,8 +20,12 @@ import logging
 import os
 import re
 import time
+from collections import deque
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
+
+from utils.circuit_breaker import CircuitBreaker, CircuitOpenError
 
 logger = logging.getLogger(__name__)
 
@@ -88,6 +92,80 @@ Provide your reasoning for each step, then give your final classification."""
 
 
 # =============================================================================
+# RATE LIMITER
+# =============================================================================
+
+class RateLimiter:
+    """
+    Token bucket rate limiter for Gemini API calls.
+
+    Gemini AI Studio free tier limits:
+    - 1500 requests per day
+    - 15 requests per minute
+
+    Usage:
+        limiter = RateLimiter(rpm=15, rpd=1500)
+        await limiter.acquire()  # Blocks until a token is available
+    """
+
+    def __init__(self, rpm: int = 15, rpd: int = 1500):
+        """
+        Initialize rate limiter.
+
+        Args:
+            rpm: Requests per minute
+            rpd: Requests per day
+        """
+        self.rpm = rpm
+        self.rpd = rpd
+        self._minute_calls: deque = deque()  # Timestamps of calls in last minute
+        self._day_calls: deque = deque()  # Timestamps of calls in last day
+
+    async def acquire(self) -> None:
+        """
+        Acquire a rate limit token, blocking if necessary.
+
+        Raises:
+            RuntimeError: If daily quota is exhausted
+        """
+        now = datetime.now(timezone.utc)
+        minute_ago = now - timedelta(minutes=1)
+        day_ago = now - timedelta(days=1)
+
+        # Clean old entries
+        while self._minute_calls and self._minute_calls[0] < minute_ago:
+            self._minute_calls.popleft()
+        while self._day_calls and self._day_calls[0] < day_ago:
+            self._day_calls.popleft()
+
+        # Check daily quota first (hard limit)
+        if len(self._day_calls) >= self.rpd:
+            raise RuntimeError(f"Daily quota exhausted ({self.rpd} requests)")
+
+        # Check minute rate (soft limit - sleep if needed)
+        if len(self._minute_calls) >= self.rpm:
+            sleep_until = self._minute_calls[0] + timedelta(minutes=1)
+            sleep_seconds = (sleep_until - now).total_seconds()
+            if sleep_seconds > 0:
+                logger.warning(f"Rate limit: sleeping {sleep_seconds:.1f}s")
+                await self._sleep(sleep_seconds)
+
+        # Record this call
+        self._minute_calls.append(now)
+        self._day_calls.append(now)
+
+    async def _sleep(self, seconds: float) -> None:
+        """Async sleep helper."""
+        import asyncio
+        await asyncio.sleep(seconds)
+
+    def reset(self) -> None:
+        """Reset rate limiter state (for testing)."""
+        self._minute_calls.clear()
+        self._day_calls.clear()
+
+
+# =============================================================================
 # DATA CLASSES
 # =============================================================================
 
@@ -143,6 +221,8 @@ class LLMClassifier:
         temperature: float = 0.2,
         max_tokens: int = 400,
         cot_enabled: Optional[bool] = None,
+        rate_limiter: Optional[RateLimiter] = None,
+        circuit_breaker: Optional[CircuitBreaker] = None,
     ):
         """
         Initialize Gemini classifier.
@@ -153,6 +233,8 @@ class LLMClassifier:
             temperature: Sampling temperature (lower = more deterministic)
             max_tokens: Max response tokens
             cot_enabled: Enable chain-of-thought reasoning (default: from ENABLE_COT_REASONING env)
+            rate_limiter: Rate limiter (defaults to 15 RPM, 1500 RPD)
+            circuit_breaker: Circuit breaker (defaults to 5 failures, 600s timeout)
         """
         self.model_name = model
         self.api_key = api_key or os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
@@ -164,6 +246,14 @@ class LLMClassifier:
             self.cot_enabled = os.environ.get("ENABLE_COT_REASONING", "").lower() in ("true", "1", "yes")
         else:
             self.cot_enabled = cot_enabled
+
+        # Phase 9: Rate limiting + circuit breaker
+        self._rate_limiter = rate_limiter or RateLimiter(rpm=15, rpd=1500)
+        self._circuit_breaker = circuit_breaker or CircuitBreaker(
+            name="gemini_llm",
+            failure_threshold=5,
+            recovery_timeout=600  # 10 minutes
+        )
 
     @property
     def client(self):
@@ -193,6 +283,40 @@ class LLMClassifier:
         Returns:
             ThesisClassification result
         """
+        # Phase 9: Check circuit breaker
+        if self._circuit_breaker.state == "open":
+            logger.warning("LLM circuit breaker OPEN, skipping classification")
+            return ThesisClassification(
+                thesis_match=False,
+                thesis_fit_score=0.0,
+                category="excluded",
+                stage_estimate="unknown",
+                confidence="low",
+                company_name=None,
+                rationale="Circuit breaker OPEN (Gemini unavailable)",
+                key_signals=[],
+                prompt_version=CLASSIFIER_PROMPT_VERSION,
+                model=self.model_name,
+            )
+
+        # Phase 9: Rate limiting
+        try:
+            await self._rate_limiter.acquire()
+        except RuntimeError as e:
+            logger.error(f"Rate limit exceeded: {e}")
+            return ThesisClassification(
+                thesis_match=False,
+                thesis_fit_score=0.0,
+                category="excluded",
+                stage_estimate="unknown",
+                confidence="low",
+                company_name=None,
+                rationale=f"Rate limit exceeded: {str(e)}",
+                key_signals=[],
+                prompt_version=CLASSIFIER_PROMPT_VERSION,
+                model=self.model_name,
+            )
+
         # Build user prompt
         title = signal_data.get("title", "N/A")
         url = signal_data.get("url", "N/A")
@@ -229,22 +353,30 @@ Context: {context if context else 'N/A'}
 
 Respond with JSON classification only."""
 
-        # Call Gemini API
+        # Call Gemini API through circuit breaker
         start_time = time.time()
 
         try:
-            from google.genai import types
-
-            response = self.client.models.generate_content(
-                model=self.model_name,
-                contents=user_prompt,
-                config=types.GenerateContentConfig(
-                    temperature=self.temperature,
-                    max_output_tokens=self.max_tokens,
-                    response_mime_type="application/json",
-                ),
+            # Phase 9: Wrap API call in circuit breaker
+            response = await self._circuit_breaker.call(
+                self._call_gemini_api,
+                user_prompt
             )
             response_text = response.text
+        except CircuitOpenError as e:
+            logger.warning(f"Circuit breaker rejected call: {e}")
+            return ThesisClassification(
+                thesis_match=False,
+                thesis_fit_score=0.0,
+                category="excluded",
+                stage_estimate="unknown",
+                confidence="low",
+                company_name=None,
+                rationale=f"Circuit breaker OPEN: {str(e)}",
+                key_signals=[],
+                prompt_version=CLASSIFIER_PROMPT_VERSION,
+                model=self.model_name,
+            )
         except Exception as e:
             logger.error(f"Gemini API error: {e}")
             return ThesisClassification(
@@ -347,6 +479,24 @@ Respond with JSON classification only."""
         else:
             return asyncio.run(self.classify(signal_data))
 
+    async def _call_gemini_api(self, user_prompt: str):
+        """
+        Internal helper to call Gemini API.
+
+        Separated for circuit breaker wrapping.
+        """
+        from google.genai import types
+
+        return self.client.models.generate_content(
+            model=self.model_name,
+            contents=user_prompt,
+            config=types.GenerateContentConfig(
+                temperature=self.temperature,
+                max_output_tokens=self.max_tokens,
+                response_mime_type="application/json",
+            ),
+        )
+
     def estimate_cost(self, signal_count: int) -> float:
         """
         Estimate cost for classifying N signals.
@@ -357,6 +507,11 @@ Respond with JSON classification only."""
             0.0 (free tier)
         """
         return 0.0  # FREE on Google AI Studio
+
+    @property
+    def circuit_breaker_stats(self) -> dict:
+        """Get circuit breaker statistics."""
+        return self._circuit_breaker.stats()
 
 
 # =============================================================================

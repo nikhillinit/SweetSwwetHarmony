@@ -264,3 +264,30 @@ def detect_patterns(conn: sqlite3.Connection, *, config: PatternConfig) -> List[
             )
 
     return patterns
+
+
+def detect_patterns_wrapper(db_path: str, *, days: int = 30) -> List[Dict[str, Any]]:
+    """
+    Scheduler-friendly wrapper for detect_patterns.
+
+    Args:
+        db_path: Path to signals database
+        days: Number of days to analyze
+
+    Returns:
+        List of detected patterns
+    """
+    import sqlite3
+
+    conn = sqlite3.Connect(db_path)
+    conn.row_factory = sqlite3.Row
+
+    try:
+        # Ensure quality tables exist
+        from ops.quality.schema import ensure_quality_tables
+        ensure_quality_tables(conn)
+
+        config = PatternConfig(days=days)
+        return detect_patterns(conn, config=config)
+    finally:
+        conn.close()

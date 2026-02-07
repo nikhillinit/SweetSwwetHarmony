@@ -1260,6 +1260,92 @@ def schedule_delete_cmd(args):
     print(f"Schedule {args.schedule_id} deleted")
 
 
+def schedule_add_quality_sync_cmd(args):
+    """Create quality-sync schedule (sync Notion status events every 6 hours)."""
+    storage = get_storage(args)
+    from ops.scheduler import PipelineScheduler, ScheduleConfig
+
+    scheduler = PipelineScheduler(storage)
+
+    config = ScheduleConfig(
+        name="quality-sync-notion-status",
+        cron_expression="0 */6 * * *",  # Every 6 hours
+        collectors=[],
+        mode="quality-sync",
+        enabled=not args.disabled,
+    )
+
+    try:
+        sid = scheduler.create_schedule(config)
+    except Exception as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+
+    print(f"✅ Quality sync schedule created: id={sid}")
+    print(f"   Name: {config.name}")
+    print(f"   Cron: {config.cron_expression} (every 6 hours)")
+    print(f"   Mode: {config.mode}")
+    print(f"   Enabled: {config.enabled}")
+
+
+def schedule_add_quality_classify_cmd(args):
+    """Create quality-classify schedule (batch classify signals daily at 2am UTC)."""
+    storage = get_storage(args)
+    from ops.scheduler import PipelineScheduler, ScheduleConfig
+
+    scheduler = PipelineScheduler(storage)
+
+    config = ScheduleConfig(
+        name="quality-thesis-classify-batch",
+        cron_expression="0 2 * * *",  # Daily at 2am UTC
+        collectors=[],
+        mode="quality-classify",
+        enabled=not args.disabled,
+    )
+
+    try:
+        sid = scheduler.create_schedule(config)
+    except Exception as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+
+    print(f"✅ Quality classify schedule created: id={sid}")
+    print(f"   Name: {config.name}")
+    print(f"   Cron: {config.cron_expression} (daily at 2am UTC)")
+    print(f"   Mode: {config.mode}")
+    print(f"   Enabled: {config.enabled}")
+    print(f"   Note: Requires LLM_THESIS_MODE=shadow or active")
+
+
+def schedule_add_quality_patterns_cmd(args):
+    """Create quality-patterns schedule (detect FP patterns weekly on Sundays at 3am UTC)."""
+    storage = get_storage(args)
+    from ops.scheduler import PipelineScheduler, ScheduleConfig
+
+    scheduler = PipelineScheduler(storage)
+
+    config = ScheduleConfig(
+        name="quality-find-patterns",
+        cron_expression="0 3 * * 0",  # Sundays at 3am UTC
+        collectors=[],
+        mode="quality-patterns",
+        enabled=not args.disabled,
+    )
+
+    try:
+        sid = scheduler.create_schedule(config)
+    except Exception as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+
+    print(f"✅ Quality patterns schedule created: id={sid}")
+    print(f"   Name: {config.name}")
+    print(f"   Cron: {config.cron_expression} (Sundays at 3am UTC)")
+    print(f"   Mode: {config.mode}")
+    print(f"   Enabled: {config.enabled}")
+    print(f"   Note: Pattern results stored in ops DB (pattern_runs table)")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Ops CLI - Internal Team Tool",
@@ -1444,7 +1530,7 @@ Tip:
     sched_add_p.add_argument("name", help="Schedule name (unique)")
     sched_add_p.add_argument("cron_expression", help="Cron expression (e.g. '0 2 * * *')")
     sched_add_p.add_argument("--collectors", default="", help="Comma-separated collector names")
-    sched_add_p.add_argument("--mode", choices=["full", "collect", "process"], default="full", help="Pipeline mode")
+    sched_add_p.add_argument("--mode", choices=["full", "collect", "process", "quality-sync", "quality-classify", "quality-patterns"], default="full", help="Pipeline mode")
     sched_add_p.add_argument("--dry-run", action="store_true", help="Enable dry-run mode")
     sched_add_p.set_defaults(func=schedule_add_cmd)
 
@@ -1475,6 +1561,19 @@ Tip:
     sched_delete_p = schedule_sub.add_parser("delete", help="Delete a schedule")
     sched_delete_p.add_argument("schedule_id", type=int, help="Schedule ID")
     sched_delete_p.set_defaults(func=schedule_delete_cmd)
+
+    # Quality schedule convenience commands
+    sched_add_qsync_p = schedule_sub.add_parser("add-quality-sync", help="Create quality-sync schedule (every 6h)")
+    sched_add_qsync_p.add_argument("--disabled", action="store_true", help="Create in disabled state")
+    sched_add_qsync_p.set_defaults(func=schedule_add_quality_sync_cmd)
+
+    sched_add_qclass_p = schedule_sub.add_parser("add-quality-classify", help="Create quality-classify schedule (daily 2am)")
+    sched_add_qclass_p.add_argument("--disabled", action="store_true", help="Create in disabled state")
+    sched_add_qclass_p.set_defaults(func=schedule_add_quality_classify_cmd)
+
+    sched_add_qpatt_p = schedule_sub.add_parser("add-quality-patterns", help="Create quality-patterns schedule (weekly Sun 3am)")
+    sched_add_qpatt_p.add_argument("--disabled", action="store_true", help="Create in disabled state")
+    sched_add_qpatt_p.set_defaults(func=schedule_add_quality_patterns_cmd)
 
     # ── quality ops commands ────────────────────────────────────────
     try:

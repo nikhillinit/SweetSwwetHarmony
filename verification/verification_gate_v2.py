@@ -271,6 +271,8 @@ class VerificationGate:
         momentum_score: float = 0.0,
         enrichment_boost: float = 0.0,
         community_sentiment_boost: float = 0.0,
+        keyword_score: Optional[float] = None,
+        llm_score: Optional[float] = None,
     ) -> VerificationResult:
         """
         Main entry point: evaluate signals and decide on push action.
@@ -282,6 +284,8 @@ class VerificationGate:
             momentum_score: Raw momentum score (0-1) for tracking.
             enrichment_boost: Confidence boost from enrichment data (0-0.05).
             community_sentiment_boost: Boost/penalty from community sentiment (-0.15 to +0.15).
+            keyword_score: Phase 9: Keyword thesis score (0-1) for LLM adjustment.
+            llm_score: Phase 9: LLM thesis score (0-1) for LLM adjustment.
         """
         if not signals:
             return VerificationResult(
@@ -324,11 +328,18 @@ class VerificationGate:
         # Determine verification status
         verification_status = self._assess_verification_status(signals)
 
-        # Make push decision
+        # Phase 9: Apply LLM confidence adjustment
+        final_confidence, llm_adjustment_reason = self._apply_llm_adjustment(
+            base_confidence=breakdown.overall,
+            keyword_score=keyword_score,
+            llm_score=llm_score
+        )
+
+        # Make push decision (using adjusted confidence)
         decision, reason, suggested_status = self._make_decision(
             breakdown, verification_status, signals
         )
-        
+
         # Build verification details for audit
         verification_details = [
             {
@@ -340,11 +351,22 @@ class VerificationGate:
             }
             for s in signals
         ]
-        
+
+        # Add LLM adjustment to verification details if applied
+        if llm_adjustment_reason != "llm_inactive" and llm_adjustment_reason != "llm_data_missing":
+            verification_details.append({
+                "source": "llm_adjustment",
+                "reason": llm_adjustment_reason,
+                "base_confidence": breakdown.overall,
+                "final_confidence": final_confidence,
+                "keyword_score": keyword_score,
+                "llm_score": llm_score
+            })
+
         return VerificationResult(
             decision=decision,
             verification_status=verification_status,
-            confidence_score=breakdown.overall,
+            confidence_score=final_confidence,  # Use adjusted confidence
             confidence_breakdown=breakdown.to_dict(),
             reason=reason,
             suggested_status=suggested_status,
@@ -528,7 +550,77 @@ class VerificationGate:
             sources=list(by_source.keys()),
             signal_details=signal_details
         )
-    
+
+    def _apply_llm_adjustment(
+        self,
+        base_confidence: float,
+        keyword_score: Optional[float] = None,
+        llm_score: Optional[float] = None
+    ) -> tuple[float, str]:
+        """
+        Phase 9: Apply LLM-based confidence adjustment.
+
+        Only active when LLM_THESIS_MODE=active.
+        Returns (adjusted_confidence, reason).
+
+        Args:
+            base_confidence: Confidence from verification gate (0-1)
+            keyword_score: Keyword thesis score (0-1)
+            llm_score: LLM thesis score (0-1)
+
+        Returns:
+            (adjusted_confidence, adjustment_reason)
+        """
+        import os
+
+        # Check if LLM mode allows routing impact
+        llm_mode = os.getenv("LLM_THESIS_MODE", "off").lower()
+        if llm_mode != "active":
+            return (base_confidence, "llm_inactive")
+
+        if keyword_score is None or llm_score is None:
+            return (base_confidence, "llm_data_missing")
+
+        # Load thresholds from env (externalized for tuning)
+        agreement_threshold = float(os.getenv("LLM_AGREEMENT_THRESHOLD", "0.7"))
+        disagreement_threshold = float(os.getenv("LLM_DISAGREEMENT_THRESHOLD", "0.4"))
+        boost = float(os.getenv("CONFIDENCE_BOOST_AGREEMENT", "0.10"))
+        penalty = float(os.getenv("CONFIDENCE_PENALTY_DISAGREEMENT", "0.15"))
+
+        adjustment = 0.0
+        reason = "no_adjustment"
+
+        # Agreement boost (both keyword and LLM agree this is a good fit)
+        if keyword_score >= agreement_threshold and llm_score >= agreement_threshold:
+            adjustment = boost
+            reason = "agreement_boost"
+
+        # Disagreement penalty (keyword says yes, LLM says no)
+        elif keyword_score >= agreement_threshold and llm_score < disagreement_threshold:
+            adjustment = -penalty
+            reason = "disagreement_penalty"
+
+        # Weak keyword, strong LLM = modest boost (LLM found something keywords missed)
+        elif keyword_score < disagreement_threshold and llm_score >= agreement_threshold:
+            adjustment = boost / 2
+            reason = "weak_keyword_strong_llm"
+
+        # Calculate adjusted confidence
+        adjusted = base_confidence + adjustment
+
+        # CRITICAL: Clamp to [0, 1] to prevent overflow
+        clamped = max(0.0, min(1.0, adjusted))
+
+        # Log for observability
+        if adjustment != 0:
+            logger.info(
+                f"LLM adjustment: base={base_confidence:.3f}, delta={adjustment:+.3f}, "
+                f"clamped={clamped:.3f}, reason={reason}, "
+                f"keyword={keyword_score:.3f}, llm={llm_score:.3f}"
+            )
+
+        return (clamped, reason)
+
     def _assess_verification_status(self, signals: List[Signal]) -> VerificationStatus:
         """Determine overall verification status from signals."""
         sources = set(s.source_api for s in signals)

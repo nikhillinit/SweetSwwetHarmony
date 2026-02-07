@@ -78,20 +78,78 @@ class PipelineScheduler:
     def _ensure_tables(self):
         """Ensure scheduler tables exist (idempotent)."""
         with self.storage.pool.get_connection() as conn:
+            # Check if table exists
+            cursor = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='pipeline_schedules'"
+            )
+            table_exists = cursor.fetchone() is not None
+
+            if table_exists:
+                # Table exists - migrate if needed
+                conn.executescript("""
+                    -- Backup existing data
+                    CREATE TABLE IF NOT EXISTS pipeline_schedules_backup AS SELECT * FROM pipeline_schedules;
+
+                    -- Drop old table
+                    DROP TABLE IF EXISTS pipeline_schedules;
+
+                    -- Create new table with quality modes
+                    CREATE TABLE pipeline_schedules (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name TEXT NOT NULL UNIQUE,
+                        cron_expression TEXT NOT NULL,
+                        collectors TEXT DEFAULT '[]',
+                        mode TEXT DEFAULT 'full' CHECK(mode IN ('full', 'collect', 'process', 'quality-sync', 'quality-classify', 'quality-patterns')),
+                        dry_run INTEGER DEFAULT 0,
+                        enabled INTEGER DEFAULT 1,
+                        max_retries INTEGER DEFAULT 0,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+
+                    -- Restore data
+                    INSERT OR IGNORE INTO pipeline_schedules SELECT * FROM pipeline_schedules_backup;
+
+                    -- Cleanup
+                    DROP TABLE IF EXISTS pipeline_schedules_backup;
+
+                    -- Create index
+                    CREATE INDEX IF NOT EXISTS idx_schedules_enabled ON pipeline_schedules(enabled);
+                """)
+            else:
+                # Fresh database - just create
+                conn.executescript("""
+                    CREATE TABLE pipeline_schedules (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        name TEXT NOT NULL UNIQUE,
+                        cron_expression TEXT NOT NULL,
+                        collectors TEXT DEFAULT '[]',
+                        mode TEXT DEFAULT 'full' CHECK(mode IN ('full', 'collect', 'process', 'quality-sync', 'quality-classify', 'quality-patterns')),
+                        dry_run INTEGER DEFAULT 0,
+                        enabled INTEGER DEFAULT 1,
+                        max_retries INTEGER DEFAULT 0,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                    CREATE INDEX IF NOT EXISTS idx_schedules_enabled ON pipeline_schedules(enabled);
+                """)
+
+            # Create other tables
             conn.executescript("""
-                CREATE TABLE IF NOT EXISTS pipeline_schedules (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT NOT NULL UNIQUE,
-                    cron_expression TEXT NOT NULL,
-                    collectors TEXT DEFAULT '[]',
-                    mode TEXT DEFAULT 'full' CHECK(mode IN ('full', 'collect', 'process')),
-                    dry_run INTEGER DEFAULT 0,
-                    enabled INTEGER DEFAULT 1,
-                    max_retries INTEGER DEFAULT 0,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+
+                CREATE TABLE IF NOT EXISTS scheduler_locks (
+                    schedule_name TEXT PRIMARY KEY,
+                    locked_at TEXT NOT NULL,
+                    locked_by TEXT DEFAULT 'scheduler'
                 );
-                CREATE INDEX IF NOT EXISTS idx_schedules_enabled ON pipeline_schedules(enabled);
+
+                CREATE TABLE IF NOT EXISTS pattern_runs (
+                    run_id INTEGER PRIMARY KEY,
+                    detected_at TEXT NOT NULL,
+                    pattern_data TEXT NOT NULL,
+                    pattern_count INTEGER,
+                    FOREIGN KEY(run_id) REFERENCES pipeline_run_history(id) ON DELETE CASCADE
+                );
 
                 CREATE TABLE IF NOT EXISTS pipeline_run_history (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -113,6 +171,40 @@ class PipelineScheduler:
                 CREATE INDEX IF NOT EXISTS idx_run_history_status ON pipeline_run_history(status);
                 CREATE INDEX IF NOT EXISTS idx_run_history_idempotency ON pipeline_run_history(idempotency_key);
             """)
+
+    # -----------------------------------------------------------------------
+    # Lock management (prevent overlapping runs)
+    # -----------------------------------------------------------------------
+
+    def _acquire_lock(self, schedule_name: str) -> bool:
+        """
+        Acquire advisory lock to prevent overlapping runs.
+
+        Returns:
+            True if lock acquired, False if already running
+        """
+        import sqlite3
+
+        try:
+            with self.storage.transaction() as conn:
+                conn.execute(
+                    "INSERT INTO scheduler_locks (schedule_name, locked_at) VALUES (?, ?)",
+                    (schedule_name, datetime.now(timezone.utc).isoformat())
+                )
+            logger.debug(f"Acquired lock for schedule: {schedule_name}")
+            return True
+        except sqlite3.IntegrityError:
+            logger.warning(f"Schedule {schedule_name} already running, skipping")
+            return False
+
+    def _release_lock(self, schedule_name: str):
+        """Release advisory lock."""
+        with self.storage.transaction() as conn:
+            conn.execute(
+                "DELETE FROM scheduler_locks WHERE schedule_name = ?",
+                (schedule_name,)
+            )
+        logger.debug(f"Released lock for schedule: {schedule_name}")
 
     # -----------------------------------------------------------------------
     # CRUD
@@ -338,6 +430,111 @@ class PipelineScheduler:
             return rows
 
     # -----------------------------------------------------------------------
+    # -----------------------------------------------------------------------
+    # Quality workflow execution handlers (Phase 9)
+    # -----------------------------------------------------------------------
+
+    async def _execute_quality_sync(self, run_id: int, schedule: dict) -> dict:
+        """
+        Execute quality sync workflow:
+        1. Sync Notion status events
+        2. Backfill TP/FP outcomes from events
+
+        Implements complete feedback loop closure.
+        """
+        logger.info(f"Starting quality-sync (run_id={run_id})")
+
+        try:
+            import os
+            from ops.quality.status_events import sync_status_events
+            from ops.quality.outcomes import backfill_outcomes_from_events
+
+            # Get signals DB path
+            db_path = os.getenv("DISCOVERY_DB_PATH", "signals.db")
+
+            # Step 1: Sync Notion → local events
+            events_synced = sync_status_events(db_path)
+            logger.info(f"Synced {events_synced} status events")
+
+            # Step 2: Infer TP/FP outcomes
+            outcomes_updated = backfill_outcomes_from_events(db_path)
+            logger.info(f"Updated {outcomes_updated} outcomes")
+
+            return {
+                "events_synced": events_synced,
+                "outcomes_updated": outcomes_updated
+            }
+        except Exception as e:
+            logger.error(f"Quality sync failed: {e}")
+            raise
+
+    async def _execute_quality_classify(self, run_id: int, schedule: dict) -> dict:
+        """
+        Batch classify recent signals with LLM.
+        Uses UPSERT to prevent duplicates if job runs twice.
+        """
+        import os
+
+        logger.info(f"Starting thesis-classify-batch (run_id={run_id})")
+
+        # Only run if LLM mode is shadow or active
+        llm_mode = os.getenv("LLM_THESIS_MODE", "off").lower()
+        if llm_mode == "off":
+            logger.info("LLM disabled, skipping batch classification")
+            return {"classified": 0, "reason": "llm_disabled"}
+
+        try:
+            from ops.quality.thesis import batch_classify_recent
+
+            # Get signals DB path
+            db_path = os.getenv("DISCOVERY_DB_PATH", "signals.db")
+
+            # Classify in chunks to prevent lock contention
+            classified = batch_classify_recent(
+                db_path,
+                limit=50,
+                chunk_size=10,  # Process 10 at a time
+                upsert=True  # Idempotent
+            )
+
+            logger.info(f"Classified {classified} signals")
+            return {"classified": classified}
+        except Exception as e:
+            logger.error(f"Batch classification failed: {e}")
+            raise
+
+    async def _execute_quality_patterns(self, run_id: int, schedule: dict) -> dict:
+        """
+        Detect FP patterns weekly.
+        Stores results in ops DB, not ephemeral file.
+        """
+        logger.info(f"Starting find-patterns (run_id={run_id})")
+
+        try:
+            import os
+            from ops.quality.patterns import detect_patterns_wrapper
+
+            # Get signals DB path
+            db_path = os.getenv("DISCOVERY_DB_PATH", "signals.db")
+
+            # Detect patterns over last 30 days
+            patterns = detect_patterns_wrapper(db_path, days=30)
+
+            # Store in ops DB for durability
+            pattern_json = json.dumps(patterns)
+            with self.storage.transaction() as conn:
+                conn.execute(
+                    """INSERT INTO pattern_runs (run_id, detected_at, pattern_data, pattern_count)
+                       VALUES (?, ?, ?, ?)""",
+                    (run_id, datetime.now(timezone.utc).isoformat(), pattern_json, len(patterns))
+                )
+
+            logger.info(f"Detected {len(patterns)} patterns")
+            return {"patterns_detected": len(patterns)}
+        except Exception as e:
+            logger.error(f"Pattern detection failed: {e}")
+            raise
+
     # Execute (calls the actual pipeline)
     # -----------------------------------------------------------------------
 
@@ -345,6 +542,17 @@ class PipelineScheduler:
         schedule = self.get_schedule(schedule_id)
         if not schedule or not schedule["enabled"]:
             raise ValueError(f"Schedule {schedule_id} is disabled or not found")
+
+        schedule_name = schedule["name"]
+        mode = schedule["mode"]
+
+        # Phase 9: Acquire lock to prevent overlapping runs
+        if not self._acquire_lock(schedule_name):
+            return {
+                "run_id": None,
+                "status": "skipped",
+                "reason": "already_running"
+            }
 
         collectors = json.loads(schedule["collectors"]) if schedule["collectors"] else []
         dry_run = bool(schedule["dry_run"])
@@ -360,24 +568,57 @@ class PipelineScheduler:
             )
 
         try:
-            from workflows.pipeline import DiscoveryPipeline
+            # Phase 9: Dispatch to appropriate handler based on mode
+            if mode == "quality-sync":
+                mode_result = await self._execute_quality_sync(run_id, schedule)
+                stats_dict = {
+                    "signals_found": 0,
+                    "signals_processed": mode_result.get("outcomes_updated", 0),
+                    "signals_pushed": 0,
+                    "collectors_failed": 0
+                }
+            elif mode == "quality-classify":
+                mode_result = await self._execute_quality_classify(run_id, schedule)
+                stats_dict = {
+                    "signals_found": 0,
+                    "signals_processed": mode_result.get("classified", 0),
+                    "signals_pushed": 0,
+                    "collectors_failed": 0
+                }
+            elif mode == "quality-patterns":
+                mode_result = await self._execute_quality_patterns(run_id, schedule)
+                stats_dict = {
+                    "signals_found": 0,
+                    "signals_processed": mode_result.get("patterns_detected", 0),
+                    "signals_pushed": 0,
+                    "collectors_failed": 0
+                }
+            else:
+                # Default: full pipeline execution
+                from workflows.pipeline import DiscoveryPipeline
 
-            pipeline = DiscoveryPipeline()
-            await pipeline.initialize()
+                pipeline = DiscoveryPipeline()
+                await pipeline.initialize()
 
-            stats = await pipeline.run_full_pipeline(
-                collectors=collectors or None,
-                dry_run=dry_run,
-            )
+                stats = await pipeline.run_full_pipeline(
+                    collectors=collectors or None,
+                    dry_run=dry_run,
+                )
+                stats_dict = {
+                    "signals_found": stats.signals_collected,
+                    "signals_processed": stats.signals_processed,
+                    "signals_pushed": stats.prospects_created,
+                    "collectors_failed": stats.collectors_failed
+                }
 
             finished_at = datetime.now(timezone.utc)
             result = {
                 "run_id": run_id,
                 "status": RunStatus.SUCCESS.value,
-                "signals_found": stats.signals_collected,
-                "signals_processed": stats.signals_processed,
-                "signals_pushed": stats.prospects_created,
-                "errors": stats.collectors_failed,
+                "signals_found": stats_dict["signals_found"],
+                "signals_processed": stats_dict["signals_processed"],
+                "signals_pushed": stats_dict["signals_pushed"],
+                "errors": stats_dict["collectors_failed"],
                 "error_message": None,
                 "duration_seconds": (finished_at - started_at).total_seconds(),
             }
@@ -387,13 +628,13 @@ class PipelineScheduler:
                 status=RunStatus.SUCCESS,
                 started_at=started_at,
                 finished_at=finished_at,
-                signals_found=stats.signals_collected,
-                signals_processed=stats.signals_processed,
-                signals_pushed=stats.prospects_created,
-                errors=stats.collectors_failed,
+                signals_found=stats_dict["signals_found"],
+                signals_processed=stats_dict["signals_processed"],
+                signals_pushed=stats_dict["signals_pushed"],
+                errors=stats_dict["collectors_failed"],
             )
 
-            logger.info(f"Pipeline run {run_id} completed: {result}")
+            logger.info(f"Schedule '{schedule_name}' run {run_id} completed: {result}")
             return result
 
         except Exception as e:
@@ -420,8 +661,12 @@ class PipelineScheduler:
                 errors=1,
             )
 
-            logger.error(f"Pipeline run {run_id} failed: {error_msg}")
+            logger.error(f"Schedule '{schedule_name}' run {run_id} failed: {error_msg}")
             return result
+
+        finally:
+            # Phase 9: Always release lock
+            self._release_lock(schedule_name)
 
     # -----------------------------------------------------------------------
     # Status summary
