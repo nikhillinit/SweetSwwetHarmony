@@ -342,7 +342,7 @@ def batch_classify_recent(
 
     try:
         # Ensure quality tables exist
-        from ops.quality.schema import ensure_quality_tables
+        from ops.quality.db import ensure_quality_tables
         ensure_quality_tables(conn)
 
         result = batch_classify_missing_thesis(
