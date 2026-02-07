@@ -64,6 +64,8 @@ class ThesisFilterResult:
     domain_blacklisted: bool = False
     # Phase 0B-3: v2 shadow mode comparison data
     v2_shadow: Optional[Dict[str, Any]] = None
+    # ML shadow: ML thesis model comparison data
+    ml_shadow: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert result to dictionary."""
@@ -86,6 +88,9 @@ class ThesisFilterResult:
         # Phase 0B-3: Only include v2_shadow if present
         if self.v2_shadow is not None:
             result["v2_shadow"] = self.v2_shadow
+        # ML shadow: Only include if present
+        if self.ml_shadow is not None:
+            result["ml_shadow"] = self.ml_shadow
         return result
 
 
@@ -177,6 +182,11 @@ class ThesisFilter:
             if keyword_fit.trace and keyword_fit.trace.v2_shadow:
                 v2_shadow = keyword_fit.trace.v2_shadow
 
+            # Extract ml_shadow from trace
+            ml_shadow = None
+            if keyword_fit.trace and keyword_fit.trace.ml_shadow:
+                ml_shadow = keyword_fit.trace.ml_shadow
+
             return ThesisFilterResult(
                 routing=routing,
                 keyword_score=keyword_fit.score,
@@ -191,6 +201,8 @@ class ThesisFilter:
                 domain_blacklisted=keyword_fit.domain_blacklisted,
                 # Phase 0B-3: v2 shadow comparison
                 v2_shadow=v2_shadow,
+                # ML shadow comparison
+                ml_shadow=ml_shadow,
             )
 
         # Stage 2: LLM classification
@@ -236,6 +248,11 @@ class ThesisFilter:
         if keyword_fit.trace and keyword_fit.trace.v2_shadow:
             v2_shadow = keyword_fit.trace.v2_shadow
 
+        # Extract ml_shadow from trace
+        ml_shadow = None
+        if keyword_fit.trace and keyword_fit.trace.ml_shadow:
+            ml_shadow = keyword_fit.trace.ml_shadow
+
         # Phase 9: Determine if LLM was skipped (no result or None score = skipped/failed)
         llm_skipped = not llm_result or llm_result.thesis_fit_score is None
 
@@ -256,6 +273,8 @@ class ThesisFilter:
             domain_blacklisted=keyword_fit.domain_blacklisted,
             # Phase 0B-3: v2 shadow comparison
             v2_shadow=v2_shadow,
+            # ML shadow comparison
+            ml_shadow=ml_shadow,
         )
 
     def _calculate_adjustment(

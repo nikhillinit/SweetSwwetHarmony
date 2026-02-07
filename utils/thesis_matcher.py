@@ -270,6 +270,8 @@ class ThesisFitTrace:
     explanation: str = ""
     # Phase 0B-2: Shadow mode comparison data
     v2_shadow: Optional[Dict] = None
+    # ML shadow: ML thesis model comparison data (disabled/shadow/live)
+    ml_shadow: Optional[Dict] = None
 
     def to_dict(self) -> Dict:
         """Convert trace to dictionary for serialization."""
@@ -288,6 +290,9 @@ class ThesisFitTrace:
         # Phase 0B-2: Only include v2_shadow if present
         if self.v2_shadow is not None:
             result["v2_shadow"] = self.v2_shadow
+        # ML shadow: Only include if present
+        if self.ml_shadow is not None:
+            result["ml_shadow"] = self.ml_shadow
         return result
 
 
@@ -374,6 +379,15 @@ class ThesisMatcher:
     - Scoring behavior unchanged in Phase 0A (scaffolding only)
     """
 
+    # Default model path for ML thesis model
+    _DEFAULT_ML_MODEL_PATH = "models/thesis_classifier.joblib"
+
+    # ML circuit breaker: disable after N consecutive failures
+    _ML_FAILURE_THRESHOLD = 5
+
+    # ML latency budget (ms): log warning if prediction exceeds this
+    _ML_LATENCY_BUDGET_MS = 500.0
+
     def __init__(
         self,
         custom_keywords: Optional[Dict[ConsumerThesis, Dict[str, float]]] = None,
@@ -383,8 +397,10 @@ class ThesisMatcher:
         policy_loader_mode: Optional[str] = None,
         v2_execution_enabled: Optional[bool] = None,
         config_path: Optional[str] = None,
+        ml_enablement: Optional[str] = None,
+        ml_model_path: Optional[str] = None,
     ):
-        """Initialize ThesisMatcher with optional v2 policy configuration.
+        """Initialize ThesisMatcher with optional v2 policy and ML model.
 
         Args:
             custom_keywords: Custom keyword weights to merge with defaults
@@ -393,8 +409,11 @@ class ThesisMatcher:
             policy_loader_mode: "permissive" or "strict"
             v2_execution_enabled: Whether v2 scoring is active
             config_path: Explicit path to policy directory
+            ml_enablement: "disabled", "shadow", or "live" (ML thesis model)
+            ml_model_path: Path to trained ML model file (joblib)
 
         Phase 0A: v2 infrastructure is wired but scoring behavior is unchanged.
+        ML: Model loaded when ml_enablement != "disabled".
         """
         # Initialize v1 keywords (always happens)
         self.keywords = {k: dict(v) for k, v in CONSUMER_KEYWORDS.items()}
@@ -414,6 +433,10 @@ class ThesisMatcher:
         # Phase 0B-3: Policy hash for tracking which policy version was used
         self._policy_hash: Optional[str] = None
 
+        # ML model state (initialized BEFORE v2 early return - Review 1 bug fix)
+        self._ml_model = None  # MLThesisModel or None
+        self._ml_failure_count: int = 0
+
         # Step 1: Resolve RuntimeControls (validate-before-I/O)
         # Import here to avoid circular imports and allow zero-cost when disabled
         from utils.runtime_controls import RuntimeControls
@@ -423,7 +446,13 @@ class ThesisMatcher:
             policy_loader_mode=policy_loader_mode,
             v2_execution_enabled=v2_execution_enabled,
             enable_v2_policy=enable_v2_policy,
+            ml_enablement=ml_enablement,
+            ml_model_path=ml_model_path,
         )
+
+        # Step 1b: Initialize ML model (BEFORE v2 early return)
+        # ML and v2 are independent features — v2 disabled should not block ML
+        self._init_ml_model()
 
         # Step 2: Zero-cost when disabled - no I/O, no policy loading
         if self._controls.v2_enablement == "disabled":
@@ -618,7 +647,7 @@ class ThesisMatcher:
             or self._controls.v2_enablement == "disabled"
             or not self._controls.v2_execution_enabled
         ):
-            return fit_v1
+            return self._maybe_apply_ml(fit_v1, text, company_name, domain_name)
 
         # v2 path
         w2 = self._negative_weights_v2()
@@ -629,7 +658,7 @@ class ThesisMatcher:
                 "v2 enabled (live) but negative_keyword_policy is empty; "
                 "falling back to v1 to avoid silent penalty removal"
             )
-            return fit_v1
+            return self._maybe_apply_ml(fit_v1, text, company_name, domain_name)
 
         p2 = self._compute_penalty(core.normalized, w2)
         s2 = self._apply_adjustments(core.base_score, p2, core.intent_matches, core.domain_match)
@@ -638,10 +667,10 @@ class ThesisMatcher:
         # Shadow mode: attach diff and return v1
         if self._controls.v2_enablement == "shadow":
             self._attach_v2_shadow_diff(fit_v1, fit_v2, p1, p2)
-            return fit_v1
+            return self._maybe_apply_ml(fit_v1, text, company_name, domain_name)
 
         # Live mode: return v2
-        return fit_v2
+        return self._maybe_apply_ml(fit_v2, text, company_name, domain_name)
 
     def _normalize(self, text: str) -> str:
         normalized = re.sub(r"[-/_]", " ", text)
@@ -921,6 +950,310 @@ class ThesisMatcher:
         ):
             logger.info("v2 shadow diff: %s", diff)
 
+    # =========================================================================
+    # ML THESIS MODEL INTEGRATION
+    # =========================================================================
+
+    def _init_ml_model(self) -> None:
+        """Initialize ML model if ml_enablement != disabled.
+
+        Called BEFORE v2 early return to ensure ML works independently
+        of v2 policy enablement (Review 1 bug fix).
+
+        Error isolation: ML load failure sets _ml_model to None and
+        logs error. Does NOT propagate exceptions (graceful degradation).
+        """
+        if not self._controls or self._controls.ml_enablement == "disabled":
+            return
+
+        ml_path = (
+            self._controls.ml_model_path
+            or self._DEFAULT_ML_MODEL_PATH
+        )
+
+        try:
+            from utils.ml_thesis_model import MLThesisModel
+            model = MLThesisModel()
+            model.load(ml_path)
+            self._ml_model = model
+            logger.info(
+                "ML thesis model loaded: path=%s, model_id=%s, ml_enablement=%s",
+                ml_path,
+                model.model_id,
+                self._controls.ml_enablement,
+            )
+        except FileNotFoundError:
+            logger.warning(
+                "ML model file not found: %s. ML thesis rescue disabled.",
+                ml_path,
+            )
+        except Exception as e:
+            logger.error(
+                "ML model load failed: %s. ML thesis rescue disabled.",
+                e,
+            )
+
+    def _compute_ml_score(
+        self,
+        text: str,
+        company_name: Optional[str] = None,
+        domain_name: Optional[str] = None,
+    ) -> Optional[float]:
+        """Compute ML probability of thesis fit.
+
+        Uses the shared build_ml_text() to prevent training/serving skew.
+        Includes latency budget monitoring (Review 3).
+
+        Args:
+            text: Raw description text
+            company_name: Optional company name
+            domain_name: Optional domain name
+
+        Returns:
+            Probability of positive class (0.0-1.0), or None on failure
+        """
+        if self._ml_model is None:
+            return None
+
+        try:
+            from utils.ml_text_builder import build_ml_text
+            import time
+
+            ml_text = build_ml_text(text, company_name, domain_name)
+            if not ml_text:
+                return None
+
+            start = time.monotonic()
+            prob = self._ml_model.predict_proba(ml_text)
+            latency_ms = (time.monotonic() - start) * 1000
+
+            # Latency budget monitoring (Review 3)
+            if latency_ms > self._ML_LATENCY_BUDGET_MS:
+                logger.warning(
+                    "ML prediction slow: %.1fms (budget: %.1fms)",
+                    latency_ms,
+                    self._ML_LATENCY_BUDGET_MS,
+                )
+
+            # Reset failure count on success
+            self._ml_failure_count = 0
+            return prob
+
+        except Exception as e:
+            self._ml_failure_count += 1
+            logger.warning(
+                "ML prediction failed (%d/%d): %s",
+                self._ml_failure_count,
+                self._ML_FAILURE_THRESHOLD,
+                e,
+            )
+
+            # Circuit breaker: disable ML after N consecutive failures
+            if self._ml_failure_count >= self._ML_FAILURE_THRESHOLD:
+                logger.error(
+                    "ML circuit breaker triggered: %d consecutive failures. "
+                    "Disabling ML for remainder of this instance.",
+                    self._ml_failure_count,
+                )
+                self._ml_model = None
+
+            return None
+
+    def _maybe_apply_ml(
+        self,
+        fit: ThesisFit,
+        text: str,
+        company_name: Optional[str] = None,
+        domain_name: Optional[str] = None,
+    ) -> ThesisFit:
+        """Apply ML rescoring to a completed ThesisFit result.
+
+        This is the "append-after" pattern (approved by all three reviews):
+        - Called after keyword v1/v2 scoring is complete
+        - Does NOT modify the v1/v2 flow
+        - ML is a post-processing rescue layer
+
+        Gating rules (widened per Review 1 and 3 consensus):
+        - Do NOT rescue domain_blacklisted signals (hard rejection)
+        - Do NOT rescue empty text (no data to classify)
+        - Do NOT rescue if keyword score already indicates fit (>= is_fit threshold)
+        - DO rescue any score below is_fit threshold (no arbitrary lower bound)
+
+        Score semantics (per Review 1 consensus):
+        - final_score = max(keyword_score, ml_prob) when rescuing
+        - No arbitrary *0.8 damping
+        - Both scores preserved in ml_shadow for audit
+
+        Args:
+            fit: Completed ThesisFit from keyword scoring
+            text: Raw description text
+            company_name: Optional company name
+            domain_name: Optional domain name
+
+        Returns:
+            Original fit (shadow/disabled) or rescued fit (live mode)
+        """
+        if not self._controls or self._controls.ml_enablement == "disabled":
+            return fit
+        if self._ml_model is None:
+            return fit
+
+        # Don't compute ML for hard rejections (domain blacklist, empty text)
+        if fit.domain_blacklisted:
+            return fit
+
+        ml_score = self._compute_ml_score(text, company_name, domain_name)
+        if ml_score is None:
+            return fit
+
+        if self._controls.ml_enablement == "shadow":
+            self._attach_ml_shadow_diff(fit, ml_score)
+            return fit
+
+        if self._controls.ml_enablement == "live":
+            # Rescue: only if keyword score is below fit threshold AND ML is confident
+            if fit.score < 0.4 and ml_score > 0.5:
+                rescued_score = max(fit.score, ml_score)
+                return self._rebuild_fit_with_ml_rescue(
+                    fit, rescued_score, ml_score, "rescued"
+                )
+            else:
+                # Still attach shadow data in live mode for non-rescued signals
+                self._attach_ml_shadow_diff(fit, ml_score)
+                return fit
+
+        return fit
+
+    def _attach_ml_shadow_diff(
+        self,
+        fit: ThesisFit,
+        ml_score: float,
+    ) -> None:
+        """Attach ML shadow diff to fit's trace for observability.
+
+        Schema mirrors v2_shadow pattern with model_id for versioning
+        (Review 1 + 3 consensus: model_id like policy_hash).
+
+        Records:
+        - keyword_score and ml_score for comparison
+        - would_rescue: whether live mode would change the score
+        - rescued_score: what the score would be if rescued
+        - model_id: which model version produced this prediction
+        - gating_reason: why rescue was/wasn't triggered
+        """
+        if not fit.trace:
+            return
+
+        would_rescue = fit.score < 0.4 and ml_score > 0.5
+        rescued_score = max(fit.score, ml_score) if would_rescue else fit.score
+
+        # Determine gating reason for observability (Review 3)
+        if fit.domain_blacklisted:
+            gating_reason = "domain_blacklisted"
+        elif fit.score >= 0.4:
+            gating_reason = "keyword_sufficient"
+        elif ml_score <= 0.5:
+            gating_reason = "ml_not_confident"
+        elif would_rescue:
+            gating_reason = "rescued"
+        else:
+            gating_reason = "not_rescued"
+
+        fit.trace.ml_shadow = {
+            "keyword_score": round(fit.score, 4),
+            "ml_score": round(ml_score, 4),
+            "delta": round(ml_score - fit.score, 4),
+            "would_rescue": would_rescue,
+            "rescued_score": round(rescued_score, 4),
+            "gating_reason": gating_reason,
+            "model_id": self._ml_model.model_id if self._ml_model else None,
+            "model_version": self._ml_model.__version__ if self._ml_model else None,
+        }
+
+        # Log significant diffs (delta >= 0.1 is noteworthy)
+        if abs(ml_score - fit.score) >= 0.1:
+            logger.info(
+                "ML shadow diff: keyword=%.3f, ml=%.3f, delta=%.3f, "
+                "would_rescue=%s, gating=%s",
+                fit.score, ml_score, ml_score - fit.score,
+                would_rescue, gating_reason,
+            )
+
+    def _rebuild_fit_with_ml_rescue(
+        self,
+        original: ThesisFit,
+        rescued_score: float,
+        ml_score: float,
+        gating_reason: str,
+    ) -> ThesisFit:
+        """Create a new ThesisFit with ML-rescued score.
+
+        Preserves all original fields except score, confidence, and trace.
+        The trace is updated with ml_shadow data showing the rescue.
+
+        Important: this creates a NEW ThesisFit rather than mutating the
+        original, preserving immutability semantics.
+        """
+        # Recompute confidence from rescued score
+        if rescued_score >= 0.7:
+            confidence = "HIGH"
+        elif rescued_score >= 0.4:
+            confidence = "MEDIUM"
+        else:
+            confidence = "LOW"
+
+        # Preserve thesis assignment (ML doesn't change category)
+        thesis = original.thesis if rescued_score > 0.1 else ConsumerThesis.UNKNOWN
+
+        # Build new trace with rescue explanation
+        trace = ThesisFitTrace(
+            matched_hard_negatives=original.trace.matched_hard_negatives if original.trace else [],
+            soft_negatives=original.trace.soft_negatives if original.trace else [],
+            rescue_anchors_matched=original.trace.rescue_anchors_matched if original.trace else {},
+            rescue_blocked_by=original.trace.rescue_blocked_by if original.trace else None,
+            aggregator_exception_triggered=(
+                original.trace.aggregator_exception_triggered if original.trace else False
+            ),
+            applied_ai_path=original.trace.applied_ai_path if original.trace else None,
+            final_score=rescued_score,
+            routing_decision=(
+                "QUALIFIED" if rescued_score >= 0.3
+                else "HELD" if rescued_score >= 0.1
+                else "REJECTED"
+            ),
+            explanation=(
+                f"Score: {rescued_score:.2f} (ML rescued from {original.score:.2f}). "
+                f"ML prob: {ml_score:.3f}. "
+                f"Routed to {'QUALIFIED' if rescued_score >= 0.3 else 'HELD' if rescued_score >= 0.1 else 'REJECTED'}."
+            ),
+            v2_shadow=original.trace.v2_shadow if original.trace else None,
+        )
+
+        # Attach ML shadow data to the new trace
+        trace.ml_shadow = {
+            "keyword_score": round(original.score, 4),
+            "ml_score": round(ml_score, 4),
+            "delta": round(ml_score - original.score, 4),
+            "would_rescue": True,
+            "rescued_score": round(rescued_score, 4),
+            "gating_reason": gating_reason,
+            "model_id": self._ml_model.model_id if self._ml_model else None,
+            "model_version": self._ml_model.__version__ if self._ml_model else None,
+        }
+
+        return ThesisFit(
+            thesis=thesis,
+            score=rescued_score,
+            matched_keywords=original.matched_keywords,
+            negative_keywords=original.negative_keywords,
+            all_scores=original.all_scores,
+            confidence=confidence,
+            intent_phrases_matched=original.intent_phrases_matched,
+            domain_match=original.domain_match,
+            domain_blacklisted=original.domain_blacklisted,
+            trace=trace,
+        )
+
     def _find_intent_phrases(self, text: str) -> List[str]:
         """Find intent phrases that indicate commercial/consumer intent (Phase B)."""
         matches = []
@@ -1075,10 +1408,21 @@ class ThesisMatcher:
         return self.score(combined_text, company_name=company_name)
 
 
+# Module-level singleton to avoid reinstantiating ThesisMatcher (and reloading
+# the ML model) on every call to score_thesis_fit() (Review 1 performance fix).
+_default_matcher: Optional[ThesisMatcher] = None
+
+
 def score_thesis_fit(text: str, company_name: Optional[str] = None) -> ThesisFit:
-    """Convenience function to score thesis fit."""
-    matcher = ThesisMatcher()
-    return matcher.score(text, company_name)
+    """Convenience function to score thesis fit.
+
+    Uses a module-level singleton to avoid reinstantiating ThesisMatcher
+    (and reloading the ML model) on every call.
+    """
+    global _default_matcher
+    if _default_matcher is None:
+        _default_matcher = ThesisMatcher()
+    return _default_matcher.score(text, company_name)
 
 
 def is_thesis_fit(text: str, min_score: float = 0.4) -> bool:
