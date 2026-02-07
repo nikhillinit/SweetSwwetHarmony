@@ -316,6 +316,47 @@ def batch_classify_missing_thesis(
     return {"attempted": len(ids), "succeeded": len(results), "failed": len(errors), "results": results, "errors": errors}
 
 
+def batch_classify_recent(
+    db_path: str,
+    *,
+    limit: int = 50,
+    chunk_size: int = 10,
+    upsert: bool = True
+) -> int:
+    """
+    Scheduler-friendly wrapper for batch_classify_missing_thesis.
+
+    Args:
+        db_path: Path to signals database
+        limit: Maximum signals to classify
+        chunk_size: Batch size (not used currently, but kept for API compat)
+        upsert: If True, uses UPSERT to avoid duplicates (idempotent)
+
+    Returns:
+        Number of signals successfully classified
+    """
+    import sqlite3
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+
+    try:
+        # Ensure quality tables exist
+        from ops.quality.schema import ensure_quality_tables
+        ensure_quality_tables(conn)
+
+        result = batch_classify_missing_thesis(
+            conn,
+            days=30,  # Last 30 days
+            limit=limit,
+            stop_on_error=False
+        )
+
+        return result["succeeded"]
+    finally:
+        conn.close()
+
+
 def generate_disagreement_report(
     conn: sqlite3.Connection,
     *,

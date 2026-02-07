@@ -148,3 +148,33 @@ async def sync_and_capture_status_events(
         new_keys=new_keys,
         changed_keys=changed_keys,
     )
+
+
+def sync_status_events(db_path: str) -> int:
+    """
+    Scheduler-friendly wrapper for sync_and_capture_status_events.
+
+    Args:
+        db_path: Path to signals database
+
+    Returns:
+        Number of events inserted
+    """
+    import sqlite3
+
+    conn = sqlite3.connect(db_path)
+    conn.row_factory = sqlite3.Row
+
+    try:
+        # Ensure quality tables exist
+        from ops.quality.schema import ensure_quality_tables
+        ensure_quality_tables(conn)
+
+        # Run async sync
+        stats = asyncio.run(
+            sync_and_capture_status_events(conn, db_path=db_path)
+        )
+
+        return stats.events_inserted
+    finally:
+        conn.close()
