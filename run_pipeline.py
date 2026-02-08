@@ -11,7 +11,8 @@ Commands:
   health     - Run health checks on all components
   metrics    - Show pipeline run metrics with per-collector breakdown
   pipeline   - Pipeline dashboard commands (status, qualified, push)
-  import-csv - Import signals from CSV files (OpenVC, etc.)
+  import-csv    - Import signals from CSV files (OpenVC, etc.)
+  export-queue  - Export pending/queued signals to CSV for offline review
 
 Available Collectors:
   - Traditional: github, sec_edgar, companies_house, domain_whois, product_hunt,
@@ -3113,6 +3114,61 @@ Examples:
         help="Output as JSON",
     )
 
+    # --- export-queue command ---
+    export_queue_parser = subparsers.add_parser(
+        "export-queue",
+        help="Export pending/queued signals to CSV for offline review",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="""
+Export pending/queued signals to CSV for offline operator review.
+
+Examples:
+  # Export all signals to CSV file
+  python run_pipeline.py export-queue --out queue.csv
+
+  # Export only pending signals with minimum confidence
+  python run_pipeline.py export-queue --status pending --min-confidence 0.4
+
+  # Export signals from last 30 days to stdout
+  python run_pipeline.py export-queue --days 30
+""",
+    )
+    export_queue_parser.add_argument(
+        "--format",
+        type=str,
+        default="csv",
+        choices=["csv"],
+        help="Output format (default: csv)",
+    )
+    export_queue_parser.add_argument(
+        "--out",
+        type=str,
+        default=None,
+        help="Output file path (default: stdout)",
+    )
+    export_queue_parser.add_argument(
+        "--status",
+        type=str,
+        choices=["pending", "queued", "pushed", "rejected"],
+        help="Filter by processing status",
+    )
+    export_queue_parser.add_argument(
+        "--min-confidence",
+        type=float,
+        help="Minimum confidence score (e.g., 0.4)",
+    )
+    export_queue_parser.add_argument(
+        "--days",
+        type=int,
+        help="Only include signals from the last N days",
+    )
+    export_queue_parser.add_argument(
+        "--db-path",
+        type=str,
+        default=None,
+        help="Path to SQLite database (overrides env var)",
+    )
+
     return parser
 
 
@@ -4175,6 +4231,70 @@ async def cmd_shadow_backfill(args):
         await store.close()
 
 
+async def cmd_export_queue(args):
+    """Export pending/queued signals to CSV for offline review.
+
+    Phase 0, Task 0.5: Lets operators review the signal queue offline
+    without needing Notion access.
+    """
+    import csv
+    from datetime import datetime, timedelta, timezone
+
+    db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+    store = SignalStore(db_path)
+    await store.initialize()
+
+    try:
+        # Build query with optional filters
+        query = """
+            SELECT s.id, s.company_name, s.canonical_key, s.confidence,
+                   s.signal_type, s.source_api, s.detected_at,
+                   COALESCE(sp.status, 'pending') as status
+            FROM signals s
+            LEFT JOIN signal_processing sp ON sp.signal_id = s.id
+            WHERE 1=1
+        """
+        params = []
+
+        if getattr(args, "status", None):
+            query += " AND COALESCE(sp.status, 'pending') = ?"
+            params.append(args.status)
+
+        if getattr(args, "min_confidence", None) is not None:
+            query += " AND s.confidence >= ?"
+            params.append(args.min_confidence)
+
+        if getattr(args, "days", None) is not None:
+            cutoff = datetime.now(timezone.utc) - timedelta(days=args.days)
+            query += " AND s.detected_at >= ?"
+            params.append(cutoff.isoformat())
+
+        query += " ORDER BY s.detected_at DESC"
+
+        cursor = await store._db.execute(query, params)
+        rows = await cursor.fetchall()
+        columns = ["signal_id", "company_name", "canonical_key", "confidence",
+                    "signal_type", "source_api", "detected_at", "status"]
+
+        # Write CSV output
+        output_file = getattr(args, "out", None)
+        if output_file:
+            with open(output_file, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow(columns)
+                writer.writerows(rows)
+            print(f"Exported {len(rows)} signals to {output_file}")
+        else:
+            writer = csv.writer(sys.stdout)
+            writer.writerow(columns)
+            writer.writerows(rows)
+            # Print summary to stderr so it doesn't mix with CSV data
+            print(f"\n# Exported {len(rows)} signals", file=sys.stderr)
+
+    finally:
+        await store.close()
+
+
 async def cmd_ground_truth(args):
     """Export ground truth labels from Notion CRM for evaluation.
 
@@ -4448,6 +4568,8 @@ async def main():
             await cmd_shadow_backfill(args)
         elif args.command == "ground-truth":
             await cmd_ground_truth(args)
+        elif args.command == "export-queue":
+            await cmd_export_queue(args)
         else:
             print(f"Unknown command: {args.command}")
             parser.print_help()
