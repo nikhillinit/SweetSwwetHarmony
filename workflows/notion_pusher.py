@@ -32,6 +32,11 @@ from typing import Dict, List, Optional, Any
 from storage.signal_store import SignalStore, StoredSignal
 from connectors.notion_connector_v2 import NotionConnector, ProspectPayload, InvestmentStage
 from verification.verification_gate_v2 import VerificationGate, Signal, PushDecision, VerificationStatus
+from workflows.delivery_policy import (
+    assert_notion_write_allowed,
+    DeliveryIntent,
+    DeliveryPolicyError,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -257,6 +262,12 @@ class NotionPusher:
                             f"{prospect.canonical_key}: {push_result.error}"
                         )
 
+                except DeliveryPolicyError as e:
+                    # Delivery guard blocked writes -- batch-level abort
+                    logger.warning(f"Delivery policy blocked batch: {e}")
+                    result.error_messages.append(f"Delivery policy: {e}")
+                    break
+
                 except Exception as e:
                     logger.error(f"Error processing prospect {prospect.canonical_key}: {e}")
                     result.errors += 1
@@ -274,12 +285,18 @@ class NotionPusher:
 
     async def process_single_prospect(
         self,
-        canonical_key: str
+        canonical_key: str,
+        intent: DeliveryIntent = DeliveryIntent.AUTO_PUSH,
     ) -> PushResult:
         """
         Process all signals for a single prospect by canonical key.
 
         Useful for reprocessing or debugging specific prospects.
+
+        Args:
+            canonical_key: The canonical key to look up signals for.
+            intent: Delivery intent for the push (default AUTO_PUSH).
+                    Use DeliveryIntent.MANUAL_PUSH for operator-initiated pushes.
         """
         # Get all signals for this prospect
         signals = await self.store.get_signals_for_company(canonical_key)
@@ -300,7 +317,7 @@ class NotionPusher:
             signals=signals
         )
 
-        return await self._process_prospect(prospect)
+        return await self._process_prospect(prospect, intent=intent)
 
     # =========================================================================
     # SIGNAL AGGREGATION
@@ -340,7 +357,8 @@ class NotionPusher:
 
     async def _process_prospect(
         self,
-        prospect: AggregatedProspect
+        prospect: AggregatedProspect,
+        intent: DeliveryIntent = DeliveryIntent.AUTO_PUSH,
     ) -> PushResult:
         """
         Process a single aggregated prospect.
@@ -396,9 +414,12 @@ class NotionPusher:
                 push_result = await self._push_to_notion(
                     prospect,
                     verification_result,
-                    push_result
+                    push_result,
+                    intent=intent,
                 )
 
+        except DeliveryPolicyError:
+            raise  # Let delivery guard errors propagate to batch handler
         except Exception as e:
             logger.error(f"Error processing {prospect.canonical_key}: {e}")
             push_result.error = str(e)
@@ -434,7 +455,8 @@ class NotionPusher:
         self,
         prospect: AggregatedProspect,
         verification_result,
-        push_result: PushResult
+        push_result: PushResult,
+        intent: DeliveryIntent = DeliveryIntent.AUTO_PUSH,
     ) -> PushResult:
         """
         Push prospect to Notion with retry logic.
@@ -450,6 +472,8 @@ class NotionPusher:
 
         # Push with retry
         if not self.dry_run:
+            # Delivery policy guard -- raises DeliveryPolicyError if blocked
+            assert_notion_write_allowed(intent)
             notion_result = await self._push_with_retry(payload)
 
             if notion_result:
