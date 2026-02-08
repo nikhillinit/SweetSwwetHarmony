@@ -199,8 +199,9 @@ async def test_aggregated_prospect_metadata(temp_db):
 # =============================================================================
 
 @pytest.mark.asyncio
-async def test_high_confidence_multi_source_auto_push(temp_db, mock_notion, verification_gate):
+async def test_high_confidence_multi_source_auto_push(temp_db, mock_notion, verification_gate, monkeypatch):
     """High confidence + multi-source should AUTO_PUSH to 'Source' status"""
+    monkeypatch.setenv("DELIVERY_MODE", "auto_publish")
     store = temp_db
 
     # Create high-confidence multi-source signals
@@ -247,8 +248,9 @@ async def test_high_confidence_multi_source_auto_push(temp_db, mock_notion, veri
 
 
 @pytest.mark.asyncio
-async def test_medium_confidence_needs_review(temp_db, mock_notion, verification_gate):
+async def test_medium_confidence_needs_review(temp_db, mock_notion, verification_gate, monkeypatch):
     """Medium confidence should route to 'Tracking' status"""
+    monkeypatch.setenv("DELIVERY_MODE", "auto_publish")
     store = temp_db
 
     # Create medium-confidence signal
@@ -362,8 +364,9 @@ async def test_hard_kill_signal_rejected(temp_db, mock_notion, verification_gate
 # =============================================================================
 
 @pytest.mark.asyncio
-async def test_notion_error_handling(temp_db, verification_gate):
+async def test_notion_error_handling(temp_db, verification_gate, monkeypatch):
     """Test handling of Notion API errors"""
+    monkeypatch.setenv("DELIVERY_MODE", "auto_publish")
 
     class FailingNotionConnector:
         async def upsert_prospect(self, payload):
@@ -397,8 +400,9 @@ async def test_notion_error_handling(temp_db, verification_gate):
 
 
 @pytest.mark.asyncio
-async def test_partial_batch_failure(temp_db, verification_gate):
+async def test_partial_batch_failure(temp_db, verification_gate, monkeypatch):
     """Test that one failure doesn't stop entire batch"""
+    monkeypatch.setenv("DELIVERY_MODE", "auto_publish")
 
     class PartiallyFailingNotionConnector:
         def __init__(self):
@@ -461,8 +465,9 @@ async def test_partial_batch_failure(temp_db, verification_gate):
 # =============================================================================
 
 @pytest.mark.asyncio
-async def test_dry_run_mode(temp_db, mock_notion, verification_gate):
+async def test_dry_run_mode(temp_db, mock_notion, verification_gate, monkeypatch):
     """Test dry run doesn't push to Notion or update store"""
+    monkeypatch.setenv("DELIVERY_MODE", "auto_publish")
     store = temp_db
 
     await store.save_signal(
@@ -500,8 +505,9 @@ async def test_dry_run_mode(temp_db, mock_notion, verification_gate):
 # =============================================================================
 
 @pytest.mark.asyncio
-async def test_prospect_payload_generation(temp_db, mock_notion, verification_gate):
+async def test_prospect_payload_generation(temp_db, mock_notion, verification_gate, monkeypatch):
     """Test ProspectPayload is built correctly from aggregated signals"""
+    monkeypatch.setenv("DELIVERY_MODE", "auto_publish")
     store = temp_db
 
     await store.save_signal(
@@ -548,8 +554,9 @@ async def test_prospect_payload_generation(temp_db, mock_notion, verification_ga
 # =============================================================================
 
 @pytest.mark.asyncio
-async def test_batch_limit(temp_db, mock_notion, verification_gate):
+async def test_batch_limit(temp_db, mock_notion, verification_gate, monkeypatch):
     """Test batch processing respects limit"""
+    monkeypatch.setenv("DELIVERY_MODE", "auto_publish")
     store = temp_db
 
     # Add 5 signals
@@ -580,6 +587,232 @@ async def test_batch_limit(temp_db, mock_notion, verification_gate):
     # Should still have pending signals
     pending = await store.get_pending_signals()
     assert len(pending) >= 3
+
+
+# =============================================================================
+# TESTS: DELIVERY GUARD
+# =============================================================================
+
+@pytest.mark.asyncio
+async def test_delivery_guard_staging_only_blocks_push(
+    temp_db, mock_notion, verification_gate, monkeypatch
+):
+    """staging_only DELIVERY_MODE blocks Notion writes and aborts batch"""
+    monkeypatch.setenv("DELIVERY_MODE", "staging_only")
+    store = temp_db
+
+    # Multi-source signals to reach the push path (NEEDS_REVIEW or AUTO_PUSH)
+    await store.save_signal(
+        signal_type="incorporation",
+        source_api="companies_house",
+        canonical_key="domain:guarded.ai",
+        company_name="Guarded Inc",
+        confidence=0.95,
+        raw_data={"company_number": "12345678"},
+        detected_at=datetime.now(timezone.utc) - timedelta(days=30),
+    )
+    await store.save_signal(
+        signal_type="github_spike",
+        source_api="github",
+        canonical_key="domain:guarded.ai",
+        company_name="Guarded Inc",
+        confidence=0.8,
+        raw_data={"repo": "guarded/ai", "stars": 500},
+        detected_at=datetime.now(timezone.utc) - timedelta(days=7),
+    )
+
+    pusher = NotionPusher(
+        signal_store=store,
+        notion_connector=mock_notion,
+        verification_gate=verification_gate,
+        dry_run=False,
+    )
+
+    result = await pusher.process_batch()
+
+    # Nothing should be pushed to Notion
+    assert len(mock_notion.pushed_prospects) == 0
+    # Batch should contain a delivery-policy error message
+    assert any("Delivery policy" in msg for msg in result.error_messages)
+
+
+@pytest.mark.asyncio
+async def test_delivery_guard_auto_publish_allows_push(
+    temp_db, mock_notion, verification_gate, monkeypatch
+):
+    """auto_publish DELIVERY_MODE allows Notion writes"""
+    monkeypatch.setenv("DELIVERY_MODE", "auto_publish")
+    store = temp_db
+
+    # Multi-source signals to reach the push path
+    await store.save_signal(
+        signal_type="incorporation",
+        source_api="companies_house",
+        canonical_key="domain:allowed.ai",
+        company_name="Allowed Inc",
+        confidence=0.95,
+        raw_data={"company_number": "12345678"},
+        detected_at=datetime.now(timezone.utc) - timedelta(days=30),
+    )
+    await store.save_signal(
+        signal_type="github_spike",
+        source_api="github",
+        canonical_key="domain:allowed.ai",
+        company_name="Allowed Inc",
+        confidence=0.8,
+        raw_data={"repo": "allowed/ai", "stars": 500},
+        detected_at=datetime.now(timezone.utc) - timedelta(days=7),
+    )
+
+    pusher = NotionPusher(
+        signal_store=store,
+        notion_connector=mock_notion,
+        verification_gate=verification_gate,
+        dry_run=False,
+    )
+
+    result = await pusher.process_batch()
+
+    # Should push successfully
+    assert result.pushed == 1
+    assert len(mock_notion.pushed_prospects) == 1
+    assert not result.error_messages
+
+
+@pytest.mark.asyncio
+async def test_dry_run_skips_regardless_of_delivery_mode(
+    temp_db, mock_notion, verification_gate, monkeypatch
+):
+    """dry_run=True should skip Notion writes even when DELIVERY_MODE=staging_only"""
+    monkeypatch.setenv("DELIVERY_MODE", "staging_only")
+    store = temp_db
+
+    # Multi-source signals to reach the push path
+    await store.save_signal(
+        signal_type="incorporation",
+        source_api="companies_house",
+        canonical_key="domain:dryguard.ai",
+        company_name="Dry Guard Inc",
+        confidence=0.95,
+        raw_data={"company_number": "12345678"},
+        detected_at=datetime.now(timezone.utc) - timedelta(days=30),
+    )
+    await store.save_signal(
+        signal_type="github_spike",
+        source_api="github",
+        canonical_key="domain:dryguard.ai",
+        company_name="Dry Guard Inc",
+        confidence=0.8,
+        raw_data={"repo": "dryguard/ai", "stars": 500},
+        detected_at=datetime.now(timezone.utc) - timedelta(days=7),
+    )
+
+    pusher = NotionPusher(
+        signal_store=store,
+        notion_connector=mock_notion,
+        verification_gate=verification_gate,
+        dry_run=True,
+    )
+
+    result = await pusher.process_batch()
+
+    # dry_run reports as pushed (for stats) but nothing actually hits Notion
+    assert result.pushed == 1
+    assert len(mock_notion.pushed_prospects) == 0
+    # No delivery-policy errors because the guard is never reached
+    assert not any("Delivery policy" in msg for msg in result.error_messages)
+
+
+@pytest.mark.asyncio
+async def test_delivery_guard_manual_publish_allows_manual_intent(
+    temp_db, mock_notion, verification_gate, monkeypatch
+):
+    """manual_publish DELIVERY_MODE allows MANUAL_PUSH intent via process_single_prospect"""
+    from workflows.delivery_policy import DeliveryIntent
+
+    monkeypatch.setenv("DELIVERY_MODE", "manual_publish")
+    store = temp_db
+
+    # Multi-source signals to reach the push path
+    await store.save_signal(
+        signal_type="incorporation",
+        source_api="companies_house",
+        canonical_key="domain:manual.ai",
+        company_name="Manual Inc",
+        confidence=0.95,
+        raw_data={"company_number": "12345678"},
+        detected_at=datetime.now(timezone.utc) - timedelta(days=30),
+    )
+    await store.save_signal(
+        signal_type="github_spike",
+        source_api="github",
+        canonical_key="domain:manual.ai",
+        company_name="Manual Inc",
+        confidence=0.8,
+        raw_data={"repo": "manual/ai", "stars": 500},
+        detected_at=datetime.now(timezone.utc) - timedelta(days=7),
+    )
+
+    pusher = NotionPusher(
+        signal_store=store,
+        notion_connector=mock_notion,
+        verification_gate=verification_gate,
+        dry_run=False,
+    )
+
+    result = await pusher.process_single_prospect(
+        "domain:manual.ai",
+        intent=DeliveryIntent.MANUAL_PUSH,
+    )
+
+    # Should succeed -- manual_publish allows MANUAL_PUSH
+    assert result.pushed
+    assert len(mock_notion.pushed_prospects) == 1
+
+
+@pytest.mark.asyncio
+async def test_delivery_guard_manual_publish_blocks_auto_intent(
+    temp_db, mock_notion, verification_gate, monkeypatch
+):
+    """manual_publish DELIVERY_MODE blocks AUTO_PUSH intent"""
+    from workflows.delivery_policy import DeliveryPolicyError
+
+    monkeypatch.setenv("DELIVERY_MODE", "manual_publish")
+    store = temp_db
+
+    # Multi-source signals to reach the push path
+    await store.save_signal(
+        signal_type="incorporation",
+        source_api="companies_house",
+        canonical_key="domain:blocked.ai",
+        company_name="Blocked Inc",
+        confidence=0.95,
+        raw_data={"company_number": "12345678"},
+        detected_at=datetime.now(timezone.utc) - timedelta(days=30),
+    )
+    await store.save_signal(
+        signal_type="github_spike",
+        source_api="github",
+        canonical_key="domain:blocked.ai",
+        company_name="Blocked Inc",
+        confidence=0.8,
+        raw_data={"repo": "blocked/ai", "stars": 500},
+        detected_at=datetime.now(timezone.utc) - timedelta(days=7),
+    )
+
+    pusher = NotionPusher(
+        signal_store=store,
+        notion_connector=mock_notion,
+        verification_gate=verification_gate,
+        dry_run=False,
+    )
+
+    # AUTO_PUSH should raise DeliveryPolicyError
+    with pytest.raises(DeliveryPolicyError):
+        await pusher.process_single_prospect("domain:blocked.ai")
+
+    # Nothing pushed to Notion
+    assert len(mock_notion.pushed_prospects) == 0
 
 
 if __name__ == "__main__":

@@ -11,7 +11,10 @@ Commands:
   health     - Run health checks on all components
   metrics    - Show pipeline run metrics with per-collector breakdown
   pipeline   - Pipeline dashboard commands (status, qualified, push)
-  import-csv - Import signals from CSV files (OpenVC, etc.)
+  triage     - Triage pending signals (list, approve, reject, defer)
+  import-csv    - Import signals from CSV files (OpenVC, etc.)
+  export-queue  - Export pending/queued signals to CSV for offline review
+  push          - Push specific signals to Notion by ID (manual push)
 
 Available Collectors:
   - Traditional: github, sec_edgar, companies_house, domain_whois, product_hunt,
@@ -3113,6 +3116,198 @@ Examples:
         help="Output as JSON",
     )
 
+    # --- export-queue command ---
+    export_queue_parser = subparsers.add_parser(
+        "export-queue",
+        help="Export pending/queued signals to CSV for offline review",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="""
+Export pending/queued signals to CSV for offline operator review.
+
+Examples:
+  # Export all signals to CSV file
+  python run_pipeline.py export-queue --out queue.csv
+
+  # Export only pending signals with minimum confidence
+  python run_pipeline.py export-queue --status pending --min-confidence 0.4
+
+  # Export signals from last 30 days to stdout
+  python run_pipeline.py export-queue --days 30
+""",
+    )
+    export_queue_parser.add_argument(
+        "--format",
+        type=str,
+        default="csv",
+        choices=["csv"],
+        help="Output format (default: csv)",
+    )
+    export_queue_parser.add_argument(
+        "--out",
+        type=str,
+        default=None,
+        help="Output file path (default: stdout)",
+    )
+    export_queue_parser.add_argument(
+        "--status",
+        type=str,
+        choices=["pending", "queued", "pushed", "rejected"],
+        help="Filter by processing status",
+    )
+    export_queue_parser.add_argument(
+        "--min-confidence",
+        type=float,
+        help="Minimum confidence score (e.g., 0.4)",
+    )
+    export_queue_parser.add_argument(
+        "--days",
+        type=int,
+        help="Only include signals from the last N days",
+    )
+    export_queue_parser.add_argument(
+        "--db-path",
+        type=str,
+        default=None,
+        help="Path to SQLite database (overrides env var)",
+    )
+
+    # --- push command ---
+    push_parser = subparsers.add_parser(
+        "push",
+        help="Push specific signals to Notion by ID (manual push)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="""
+Push specific signals to Notion by their signal IDs.
+
+Requires DELIVERY_MODE >= manual_publish (unless --dry-run).
+
+Examples:
+  # Dry run to preview what would be pushed
+  python run_pipeline.py push --signal-ids 1,2,3 --dry-run
+
+  # Actually push specific signals
+  python run_pipeline.py push --signal-ids 5
+
+  # Push with custom database path
+  python run_pipeline.py push --signal-ids 1,2 --db-path custom.db
+""",
+    )
+    push_parser.add_argument(
+        "--signal-ids",
+        type=str,
+        required=True,
+        help="Comma-separated signal IDs to push (e.g., 1,2,3)",
+    )
+    push_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help="Preview what would be pushed without actually pushing",
+    )
+    push_parser.add_argument(
+        "--db-path",
+        type=str,
+        default=None,
+        help="Path to SQLite database (overrides env var)",
+    )
+
+    # --- triage command group ---
+    triage_parser = subparsers.add_parser(
+        "triage",
+        help="Triage pending signals (list, approve, reject, defer)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="""
+Triage pending signals for review.
+
+Examples:
+  # List pending signals (compact table)
+  python run_pipeline.py triage list --limit 20
+
+  # Approve a signal for push
+  python run_pipeline.py triage approve 123 --reason "Clear consumer fit"
+
+  # Reject a signal
+  python run_pipeline.py triage reject 124 --reason "B2B dev tool"
+
+  # Defer a signal for later review
+  python run_pipeline.py triage defer 125 --reason "Need more signals"
+""",
+    )
+    triage_sub = triage_parser.add_subparsers(dest="triage_cmd")
+
+    # triage list
+    triage_list_parser = triage_sub.add_parser("list", help="List pending signals for triage")
+    triage_list_parser.add_argument(
+        "--limit", type=int, default=20,
+        help="Maximum signals to show (default: 20)",
+    )
+    triage_list_parser.add_argument(
+        "--status", type=str, default="pending",
+        choices=["pending", "queued", "pushed", "rejected"],
+        help="Filter by status (default: pending)",
+    )
+    triage_list_parser.add_argument(
+        "--min-confidence", type=float, default=None, dest="min_confidence",
+        help="Minimum confidence score filter",
+    )
+    triage_list_parser.add_argument(
+        "--compact", action="store_true", default=True,
+        help="Compact mode: single line per signal (default)",
+    )
+    triage_list_parser.add_argument(
+        "--verbose", action="store_true", default=False,
+        help="Show more detail per signal",
+    )
+    triage_list_parser.add_argument(
+        "--db-path", type=str, default=None,
+        help="Path to SQLite database (overrides env var)",
+    )
+
+    # triage approve
+    triage_approve_parser = triage_sub.add_parser("approve", help="Approve a signal for push")
+    triage_approve_parser.add_argument(
+        "signal_id", type=int,
+        help="Signal ID to approve",
+    )
+    triage_approve_parser.add_argument(
+        "--reason", type=str, required=True,
+        help="Reason for approval (required)",
+    )
+    triage_approve_parser.add_argument(
+        "--db-path", type=str, default=None,
+        help="Path to SQLite database (overrides env var)",
+    )
+
+    # triage reject
+    triage_reject_parser = triage_sub.add_parser("reject", help="Reject a signal")
+    triage_reject_parser.add_argument(
+        "signal_id", type=int,
+        help="Signal ID to reject",
+    )
+    triage_reject_parser.add_argument(
+        "--reason", type=str, required=True,
+        help="Reason for rejection (required)",
+    )
+    triage_reject_parser.add_argument(
+        "--db-path", type=str, default=None,
+        help="Path to SQLite database (overrides env var)",
+    )
+
+    # triage defer
+    triage_defer_parser = triage_sub.add_parser("defer", help="Defer a signal for later review")
+    triage_defer_parser.add_argument(
+        "signal_id", type=int,
+        help="Signal ID to defer",
+    )
+    triage_defer_parser.add_argument(
+        "--reason", type=str, required=True,
+        help="Reason for deferral (required)",
+    )
+    triage_defer_parser.add_argument(
+        "--db-path", type=str, default=None,
+        help="Path to SQLite database (overrides env var)",
+    )
+
     return parser
 
 
@@ -4175,6 +4370,395 @@ async def cmd_shadow_backfill(args):
         await store.close()
 
 
+# =============================================================================
+# TRIAGE COMMANDS
+# =============================================================================
+
+
+async def cmd_triage_list(args):
+    """List pending/queued signals in a compact table for triage review.
+
+    Phase 0, Task 0.11: Lets operators quickly scan signals needing review.
+    """
+    db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+    store = SignalStore(db_path)
+    await store.initialize()
+
+    try:
+        status_filter = getattr(args, "status", "pending") or "pending"
+        min_confidence = getattr(args, "min_confidence", None)
+        limit = getattr(args, "limit", 20) or 20
+        verbose_mode = getattr(args, "verbose", False)
+
+        query = """
+            SELECT s.id, s.company_name, s.canonical_key, s.confidence,
+                   s.signal_type, s.source_api, s.raw_data,
+                   COALESCE(sp.status, 'pending') as status,
+                   s.detected_at
+            FROM signals s
+            LEFT JOIN signal_processing sp ON sp.signal_id = s.id
+            WHERE COALESCE(sp.status, 'pending') = ?
+        """
+        params: list = [status_filter]
+
+        if min_confidence is not None:
+            query += " AND s.confidence >= ?"
+            params.append(min_confidence)
+
+        query += " ORDER BY s.confidence DESC, s.detected_at DESC"
+        query += " LIMIT ?"
+        params.append(limit)
+
+        cursor = await store._db.execute(query, params)
+        rows = await cursor.fetchall()
+
+        if not rows:
+            print(f"No signals with status '{status_filter}' found.")
+            return
+
+        # Print header
+        print(f"\n{'ID':>6}  {'Company':<25}  {'Summary':<40}  {'Conf':>5}  {'Source':<15}  {'Status':<10}")
+        print("-" * 110)
+
+        for row in rows:
+            sig_id = row[0]
+            company = (row[1] or row[2] or "Unknown")[:25]
+            confidence = row[3]
+            signal_type = row[4] or ""
+            source_api = row[5] or ""
+            raw_data_str = row[6] or "{}"
+            status = row[7]
+
+            # Extract summary from raw_data
+            try:
+                raw_data = json.loads(raw_data_str)
+                summary = (
+                    raw_data.get("description")
+                    or raw_data.get("title")
+                    or raw_data.get("name")
+                    or signal_type
+                )
+            except (json.JSONDecodeError, TypeError):
+                summary = signal_type
+
+            summary = (summary or "")[:40]
+            source = source_api[:15] if source_api else ""
+
+            print(f"{sig_id:>6}  {company:<25}  {summary:<40}  {confidence:>5.2f}  {source:<15}  {status:<10}")
+
+            if verbose_mode:
+                detected_at = row[8] or ""
+                print(f"        Detected: {detected_at}  Type: {signal_type}  Key: {row[2]}")
+
+        print(f"\nShowing {len(rows)} signal(s) with status '{status_filter}'")
+
+    finally:
+        await store.close()
+
+
+async def _triage_action(args, action_type: str, new_status=None):
+    """Shared handler for triage approve/reject/defer actions.
+
+    Writes an audit_log entry and optionally updates signal_processing status.
+
+    Args:
+        args: Parsed CLI arguments (signal_id, reason, db_path)
+        action_type: The audit action type (e.g., 'triage_approve')
+        new_status: New signal_processing status, or None to keep unchanged
+    """
+    from datetime import datetime, timezone
+
+    db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+    store = SignalStore(db_path)
+    await store.initialize()
+
+    try:
+        signal_id = args.signal_id
+        reason = args.reason
+        now = datetime.now(timezone.utc).isoformat()
+
+        # Verify signal exists
+        cursor = await store._db.execute(
+            "SELECT id, company_name FROM signals WHERE id = ?",
+            (signal_id,),
+        )
+        signal_row = await cursor.fetchone()
+        if not signal_row:
+            print(f"ERROR: Signal ID {signal_id} not found")
+            sys.exit(1)
+
+        company_name = signal_row[1] or f"Signal #{signal_id}"
+
+        # Insert audit_log entry
+        details = json.dumps({"reason": reason})
+        await store._db.execute(
+            """INSERT INTO audit_log (action_type, entity_type, entity_id, actor, details, created_at)
+               VALUES (?, 'signal', ?, 'operator', ?, ?)""",
+            (action_type, str(signal_id), details, now),
+        )
+
+        # Update or insert signal_processing row (if new_status is set)
+        if new_status is not None:
+            cursor = await store._db.execute(
+                "SELECT id FROM signal_processing WHERE signal_id = ?",
+                (signal_id,),
+            )
+            existing = await cursor.fetchone()
+
+            if existing:
+                await store._db.execute(
+                    """UPDATE signal_processing
+                       SET status = ?, processed_at = ?, metadata = ?
+                       WHERE signal_id = ?""",
+                    (new_status, now, details, signal_id),
+                )
+            else:
+                await store._db.execute(
+                    """INSERT INTO signal_processing
+                       (signal_id, status, processed_at, metadata, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (signal_id, new_status, now, details, now, now),
+                )
+
+        await store._db.commit()
+
+        action_label = action_type.replace("triage_", "").upper()
+        status_msg = f" -> status={new_status}" if new_status else " (status unchanged)"
+        print(f"[{action_label}] Signal {signal_id} ({company_name}){status_msg}")
+        print(f"  Reason: {reason}")
+        print(f"  Audit log entry created at {now}")
+
+    finally:
+        await store.close()
+
+
+async def cmd_triage_approve(args):
+    """Approve a signal for push (sets status to 'queued').
+
+    Phase 0, Task 0.11: Operator approves signal, recording reason in audit_log.
+    """
+    await _triage_action(args, action_type="triage_approve", new_status="queued")
+
+
+async def cmd_triage_reject(args):
+    """Reject a signal (sets status to 'rejected').
+
+    Phase 0, Task 0.11: Operator rejects signal, recording reason in audit_log.
+    """
+    await _triage_action(args, action_type="triage_reject", new_status="rejected")
+
+
+async def cmd_triage_defer(args):
+    """Defer a signal for later review (status unchanged).
+
+    Phase 0, Task 0.11: Operator defers signal, recording reason in audit_log.
+    """
+    await _triage_action(args, action_type="triage_defer", new_status=None)
+
+
+async def cmd_export_queue(args):
+    """Export pending/queued signals to CSV for offline review.
+
+    Phase 0, Task 0.5: Lets operators review the signal queue offline
+    without needing Notion access.
+    """
+    import csv
+    from datetime import datetime, timedelta, timezone
+
+    db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+    store = SignalStore(db_path)
+    await store.initialize()
+
+    try:
+        # Build query with optional filters
+        query = """
+            SELECT s.id, s.company_name, s.canonical_key, s.confidence,
+                   s.signal_type, s.source_api, s.detected_at,
+                   COALESCE(sp.status, 'pending') as status
+            FROM signals s
+            LEFT JOIN signal_processing sp ON sp.signal_id = s.id
+            WHERE 1=1
+        """
+        params = []
+
+        if getattr(args, "status", None):
+            query += " AND COALESCE(sp.status, 'pending') = ?"
+            params.append(args.status)
+
+        if getattr(args, "min_confidence", None) is not None:
+            query += " AND s.confidence >= ?"
+            params.append(args.min_confidence)
+
+        if getattr(args, "days", None) is not None:
+            cutoff = datetime.now(timezone.utc) - timedelta(days=args.days)
+            query += " AND s.detected_at >= ?"
+            params.append(cutoff.isoformat())
+
+        query += " ORDER BY s.detected_at DESC"
+
+        cursor = await store._db.execute(query, params)
+        rows = await cursor.fetchall()
+        columns = ["signal_id", "company_name", "canonical_key", "confidence",
+                    "signal_type", "source_api", "detected_at", "status"]
+
+        # Write CSV output
+        output_file = getattr(args, "out", None)
+        if output_file:
+            with open(output_file, "w", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                writer.writerow(columns)
+                writer.writerows(rows)
+            print(f"Exported {len(rows)} signals to {output_file}")
+        else:
+            writer = csv.writer(sys.stdout)
+            writer.writerow(columns)
+            writer.writerows(rows)
+            # Print summary to stderr so it doesn't mix with CSV data
+            print(f"\n# Exported {len(rows)} signals", file=sys.stderr)
+
+    finally:
+        await store.close()
+
+
+async def cmd_push(args):
+    """Push specific signals to Notion by ID (manual push).
+
+    Phase 0, Task 0.6: Lets operators manually push selected signals
+    to Notion after reviewing them in the export queue.
+    """
+    from workflows.delivery_policy import (
+        assert_notion_write_allowed,
+        DeliveryIntent,
+        DeliveryPolicyError,
+    )
+
+    # Parse signal IDs
+    try:
+        signal_ids = [int(x.strip()) for x in args.signal_ids.split(",")]
+    except ValueError:
+        print("ERROR: --signal-ids must be comma-separated integers (e.g., 1,2,3)")
+        sys.exit(1)
+
+    if not signal_ids:
+        print("ERROR: No signal IDs provided")
+        sys.exit(1)
+
+    dry_run = getattr(args, "dry_run", False)
+
+    # Check delivery policy upfront (skip for dry-run)
+    if not dry_run:
+        try:
+            assert_notion_write_allowed(DeliveryIntent.MANUAL_PUSH)
+        except DeliveryPolicyError as e:
+            print(f"ERROR: {e}")
+            sys.exit(1)
+
+    db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+    store = SignalStore(db_path)
+    await store.initialize()
+
+    results = {"pushed": 0, "rejected": 0, "not_found": 0, "error": 0}
+
+    try:
+        # Fetch signals by ID
+        signals = []
+        for sid in signal_ids:
+            signal = await store.get_signal(sid)
+            if signal is None:
+                print(f"  [NOT FOUND] Signal ID {sid} does not exist")
+                results["not_found"] += 1
+            else:
+                signals.append(signal)
+
+        if not signals:
+            print("\nNo valid signals found to push.")
+            return
+
+        # Group signals by canonical_key
+        grouped: dict[str, list] = {}
+        for sig in signals:
+            grouped.setdefault(sig.canonical_key, []).append(sig)
+
+        print(f"\nFound {len(signals)} signal(s) across {len(grouped)} prospect(s)")
+        print()
+
+        if dry_run:
+            # Dry-run: just show what would be pushed
+            print("[DRY RUN] Would push the following signals:\n")
+            for canonical_key, sigs in grouped.items():
+                company_name = sigs[0].company_name or "Unknown"
+                confidence_max = max(s.confidence for s in sigs)
+                print(f"  Prospect: {company_name} ({canonical_key})")
+                print(f"    Signals: {len(sigs)}, Max confidence: {confidence_max:.2f}")
+                for s in sigs:
+                    print(f"      ID={s.id}  type={s.signal_type}  source={s.source_api}  "
+                          f"confidence={s.confidence:.2f}")
+                print()
+            results["pushed"] = len(signals)
+        else:
+            # Actual push: instantiate NotionPusher and push per canonical key
+            from connectors.notion_connector_v2 import NotionConnector
+            from verification.verification_gate_v2 import VerificationGate
+
+            notion_api_key = os.environ.get("NOTION_API_KEY")
+            notion_db_id = os.environ.get("NOTION_DATABASE_ID")
+
+            if not notion_api_key or not notion_db_id:
+                print("ERROR: NOTION_API_KEY and NOTION_DATABASE_ID must be set")
+                sys.exit(1)
+
+            connector = NotionConnector(
+                api_key=notion_api_key,
+                database_id=notion_db_id,
+            )
+
+            from workflows.notion_pusher import NotionPusher
+
+            pusher = NotionPusher(
+                signal_store=store,
+                notion_connector=connector,
+                verification_gate=VerificationGate(
+                    strict_mode=False,
+                    auto_push_status="Source",
+                    needs_review_status="Tracking",
+                ),
+                dry_run=False,
+            )
+
+            for canonical_key, sigs in grouped.items():
+                company_name = sigs[0].company_name or "Unknown"
+                print(f"  Pushing: {company_name} ({canonical_key}) ...")
+                try:
+                    result = await pusher.process_single_prospect(
+                        canonical_key, intent=DeliveryIntent.MANUAL_PUSH
+                    )
+                    if result.error:
+                        print(f"    [ERROR] {result.error}")
+                        results["error"] += len(sigs)
+                    elif result.decision.value == "reject":
+                        print(f"    [REJECTED] confidence={result.confidence:.2f}")
+                        results["rejected"] += len(sigs)
+                    else:
+                        print(f"    [PUSHED] decision={result.decision.value} "
+                              f"confidence={result.confidence:.2f}")
+                        results["pushed"] += len(sigs)
+                except Exception as e:
+                    print(f"    [ERROR] {e}")
+                    results["error"] += len(sigs)
+
+        # Summary
+        print("=" * 50)
+        print("PUSH SUMMARY")
+        print("=" * 50)
+        print(f"  Pushed:     {results['pushed']}")
+        print(f"  Rejected:   {results['rejected']}")
+        print(f"  Not found:  {results['not_found']}")
+        print(f"  Errors:     {results['error']}")
+
+    finally:
+        await store.close()
+
+
 async def cmd_ground_truth(args):
     """Export ground truth labels from Notion CRM for evaluation.
 
@@ -4448,6 +5032,27 @@ async def main():
             await cmd_shadow_backfill(args)
         elif args.command == "ground-truth":
             await cmd_ground_truth(args)
+        elif args.command == "export-queue":
+            await cmd_export_queue(args)
+        elif args.command == "push":
+            await cmd_push(args)
+        elif args.command == "triage":
+            # Handle triage subcommands
+            if hasattr(args, "triage_cmd") and args.triage_cmd:
+                if args.triage_cmd == "list":
+                    await cmd_triage_list(args)
+                elif args.triage_cmd == "approve":
+                    await cmd_triage_approve(args)
+                elif args.triage_cmd == "reject":
+                    await cmd_triage_reject(args)
+                elif args.triage_cmd == "defer":
+                    await cmd_triage_defer(args)
+                else:
+                    print(f"Unknown triage command: {args.triage_cmd}")
+                    sys.exit(1)
+            else:
+                print("Triage command requires a subcommand (list, approve, reject, defer)")
+                sys.exit(1)
         else:
             print(f"Unknown command: {args.command}")
             parser.print_help()
