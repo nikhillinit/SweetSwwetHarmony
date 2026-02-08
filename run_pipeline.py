@@ -11,6 +11,7 @@ Commands:
   health     - Run health checks on all components
   metrics    - Show pipeline run metrics with per-collector breakdown
   pipeline   - Pipeline dashboard commands (status, qualified, push)
+  triage     - Triage pending signals (list, approve, reject, defer)
   import-csv    - Import signals from CSV files (OpenVC, etc.)
   export-queue  - Export pending/queued signals to CSV for offline review
   push          - Push specific signals to Notion by ID (manual push)
@@ -3210,6 +3211,103 @@ Examples:
         help="Path to SQLite database (overrides env var)",
     )
 
+    # --- triage command group ---
+    triage_parser = subparsers.add_parser(
+        "triage",
+        help="Triage pending signals (list, approve, reject, defer)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="""
+Triage pending signals for review.
+
+Examples:
+  # List pending signals (compact table)
+  python run_pipeline.py triage list --limit 20
+
+  # Approve a signal for push
+  python run_pipeline.py triage approve 123 --reason "Clear consumer fit"
+
+  # Reject a signal
+  python run_pipeline.py triage reject 124 --reason "B2B dev tool"
+
+  # Defer a signal for later review
+  python run_pipeline.py triage defer 125 --reason "Need more signals"
+""",
+    )
+    triage_sub = triage_parser.add_subparsers(dest="triage_cmd")
+
+    # triage list
+    triage_list_parser = triage_sub.add_parser("list", help="List pending signals for triage")
+    triage_list_parser.add_argument(
+        "--limit", type=int, default=20,
+        help="Maximum signals to show (default: 20)",
+    )
+    triage_list_parser.add_argument(
+        "--status", type=str, default="pending",
+        choices=["pending", "queued", "pushed", "rejected"],
+        help="Filter by status (default: pending)",
+    )
+    triage_list_parser.add_argument(
+        "--min-confidence", type=float, default=None, dest="min_confidence",
+        help="Minimum confidence score filter",
+    )
+    triage_list_parser.add_argument(
+        "--compact", action="store_true", default=True,
+        help="Compact mode: single line per signal (default)",
+    )
+    triage_list_parser.add_argument(
+        "--verbose", action="store_true", default=False,
+        help="Show more detail per signal",
+    )
+    triage_list_parser.add_argument(
+        "--db-path", type=str, default=None,
+        help="Path to SQLite database (overrides env var)",
+    )
+
+    # triage approve
+    triage_approve_parser = triage_sub.add_parser("approve", help="Approve a signal for push")
+    triage_approve_parser.add_argument(
+        "signal_id", type=int,
+        help="Signal ID to approve",
+    )
+    triage_approve_parser.add_argument(
+        "--reason", type=str, required=True,
+        help="Reason for approval (required)",
+    )
+    triage_approve_parser.add_argument(
+        "--db-path", type=str, default=None,
+        help="Path to SQLite database (overrides env var)",
+    )
+
+    # triage reject
+    triage_reject_parser = triage_sub.add_parser("reject", help="Reject a signal")
+    triage_reject_parser.add_argument(
+        "signal_id", type=int,
+        help="Signal ID to reject",
+    )
+    triage_reject_parser.add_argument(
+        "--reason", type=str, required=True,
+        help="Reason for rejection (required)",
+    )
+    triage_reject_parser.add_argument(
+        "--db-path", type=str, default=None,
+        help="Path to SQLite database (overrides env var)",
+    )
+
+    # triage defer
+    triage_defer_parser = triage_sub.add_parser("defer", help="Defer a signal for later review")
+    triage_defer_parser.add_argument(
+        "signal_id", type=int,
+        help="Signal ID to defer",
+    )
+    triage_defer_parser.add_argument(
+        "--reason", type=str, required=True,
+        help="Reason for deferral (required)",
+    )
+    triage_defer_parser.add_argument(
+        "--db-path", type=str, default=None,
+        help="Path to SQLite database (overrides env var)",
+    )
+
     return parser
 
 
@@ -4272,6 +4370,192 @@ async def cmd_shadow_backfill(args):
         await store.close()
 
 
+# =============================================================================
+# TRIAGE COMMANDS
+# =============================================================================
+
+
+async def cmd_triage_list(args):
+    """List pending/queued signals in a compact table for triage review.
+
+    Phase 0, Task 0.11: Lets operators quickly scan signals needing review.
+    """
+    db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+    store = SignalStore(db_path)
+    await store.initialize()
+
+    try:
+        status_filter = getattr(args, "status", "pending") or "pending"
+        min_confidence = getattr(args, "min_confidence", None)
+        limit = getattr(args, "limit", 20) or 20
+        verbose_mode = getattr(args, "verbose", False)
+
+        query = """
+            SELECT s.id, s.company_name, s.canonical_key, s.confidence,
+                   s.signal_type, s.source_api, s.raw_data,
+                   COALESCE(sp.status, 'pending') as status,
+                   s.detected_at
+            FROM signals s
+            LEFT JOIN signal_processing sp ON sp.signal_id = s.id
+            WHERE COALESCE(sp.status, 'pending') = ?
+        """
+        params: list = [status_filter]
+
+        if min_confidence is not None:
+            query += " AND s.confidence >= ?"
+            params.append(min_confidence)
+
+        query += " ORDER BY s.confidence DESC, s.detected_at DESC"
+        query += " LIMIT ?"
+        params.append(limit)
+
+        cursor = await store._db.execute(query, params)
+        rows = await cursor.fetchall()
+
+        if not rows:
+            print(f"No signals with status '{status_filter}' found.")
+            return
+
+        # Print header
+        print(f"\n{'ID':>6}  {'Company':<25}  {'Summary':<40}  {'Conf':>5}  {'Source':<15}  {'Status':<10}")
+        print("-" * 110)
+
+        for row in rows:
+            sig_id = row[0]
+            company = (row[1] or row[2] or "Unknown")[:25]
+            confidence = row[3]
+            signal_type = row[4] or ""
+            source_api = row[5] or ""
+            raw_data_str = row[6] or "{}"
+            status = row[7]
+
+            # Extract summary from raw_data
+            try:
+                raw_data = json.loads(raw_data_str)
+                summary = (
+                    raw_data.get("description")
+                    or raw_data.get("title")
+                    or raw_data.get("name")
+                    or signal_type
+                )
+            except (json.JSONDecodeError, TypeError):
+                summary = signal_type
+
+            summary = (summary or "")[:40]
+            source = source_api[:15] if source_api else ""
+
+            print(f"{sig_id:>6}  {company:<25}  {summary:<40}  {confidence:>5.2f}  {source:<15}  {status:<10}")
+
+            if verbose_mode:
+                detected_at = row[8] or ""
+                print(f"        Detected: {detected_at}  Type: {signal_type}  Key: {row[2]}")
+
+        print(f"\nShowing {len(rows)} signal(s) with status '{status_filter}'")
+
+    finally:
+        await store.close()
+
+
+async def _triage_action(args, action_type: str, new_status=None):
+    """Shared handler for triage approve/reject/defer actions.
+
+    Writes an audit_log entry and optionally updates signal_processing status.
+
+    Args:
+        args: Parsed CLI arguments (signal_id, reason, db_path)
+        action_type: The audit action type (e.g., 'triage_approve')
+        new_status: New signal_processing status, or None to keep unchanged
+    """
+    from datetime import datetime, timezone
+
+    db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+    store = SignalStore(db_path)
+    await store.initialize()
+
+    try:
+        signal_id = args.signal_id
+        reason = args.reason
+        now = datetime.now(timezone.utc).isoformat()
+
+        # Verify signal exists
+        cursor = await store._db.execute(
+            "SELECT id, company_name FROM signals WHERE id = ?",
+            (signal_id,),
+        )
+        signal_row = await cursor.fetchone()
+        if not signal_row:
+            print(f"ERROR: Signal ID {signal_id} not found")
+            sys.exit(1)
+
+        company_name = signal_row[1] or f"Signal #{signal_id}"
+
+        # Insert audit_log entry
+        details = json.dumps({"reason": reason})
+        await store._db.execute(
+            """INSERT INTO audit_log (action_type, entity_type, entity_id, actor, details, created_at)
+               VALUES (?, 'signal', ?, 'operator', ?, ?)""",
+            (action_type, str(signal_id), details, now),
+        )
+
+        # Update or insert signal_processing row (if new_status is set)
+        if new_status is not None:
+            cursor = await store._db.execute(
+                "SELECT id FROM signal_processing WHERE signal_id = ?",
+                (signal_id,),
+            )
+            existing = await cursor.fetchone()
+
+            if existing:
+                await store._db.execute(
+                    """UPDATE signal_processing
+                       SET status = ?, processed_at = ?, metadata = ?
+                       WHERE signal_id = ?""",
+                    (new_status, now, details, signal_id),
+                )
+            else:
+                await store._db.execute(
+                    """INSERT INTO signal_processing
+                       (signal_id, status, processed_at, metadata, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (signal_id, new_status, now, details, now, now),
+                )
+
+        await store._db.commit()
+
+        action_label = action_type.replace("triage_", "").upper()
+        status_msg = f" -> status={new_status}" if new_status else " (status unchanged)"
+        print(f"[{action_label}] Signal {signal_id} ({company_name}){status_msg}")
+        print(f"  Reason: {reason}")
+        print(f"  Audit log entry created at {now}")
+
+    finally:
+        await store.close()
+
+
+async def cmd_triage_approve(args):
+    """Approve a signal for push (sets status to 'queued').
+
+    Phase 0, Task 0.11: Operator approves signal, recording reason in audit_log.
+    """
+    await _triage_action(args, action_type="triage_approve", new_status="queued")
+
+
+async def cmd_triage_reject(args):
+    """Reject a signal (sets status to 'rejected').
+
+    Phase 0, Task 0.11: Operator rejects signal, recording reason in audit_log.
+    """
+    await _triage_action(args, action_type="triage_reject", new_status="rejected")
+
+
+async def cmd_triage_defer(args):
+    """Defer a signal for later review (status unchanged).
+
+    Phase 0, Task 0.11: Operator defers signal, recording reason in audit_log.
+    """
+    await _triage_action(args, action_type="triage_defer", new_status=None)
+
+
 async def cmd_export_queue(args):
     """Export pending/queued signals to CSV for offline review.
 
@@ -4752,6 +5036,23 @@ async def main():
             await cmd_export_queue(args)
         elif args.command == "push":
             await cmd_push(args)
+        elif args.command == "triage":
+            # Handle triage subcommands
+            if hasattr(args, "triage_cmd") and args.triage_cmd:
+                if args.triage_cmd == "list":
+                    await cmd_triage_list(args)
+                elif args.triage_cmd == "approve":
+                    await cmd_triage_approve(args)
+                elif args.triage_cmd == "reject":
+                    await cmd_triage_reject(args)
+                elif args.triage_cmd == "defer":
+                    await cmd_triage_defer(args)
+                else:
+                    print(f"Unknown triage command: {args.triage_cmd}")
+                    sys.exit(1)
+            else:
+                print("Triage command requires a subcommand (list, approve, reject, defer)")
+                sys.exit(1)
         else:
             print(f"Unknown command: {args.command}")
             parser.print_help()
