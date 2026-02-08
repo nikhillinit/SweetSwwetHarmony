@@ -53,6 +53,7 @@ from typing import Any, Dict, List, Optional, AsyncIterator, TYPE_CHECKING
 import aiosqlite
 
 from storage.migrations.quality_tables import QUALITY_TABLES_DDL
+from storage.migrations.v27_audit_log import AUDIT_LOG_DDL
 
 if TYPE_CHECKING:
     from workflows.pipeline import PipelineStats, CollectorMetrics
@@ -65,7 +66,7 @@ logger = logging.getLogger(__name__)
 # SCHEMA VERSION
 # =============================================================================
 
-CURRENT_SCHEMA_VERSION = 26
+CURRENT_SCHEMA_VERSION = 27
 
 # SQL for creating tables (migrations applied in order)
 MIGRATIONS = {
@@ -1699,6 +1700,7 @@ MIGRATIONS = {
     --                    OR (keyword_score < 0.4 AND thesis_fit_score >= 0.7)
     ALTER TABLE thesis_classifications ADD COLUMN disagreement_detected BOOLEAN DEFAULT 0;
     """,
+    27: AUDIT_LOG_DDL,
 }
 
 
