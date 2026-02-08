@@ -15,7 +15,9 @@ AUDIT_LOG_DDL = """
 
 -- Structured audit trail for all pipeline and operator actions.
 -- Each row records a single action with its context.
-CREATE TABLE IF NOT EXISTS audit_log (
+-- Drop legacy audit_log (v24 schema) to replace with new structured version.
+DROP TABLE IF EXISTS audit_log;
+CREATE TABLE audit_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     action_type TEXT NOT NULL,    -- e.g., 'triage_approve', 'triage_reject',
                                  --       'triage_defer', 'manual_push',
