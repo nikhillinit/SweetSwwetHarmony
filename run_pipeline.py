@@ -13,6 +13,7 @@ Commands:
   pipeline   - Pipeline dashboard commands (status, qualified, push)
   import-csv    - Import signals from CSV files (OpenVC, etc.)
   export-queue  - Export pending/queued signals to CSV for offline review
+  push          - Push specific signals to Notion by ID (manual push)
 
 Available Collectors:
   - Traditional: github, sec_edgar, companies_house, domain_whois, product_hunt,
@@ -3169,6 +3170,46 @@ Examples:
         help="Path to SQLite database (overrides env var)",
     )
 
+    # --- push command ---
+    push_parser = subparsers.add_parser(
+        "push",
+        help="Push specific signals to Notion by ID (manual push)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="""
+Push specific signals to Notion by their signal IDs.
+
+Requires DELIVERY_MODE >= manual_publish (unless --dry-run).
+
+Examples:
+  # Dry run to preview what would be pushed
+  python run_pipeline.py push --signal-ids 1,2,3 --dry-run
+
+  # Actually push specific signals
+  python run_pipeline.py push --signal-ids 5
+
+  # Push with custom database path
+  python run_pipeline.py push --signal-ids 1,2 --db-path custom.db
+""",
+    )
+    push_parser.add_argument(
+        "--signal-ids",
+        type=str,
+        required=True,
+        help="Comma-separated signal IDs to push (e.g., 1,2,3)",
+    )
+    push_parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help="Preview what would be pushed without actually pushing",
+    )
+    push_parser.add_argument(
+        "--db-path",
+        type=str,
+        default=None,
+        help="Path to SQLite database (overrides env var)",
+    )
+
     return parser
 
 
@@ -4295,6 +4336,145 @@ async def cmd_export_queue(args):
         await store.close()
 
 
+async def cmd_push(args):
+    """Push specific signals to Notion by ID (manual push).
+
+    Phase 0, Task 0.6: Lets operators manually push selected signals
+    to Notion after reviewing them in the export queue.
+    """
+    from workflows.delivery_policy import (
+        assert_notion_write_allowed,
+        DeliveryIntent,
+        DeliveryPolicyError,
+    )
+
+    # Parse signal IDs
+    try:
+        signal_ids = [int(x.strip()) for x in args.signal_ids.split(",")]
+    except ValueError:
+        print("ERROR: --signal-ids must be comma-separated integers (e.g., 1,2,3)")
+        sys.exit(1)
+
+    if not signal_ids:
+        print("ERROR: No signal IDs provided")
+        sys.exit(1)
+
+    dry_run = getattr(args, "dry_run", False)
+
+    # Check delivery policy upfront (skip for dry-run)
+    if not dry_run:
+        try:
+            assert_notion_write_allowed(DeliveryIntent.MANUAL_PUSH)
+        except DeliveryPolicyError as e:
+            print(f"ERROR: {e}")
+            sys.exit(1)
+
+    db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+    store = SignalStore(db_path)
+    await store.initialize()
+
+    results = {"pushed": 0, "rejected": 0, "not_found": 0, "error": 0}
+
+    try:
+        # Fetch signals by ID
+        signals = []
+        for sid in signal_ids:
+            signal = await store.get_signal(sid)
+            if signal is None:
+                print(f"  [NOT FOUND] Signal ID {sid} does not exist")
+                results["not_found"] += 1
+            else:
+                signals.append(signal)
+
+        if not signals:
+            print("\nNo valid signals found to push.")
+            return
+
+        # Group signals by canonical_key
+        grouped: dict[str, list] = {}
+        for sig in signals:
+            grouped.setdefault(sig.canonical_key, []).append(sig)
+
+        print(f"\nFound {len(signals)} signal(s) across {len(grouped)} prospect(s)")
+        print()
+
+        if dry_run:
+            # Dry-run: just show what would be pushed
+            print("[DRY RUN] Would push the following signals:\n")
+            for canonical_key, sigs in grouped.items():
+                company_name = sigs[0].company_name or "Unknown"
+                confidence_max = max(s.confidence for s in sigs)
+                print(f"  Prospect: {company_name} ({canonical_key})")
+                print(f"    Signals: {len(sigs)}, Max confidence: {confidence_max:.2f}")
+                for s in sigs:
+                    print(f"      ID={s.id}  type={s.signal_type}  source={s.source_api}  "
+                          f"confidence={s.confidence:.2f}")
+                print()
+            results["pushed"] = len(signals)
+        else:
+            # Actual push: instantiate NotionPusher and push per canonical key
+            from connectors.notion_connector_v2 import NotionConnector
+            from verification.verification_gate_v2 import VerificationGate
+
+            notion_api_key = os.environ.get("NOTION_API_KEY")
+            notion_db_id = os.environ.get("NOTION_DATABASE_ID")
+
+            if not notion_api_key or not notion_db_id:
+                print("ERROR: NOTION_API_KEY and NOTION_DATABASE_ID must be set")
+                sys.exit(1)
+
+            connector = NotionConnector(
+                api_key=notion_api_key,
+                database_id=notion_db_id,
+            )
+
+            from workflows.notion_pusher import NotionPusher
+
+            pusher = NotionPusher(
+                signal_store=store,
+                notion_connector=connector,
+                verification_gate=VerificationGate(
+                    strict_mode=False,
+                    auto_push_status="Source",
+                    needs_review_status="Tracking",
+                ),
+                dry_run=False,
+            )
+
+            for canonical_key, sigs in grouped.items():
+                company_name = sigs[0].company_name or "Unknown"
+                print(f"  Pushing: {company_name} ({canonical_key}) ...")
+                try:
+                    result = await pusher.process_single_prospect(
+                        canonical_key, intent=DeliveryIntent.MANUAL_PUSH
+                    )
+                    if result.error:
+                        print(f"    [ERROR] {result.error}")
+                        results["error"] += len(sigs)
+                    elif result.decision.value == "reject":
+                        print(f"    [REJECTED] confidence={result.confidence:.2f}")
+                        results["rejected"] += len(sigs)
+                    else:
+                        print(f"    [PUSHED] decision={result.decision.value} "
+                              f"confidence={result.confidence:.2f}")
+                        results["pushed"] += len(sigs)
+                except Exception as e:
+                    print(f"    [ERROR] {e}")
+                    results["error"] += len(sigs)
+
+        # Summary
+        print("=" * 50)
+        print("PUSH SUMMARY")
+        print("=" * 50)
+        print(f"  Pushed:     {results['pushed']}")
+        print(f"  Rejected:   {results['rejected']}")
+        print(f"  Not found:  {results['not_found']}")
+        print(f"  Errors:     {results['error']}")
+
+    finally:
+        await store.close()
+
+
 async def cmd_ground_truth(args):
     """Export ground truth labels from Notion CRM for evaluation.
 
@@ -4570,6 +4750,8 @@ async def main():
             await cmd_ground_truth(args)
         elif args.command == "export-queue":
             await cmd_export_queue(args)
+        elif args.command == "push":
+            await cmd_push(args)
         else:
             print(f"Unknown command: {args.command}")
             parser.print_help()
