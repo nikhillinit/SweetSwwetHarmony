@@ -8,7 +8,7 @@ Provides:
 State transitions:
     pending -> approved, rejected, deferred
     approved -> published, publish_queued
-    publish_queued -> published, rejected (emergency halt)
+    publish_queued -> published, rejected (emergency halt), approved (batch abort revert)
     deferred -> pending (reopen)
     rejected, published -> terminal (no outbound)
 """
@@ -35,7 +35,7 @@ class InvalidStateTransition(Exception):
 VALID_TRANSITIONS: Dict[str, List[str]] = {
     "pending": ["approved", "rejected", "deferred"],
     "approved": ["published", "publish_queued"],
-    "publish_queued": ["published", "rejected"],  # rejected = emergency halt
+    "publish_queued": ["published", "rejected", "approved"],  # rejected = emergency halt, approved = batch abort revert
     "deferred": ["pending"],  # reopen
     "rejected": [],  # terminal
     "published": [],  # terminal
