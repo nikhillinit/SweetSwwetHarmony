@@ -170,6 +170,21 @@ class TestValidTransitions:
         assert (await cursor.fetchone())[0] == "rejected"
 
     @pytest.mark.asyncio
+    async def test_publish_queued_to_approved_abort_revert(self, store_with_review):
+        """publish_queued -> approved (batch abort revert) is valid."""
+        store, review_id = store_with_review
+        from storage.review_store import update_review_status
+
+        await update_review_status(store, review_id, "approved", actor="a", reason="ok")
+        await update_review_status(store, review_id, "publish_queued", actor="batch", reason="q")
+        await update_review_status(store, review_id, "approved", actor="batch", reason="batch abort")
+
+        cursor = await store._db.execute(
+            "SELECT status FROM review_items WHERE id = ?", (review_id,)
+        )
+        assert (await cursor.fetchone())[0] == "approved"
+
+    @pytest.mark.asyncio
     async def test_deferred_to_pending(self, store_with_review):
         """deferred -> pending (reopen) is valid."""
         store, review_id = store_with_review
