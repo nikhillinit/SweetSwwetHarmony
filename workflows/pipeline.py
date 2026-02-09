@@ -99,6 +99,10 @@ from utils.claim_extractor import ClaimExtractor
 from utils.feature_states import FeatureRegistry, FeatureState
 from utils.boilerplate_detector import BoilerplateDetector
 
+# Phase 1a: Identity gate + thin file promotion
+from storage.identity_gate import check_identity_integrity, IdentityMigrationRequired
+from workflows.thin_file_manager import run_promotion_sweep
+
 logger = logging.getLogger(__name__)
 
 
@@ -174,6 +178,9 @@ class PipelineConfig:
     use_phase_g_identity_resolution: bool = False  # Enable blocking-first fuzzy entity resolution
     use_claim_facts: bool = False  # Enable bi-temporal claim facts (SCD-2)
 
+    # Phase 1a: Canonical identity + thin files
+    use_thin_files: bool = False  # Enable thin file upsert + promotion sweep
+
     # Timeout configuration (Phase C0)
     collector_connect_timeout: float = 10.0   # TCP connection establishment
     collector_search_timeout: float = 60.0    # List/search endpoints (often slowest)
@@ -219,6 +226,7 @@ class PipelineConfig:
             use_investor_matching=os.getenv("ENABLE_INVESTOR_MATCHING", "false").lower() == "true",
             use_phase_g_identity_resolution=os.getenv("USE_PHASE_G_IDENTITY_RESOLUTION", "false").lower() == "true",
             use_claim_facts=os.getenv("USE_CLAIM_FACTS", "false").lower() == "true",
+            use_thin_files=os.getenv("USE_THIN_FILES", "false").lower() == "true",
             # Timeout configuration
             collector_connect_timeout=float(os.getenv("COLLECTOR_CONNECT_TIMEOUT", "10.0")),
             collector_search_timeout=float(os.getenv("COLLECTOR_SEARCH_TIMEOUT", "60.0")),
@@ -265,6 +273,12 @@ class PipelineStats:
 
     # Shadow logging stats
     shadow_logs_written: int = 0
+
+    # Identity / thin file stats (Phase 1a)
+    sweep_evaluated: int = 0   # candidates examined by promotion sweep
+    sweep_promoted: int = 0    # companies promoted (thin → promoted)
+    sweep_pages: int = 0       # pagination pages processed
+    sweep_error: Optional[str] = None  # sweep failure message, if any
 
     # Errors
     errors: List[str] = field(default_factory=list)
@@ -455,7 +469,10 @@ class DiscoveryPipeline:
         logger.info("Initializing discovery pipeline...")
 
         # Initialize signal store
-        self._store = SignalStore(db_path=self.config.db_path)
+        self._store = SignalStore(
+            db_path=self.config.db_path,
+            use_thin_files=self.config.use_thin_files,
+        )
         await self._store.initialize()
 
         # Initialize Notion connector (if credentials provided)
@@ -539,6 +556,24 @@ class DiscoveryPipeline:
             self._phase_g_resolver = PhaseGEntityResolver(self._identity_store)
             logger.info("PhaseGEntityResolver initialized (blocking-first fuzzy matching enabled)")
 
+        # Phase 1a: Identity store for thin files (create if not already from Phase G)
+        if self.config.use_thin_files and not self._identity_store:
+            self._identity_store = EntityIdentityStore(self._store)
+            logger.info("EntityIdentityStore initialized for thin files")
+
+        # Wire identity store into SignalStore for save_signal() resolution
+        if self._identity_store:
+            self._store._identity_store = self._identity_store
+
+        # Phase 1a: Validate Phase G tables exist when identity features active
+        if self.config.use_thin_files or self.config.use_phase_g_identity_resolution:
+            await self._validate_phase_g_tables()
+
+        # Phase 1a: Identity gate — block pipeline if signals have NULL company_id
+        if self.config.use_thin_files:
+            await check_identity_integrity(self._store)
+            logger.info("Identity gate passed")
+
         # Initialize Claim Fact Store (if claim facts enabled)
         if self.config.use_claim_facts:
             self._claim_fact_store = ClaimFactStore(self._store)
@@ -598,6 +633,103 @@ class DiscoveryPipeline:
             self._notifier = None
         self._velocity_tracker = None
         self._initialized = False
+
+    async def _run_promotion_sweep(self, stats: PipelineStats) -> None:
+        """Run paginated promotion sweep on updated CompanyFiles.
+
+        Promotes thin files that meet criteria and creates ReviewItems.
+        Non-fatal: logs errors but does not fail the pipeline.
+        Writes sweep counters into *stats* for persistence in pipeline_runs.
+        """
+        try:
+            total_promoted = 0
+            pages = 0
+            last_seen_cursor = None
+            company_id_cursor = None
+
+            while True:
+                promoted, last_seen_cursor, company_id_cursor = (
+                    await run_promotion_sweep(
+                        self._store,
+                        last_seen_cursor=last_seen_cursor,
+                        company_id_cursor=company_id_cursor,
+                    )
+                )
+                total_promoted += promoted
+                pages += 1
+
+                # No more pages
+                if last_seen_cursor is None:
+                    break
+
+            stats.sweep_promoted = total_promoted
+            stats.sweep_pages = pages
+
+            if total_promoted > 0:
+                logger.info(f"Promotion sweep: {total_promoted} companies promoted")
+            else:
+                logger.debug("Promotion sweep: no new promotions")
+
+            # Audit: record sweep completion
+            await self._write_sweep_audit(
+                promoted=total_promoted, pages=pages, error=None,
+            )
+
+        except Exception as e:
+            stats.sweep_error = str(e)
+            logger.warning(f"Promotion sweep failed (non-fatal): {e}")
+            # Audit: record sweep failure
+            try:
+                await self._write_sweep_audit(
+                    promoted=0, pages=0, error=str(e),
+                )
+            except Exception:
+                pass  # best-effort
+
+    async def _write_sweep_audit(
+        self,
+        promoted: int,
+        pages: int,
+        error: Optional[str],
+    ) -> None:
+        """Write a single audit_log entry recording the promotion sweep outcome."""
+        import json as _json
+        now_iso = datetime.now(timezone.utc).isoformat()
+        details = _json.dumps({
+            "promoted": promoted,
+            "pages": pages,
+            "error": error,
+        })
+        await self._store._db.execute(
+            """INSERT INTO audit_log
+               (action_type, entity_type, entity_id, actor, details, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            ("promotion_sweep", "pipeline", "sweep", "pipeline", details, now_iso),
+        )
+        await self._store._db.commit()
+
+    async def _validate_phase_g_tables(self) -> None:
+        """Validate that Phase G tables exist (migration 19+).
+
+        Checks for both entity_aliases and entity_migrations tables.
+        Raises RuntimeError with actionable message if missing.
+        """
+        required_tables = ["entity_aliases", "entity_migrations"]
+        cursor = await self._store._db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name IN (?, ?)",
+            tuple(required_tables),
+        )
+        found = {row[0] for row in await cursor.fetchall()}
+        missing = [t for t in required_tables if t not in found]
+
+        if missing:
+            raise RuntimeError(
+                f"Phase 1a requires Phase G tables (migration 19). "
+                f"Missing: {missing}. "
+                f"Run: python -m storage.migrate --db signals.db"
+            )
+
+        logger.debug("Phase G table validation passed")
 
     async def _warmup_suppression_cache(self) -> None:
         """
@@ -705,6 +837,10 @@ class DiscoveryPipeline:
                 1 for r in collector_results if r.status == CollectorStatus.SKIPPED
             )
             stats.signals_collected = sum(r.signals_found for r in collector_results)
+
+            # Stage 1.5: Run promotion sweep on updated CompanyFiles
+            if self.config.use_thin_files:
+                await self._run_promotion_sweep(stats)
 
             # Stage 2: Process pending signals
             process_stats = await self._process_signals_stage(dry_run)
