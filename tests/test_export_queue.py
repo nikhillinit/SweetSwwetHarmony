@@ -53,6 +53,31 @@ async def _setup_db(db_path: str):
             metadata TEXT
         )
     """)
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS functional_schemas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id TEXT NOT NULL,
+            schema_version INTEGER NOT NULL DEFAULT 1,
+            problem_solved_text TEXT,
+            customer_archetype TEXT,
+            schema_confidence REAL,
+            is_advisory BOOLEAN NOT NULL DEFAULT 0,
+            is_active BOOLEAN NOT NULL DEFAULT 1,
+            superseded_by INTEGER,
+            created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+            UNIQUE(company_id, schema_version)
+        )
+    """)
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS thesis_classifications (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            signal_id INTEGER,
+            canonical_key TEXT,
+            category TEXT,
+            rationale TEXT,
+            classified_at TEXT
+        )
+    """)
 
     now = datetime.now(timezone.utc)
     signals = [
@@ -133,6 +158,8 @@ class TestExportQueueHandler:
         assert rows[0] == [
             "signal_id", "company_name", "canonical_key", "confidence",
             "signal_type", "source_api", "detected_at", "status", "company_id",
+            "problem_solved", "customer_archetype", "schema_confidence",
+            "thesis_category", "thesis_rationale",
         ]
 
     @pytest.mark.asyncio

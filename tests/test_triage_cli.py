@@ -63,6 +63,23 @@ async def _setup_db(db_path: str):
             created_at TEXT NOT NULL
         )
     """)
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS functional_schemas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id TEXT NOT NULL,
+            schema_version INTEGER NOT NULL DEFAULT 1,
+            problem_solved_text TEXT,
+            customer_archetype TEXT,
+            approach_text TEXT,
+            schema_confidence REAL,
+            is_advisory BOOLEAN NOT NULL DEFAULT 0,
+            evidence_signal_ids TEXT,
+            is_active BOOLEAN NOT NULL DEFAULT 1,
+            superseded_by INTEGER,
+            created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+            UNIQUE(company_id, schema_version)
+        )
+    """)
 
     now = datetime.now(timezone.utc)
     signals = [
