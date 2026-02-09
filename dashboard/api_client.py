@@ -412,6 +412,161 @@ class APIClient:
             return None
 
 
+    # -------------------------------------------------------------------------
+    # Triage Endpoints
+    # -------------------------------------------------------------------------
+
+    def list_triage(
+        self,
+        status: Optional[str] = None,
+        min_confidence: Optional[float] = None,
+        source_api: Optional[str] = None,
+        search: Optional[str] = None,
+        cursor: Optional[str] = None,
+        limit: int = 50,
+    ) -> Optional[Dict[str, Any]]:
+        """List triage items with filters and cursor pagination."""
+        params: Dict[str, Any] = {"limit": limit}
+        if status:
+            params["status"] = status
+        if min_confidence is not None:
+            params["min_confidence"] = min_confidence
+        if source_api:
+            params["source_api"] = source_api
+        if search:
+            params["search"] = search
+        if cursor:
+            params["cursor"] = cursor
+        return self.get("/triage", params=params)
+
+    def get_triage_detail(self, review_id: int) -> Optional[Dict[str, Any]]:
+        """Get full triage detail for a review item."""
+        return self.get(f"/triage/{review_id}")
+
+    def approve_triage(
+        self,
+        review_id: int,
+        reason: str,
+        updated_at: str,
+        idempotency_key: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Approve a triage item."""
+        return self._post_with_idempotency(
+            f"/triage/{review_id}/approve",
+            json={"reason": reason, "updated_at": updated_at},
+            idempotency_key=idempotency_key,
+        )
+
+    def reject_triage(
+        self,
+        review_id: int,
+        reason: str,
+        updated_at: str,
+        idempotency_key: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Reject a triage item."""
+        return self._post_with_idempotency(
+            f"/triage/{review_id}/reject",
+            json={"reason": reason, "updated_at": updated_at},
+            idempotency_key=idempotency_key,
+        )
+
+    def defer_triage(
+        self,
+        review_id: int,
+        reason: str,
+        updated_at: str,
+        idempotency_key: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Defer a triage item."""
+        return self._post_with_idempotency(
+            f"/triage/{review_id}/defer",
+            json={"reason": reason, "updated_at": updated_at},
+            idempotency_key=idempotency_key,
+        )
+
+    def get_triage_ach(self, review_id: int) -> Optional[Dict[str, Any]]:
+        """Get cached ACH analysis for a review item."""
+        return self.get(f"/triage/{review_id}/ach")
+
+    def rebuild_triage_ach(self, review_id: int) -> Optional[Dict[str, Any]]:
+        """Rebuild ACH analysis for a review item."""
+        return self.post(f"/triage/{review_id}/ach/rebuild")
+
+    # -------------------------------------------------------------------------
+    # Batch Endpoints
+    # -------------------------------------------------------------------------
+
+    def list_batches(
+        self,
+        status: Optional[str] = None,
+        limit: int = 20,
+    ) -> Optional[Dict[str, Any]]:
+        """List recent batches."""
+        params: Dict[str, Any] = {"limit": limit}
+        if status:
+            params["status"] = status
+        return self.get("/batches", params=params)
+
+    def create_batch(self, limit: int = 50) -> Optional[Dict[str, Any]]:
+        """Create a new batch from approved reviews."""
+        return self.post("/batches", json={"limit": limit})
+
+    def get_batch_preview(self, batch_id: str) -> Optional[Dict[str, Any]]:
+        """Get batch preview with items and hash."""
+        return self.get(f"/batches/{batch_id}")
+
+    def commit_batch(
+        self,
+        batch_id: str,
+        items_hash: str,
+        dry_run: bool = False,
+        idempotency_key: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Commit a batch (push to Notion)."""
+        return self._post_with_idempotency(
+            f"/batches/{batch_id}/commit",
+            json={"expected_items_hash": items_hash, "dry_run": dry_run},
+            idempotency_key=idempotency_key,
+        )
+
+    def abort_batch(
+        self,
+        batch_id: str,
+        reason: str = "",
+        idempotency_key: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Abort a batch and revert reviews."""
+        return self._post_with_idempotency(
+            f"/batches/{batch_id}/abort",
+            json={"reason": reason},
+            idempotency_key=idempotency_key,
+        )
+
+    # -------------------------------------------------------------------------
+    # Idempotency Helper
+    # -------------------------------------------------------------------------
+
+    def _post_with_idempotency(
+        self,
+        path: str,
+        json: Optional[Dict[str, Any]] = None,
+        idempotency_key: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """POST with optional X-Idempotency-Key header."""
+        try:
+            headers = self._get_headers()
+            if idempotency_key:
+                headers["X-Idempotency-Key"] = idempotency_key
+            with httpx.Client(base_url=self.base_url, timeout=self.timeout) as client:
+                response = client.post(path, json=json, headers=headers)
+                return self._handle_response(response)
+        except httpx.ConnectError:
+            return {"error": True, "message": "Cannot connect to API server"}
+        except Exception as e:
+            return {"error": True, "message": str(e)}
+
+
 # =============================================================================
 # HEALTH CHECK HELPERS
 # =============================================================================
