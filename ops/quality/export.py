@@ -102,6 +102,7 @@ def iter_labeled_signals(
             s.confidence,
             s.detected_at,
             s.raw_data,
+            s.company_id,
             sqm.human_label,
             sqm.label_source,
             sqm.labeled_at,
