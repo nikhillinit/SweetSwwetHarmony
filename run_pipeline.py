@@ -11,7 +11,7 @@ Commands:
   health     - Run health checks on all components
   metrics    - Show pipeline run metrics with per-collector breakdown
   pipeline   - Pipeline dashboard commands (status, qualified, push)
-  triage     - Triage pending signals (list, approve, reject, defer)
+  triage     - Triage pending signals (list, approve, reject, defer, detail)
   import-csv    - Import signals from CSV files (OpenVC, etc.)
   export-queue  - Export pending/queued signals to CSV for offline review
   push          - Push specific signals to Notion by ID (manual push)
@@ -3223,6 +3223,9 @@ Examples:
   # List pending signals (compact table)
   python run_pipeline.py triage list --limit 20
 
+  # Show full intelligence for a signal
+  python run_pipeline.py triage detail 123
+
   # Approve a signal for push
   python run_pipeline.py triage approve 123 --reason "Clear consumer fit"
 
@@ -3304,6 +3307,17 @@ Examples:
         help="Reason for deferral (required)",
     )
     triage_defer_parser.add_argument(
+        "--db-path", type=str, default=None,
+        help="Path to SQLite database (overrides env var)",
+    )
+
+    # triage detail
+    triage_detail_parser = triage_sub.add_parser("detail", help="Show full intelligence for a signal")
+    triage_detail_parser.add_argument(
+        "signal_id", type=int,
+        help="Signal ID to show detail for",
+    )
+    triage_detail_parser.add_argument(
         "--db-path", type=str, default=None,
         help="Path to SQLite database (overrides env var)",
     )
@@ -4524,13 +4538,42 @@ async def cmd_triage_list(args):
         cursor = await store._db.execute(query, params)
         rows = await cursor.fetchall()
 
+        # Compute Sim column data (case-law similarity per signal)
+        sim_map = {}
+        try:
+            from intelligence.vectorizer_config import load_latest_metadata, VECTORIZER_DIR
+            from utils.corpus_text_builder import build_corpus_text
+            meta = load_latest_metadata(VECTORIZER_DIR)
+            if meta:
+                vec_path = os.path.join(VECTORIZER_DIR, f"case_law_{meta.version}.joblib")
+                if os.path.exists(vec_path):
+                    from intelligence.case_law_retriever import CaseLawRetriever
+                    _retriever = CaseLawRetriever(vectorizer_path=vec_path)
+                    pcursor = await store._db.execute(
+                        "SELECT * FROM precedents WHERE vectorizer_version = ?",
+                        (meta.version,),
+                    )
+                    pcols = [d[0] for d in pcursor.description]
+                    all_precs = [dict(zip(pcols, r)) for r in await pcursor.fetchall()]
+                    if all_precs:
+                        for r in rows:
+                            schema_d = None
+                            if r[10]:
+                                schema_d = {"problem_solved_text": r[10], "customer_archetype": r[11]}
+                            qt = build_corpus_text(r[1] or "", r[6] or "{}", schema_d)
+                            cl = _retriever.find_similar(qt, all_precs)
+                            if cl.max_similarity_tp > 0 or cl.max_similarity_fp > 0:
+                                sim_map[r[0]] = f"{cl.max_similarity_tp:.2f}W/{cl.max_similarity_fp:.2f}L"
+        except Exception:
+            pass
+
         if not rows:
             print(f"No signals with status '{status_filter}' found.")
             return
 
         # Print header
-        print(f"\n{'ID':>6}  {'Company':<25}  {'Problem':<40}  {'Archetype':<13}  {'Conf':>5}  {'Source':<15}  {'Status':<10}")
-        print("-" * 125)
+        print(f"\n{'ID':>6}  {'Company':<25}  {'Problem':<40}  {'Archetype':<13}  {'Conf':>5}  {'Sim':<11}  {'Source':<15}  {'Status':<10}")
+        print("-" * 138)
 
         for row in rows:
             sig_id = row[0]
@@ -4568,8 +4611,9 @@ async def cmd_triage_list(args):
                 display_archetype = "\u2014"
 
             source = source_api[:15] if source_api else ""
+            sim_display = sim_map.get(sig_id, "\u2014")
 
-            print(f"{sig_id:>6}  {company:<25}  {display_problem:<40}  {display_archetype:<13}  {confidence:>5.2f}  {source:<15}  {status:<10}")
+            print(f"{sig_id:>6}  {company:<25}  {display_problem:<40}  {display_archetype:<13}  {confidence:>5.2f}  {sim_display:<11}  {source:<15}  {status:<10}")
 
             if verbose_mode:
                 detected_at = row[8] or ""
@@ -4687,6 +4731,167 @@ async def cmd_triage_defer(args):
     await _triage_action(args, action_type="triage_defer", new_status=None)
 
 
+async def cmd_triage_detail(args):
+    """Show full intelligence detail for a single signal.
+
+    Phase 3, Task 3.10: Displays case-law precedents, exemplar matches,
+    and veto status for a single signal.
+    """
+    db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+    store = SignalStore(db_path)
+    await store.initialize()
+
+    try:
+        signal_id = args.signal_id
+
+        query = """
+            SELECT s.id, s.company_name, s.canonical_key, s.confidence,
+                   s.signal_type, s.source_api, s.raw_data,
+                   COALESCE(sp.status, 'pending') as status,
+                   s.detected_at, s.company_id,
+                   fs.problem_solved_text,
+                   fs.customer_archetype,
+                   fs.schema_confidence,
+                   fs.is_advisory,
+                   fs.approach_text,
+                   tc.category as thesis_category,
+                   tc.rationale as thesis_rationale
+            FROM signals s
+            LEFT JOIN signal_processing sp ON sp.signal_id = s.id
+            LEFT JOIN functional_schemas fs
+                ON fs.company_id = s.company_id AND fs.is_active = 1
+            LEFT JOIN thesis_classifications tc ON tc.signal_id = s.id
+            WHERE s.id = ?
+        """
+        cursor = await store._db.execute(query, (signal_id,))
+        row = await cursor.fetchone()
+
+        if not row:
+            print(f"Signal #{signal_id} not found.")
+            return
+
+        company = row[1] or row[2] or "Unknown"
+        confidence = row[3]
+        signal_type = row[4] or ""
+        source_api = row[5] or ""
+        raw_data_str = row[6] or "{}"
+        status = row[7]
+        detected_at = row[8] or ""
+        problem_text = row[10] or ""
+        archetype = row[11] or ""
+        schema_conf = row[12]
+        is_advisory = row[13]
+        approach = row[14] or ""
+        thesis_cat = row[15] or ""
+        thesis_rat = row[16] or ""
+
+        # Header
+        print(f"\nCompany: {company} | Confidence: {confidence:.2f} | Status: {status}")
+        if detected_at:
+            print(f"Detected: {detected_at} | Source: {source_api} | Type: {signal_type}")
+
+        # Functional Schema
+        if problem_text:
+            advisory_tag = " [advisory]" if is_advisory else ""
+            conf_str = f", {schema_conf:.2f} conf" if schema_conf else ""
+            print(f'Functional: "{problem_text}" ({archetype or chr(8212)}{conf_str}){advisory_tag}')
+            if approach:
+                print(f"  Approach: {approach}")
+        else:
+            print("Functional: [no schema]")
+
+        # Thesis
+        if thesis_cat:
+            print(f"Thesis: {thesis_cat}" + (f" \u2014 {thesis_rat}" if thesis_rat else ""))
+
+        # Case-law + Exemplar Intelligence
+        try:
+            from intelligence.vectorizer_config import load_latest_metadata, VECTORIZER_DIR
+            from utils.corpus_text_builder import build_corpus_text
+
+            meta = load_latest_metadata(VECTORIZER_DIR)
+            if not meta:
+                print("\nIntelligence: No vectorizer metadata found")
+                return
+
+            vec_path = os.path.join(VECTORIZER_DIR, f"case_law_{meta.version}.joblib")
+            if not os.path.exists(vec_path):
+                print("\nIntelligence: Vectorizer not built (run scripts/build_case_law_corpus.py)")
+                return
+
+            from intelligence.case_law_retriever import CaseLawRetriever
+            from intelligence.exemplar_matcher import ExemplarMatcher
+
+            retriever = CaseLawRetriever(vectorizer_path=vec_path)
+            matcher = ExemplarMatcher(vectorizer_path=vec_path)
+
+            schema_dict = None
+            if problem_text:
+                schema_dict = {"problem_solved_text": problem_text, "customer_archetype": archetype}
+            query_text = build_corpus_text(company, raw_data_str, schema_dict)
+
+            # Case-law precedents
+            try:
+                pcursor = await store._db.execute(
+                    "SELECT * FROM precedents WHERE vectorizer_version = ?",
+                    (meta.version,),
+                )
+                pcols = [d[0] for d in pcursor.description]
+                precedents = [dict(zip(pcols, r)) for r in await pcursor.fetchall()]
+            except Exception:
+                precedents = []
+
+            print(f"\nCase-law (similar precedents):")
+            if precedents:
+                cl_result = retriever.find_similar(query_text, precedents)
+                if cl_result.wins:
+                    for m in cl_result.wins:
+                        stale = " [STALE]" if m.is_stale else ""
+                        print(f'  WIN:  {m.company_name} ({m.similarity_score:.2f} sim, TP, "{m.label_reason}"){stale}')
+                else:
+                    print("  No similar wins (TP precedents)")
+                if cl_result.losses:
+                    for m in cl_result.losses:
+                        print(f'  LOSS: {m.company_name} ({m.similarity_score:.2f} sim, FP, "{m.label_reason}")')
+                else:
+                    print("  No similar losses (FP precedents)")
+            else:
+                print("  No precedents available")
+
+            # Exemplar matches
+            try:
+                ecursor = await store._db.execute(
+                    "SELECT * FROM thesis_exemplars WHERE vectorizer_version = ? AND is_active = 1",
+                    (meta.version,),
+                )
+                ecols = [d[0] for d in ecursor.description]
+                exemplars = [dict(zip(ecols, r)) for r in await ecursor.fetchall()]
+            except Exception:
+                exemplars = []
+
+            print(f"\nExemplar matches:")
+            if exemplars:
+                em_result = matcher.match(query_text, exemplars, threshold=0.3)
+                if em_result.matches:
+                    for em in em_result.matches:
+                        print(f'  {em.exemplar_key} ({em.similarity_score:.2f} sim, category: {em.category}) \u2014 "{em.description}"')
+                    veto_threshold = float(os.environ.get("EXEMPLAR_VETO_THRESHOLD", "0.75"))
+                    if em_result.veto_eligible:
+                        print(f"\nVeto: ACTIVE (exemplar similarity {em_result.max_similarity:.2f} >= {veto_threshold} threshold)")
+                    else:
+                        print(f"\nVeto: inactive (max similarity {em_result.max_similarity:.2f} < {veto_threshold} threshold)")
+                else:
+                    print("  None above threshold")
+            else:
+                print("  No exemplar library available")
+
+        except Exception as e:
+            print(f"\nIntelligence: Not available ({e})")
+
+    finally:
+        await store.close()
+
+
 async def cmd_export_queue(args):
     """Export pending/queued signals to CSV for offline review.
 
@@ -4701,7 +4906,7 @@ async def cmd_export_queue(args):
     await store.initialize()
 
     try:
-        # Build query with optional filters (Phase 2: LEFT JOIN functional_schemas + thesis_classifications)
+        # Build query with optional filters (Phase 2: functional_schemas + thesis; Phase 3: case-law + exemplars)
         query = """
             SELECT s.id, s.company_name, s.canonical_key, s.confidence,
                    s.signal_type, s.source_api, s.detected_at,
@@ -4711,12 +4916,31 @@ async def cmd_export_queue(args):
                    fs.schema_confidence,
                    fs.is_advisory,
                    tc.category as thesis_category,
-                   tc.rationale as thesis_rationale
+                   tc.rationale as thesis_rationale,
+                   COALESCE(pcl.tp_count, 0) as precedent_tp_count,
+                   COALESCE(pcl.fp_count, 0) as precedent_fp_count,
+                   em.exemplar_category,
+                   em.exemplar_key
             FROM signals s
             LEFT JOIN signal_processing sp ON sp.signal_id = s.id
             LEFT JOIN functional_schemas fs
                 ON fs.company_id = s.company_id AND fs.is_active = 1
             LEFT JOIN thesis_classifications tc ON tc.signal_id = s.id
+            LEFT JOIN (
+                SELECT company_id,
+                       SUM(CASE WHEN human_label = 'TP' THEN 1 ELSE 0 END) as tp_count,
+                       SUM(CASE WHEN human_label = 'FP' THEN 1 ELSE 0 END) as fp_count
+                FROM precedents
+                GROUP BY company_id
+            ) pcl ON pcl.company_id = s.company_id
+            LEFT JOIN (
+                SELECT canonical_key,
+                       category as exemplar_category,
+                       exemplar_key
+                FROM thesis_exemplars
+                WHERE is_active = 1
+                GROUP BY canonical_key
+            ) em ON em.canonical_key = s.canonical_key
             WHERE 1=1
         """
         params = []
@@ -4744,24 +4968,30 @@ async def cmd_export_queue(args):
             "signal_type", "source_api", "detected_at", "status", "company_id",
             "problem_solved", "customer_archetype", "schema_confidence",
             "thesis_category", "thesis_rationale",
+            "precedent_tp", "precedent_fp", "exemplar_category", "exemplar_key",
         ]
 
         # Post-process rows: advisory * suffix, convert NULLs to empty strings
+        # Query columns: 0-8 core, 9 problem, 10 archetype, 11 schema_conf,
+        #   12 is_advisory, 13 thesis_cat, 14 thesis_rat,
+        #   15 tp_count, 16 fp_count, 17 exemplar_cat, 18 exemplar_key
         output_rows = []
         for row in rows:
             row = list(row)
-            # Advisory flag is at index 12 (is_advisory); archetype at index 10
             is_advisory = row[12]
             archetype = row[10] or ""
             if is_advisory and archetype:
                 archetype = archetype + "*"
-            # Replace row fields: remove is_advisory column, keep processed archetype
             output_rows.append(
                 row[:10]                            # signal_id..problem_solved_text
                 + [archetype]                       # customer_archetype (with * if advisory)
                 + [row[11] or ""]                   # schema_confidence
                 + [row[13] or ""]                   # thesis_category
                 + [row[14] or ""]                   # thesis_rationale
+                + [row[15] or 0]                    # precedent_tp_count
+                + [row[16] or 0]                    # precedent_fp_count
+                + [row[17] or ""]                   # exemplar_category
+                + [row[18] or ""]                   # exemplar_key
             )
 
         # Write CSV output
@@ -5370,11 +5600,13 @@ async def main():
                     await cmd_triage_reject(args)
                 elif args.triage_cmd == "defer":
                     await cmd_triage_defer(args)
+                elif args.triage_cmd == "detail":
+                    await cmd_triage_detail(args)
                 else:
                     print(f"Unknown triage command: {args.triage_cmd}")
                     sys.exit(1)
             else:
-                print("Triage command requires a subcommand (list, approve, reject, defer)")
+                print("Triage command requires a subcommand (list, approve, reject, defer, detail)")
                 sys.exit(1)
         elif args.command == "publish":
             # Handle publish subcommands
