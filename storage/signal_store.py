@@ -58,6 +58,9 @@ from storage.migrations.v28_canonical_identity import V28_CANONICAL_IDENTITY_DDL
 from storage.migrations.v29_review_queue import V29_REVIEW_QUEUE_DDL
 from storage.migrations.v30_pipeline_identity_stats import V30_PIPELINE_IDENTITY_STATS_DDL
 from storage.migrations.v31_batch_publish import V31_BATCH_PUBLISH_DDL
+from storage.migrations.v32_functional_schema import V32_FUNCTIONAL_SCHEMA_DDL
+from storage.migrations.v33_case_law import V33_CASE_LAW_DDL
+from storage.migrations.v34_exemplars import V34_EXEMPLARS_DDL
 
 if TYPE_CHECKING:
     from workflows.pipeline import PipelineStats, CollectorMetrics
@@ -71,7 +74,7 @@ logger = logging.getLogger(__name__)
 # SCHEMA VERSION
 # =============================================================================
 
-CURRENT_SCHEMA_VERSION = 31
+CURRENT_SCHEMA_VERSION = 34
 
 # SQL for creating tables (migrations applied in order)
 MIGRATIONS = {
@@ -1710,6 +1713,9 @@ MIGRATIONS = {
     29: V29_REVIEW_QUEUE_DDL,
     30: V30_PIPELINE_IDENTITY_STATS_DDL,
     31: V31_BATCH_PUBLISH_DDL,
+    32: V32_FUNCTIONAL_SCHEMA_DDL,
+    33: V33_CASE_LAW_DDL,
+    34: V34_EXEMPLARS_DDL,
 }
 
 
@@ -4369,6 +4375,172 @@ class SignalStore:
         if classified_at >= cutoff:
             return result
         return None
+
+    # =========================================================================
+    # FUNCTIONAL SCHEMA STORAGE
+    # =========================================================================
+
+    async def save_functional_schema(self, schema: Dict[str, Any]) -> int:
+        """Save a new functional schema for a company.
+
+        Guards:
+        - Verifies all signal_ids in evidence_signal_ids belong to company_id
+        - Schema rows are immutable once created (extract-once, Phase 2)
+
+        Returns the new row ID.
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        company_id = schema["company_id"]
+
+        # Validate evidence_signal_ids belong to this company_id
+        evidence_ids = schema.get("evidence_signal_ids") or []
+        if evidence_ids:
+            placeholders = ",".join("?" for _ in evidence_ids)
+            cursor = await self._db.execute(
+                f"SELECT id FROM signals WHERE id IN ({placeholders}) AND company_id != ?",
+                [*evidence_ids, company_id],
+            )
+            bad_rows = await cursor.fetchall()
+            if bad_rows:
+                bad_ids = [r[0] for r in bad_rows]
+                raise ValueError(
+                    f"evidence_signal_ids {bad_ids} do not belong to company_id {company_id}"
+                )
+
+        # Determine next schema_version for this company
+        cursor = await self._db.execute(
+            "SELECT COALESCE(MAX(schema_version), 0) FROM functional_schemas WHERE company_id = ?",
+            (company_id,),
+        )
+        row = await cursor.fetchone()
+        next_version = row[0] + 1
+
+        import json as _json
+
+        cursor = await self._db.execute(
+            """INSERT INTO functional_schemas (
+                company_id, schema_version,
+                problem_solved_text, customer_text, approach_text,
+                customer_archetype, problem_archetypes,
+                schema_confidence, is_advisory,
+                evidence_signal_ids, extraction_model, extraction_prompt_version
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                company_id,
+                next_version,
+                schema.get("problem_solved_text"),
+                schema.get("customer_text"),
+                schema.get("approach_text"),
+                schema.get("customer_archetype"),
+                _json.dumps(schema.get("problem_archetypes")) if schema.get("problem_archetypes") else None,
+                schema.get("schema_confidence"),
+                1 if schema.get("is_advisory") else 0,
+                _json.dumps(evidence_ids) if evidence_ids else None,
+                schema.get("extraction_model"),
+                schema.get("extraction_prompt_version"),
+            ),
+        )
+        await self._db.commit()
+        return cursor.lastrowid
+
+    async def get_active_schema(self, company_id: str) -> Optional[Dict[str, Any]]:
+        """Get the current active schema for a company. Returns None if no schema exists."""
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        cursor = await self._db.execute(
+            """SELECT id, company_id, schema_version,
+                      problem_solved_text, customer_text, approach_text,
+                      customer_archetype, problem_archetypes,
+                      schema_confidence, is_advisory,
+                      evidence_signal_ids, extraction_model, extraction_prompt_version,
+                      is_active, superseded_by, created_at
+               FROM functional_schemas
+               WHERE company_id = ? AND is_active = 1
+               ORDER BY schema_version DESC LIMIT 1""",
+            (company_id,),
+        )
+        row = await cursor.fetchone()
+        if not row:
+            return None
+
+        import json as _json
+
+        return {
+            "id": row[0],
+            "company_id": row[1],
+            "schema_version": row[2],
+            "problem_solved_text": row[3],
+            "customer_text": row[4],
+            "approach_text": row[5],
+            "customer_archetype": row[6],
+            "problem_archetypes": _json.loads(row[7]) if row[7] else None,
+            "schema_confidence": row[8],
+            "is_advisory": bool(row[9]),
+            "evidence_signal_ids": _json.loads(row[10]) if row[10] else None,
+            "extraction_model": row[11],
+            "extraction_prompt_version": row[12],
+            "is_active": bool(row[13]),
+            "superseded_by": row[14],
+            "created_at": row[15],
+        }
+
+    async def get_schema_history(self, company_id: str) -> List[Dict[str, Any]]:
+        """Get all schema versions for a company (audit trail), ordered by version."""
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        cursor = await self._db.execute(
+            """SELECT id, company_id, schema_version,
+                      problem_solved_text, customer_text, approach_text,
+                      customer_archetype, problem_archetypes,
+                      schema_confidence, is_advisory,
+                      evidence_signal_ids, extraction_model, extraction_prompt_version,
+                      is_active, superseded_by, created_at
+               FROM functional_schemas
+               WHERE company_id = ?
+               ORDER BY schema_version ASC""",
+            (company_id,),
+        )
+        rows = await cursor.fetchall()
+
+        import json as _json
+
+        results = []
+        for row in rows:
+            results.append({
+                "id": row[0],
+                "company_id": row[1],
+                "schema_version": row[2],
+                "problem_solved_text": row[3],
+                "customer_text": row[4],
+                "approach_text": row[5],
+                "customer_archetype": row[6],
+                "problem_archetypes": _json.loads(row[7]) if row[7] else None,
+                "schema_confidence": row[8],
+                "is_advisory": bool(row[9]),
+                "evidence_signal_ids": _json.loads(row[10]) if row[10] else None,
+                "extraction_model": row[11],
+                "extraction_prompt_version": row[12],
+                "is_active": bool(row[13]),
+                "superseded_by": row[14],
+                "created_at": row[15],
+            })
+        return results
+
+    async def has_active_schema(self, company_id: str) -> bool:
+        """Quick check if company already has an active schema (pipeline skip logic)."""
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        cursor = await self._db.execute(
+            "SELECT 1 FROM functional_schemas WHERE company_id = ? AND is_active = 1 LIMIT 1",
+            (company_id,),
+        )
+        row = await cursor.fetchone()
+        return row is not None
 
     # =========================================================================
     # EXIT PREDICTIONS
