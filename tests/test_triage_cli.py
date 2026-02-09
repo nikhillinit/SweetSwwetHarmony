@@ -36,7 +36,8 @@ async def _setup_db(db_path: str):
             confidence REAL DEFAULT 0.5,
             raw_data TEXT DEFAULT '{}',
             detected_at TEXT NOT NULL,
-            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            company_id TEXT
         )
     """)
     await db.execute("""

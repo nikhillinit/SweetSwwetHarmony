@@ -49,7 +49,7 @@ def test_db(tmp_path):
 
     # Signal 1: Disagreement (keyword high, LLM low)
     conn.execute(
-        "INSERT INTO signals VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO signals (id, signal_type, source_api, canonical_key, company_name, confidence, raw_data, detected_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (1, "test", "github", "domain:test1.com", "Test Co 1", 0.8, "{}", now, now)
     )
     conn.execute(
@@ -59,7 +59,7 @@ def test_db(tmp_path):
 
     # Signal 2: Disagreement (keyword low, LLM high)
     conn.execute(
-        "INSERT INTO signals VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO signals (id, signal_type, source_api, canonical_key, company_name, confidence, raw_data, detected_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (2, "test", "github", "domain:test2.com", "Test Co 2", 0.8, "{}", now, now)
     )
     conn.execute(
@@ -69,7 +69,7 @@ def test_db(tmp_path):
 
     # Signal 3: Agreement (both high)
     conn.execute(
-        "INSERT INTO signals VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO signals (id, signal_type, source_api, canonical_key, company_name, confidence, raw_data, detected_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (3, "test", "github", "domain:test3.com", "Test Co 3", 0.8, "{}", now, now)
     )
     conn.execute(
@@ -79,7 +79,7 @@ def test_db(tmp_path):
 
     # Signal 4: Another disagreement (keyword high, LLM low)
     conn.execute(
-        "INSERT INTO signals VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO signals (id, signal_type, source_api, canonical_key, company_name, confidence, raw_data, detected_at, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (4, "test", "sec_edgar", "domain:test4.com", "Test Co 4", 0.8, "{}", now, now)
     )
     conn.execute(

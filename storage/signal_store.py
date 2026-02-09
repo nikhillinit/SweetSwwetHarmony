@@ -54,10 +54,14 @@ import aiosqlite
 
 from storage.migrations.quality_tables import QUALITY_TABLES_DDL
 from storage.migrations.v27_audit_log import AUDIT_LOG_DDL
+from storage.migrations.v28_canonical_identity import V28_CANONICAL_IDENTITY_DDL
+from storage.migrations.v29_review_queue import V29_REVIEW_QUEUE_DDL
+from storage.migrations.v30_pipeline_identity_stats import V30_PIPELINE_IDENTITY_STATS_DDL
 
 if TYPE_CHECKING:
     from workflows.pipeline import PipelineStats, CollectorMetrics
     from utils.exit_predictor import ExitPrediction
+    from storage.entity_identity_store import EntityIdentityStore, StrongKeyBinding
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +70,7 @@ logger = logging.getLogger(__name__)
 # SCHEMA VERSION
 # =============================================================================
 
-CURRENT_SCHEMA_VERSION = 27
+CURRENT_SCHEMA_VERSION = 30
 
 # SQL for creating tables (migrations applied in order)
 MIGRATIONS = {
@@ -1701,6 +1705,9 @@ MIGRATIONS = {
     ALTER TABLE thesis_classifications ADD COLUMN disagreement_detected BOOLEAN DEFAULT 0;
     """,
     27: AUDIT_LOG_DDL,
+    28: V28_CANONICAL_IDENTITY_DDL,
+    29: V29_REVIEW_QUEUE_DDL,
+    30: V30_PIPELINE_IDENTITY_STATS_DDL,
 }
 
 
@@ -1720,6 +1727,9 @@ class StoredSignal:
     raw_data: Dict[str, Any]
     detected_at: datetime
     created_at: datetime
+
+    # Identity (added by v28 migration)
+    company_id: Optional[str] = None
 
     # Processing info (if joined)
     processing_status: Optional[str] = None
@@ -1925,6 +1935,8 @@ class SignalStore:
         self,
         db_path: str | Path = "signals.db",
         suppression_ttl_days: int = 7,
+        identity_store: Optional[EntityIdentityStore] = None,
+        use_thin_files: bool = False,
     ):
         """
         Initialize signal store.
@@ -1932,9 +1944,13 @@ class SignalStore:
         Args:
             db_path: Path to SQLite database file
             suppression_ttl_days: How long to cache Notion entries before re-checking
+            identity_store: Phase G EntityIdentityStore for company_id resolution
+            use_thin_files: Enable thin file upsert on save_signal()
         """
         self.db_path = Path(db_path)
         self.suppression_ttl_days = suppression_ttl_days
+        self._identity_store = identity_store
+        self._use_thin_files = use_thin_files
         self._db: Optional[aiosqlite.Connection] = None
         self._lock = asyncio.Lock()
 
@@ -2502,24 +2518,61 @@ class SignalStore:
         """
         Save a new signal to the database.
 
+        When identity_store is configured:
+        - Resolves company_id via lookup_strong_keys / entity_id_for_seed
+        - Registers strong key binding
+        - Processes merge pairs via cascade_merge
+        - Upserts company_file if use_thin_files is enabled
+
         Returns the signal ID.
         Raises IntegrityError if duplicate (same canonical_key, signal_type, source_api, detected_at).
         """
         if not self._db:
             raise RuntimeError("Database not initialized")
 
+        if self._use_thin_files and not self._identity_store:
+            raise RuntimeError(
+                "use_thin_files requires Phase G identity store. "
+                "Ensure entity_aliases table exists (migration 19+)."
+            )
+
         detected_at = detected_at or datetime.now(timezone.utc)
         created_at = datetime.now(timezone.utc)
 
-        async with self.transaction() as conn:
-            # Insert signal
+        # Choose transaction mode based on identity store presence
+        if self._identity_store:
+            tx_cm = self.transaction_immediate()
+        else:
+            tx_cm = self.transaction()
+
+        async with tx_cm as conn:
+            # Resolve company_id if identity store is configured
+            company_id = None
+            if self._identity_store:
+                # Lazy import to avoid circular dependency at module level
+                from storage.entity_identity_store import (
+                    EntityIdentityStore,
+                    StrongKeyBinding,
+                )
+
+                existing = await self._identity_store.lookup_strong_keys(
+                    [canonical_key]
+                )
+                if canonical_key in existing:
+                    company_id = existing[canonical_key]
+                else:
+                    company_id = EntityIdentityStore.entity_id_for_seed(
+                        canonical_key
+                    )
+
+            # Insert signal (with company_id if resolved)
             cursor = await conn.execute(
                 """
                 INSERT INTO signals (
                     signal_type, source_api, canonical_key, company_name,
-                    confidence, raw_data, detected_at, created_at
+                    confidence, raw_data, detected_at, created_at, company_id
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     signal_type,
@@ -2530,7 +2583,8 @@ class SignalStore:
                     json.dumps(raw_data),
                     detected_at.isoformat(),
                     created_at.isoformat(),
-                )
+                    company_id,
+                ),
             )
 
             signal_id = cursor.lastrowid
@@ -2543,8 +2597,54 @@ class SignalStore:
                 )
                 VALUES (?, 'pending', ?, ?)
                 """,
-                (signal_id, created_at.isoformat(), created_at.isoformat())
+                (signal_id, created_at.isoformat(), created_at.isoformat()),
             )
+
+            # Register strong key binding + handle merges
+            if self._identity_store and company_id:
+                binding = StrongKeyBinding(
+                    strong_key=canonical_key,
+                    entity_id=company_id,
+                    source_signal_id=signal_id,
+                    source_key=source_api,
+                )
+                merge_pairs = await self._identity_store.upsert_strong_key_bindings(
+                    [binding], conn
+                )
+
+                # Process merge pairs via cascade_merge
+                if merge_pairs:
+                    from storage.merge_cascade import cascade_merge
+
+                    for loser, winner in merge_pairs:
+                        await cascade_merge(
+                            store=self,
+                            winner_company_id=winner,
+                            loser_company_id=loser,
+                            reason="identity_merge",
+                            actor="pipeline",
+                            tx=conn,
+                        )
+                        # Update our company_id if it was the loser
+                        if company_id == loser:
+                            company_id = winner
+                            await conn.execute(
+                                "UPDATE signals SET company_id = ? WHERE id = ?",
+                                (winner, signal_id),
+                            )
+
+            # Upsert company file within same transaction
+            if self._use_thin_files and company_id:
+                from workflows.thin_file_manager import upsert_company_file
+
+                await upsert_company_file(
+                    store=self,
+                    company_id=company_id,
+                    company_name=company_name,
+                    canonical_key=canonical_key,
+                    source_api=source_api,
+                    tx=conn,
+                )
 
         logger.debug(f"Saved signal {signal_id}: {signal_type} for {canonical_key}")
         return signal_id
@@ -2559,7 +2659,7 @@ class SignalStore:
             SELECT
                 s.id, s.signal_type, s.source_api, s.canonical_key,
                 s.company_name, s.confidence, s.raw_data,
-                s.detected_at, s.created_at,
+                s.detected_at, s.created_at, s.company_id,
                 p.status, p.notion_page_id, p.processed_at, p.error_message
             FROM signals s
             LEFT JOIN signal_processing p ON s.id = p.signal_id
@@ -2593,7 +2693,7 @@ class SignalStore:
             SELECT
                 s.id, s.signal_type, s.source_api, s.canonical_key,
                 s.company_name, s.confidence, s.raw_data,
-                s.detected_at, s.created_at,
+                s.detected_at, s.created_at, s.company_id,
                 p.status, p.notion_page_id, p.processed_at, p.error_message
             FROM signals s
             INNER JOIN signal_processing p ON s.id = p.signal_id
@@ -2630,7 +2730,7 @@ class SignalStore:
             SELECT
                 s.id, s.signal_type, s.source_api, s.canonical_key,
                 s.company_name, s.confidence, s.raw_data,
-                s.detected_at, s.created_at,
+                s.detected_at, s.created_at, s.company_id,
                 p.status, p.notion_page_id, p.processed_at, p.error_message
             FROM signals s
             LEFT JOIN signal_processing p ON s.id = p.signal_id
@@ -2862,7 +2962,7 @@ class SignalStore:
         query = """
             SELECT s.id, s.signal_type, s.source_api, s.canonical_key,
                    s.company_name, s.confidence, s.raw_data,
-                   s.detected_at, s.created_at,
+                   s.detected_at, s.created_at, s.company_id,
                    p.status, p.notion_page_id, p.processed_at, p.error_message
             FROM signals s
             JOIN signal_processing p ON s.id = p.signal_id
@@ -3738,10 +3838,11 @@ class SignalStore:
             raw_data=json.loads(row[6]),
             detected_at=parse_datetime(row[7]),
             created_at=parse_datetime(row[8]),
-            processing_status=row[9] if len(row) > 9 else None,
-            notion_page_id=row[10] if len(row) > 10 else None,
-            processed_at=parse_datetime(row[11]) if len(row) > 11 and row[11] else None,
-            error_message=row[12] if len(row) > 12 else None,
+            company_id=row[9] if len(row) > 9 else None,
+            processing_status=row[10] if len(row) > 10 else None,
+            notion_page_id=row[11] if len(row) > 11 else None,
+            processed_at=parse_datetime(row[12]) if len(row) > 12 and row[12] else None,
+            error_message=row[13] if len(row) > 13 else None,
         )
 
     async def get_stats(self) -> Dict[str, Any]:
@@ -3809,6 +3910,15 @@ class SignalStore:
         if stats.health_report:
             health_json = json.dumps(stats.health_report.to_dict())
 
+        # Serialize identity/sweep stats as JSON
+        identity_stats = {
+            "sweep_promoted": getattr(stats, "sweep_promoted", 0),
+            "sweep_evaluated": getattr(stats, "sweep_evaluated", 0),
+            "sweep_pages": getattr(stats, "sweep_pages", 0),
+            "sweep_error": getattr(stats, "sweep_error", None),
+        }
+        identity_json = json.dumps(identity_stats)
+
         async with self.transaction() as conn:
             await conn.execute(
                 """
@@ -3819,9 +3929,9 @@ class SignalStore:
                     signals_processed, signals_auto_push, signals_needs_review,
                     signals_held, signals_rejected,
                     prospects_created, prospects_updated, prospects_skipped,
-                    errors, health_report, created_at
+                    errors, health_report, identity_stats, created_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_id,
@@ -3844,6 +3954,7 @@ class SignalStore:
                     stats.prospects_skipped,
                     errors_json,
                     health_json,
+                    identity_json,
                     now,
                 )
             )

@@ -73,7 +73,7 @@ def enrich_signals_best_effort(
     Enrich a list of signals and return JSON-serializable results.
     """
     rows = conn.execute(
-        "SELECT id, canonical_key, company_name, raw_data FROM signals WHERE id IN ({})".format(",".join(["?"] * len(signal_ids))),
+        "SELECT id, canonical_key, company_name, raw_data, company_id FROM signals WHERE id IN ({})".format(",".join(["?"] * len(signal_ids))),
         signal_ids,
     ).fetchall()
 

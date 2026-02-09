@@ -50,6 +50,7 @@ class StoredSignalProtocol(Protocol):
     confidence: float
     raw_data: Dict[str, Any]
     detected_at: Any
+    company_id: Any
 
 
 # =============================================================================
