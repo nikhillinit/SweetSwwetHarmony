@@ -4243,7 +4243,7 @@ async def cmd_shadow_backfill(args):
         async with store.transaction() as conn:
             cursor = await conn.execute(
                 """
-                SELECT id, canonical_key, company_name, source_api, raw_data, created_at
+                SELECT id, canonical_key, company_name, source_api, raw_data, created_at, company_id
                 FROM signals
                 WHERE created_at >= ?
                 ORDER BY created_at DESC
@@ -4394,7 +4394,7 @@ async def cmd_triage_list(args):
             SELECT s.id, s.company_name, s.canonical_key, s.confidence,
                    s.signal_type, s.source_api, s.raw_data,
                    COALESCE(sp.status, 'pending') as status,
-                   s.detected_at
+                   s.detected_at, s.company_id
             FROM signals s
             LEFT JOIN signal_processing sp ON sp.signal_id = s.id
             WHERE COALESCE(sp.status, 'pending') = ?
@@ -4574,7 +4574,7 @@ async def cmd_export_queue(args):
         query = """
             SELECT s.id, s.company_name, s.canonical_key, s.confidence,
                    s.signal_type, s.source_api, s.detected_at,
-                   COALESCE(sp.status, 'pending') as status
+                   COALESCE(sp.status, 'pending') as status, s.company_id
             FROM signals s
             LEFT JOIN signal_processing sp ON sp.signal_id = s.id
             WHERE 1=1
@@ -4599,7 +4599,7 @@ async def cmd_export_queue(args):
         cursor = await store._db.execute(query, params)
         rows = await cursor.fetchall()
         columns = ["signal_id", "company_name", "canonical_key", "confidence",
-                    "signal_type", "source_api", "detected_at", "status"]
+                    "signal_type", "source_api", "detected_at", "status", "company_id"]
 
         # Write CSV output
         output_file = getattr(args, "out", None)

@@ -48,7 +48,7 @@ def _iso_days_ago(days: int) -> str:
 
 def _load_signal(conn: sqlite3.Connection, signal_id: int) -> sqlite3.Row:
     row = conn.execute(
-        "SELECT id, canonical_key, source_api, signal_type, company_name, raw_data, detected_at FROM signals WHERE id = ?",
+        "SELECT id, canonical_key, source_api, signal_type, company_name, raw_data, detected_at, company_id FROM signals WHERE id = ?",
         (signal_id,),
     ).fetchone()
     if not row:

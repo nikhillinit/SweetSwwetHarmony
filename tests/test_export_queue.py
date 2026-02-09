@@ -38,7 +38,8 @@ async def _setup_db(db_path: str):
             confidence REAL DEFAULT 0.5,
             raw_data TEXT DEFAULT '{}',
             detected_at TEXT NOT NULL,
-            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            company_id TEXT
         )
     """)
     await db.execute("""
@@ -131,7 +132,7 @@ class TestExportQueueHandler:
         assert len(rows) == 6
         assert rows[0] == [
             "signal_id", "company_name", "canonical_key", "confidence",
-            "signal_type", "source_api", "detected_at", "status",
+            "signal_type", "source_api", "detected_at", "status", "company_id",
         ]
 
     @pytest.mark.asyncio
