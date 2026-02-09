@@ -528,3 +528,117 @@ async def defer_review(
     return await _execute_triage_action(
         request, review_id, "defer", body, operator, idempotency_key,
     )
+
+
+# =============================================================================
+# ACH ENDPOINTS (A7: GET read-only, POST rebuild with side-effect)
+# =============================================================================
+
+@router.get(
+    "/{review_id}/ach",
+    response_model=BaseResponse[dict],
+)
+async def get_triage_ach(
+    review_id: int,
+    request: Request,
+    _operator: OperatorContext = Depends(require_permission(Permission.VIEW)),
+):
+    """Read-only: return cached ACH analysis for review, or 404 if none."""
+    store = request.app.state.store
+    db = store._db
+
+    # Resolve review → company_id
+    cursor = await db.execute(
+        "SELECT company_id FROM review_items WHERE id = ?",
+        (review_id,),
+    )
+    row = await cursor.fetchone()
+    if not row:
+        raise error_response(
+            404, "not_found", "REVIEW_NOT_FOUND",
+            f"Review {review_id} not found",
+        )
+    company_id = row[0]
+
+    from intelligence.ach_matrix import get_latest_ach
+
+    cached = await get_latest_ach(db, company_id)
+    if not cached:
+        raise error_response(
+            404, "not_found", "ACH_NOT_FOUND",
+            f"No ACH analysis found for review {review_id}",
+        )
+
+    return BaseResponse(data=cached)
+
+
+@router.post(
+    "/{review_id}/ach/rebuild",
+    response_model=BaseResponse[dict],
+)
+async def rebuild_triage_ach(
+    review_id: int,
+    request: Request,
+    operator: OperatorContext = Depends(
+        require_permission(Permission.TRIAGE_APPROVE)
+    ),
+):
+    """Build fresh ACH analysis, store, return result.
+
+    Idempotent via inputs_hash unique constraint — concurrent rebuilds
+    with same DB state produce same result (INSERT OR IGNORE).
+    """
+    store = request.app.state.store
+    db = store._db
+
+    # Resolve review → company_id
+    cursor = await db.execute(
+        "SELECT company_id FROM review_items WHERE id = ?",
+        (review_id,),
+    )
+    row = await cursor.fetchone()
+    if not row:
+        raise error_response(
+            404, "not_found", "REVIEW_NOT_FOUND",
+            f"Review {review_id} not found",
+        )
+    company_id = row[0]
+
+    from intelligence.ach_matrix import ACHBuilder, store_ach_analysis, update_ach_narratives
+    from intelligence.tribunal import narrate_summary
+
+    builder = ACHBuilder()
+    matrix = await builder.build(company_id, db)
+
+    # Store matrix
+    ach_id = await store_ach_analysis(db, matrix, review_id=review_id)
+
+    # Generate narratives and update
+    summary = narrate_summary(matrix)
+    await update_ach_narratives(
+        db, ach_id,
+        bull_summary=summary.bull_summary,
+        bear_summary=summary.bear_summary,
+        differentiator_count=summary.differentiator_count,
+    )
+
+    logger.info(
+        "ACH rebuild: review %d, company %s, top=%s (%.1f), %d differentiators",
+        review_id, company_id, summary.top_hypothesis,
+        summary.top_score or 0, summary.differentiator_count,
+    )
+
+    return BaseResponse(data={
+        "ach_id": ach_id,
+        "company_id": company_id,
+        "review_id": review_id,
+        "top_hypothesis": summary.top_hypothesis,
+        "top_score": summary.top_score,
+        "bull_summary": summary.bull_summary,
+        "bear_summary": summary.bear_summary,
+        "differentiator_count": summary.differentiator_count,
+        "inputs_hash": matrix.inputs_hash,
+        "builder_version": matrix.builder_version,
+        "rubric_version": matrix.rubric_version,
+        "evidence_count": matrix.evidence_count,
+    })

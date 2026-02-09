@@ -2112,6 +2112,8 @@ def main():
         view_options = []
         view_descriptions = {
             "Health": "System status and monitoring",
+            "Triage": "Review and triage pending signals",
+            "Batch Publish": "Publish approved batches to Notion",
             "Inbox": "Review and act on new deals",
             "Pipeline": "Your deal flow organized by stage",
             "Signals": "Newly discovered companies",
@@ -2126,11 +2128,11 @@ def main():
 
         # Add Health view at the start, then existing views
         if has_notion and has_db:
-            view_options = ["Health", "Inbox", "Pipeline", "Signals", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring", "Schedules", "Cost Analysis", "Ops Monitoring"]
+            view_options = ["Health", "Triage", "Batch Publish", "Inbox", "Pipeline", "Signals", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring", "Schedules", "Cost Analysis", "Ops Monitoring"]
         elif has_notion:
-            view_options = ["Health", "Inbox", "Pipeline", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring", "Schedules", "Cost Analysis", "Ops Monitoring"]
+            view_options = ["Health", "Triage", "Batch Publish", "Inbox", "Pipeline", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring", "Schedules", "Cost Analysis", "Ops Monitoring"]
         else:
-            view_options = ["Health", "Inbox", "Signals", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring", "Schedules", "Cost Analysis", "Ops Monitoring"]
+            view_options = ["Health", "Triage", "Batch Publish", "Inbox", "Signals", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring", "Schedules", "Cost Analysis", "Ops Monitoring"]
 
         view = st.radio(
             "View",
@@ -2174,6 +2176,25 @@ def main():
     # ==========================================================================
     if view == "Health":
         render_health_page()
+
+    # ==========================================================================
+    # TRIAGE VIEW (Fast Pass / Deep Review)
+    # ==========================================================================
+    elif view == "Triage":
+        from dashboard.views.triage_fast import render_triage_fast_page
+        from dashboard.views.triage_detail import render_triage_detail_page
+
+        if st.session_state.get("triage_selected_id"):
+            render_triage_detail_page()
+        else:
+            render_triage_fast_page()
+
+    # ==========================================================================
+    # BATCH PUBLISH VIEW
+    # ==========================================================================
+    elif view == "Batch Publish":
+        from dashboard.views.batch_publish import render_batch_publish_page
+        render_batch_publish_page()
 
     # ==========================================================================
     # INBOX VIEW
