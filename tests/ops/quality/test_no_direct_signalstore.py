@@ -83,6 +83,9 @@ ALLOWLIST = {
     # --- Root-level test/utility scripts ---
     "test_suppression_sync.py",
     "verify_pdf_profiler.py",
+
+    # --- Maintenance scripts ---
+    "scripts/gc_thin_files.py",
 }
 
 
