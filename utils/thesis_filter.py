@@ -17,6 +17,7 @@ from enum import Enum
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
 from utils.thesis_matcher import ThesisMatcher
+from utils.web3_detector import Web3Detector
 
 if TYPE_CHECKING:
     from storage.signal_store import SignalStore
@@ -127,6 +128,7 @@ class ThesisFilter:
         self.config = config or ThesisFilterConfig()
         self.signal_store = signal_store
         self._keyword_matcher = ThesisMatcher()
+        self._web3_detector = Web3Detector()
         self._llm_classifier = None  # Lazy load
 
     @property
@@ -159,6 +161,15 @@ class ThesisFilter:
         Returns:
             ThesisFilterResult with routing decision
         """
+        # Pre-check: Web3 co-occurrence detector (before keyword scoring)
+        web3_result = self._web3_detector.detect(text)
+        if web3_result.is_crypto:
+            return ThesisFilterResult(
+                routing=RoutingDecision.REJECTED,
+                rejection_reason=web3_result.reason,
+                negative_keywords=[web3_result.matched_term],
+            )
+
         # Stage 1: Keyword matching (with Phase B domain support)
         keyword_fit = self._keyword_matcher.score(text, company_name, domain_name=domain_name)
 

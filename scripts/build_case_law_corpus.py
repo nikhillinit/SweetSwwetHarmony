@@ -41,6 +41,7 @@ from intelligence.vectorizer_config import (
     VECTORIZER_DIR,
     VectorizerMetadata,
     save_metadata,
+    check_retrain_needed,
 )
 
 logger = logging.getLogger(__name__)
@@ -303,6 +304,7 @@ async def main():
     parser.add_argument("--version", default="v1.0.0", help="Vectorizer version")
     parser.add_argument("--dry-run", action="store_true", help="Print stats without writing")
     parser.add_argument("--calibrate", action="store_true", help="Print similarity distributions")
+    parser.add_argument("--check-only", action="store_true", help="Check if retrain is needed (no write)")
     parser.add_argument("--vectorizer-dir", default=None, help="Vectorizer output directory")
     args = parser.parse_args()
 
@@ -312,7 +314,16 @@ async def main():
     await store.initialize()
 
     try:
-        if args.calibrate:
+        if args.check_only:
+            vdir = args.vectorizer_dir or VECTORIZER_DIR
+            needs_retrain, reason = check_retrain_needed(args.db, vdir)
+            if needs_retrain:
+                print(f"Retrain needed: {reason}")
+                sys.exit(0)
+            else:
+                print(f"No retrain needed: {reason}")
+                sys.exit(0)
+        elif args.calibrate:
             result = await calibrate_corpus(store)
             print(f"\nSimilarity distributions:")
             for partition, stats in result.items():

@@ -88,3 +88,49 @@ def load_latest_metadata(directory: str) -> Optional[VectorizerMetadata]:
         return None
     latest = max(files, key=os.path.getmtime)
     return load_metadata(latest)
+
+
+def count_labeled_signals(db_path: str) -> int:
+    """Count labeled signals (TP + FP) in the database.
+
+    Uses synchronous sqlite3 for standalone CLI use.
+    """
+    import sqlite3
+    conn = sqlite3.connect(db_path)
+    try:
+        cursor = conn.execute(
+            "SELECT COUNT(*) FROM signal_quality_metrics WHERE human_label IN ('TP', 'FP')"
+        )
+        return cursor.fetchone()[0]
+    except Exception:
+        return 0
+    finally:
+        conn.close()
+
+
+def check_retrain_needed(db_path: str, vectorizer_dir: Optional[str] = None) -> tuple[bool, str]:
+    """Check if vectorizer needs retraining.
+
+    Returns (needs_retrain: bool, reason: str).
+
+    Triggers retrain if:
+    1. No vectorizer exists (first build)
+    2. Current corpus size > 2x the trained corpus size
+    """
+    vdir = vectorizer_dir or VECTORIZER_DIR
+    metadata = load_latest_metadata(vdir)
+
+    if metadata is None:
+        return True, "No vectorizer found (first build needed)"
+
+    current_size = count_labeled_signals(db_path)
+    if metadata.should_retrain(current_size):
+        return True, (
+            f"Corpus grew from {metadata.corpus_size} to {current_size} "
+            f"(>{metadata.corpus_size * 2} threshold)"
+        )
+
+    return False, (
+        f"No retrain needed (corpus: {metadata.corpus_size} -> {current_size}, "
+        f"threshold: {metadata.corpus_size * 2})"
+    )
