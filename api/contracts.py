@@ -132,6 +132,122 @@ def clear_idempotency_cache() -> None:
     _IDEMPOTENCY_CACHE.clear()
 
 
+# =============================================================================
+# SQLITE-BACKED IDEMPOTENCY (L2 — survives restart)
+# =============================================================================
+
+_IDEMPOTENCY_DB_TTL_SECONDS = 86400  # 24 hours
+
+
+async def check_idempotency_db(
+    db,
+    key: str,
+    route: str,
+    resource_id: str,
+) -> Optional[IdempotencyResult]:
+    """Check SQLite for a cached idempotency result (L2 cache).
+
+    Returns cached result if found and not expired, None otherwise.
+    """
+    cursor = await db.execute(
+        """SELECT status_code, response_body, created_at
+           FROM idempotency_keys
+           WHERE key = ? AND route = ? AND resource_id = ?""",
+        (key, route, resource_id),
+    )
+    row = await cursor.fetchone()
+    if row is None:
+        return None
+
+    created_at = row[2]
+    # Check TTL
+    try:
+        created_dt = datetime.fromisoformat(created_at)
+        age = (datetime.now(timezone.utc) - created_dt).total_seconds()
+        if age > _IDEMPOTENCY_DB_TTL_SECONDS:
+            await db.execute(
+                "DELETE FROM idempotency_keys WHERE key = ? AND route = ? AND resource_id = ?",
+                (key, route, resource_id),
+            )
+            await db.commit()
+            return None
+    except (ValueError, TypeError):
+        pass
+
+    body = json.loads(row[1]) if row[1] else None
+    return IdempotencyResult(status_code=row[0], body=body)
+
+
+async def check_idempotency_conflict(
+    db,
+    key: str,
+    route: str,
+    resource_id: str,
+    payload_hash: str,
+) -> None:
+    """Raise 409 if same idempotency key was used with a different payload.
+
+    This prevents accidental reuse of idempotency keys across different
+    mutation payloads on the same resource.
+    """
+    cursor = await db.execute(
+        """SELECT payload_hash FROM idempotency_keys
+           WHERE key = ? AND route = ? AND resource_id = ?""",
+        (key, route, resource_id),
+    )
+    row = await cursor.fetchone()
+    if row is not None and row[0] != payload_hash:
+        raise error_response(
+            status_code=status.HTTP_409_CONFLICT,
+            error="idempotency_conflict",
+            code="IDEMPOTENCY_KEY_REUSE",
+            message="Idempotency key was already used with a different payload.",
+            detail={"key": key, "route": route, "resource_id": resource_id},
+        )
+
+
+async def store_idempotency_db(
+    db,
+    key: str,
+    route: str,
+    resource_id: str,
+    payload_hash: str,
+    status_code: int,
+    body: Any,
+) -> None:
+    """Persist an idempotency result to SQLite (L2 cache).
+
+    Uses INSERT OR IGNORE to handle race conditions cleanly.
+    """
+    await db.execute(
+        """INSERT OR IGNORE INTO idempotency_keys
+           (key, route, resource_id, payload_hash, status_code, response_body, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (
+            key,
+            route,
+            resource_id,
+            payload_hash,
+            status_code,
+            json.dumps(body, default=str),
+            datetime.now(timezone.utc).isoformat(),
+        ),
+    )
+
+
+async def cleanup_expired_idempotency(db) -> int:
+    """Delete expired idempotency keys. Returns count deleted."""
+    cursor = await db.execute(
+        """DELETE FROM idempotency_keys
+           WHERE created_at < datetime('now', '-24 hours')"""
+    )
+    count = cursor.rowcount
+    if count > 0:
+        await db.commit()
+        logger.info("Cleaned up %d expired idempotency keys", count)
+    return count
+
+
 def get_idempotency_key(
     idempotency_key: Optional[str] = Header(
         None, alias="Idempotency-Key", description="Client-supplied idempotency key"
@@ -222,3 +338,13 @@ def inputs_hash(*args: Any) -> str:
     """Deterministic hash of inputs for reproducibility tracking."""
     serialised = json.dumps(args, sort_keys=True, default=str)
     return hashlib.sha256(serialised.encode()).hexdigest()[:16]
+
+
+def payload_fingerprint(action: str, reason: str, actor_id: str) -> str:
+    """Compute a fingerprint for a triage action payload.
+
+    Used to detect idempotency key reuse with different payloads.
+    """
+    return hashlib.sha256(
+        f"{action}:{reason}:{actor_id}".encode()
+    ).hexdigest()[:16]
