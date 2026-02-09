@@ -3308,6 +3308,110 @@ Examples:
         help="Path to SQLite database (overrides env var)",
     )
 
+    # -------------------------------------------------------------------------
+    # Batch publish commands
+    # -------------------------------------------------------------------------
+    publish_parser = subparsers.add_parser(
+        "publish",
+        help="Batch publish workflow (create, preview, commit, abort, list)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="""
+Git-style batch publish workflow for Notion CRM.
+
+Examples:
+  # Create a batch from approved reviews
+  python run_pipeline.py publish create --limit 10
+
+  # Preview batch contents
+  python run_pipeline.py publish preview batch-20260208-143022-a1b2c3
+
+  # Commit (dry-run first)
+  python run_pipeline.py publish commit batch-20260208-143022-a1b2c3 --dry-run
+
+  # Commit for real (requires --yes or interactive confirm)
+  python run_pipeline.py publish commit batch-20260208-143022-a1b2c3 --yes
+
+  # Abort a draft batch
+  python run_pipeline.py publish abort batch-20260208-143022-a1b2c3 --reason "wrong items"
+
+  # List recent batches
+  python run_pipeline.py publish list --status draft
+""",
+    )
+    publish_sub = publish_parser.add_subparsers(dest="publish_cmd")
+
+    # publish create
+    publish_create_parser = publish_sub.add_parser("create", help="Create batch from approved reviews")
+    publish_create_parser.add_argument(
+        "--limit", type=int, default=50,
+        help="Max reviews to include (default: 50)",
+    )
+    publish_create_parser.add_argument(
+        "--db-path", type=str, default=None,
+        help="Path to SQLite database (overrides env var)",
+    )
+
+    # publish preview
+    publish_preview_parser = publish_sub.add_parser("preview", help="Preview batch contents")
+    publish_preview_parser.add_argument(
+        "batch_id", type=str,
+        help="Batch ID to preview",
+    )
+    publish_preview_parser.add_argument(
+        "--db-path", type=str, default=None,
+        help="Path to SQLite database (overrides env var)",
+    )
+
+    # publish commit
+    publish_commit_parser = publish_sub.add_parser("commit", help="Commit batch (push to Notion)")
+    publish_commit_parser.add_argument(
+        "batch_id", type=str,
+        help="Batch ID to commit",
+    )
+    publish_commit_parser.add_argument(
+        "--dry-run", action="store_true", default=False,
+        help="Preview what would be pushed without mutations",
+    )
+    publish_commit_parser.add_argument(
+        "--yes", "-y", action="store_true", default=False,
+        help="Skip interactive confirmation",
+    )
+    publish_commit_parser.add_argument(
+        "--db-path", type=str, default=None,
+        help="Path to SQLite database (overrides env var)",
+    )
+
+    # publish abort
+    publish_abort_parser = publish_sub.add_parser("abort", help="Abort a draft batch")
+    publish_abort_parser.add_argument(
+        "batch_id", type=str,
+        help="Batch ID to abort",
+    )
+    publish_abort_parser.add_argument(
+        "--reason", type=str, default="",
+        help="Reason for aborting",
+    )
+    publish_abort_parser.add_argument(
+        "--db-path", type=str, default=None,
+        help="Path to SQLite database (overrides env var)",
+    )
+
+    # publish list
+    publish_list_parser = publish_sub.add_parser("list", help="List recent batches")
+    publish_list_parser.add_argument(
+        "--limit", type=int, default=20,
+        help="Max batches to show (default: 20)",
+    )
+    publish_list_parser.add_argument(
+        "--status", type=str, default=None,
+        choices=["draft", "committing", "committed", "committed_with_errors", "aborted"],
+        help="Filter by batch status",
+    )
+    publish_list_parser.add_argument(
+        "--db-path", type=str, default=None,
+        help="Path to SQLite database (overrides env var)",
+    )
+
     return parser
 
 
@@ -4871,6 +4975,166 @@ async def cmd_ground_truth(args):
     print(f"\nWritten to: {out_path}")
 
 
+# =============================================================================
+# BATCH PUBLISH COMMANDS
+# =============================================================================
+
+async def cmd_publish_create(args):
+    """Create a batch from approved reviews."""
+    db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+    store = SignalStore(db_path=db_path)
+    await store.initialize()
+
+    try:
+        from workflows.batch_publisher import create_batch, BatchError
+        result = await create_batch(store, limit=args.limit)
+
+        print(f"Created batch: {result['batch_id']}")
+        print(f"Items: {result['item_count']}")
+        print()
+        for item in result["items"]:
+            print(f"  {item['company_id']}  {item['canonical_key']}")
+    except BatchError as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+    finally:
+        await store.close()
+
+
+async def cmd_publish_preview(args):
+    """Preview batch contents."""
+    db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+    store = SignalStore(db_path=db_path)
+    await store.initialize()
+
+    try:
+        from workflows.batch_publisher import preview_batch, BatchNotFoundError
+        preview = await preview_batch(store, args.batch_id)
+
+        print(f"Batch: {preview['batch_id']}")
+        print(f"Status: {preview['status']}")
+        print(f"Items: {preview['item_count']}  Pushed: {preview['pushed_count']}  Errors: {preview['error_count']}")
+        print(f"Created: {preview['created_at']}")
+        if preview["committed_at"]:
+            print(f"Committed: {preview['committed_at']}")
+        print()
+
+        if not preview["items"]:
+            print("  (no items)")
+        else:
+            # Header
+            print(f"  {'ID':>4}  {'Status':<12}  {'Company':<30}  {'Canonical Key':<35}  {'Conf':>5}")
+            print(f"  {'─'*4}  {'─'*12}  {'─'*30}  {'─'*35}  {'─'*5}")
+            for item in preview["items"]:
+                name = (item.get("company_name") or "—")[:30]
+                conf = f"{item['confidence']:.2f}" if item.get("confidence") else "—"
+                print(f"  {item['id']:>4}  {item['status']:<12}  {name:<30}  {item['canonical_key']:<35}  {conf:>5}")
+    except BatchNotFoundError as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+    finally:
+        await store.close()
+
+
+async def cmd_publish_commit(args):
+    """Commit a batch to Notion."""
+    db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+    store = SignalStore(db_path=db_path)
+    await store.initialize()
+
+    try:
+        from workflows.batch_publisher import (
+            commit_batch, preview_batch, BatchError, BatchNotFoundError, BatchStateError,
+        )
+        from workflows.delivery_policy import DeliveryPolicyError
+
+        if args.dry_run:
+            result = await commit_batch(store, args.batch_id, dry_run=True)
+            print(f"Dry run for batch: {result['batch_id']}")
+            print(f"Pending items: {result['pending_count']}")
+            print("No changes made.")
+            return
+
+        # Interactive confirmation unless --yes
+        if not args.yes:
+            preview = await preview_batch(store, args.batch_id)
+            print(f"About to push {preview['item_count']} items to Notion.")
+            confirm = input("Proceed? [y/N] ")
+            if confirm.lower() != "y":
+                print("Aborted.")
+                return
+
+        # Real commit needs NotionPusher
+        notion_connector = NotionConnector(
+            api_key=os.environ["NOTION_API_KEY"],
+            database_id=os.environ["NOTION_DATABASE_ID"],
+        )
+        gate = VerificationGate()
+        pusher = NotionPusher(
+            signal_store=store,
+            notion_connector=notion_connector,
+            verification_gate=gate,
+        )
+
+        result = await commit_batch(store, args.batch_id, pusher=pusher)
+        print(f"Batch committed: {result['batch_id']}")
+        print(f"Status: {result['final_status']}")
+        print(f"Pushed: {result['pushed_count']}  Errors: {result['error_count']}")
+
+    except (BatchError, BatchNotFoundError, BatchStateError) as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+    except DeliveryPolicyError as e:
+        print(f"Delivery policy blocked: {e}")
+        sys.exit(1)
+    finally:
+        await store.close()
+
+
+async def cmd_publish_abort(args):
+    """Abort a draft batch."""
+    db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+    store = SignalStore(db_path=db_path)
+    await store.initialize()
+
+    try:
+        from workflows.batch_publisher import abort_batch, BatchNotFoundError, BatchStateError
+        result = await abort_batch(store, args.batch_id, reason=args.reason)
+        print(f"Batch aborted: {result['batch_id']}")
+        print(f"Reviews reverted to approved: {result['reverted_count']}")
+    except (BatchNotFoundError, BatchStateError) as e:
+        print(f"Error: {e}")
+        sys.exit(1)
+    finally:
+        await store.close()
+
+
+async def cmd_publish_list(args):
+    """List recent batches."""
+    db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+    store = SignalStore(db_path=db_path)
+    await store.initialize()
+
+    try:
+        from workflows.batch_publisher import list_batches
+        batches = await list_batches(store, status=args.status, limit=args.limit)
+
+        if not batches:
+            print("No batches found.")
+            return
+
+        print(f"{'Batch ID':<35}  {'Status':<22}  {'Items':>5}  {'Push':>4}  {'Err':>3}  Created")
+        print(f"{'─'*35}  {'─'*22}  {'─'*5}  {'─'*4}  {'─'*3}  {'─'*20}")
+        for b in batches:
+            print(
+                f"{b['batch_id']:<35}  {b['status']:<22}  "
+                f"{b['item_count']:>5}  {b['pushed_count']:>4}  {b['error_count']:>3}  "
+                f"{b['created_at'][:19]}"
+            )
+    finally:
+        await store.close()
+
+
 async def main():
     """Main entry point"""
 
@@ -5052,6 +5316,25 @@ async def main():
                     sys.exit(1)
             else:
                 print("Triage command requires a subcommand (list, approve, reject, defer)")
+                sys.exit(1)
+        elif args.command == "publish":
+            # Handle publish subcommands
+            if hasattr(args, "publish_cmd") and args.publish_cmd:
+                if args.publish_cmd == "create":
+                    await cmd_publish_create(args)
+                elif args.publish_cmd == "preview":
+                    await cmd_publish_preview(args)
+                elif args.publish_cmd == "commit":
+                    await cmd_publish_commit(args)
+                elif args.publish_cmd == "abort":
+                    await cmd_publish_abort(args)
+                elif args.publish_cmd == "list":
+                    await cmd_publish_list(args)
+                else:
+                    print(f"Unknown publish command: {args.publish_cmd}")
+                    sys.exit(1)
+            else:
+                print("Publish command requires a subcommand (create, preview, commit, abort, list)")
                 sys.exit(1)
         else:
             print(f"Unknown command: {args.command}")

@@ -57,6 +57,7 @@ from storage.migrations.v27_audit_log import AUDIT_LOG_DDL
 from storage.migrations.v28_canonical_identity import V28_CANONICAL_IDENTITY_DDL
 from storage.migrations.v29_review_queue import V29_REVIEW_QUEUE_DDL
 from storage.migrations.v30_pipeline_identity_stats import V30_PIPELINE_IDENTITY_STATS_DDL
+from storage.migrations.v31_batch_publish import V31_BATCH_PUBLISH_DDL
 
 if TYPE_CHECKING:
     from workflows.pipeline import PipelineStats, CollectorMetrics
@@ -70,7 +71,7 @@ logger = logging.getLogger(__name__)
 # SCHEMA VERSION
 # =============================================================================
 
-CURRENT_SCHEMA_VERSION = 30
+CURRENT_SCHEMA_VERSION = 31
 
 # SQL for creating tables (migrations applied in order)
 MIGRATIONS = {
@@ -1708,6 +1709,7 @@ MIGRATIONS = {
     28: V28_CANONICAL_IDENTITY_DDL,
     29: V29_REVIEW_QUEUE_DDL,
     30: V30_PIPELINE_IDENTITY_STATS_DDL,
+    31: V31_BATCH_PUBLISH_DDL,
 }
 
 
