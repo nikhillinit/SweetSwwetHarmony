@@ -61,6 +61,7 @@ from storage.migrations.v31_batch_publish import V31_BATCH_PUBLISH_DDL
 from storage.migrations.v32_functional_schema import V32_FUNCTIONAL_SCHEMA_DDL
 from storage.migrations.v33_case_law import V33_CASE_LAW_DDL
 from storage.migrations.v34_exemplars import V34_EXEMPLARS_DDL
+from storage.migrations.v35_platform_hardening import V35_PLATFORM_HARDENING_DDL
 
 if TYPE_CHECKING:
     from workflows.pipeline import PipelineStats, CollectorMetrics
@@ -1716,6 +1717,7 @@ MIGRATIONS = {
     32: V32_FUNCTIONAL_SCHEMA_DDL,
     33: V33_CASE_LAW_DDL,
     34: V34_EXEMPLARS_DDL,
+    35: V35_PLATFORM_HARDENING_DDL,
 }
 
 
