@@ -6,11 +6,11 @@ Provides:
 - run_promotion_sweep: Paginated sweep for thin files eligible for promotion
 - archive_stale_files: Mark thin files with no new evidence as archived
 
-Promotion criteria (Phase 1a):
+Promotion criteria (Phase 1a + Phase 3):
   1. Multi-source: len(source_apis) >= 2
   2. Trusted source: SEC, Companies House, Crunchbase
   3. Manual override via metadata.manual_promotion flag
-  Exemplar similarity is DISABLED until Phase 3.
+  4. Exemplar similarity: metadata.exemplar_similarity >= threshold (Phase 3)
 
 All queries use explicit-column SELECTs + tuple unpacking (no row_factory).
 """
@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
@@ -30,6 +31,9 @@ logger = logging.getLogger(__name__)
 
 # Sources considered "trusted" for single-source promotion
 TRUSTED_SOURCES = {"sec_edgar", "companies_house", "crunchbase"}
+
+# Exemplar similarity threshold for promotion (Phase 3)
+EXEMPLAR_PROMOTION_THRESHOLD = float(os.environ.get("EXEMPLAR_PROMOTION_THRESHOLD", "0.75"))
 
 
 def _parse_source_apis(source_apis_str: Optional[str]) -> List[str]:
@@ -54,10 +58,11 @@ def _meets_promotion_criteria(
 ) -> bool:
     """Check if a company file meets promotion criteria.
 
-    Rules (OR logic): (multi_source OR trusted) OR manual
+    Rules (OR logic): (multi_source OR trusted) OR manual OR exemplar_match
       1. Multi-source: 2+ distinct source APIs
       2. Trusted source: any source in TRUSTED_SOURCES
       3. Manual: metadata.manual_promotion is True
+      4. Exemplar match: metadata.exemplar_similarity >= threshold (Phase 3)
     """
     # Rule 3: Manual override
     if metadata and metadata.get("manual_promotion"):
@@ -70,6 +75,12 @@ def _meets_promotion_criteria(
     # Rule 2: Trusted source
     if any(s in TRUSTED_SOURCES for s in source_apis):
         return True
+
+    # Rule 4: Exemplar similarity (Phase 3)
+    if metadata:
+        exemplar_sim = metadata.get("exemplar_similarity")
+        if exemplar_sim is not None and exemplar_sim >= EXEMPLAR_PROMOTION_THRESHOLD:
+            return True
 
     return False
 

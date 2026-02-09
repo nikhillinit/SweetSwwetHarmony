@@ -28,6 +28,12 @@ from ops.quality.thesis import (
 )
 from ops.quality.keys import suggest_key_strengthening, suggestions_to_markdown
 from ops.quality.enrichment import enrich_signals_best_effort
+from ops.quality.proposals import (
+    propose_from_patterns,
+    list_proposals,
+    review_proposal,
+    expire_stale_proposals,
+)
 
 
 def _default_db_path() -> str:
@@ -131,6 +137,30 @@ def register_quality_commands(subparsers: argparse._SubParsersAction) -> None:
     p_keys.add_argument("--fp-only", action="store_true", default=False)
     p_keys.add_argument("--out", default=None)
     p_keys.set_defaults(func=_cmd_key_suggestions)
+
+    # --------------------------------------------------------- propose-patterns
+    p_pp = q.add_parser("propose-patterns", help="Auto-propose anti-pattern proposals from pattern JSON")
+    p_pp.add_argument("--patterns", required=True, help="Path to patterns JSON file")
+    p_pp.add_argument("--by", dest="proposed_by", default="system")
+    p_pp.set_defaults(func=_cmd_propose_patterns)
+
+    # --------------------------------------------------------- list-proposals
+    p_lp = q.add_parser("list-proposals", help="List anti-pattern proposals")
+    p_lp.add_argument("--status", choices=["proposed", "approved", "rejected", "expired", "applied"], default=None)
+    p_lp.add_argument("--limit", type=int, default=50)
+    p_lp.set_defaults(func=_cmd_list_proposals)
+
+    # -------------------------------------------------------- review-proposal
+    p_rp = q.add_parser("review-proposal", help="Approve/reject an anti-pattern proposal")
+    p_rp.add_argument("proposal_id", type=int)
+    p_rp.add_argument("--action", required=True, choices=["approved", "rejected", "expired"])
+    p_rp.add_argument("--by", dest="reviewed_by", default=os.getenv("USER", "human"))
+    p_rp.add_argument("--notes", default=None)
+    p_rp.set_defaults(func=_cmd_review_proposal)
+
+    # -------------------------------------------------------- expire-proposals
+    p_ep = q.add_parser("expire-proposals", help="Auto-expire stale proposals past their expiry date")
+    p_ep.set_defaults(func=_cmd_expire_proposals)
 
     # ---------------------------------------------------------------- enrichment
     p_enr = q.add_parser("enrich", help="Run stub enrichments for a list of signal ids")
@@ -283,6 +313,38 @@ def _cmd_key_suggestions(args: argparse.Namespace) -> None:
             print(json.dumps({"out": args.out, "suggestions": len(suggestions)}, indent=2))
         else:
             print(md)
+
+
+def _cmd_propose_patterns(args: argparse.Namespace) -> None:
+    patterns_doc = json.loads(Path(args.patterns).read_text(encoding="utf-8"))
+    patterns = patterns_doc.get("patterns", []) if isinstance(patterns_doc, dict) else []
+    with quality_conn(args.db_path) as conn:
+        created = propose_from_patterns(conn, patterns, proposed_by=args.proposed_by)
+        print(json.dumps({"proposed": created, "total_patterns": len(patterns)}, indent=2))
+
+
+def _cmd_list_proposals(args: argparse.Namespace) -> None:
+    with quality_conn(args.db_path) as conn:
+        proposals = list_proposals(conn, status=args.status, limit=args.limit)
+        for p in proposals:
+            status_badge = {"proposed": "?", "approved": "+", "rejected": "-", "expired": "~", "applied": "*"}.get(p.status, " ")
+            print(f"  [{status_badge}] #{p.id:4d}  {p.pattern_type:30s}  {p.pattern_key:30s}  conf={p.confidence:.2f}  {p.status}")
+        print(f"\n  Total: {len(proposals)}")
+
+
+def _cmd_review_proposal(args: argparse.Namespace) -> None:
+    with quality_conn(args.db_path) as conn:
+        ok = review_proposal(conn, args.proposal_id, args.action, args.reviewed_by, args.notes)
+        if ok:
+            print(json.dumps({"proposal_id": args.proposal_id, "new_status": args.action}, indent=2))
+        else:
+            print(f"Proposal #{args.proposal_id} not found or already decided.")
+
+
+def _cmd_expire_proposals(args: argparse.Namespace) -> None:
+    with quality_conn(args.db_path) as conn:
+        expired = expire_stale_proposals(conn)
+        print(json.dumps({"expired": expired}, indent=2))
 
 
 def _cmd_enrich(args: argparse.Namespace) -> None:

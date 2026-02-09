@@ -17,6 +17,8 @@ from dataclasses import dataclass
 from typing import Optional, Set
 import re
 
+from utils.web3_detector import Web3Detector
+
 
 @dataclass
 class DisqualifyResult:
@@ -209,6 +211,7 @@ class HardDisqualifiers:
                 can override some disqualifiers
         """
         self.allow_consumer_override = allow_consumer_override
+        self._web3_detector = Web3Detector()
 
     def check(
         self,
@@ -248,10 +251,13 @@ class HardDisqualifiers:
             )
 
         # 2. Crypto/Web3 - always disqualify (out of thesis)
-        if match := is_crypto(combined_text):
+        # Uses context-aware Web3Detector to avoid false positives
+        # on "access tokens", "DAO pattern", "data mining", etc.
+        web3_result = self._web3_detector.detect(combined_text)
+        if web3_result.is_crypto:
             return DisqualifyResult(
                 passed=False,
-                reason=f"Crypto/Web3 signal: '{match}'",
+                reason=f"Crypto/Web3 signal: '{web3_result.matched_term}' — {web3_result.reason}",
                 category="crypto"
             )
 

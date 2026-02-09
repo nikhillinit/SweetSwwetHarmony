@@ -86,6 +86,10 @@ ALLOWLIST = {
 
     # --- Maintenance scripts ---
     "scripts/gc_thin_files.py",
+
+    # --- Phase 3 corpus build scripts (standalone CLI tools) ---
+    "scripts/build_case_law_corpus.py",
+    "scripts/build_exemplar_library.py",
 }
 
 

@@ -45,7 +45,7 @@ From baseline `task_plan.md`:
 | 0 | Delivery Policy + Triage CLI + CSV Export | Week 1 | ✅ COMPLETE (PR #28) | — |
 | 1a | Identity + ReviewItem + Thin Files | Week 2 | ✅ COMPLETE (PR #29 + #30) | Phase 0 |
 | 1b | Batch Publish Workflow | Week 2-3 | ✅ COMPLETE (PR #31) | Phase 0-1a |
-| 2 | Functional Schema + Web3 + Intelligence Visibility | Week 3-4 | pending | Phase 1a |
+| 2 | Functional Schema + Web3 + Intelligence Visibility | Week 3-4 | ✅ COMPLETE (PR #32) | Phase 1a |
 | 3 | Case-law + Exemplars + Intelligence Visibility | Week 5-6 | pending | Phase 2 |
 | 4+ | Dashboard + ACH + Active Hunter | Month 2+ | pending | Phase 3 |
 
@@ -485,17 +485,18 @@ Month 2+: Dashboard + Advanced (UI overlay on existing data)
 
 | Question | Answer |
 |----------|--------|
-| Where am I? | Phases 0, 1a, 1b complete — governance backbone in place |
-| Where am I going? | Phase 2 → functional schema + Web3 + intelligence visibility (Week 3-4) |
+| Where am I? | Phases 0, 1a, 1b, 2 complete — functional schema + Web3 + intelligence visible |
+| Where am I going? | Phase 3 → case-law + exemplars + intelligence visibility (Week 5-6) |
 | What's the goal? | Merge baseline quick wins with v1.1 governance; surface intelligence immediately |
-| What have I learned? | See findings_v1.1.md + architectural_review_v1.1.md |
-| What have I done? | Phase 0 (PR #28), Phase 1a (PR #29+#30), Phase 1b (PR #31) — 892+ tests |
+| What have I learned? | See findings_v1.1.md + architectural_review_v1.1.md + phase3-findings.md |
+| What have I done? | Phase 0-2 (PRs #28-#32), ~940+ tests |
 
 ---
 
 ## Next Immediate Actions
 
-1. **Start Phase 2, Task 2.1:** Create `functional_schemas` table (versioned)
-2. **Parallel:** Continue baseline Phase 4 (ML training)
-3. **Parallel:** Continue baseline Phase 5 (manual FP detection for tuning)
-4. **Phase 2 focus:** Functional schema + Web3 co-occurrence + intelligence in CSV/CLI
+1. **Start Phase 3, Task 3.0:** Vectorizer metadata + versioning config
+2. **Phase 3 plan:** `docs/plans/2026-02-09-phase3-case-law-exemplars.md`
+3. **Parallel:** Continue baseline Phase 4 (ML training)
+4. **Parallel:** Continue baseline Phase 5 (manual FP detection for tuning)
+5. **Phase 3 focus:** Case-law TF-IDF retrieval + exemplar matching + veto + intelligence in CSV/CLI

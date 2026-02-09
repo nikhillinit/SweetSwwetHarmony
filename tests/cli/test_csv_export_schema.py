@@ -92,6 +92,44 @@ async def _create_test_db(db_path: str) -> None:
             competitor_match TEXT
         )
     """)
+    # Phase 3 tables for case-law + exemplars
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS precedents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            signal_id INTEGER NOT NULL,
+            canonical_key TEXT NOT NULL,
+            company_id TEXT,
+            human_label TEXT NOT NULL CHECK(human_label IN ('TP', 'FP')),
+            corpus_text TEXT NOT NULL,
+            tfidf_vector BLOB,
+            similarity_text_hash TEXT,
+            signal_created_at TEXT,
+            vectorizer_version TEXT NOT NULL,
+            label_reason TEXT,
+            source_api TEXT,
+            confidence REAL,
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+            updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        )
+    """)
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS thesis_exemplars (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            exemplar_key TEXT NOT NULL,
+            canonical_key TEXT,
+            company_name TEXT,
+            human_label TEXT NOT NULL DEFAULT 'TP',
+            category TEXT NOT NULL,
+            description TEXT NOT NULL,
+            corpus_text TEXT NOT NULL,
+            tfidf_vector BLOB,
+            vectorizer_version TEXT NOT NULL,
+            source TEXT NOT NULL DEFAULT 'auto',
+            is_active INTEGER NOT NULL DEFAULT 1,
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+            updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        )
+    """)
 
     # Insert test signals
     await db.execute("""
@@ -151,6 +189,7 @@ EXPECTED_COLUMNS = [
     "signal_type", "source_api", "detected_at", "status", "company_id",
     "problem_solved", "customer_archetype", "schema_confidence",
     "thesis_category", "thesis_rationale",
+    "precedent_tp", "precedent_fp", "exemplar_category", "exemplar_key",
 ]
 
 
@@ -315,5 +354,102 @@ class TestCSVExportSchema:
 
             # Header + 3 data rows
             assert len(rows) == 4
+        finally:
+            await real_db.close()
+
+    # Phase 3 — case-law + exemplar columns
+
+    @pytest.mark.asyncio
+    async def test_signal_without_precedents_shows_zero(self, db_path, output_path):
+        """Signal with no precedents shows 0 for precedent counts."""
+        await _create_test_db(db_path)
+        from run_pipeline import cmd_export_queue
+
+        mock_store, real_db = await _get_mock_store(db_path)
+        try:
+            args = Namespace(db_path=db_path, status=None, min_confidence=None, days=None, out=output_path)
+            with patch("run_pipeline.SignalStore", return_value=mock_store):
+                await cmd_export_queue(args)
+
+            with open(output_path, "r", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                rows = list(reader)
+
+            tech_row = next(r for r in rows if r["company_name"] == "TechCo")
+            assert tech_row["precedent_tp"] == "0"
+            assert tech_row["precedent_fp"] == "0"
+            assert tech_row["exemplar_category"] == ""
+            assert tech_row["exemplar_key"] == ""
+        finally:
+            await real_db.close()
+
+    @pytest.mark.asyncio
+    async def test_signal_with_precedents_shows_counts(self, db_path, output_path):
+        """Signal with precedents shows correct TP/FP counts."""
+        await _create_test_db(db_path)
+
+        # Insert precedents for FoodCo
+        db = await aiosqlite.connect(db_path)
+        await db.execute("""
+            INSERT INTO precedents (signal_id, canonical_key, company_id, human_label,
+                corpus_text, vectorizer_version)
+            VALUES (1, 'domain:food.co', 'comp-food', 'TP', 'food delivery', 'v1.0.0')
+        """)
+        await db.execute("""
+            INSERT INTO precedents (signal_id, canonical_key, company_id, human_label,
+                corpus_text, vectorizer_version)
+            VALUES (100, 'domain:food.co', 'comp-food', 'FP', 'b2b food service', 'v1.0.0')
+        """)
+        await db.commit()
+        await db.close()
+
+        from run_pipeline import cmd_export_queue
+        mock_store, real_db = await _get_mock_store(db_path)
+        try:
+            args = Namespace(db_path=db_path, status=None, min_confidence=None, days=None, out=output_path)
+            with patch("run_pipeline.SignalStore", return_value=mock_store):
+                await cmd_export_queue(args)
+
+            with open(output_path, "r", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                rows = list(reader)
+
+            food_row = next(r for r in rows if r["company_name"] == "FoodCo")
+            assert food_row["precedent_tp"] == "1"
+            assert food_row["precedent_fp"] == "1"
+        finally:
+            await real_db.close()
+
+    @pytest.mark.asyncio
+    async def test_signal_with_exemplar_shows_match(self, db_path, output_path):
+        """Signal with matching exemplar shows category and key."""
+        await _create_test_db(db_path)
+
+        # Insert exemplar matching FoodCo's canonical_key
+        db = await aiosqlite.connect(db_path)
+        await db.execute("""
+            INSERT INTO thesis_exemplars
+                (exemplar_key, canonical_key, company_name, category, description,
+                 corpus_text, vectorizer_version, is_active)
+            VALUES ('cpg_food', 'domain:food.co', 'FoodCo', 'consumer_cpg',
+                    'TP exemplar: FoodCo', 'food delivery consumer', 'v1.0.0', 1)
+        """)
+        await db.commit()
+        await db.close()
+
+        from run_pipeline import cmd_export_queue
+        mock_store, real_db = await _get_mock_store(db_path)
+        try:
+            args = Namespace(db_path=db_path, status=None, min_confidence=None, days=None, out=output_path)
+            with patch("run_pipeline.SignalStore", return_value=mock_store):
+                await cmd_export_queue(args)
+
+            with open(output_path, "r", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                rows = list(reader)
+
+            food_row = next(r for r in rows if r["company_name"] == "FoodCo")
+            assert food_row["exemplar_category"] == "consumer_cpg"
+            assert food_row["exemplar_key"] == "cpg_food"
         finally:
             await real_db.close()
