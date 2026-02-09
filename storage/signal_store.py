@@ -63,6 +63,7 @@ from storage.migrations.v33_case_law import V33_CASE_LAW_DDL
 from storage.migrations.v34_exemplars import V34_EXEMPLARS_DDL
 from storage.migrations.v35_platform_hardening import V35_PLATFORM_HARDENING_DDL
 from storage.migrations.v36_wave1_triage import V36_WAVE1_TRIAGE_DDL
+from storage.migrations.v37_ach_analyses import V37_ACH_ANALYSES_DDL
 
 if TYPE_CHECKING:
     from workflows.pipeline import PipelineStats, CollectorMetrics
@@ -1720,6 +1721,7 @@ MIGRATIONS = {
     34: V34_EXEMPLARS_DDL,
     35: V35_PLATFORM_HARDENING_DDL,
     36: V36_WAVE1_TRIAGE_DDL,
+    37: V37_ACH_ANALYSES_DDL,
 }
 
 

@@ -3322,6 +3322,17 @@ Examples:
         help="Path to SQLite database (overrides env var)",
     )
 
+    # triage ach
+    triage_ach_parser = triage_sub.add_parser("ach", help="Run ACH analysis for a review item")
+    triage_ach_parser.add_argument(
+        "review_id", type=int,
+        help="Review ID to analyze",
+    )
+    triage_ach_parser.add_argument(
+        "--db-path", type=str, default=None,
+        help="Path to SQLite database (overrides env var)",
+    )
+
     # -------------------------------------------------------------------------
     # Batch publish commands
     # -------------------------------------------------------------------------
@@ -4731,6 +4742,84 @@ async def cmd_triage_defer(args):
     await _triage_action(args, action_type="triage_defer", new_status=None)
 
 
+async def cmd_triage_ach(args):
+    """Run ACH analysis for a review item.
+
+    Wave 1, Phase B: Builds deterministic ACH matrix, stores result,
+    and prints formatted output (hypothesis scores, bull/bear, differentiators).
+    """
+    db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+    store = SignalStore(db_path)
+    await store.initialize()
+
+    try:
+        from intelligence.ach_matrix import ACHBuilder, store_ach_analysis, update_ach_narratives
+        from intelligence.tribunal import narrate_summary
+
+        # Resolve review → company_id
+        cursor = await store._db.execute(
+            "SELECT company_id FROM review_items WHERE id = ?",
+            (args.review_id,),
+        )
+        row = await cursor.fetchone()
+        if not row:
+            print(f"ERROR: Review {args.review_id} not found")
+            sys.exit(1)
+        company_id = row[0]
+
+        # Build ACH matrix
+        builder = ACHBuilder()
+        matrix = await builder.build(company_id, store._db)
+
+        # Store
+        ach_id = await store_ach_analysis(store._db, matrix, review_id=args.review_id)
+
+        # Narrate
+        summary = narrate_summary(matrix)
+        await update_ach_narratives(
+            store._db, ach_id,
+            bull_summary=summary.bull_summary,
+            bear_summary=summary.bear_summary,
+            differentiator_count=summary.differentiator_count,
+        )
+
+        # Print formatted output
+        print(f"\n{'='*60}")
+        print(f"ACH Analysis — Review #{args.review_id} (company: {company_id})")
+        print(f"{'='*60}")
+        print(f"Builder: {matrix.builder_version}  Rubric: {matrix.rubric_version}")
+        print(f"Evidence: {matrix.evidence_count}/14 available")
+        print(f"Hash: {matrix.inputs_hash}")
+        print()
+
+        # Hypothesis scores table
+        print("Hypothesis Scores:")
+        print(f"{'Hypothesis':<35} {'Score':>8}")
+        print(f"{'-'*35} {'-'*8}")
+        for h in matrix.hypotheses:
+            score = matrix.hypothesis_scores.get(h.id, 0)
+            marker = " <--" if h.id == matrix.top_hypothesis else ""
+            print(f"  {h.id} {h.label:<30} {score:>6.1f}{marker}")
+        print()
+
+        # Bull/Bear summaries
+        if summary.bull_summary:
+            print(f"BULL: {summary.bull_summary}")
+        if summary.bear_summary:
+            print(f"BEAR: {summary.bear_summary}")
+        print()
+
+        # Differentiators
+        if summary.differentiators:
+            print(f"Differentiators ({summary.differentiator_count}):")
+            for d in summary.differentiators:
+                print(f"  {d.evidence_id} ({d.evidence_label}): "
+                      f"favors {','.join(d.favors)} | opposes {','.join(d.opposes)}")
+        print()
+    finally:
+        await store.close()
+
+
 async def cmd_triage_detail(args):
     """Show full intelligence detail for a single signal.
 
@@ -4920,7 +5009,12 @@ async def cmd_export_queue(args):
                    COALESCE(pcl.tp_count, 0) as precedent_tp_count,
                    COALESCE(pcl.fp_count, 0) as precedent_fp_count,
                    em.exemplar_category,
-                   em.exemplar_key
+                   em.exemplar_key,
+                   ach.top_hypothesis as ach_top_hypothesis,
+                   ach.top_score as ach_top_score,
+                   ach.bull_summary as ach_bull_summary,
+                   ach.bear_summary as ach_bear_summary,
+                   ach.differentiator_count as ach_differentiator_count
             FROM signals s
             LEFT JOIN signal_processing sp ON sp.signal_id = s.id
             LEFT JOIN functional_schemas fs
@@ -4941,6 +5035,12 @@ async def cmd_export_queue(args):
                 WHERE is_active = 1
                 GROUP BY canonical_key
             ) em ON em.canonical_key = s.canonical_key
+            LEFT JOIN (
+                SELECT company_id, top_hypothesis, top_score, bull_summary,
+                       bear_summary, differentiator_count,
+                       ROW_NUMBER() OVER (PARTITION BY company_id ORDER BY created_at DESC, id DESC) as rn
+                FROM ach_analyses
+            ) ach ON ach.company_id = s.company_id AND ach.rn = 1
             WHERE 1=1
         """
         params = []
@@ -4969,12 +5069,22 @@ async def cmd_export_queue(args):
             "problem_solved", "customer_archetype", "schema_confidence",
             "thesis_category", "thesis_rationale",
             "precedent_tp", "precedent_fp", "exemplar_category", "exemplar_key",
+            "ach_top_hypothesis", "ach_top_score", "ach_bull_summary",
+            "ach_bear_summary", "ach_differentiator_count",
         ]
+
+        def _sanitize_csv_field(value):
+            """Prefix text fields starting with = + - @ to prevent CSV injection."""
+            if isinstance(value, str) and value and value[0] in ('=', '+', '-', '@'):
+                return "'" + value
+            return value
 
         # Post-process rows: advisory * suffix, convert NULLs to empty strings
         # Query columns: 0-8 core, 9 problem, 10 archetype, 11 schema_conf,
         #   12 is_advisory, 13 thesis_cat, 14 thesis_rat,
-        #   15 tp_count, 16 fp_count, 17 exemplar_cat, 18 exemplar_key
+        #   15 tp_count, 16 fp_count, 17 exemplar_cat, 18 exemplar_key,
+        #   19 ach_top_hypothesis, 20 ach_top_score, 21 ach_bull_summary,
+        #   22 ach_bear_summary, 23 ach_differentiator_count
         output_rows = []
         for row in rows:
             row = list(row)
@@ -4982,7 +5092,7 @@ async def cmd_export_queue(args):
             archetype = row[10] or ""
             if is_advisory and archetype:
                 archetype = archetype + "*"
-            output_rows.append(
+            out_row = (
                 row[:10]                            # signal_id..problem_solved_text
                 + [archetype]                       # customer_archetype (with * if advisory)
                 + [row[11] or ""]                   # schema_confidence
@@ -4992,7 +5102,14 @@ async def cmd_export_queue(args):
                 + [row[16] or 0]                    # precedent_fp_count
                 + [row[17] or ""]                   # exemplar_category
                 + [row[18] or ""]                   # exemplar_key
+                + [row[19] or ""]                   # ach_top_hypothesis
+                + [row[20] if row[20] is not None else ""]  # ach_top_score
+                + [row[21] or ""]                   # ach_bull_summary
+                + [row[22] or ""]                   # ach_bear_summary
+                + [row[23] if row[23] is not None else 0]  # ach_differentiator_count
             )
+            # CSV injection sanitization (B7)
+            output_rows.append([_sanitize_csv_field(v) for v in out_row])
 
         # Write CSV output
         output_file = getattr(args, "out", None)
@@ -5602,11 +5719,13 @@ async def main():
                     await cmd_triage_defer(args)
                 elif args.triage_cmd == "detail":
                     await cmd_triage_detail(args)
+                elif args.triage_cmd == "ach":
+                    await cmd_triage_ach(args)
                 else:
                     print(f"Unknown triage command: {args.triage_cmd}")
                     sys.exit(1)
             else:
-                print("Triage command requires a subcommand (list, approve, reject, defer, detail)")
+                print("Triage command requires a subcommand (list, approve, reject, defer, detail, ach)")
                 sys.exit(1)
         elif args.command == "publish":
             # Handle publish subcommands
