@@ -177,6 +177,38 @@ class TestPromotionCriteria:
             [], metadata={"manual_promotion": True}
         ) is True
 
+    # Phase 3 — Rule 4: Exemplar similarity
+    def test_exemplar_similarity_promotes(self):
+        """High exemplar similarity should trigger promotion (Phase 3)."""
+        assert _meets_promotion_criteria(
+            ["github"], metadata={"exemplar_similarity": 0.85}
+        ) is True
+
+    def test_exemplar_similarity_below_threshold(self):
+        """Low exemplar similarity should not trigger promotion."""
+        assert _meets_promotion_criteria(
+            ["github"], metadata={"exemplar_similarity": 0.50}
+        ) is False
+
+    def test_exemplar_similarity_at_threshold(self):
+        """Exemplar similarity exactly at threshold should promote."""
+        from workflows.thin_file_manager import EXEMPLAR_PROMOTION_THRESHOLD
+        assert _meets_promotion_criteria(
+            ["github"], metadata={"exemplar_similarity": EXEMPLAR_PROMOTION_THRESHOLD}
+        ) is True
+
+    def test_exemplar_similarity_none_no_promote(self):
+        """Missing exemplar_similarity should not trigger Rule 4."""
+        assert _meets_promotion_criteria(
+            ["github"], metadata={"exemplar_similarity": None}
+        ) is False
+
+    def test_exemplar_similarity_with_empty_sources(self):
+        """Exemplar similarity works even with no sources."""
+        assert _meets_promotion_criteria(
+            [], metadata={"exemplar_similarity": 0.80}
+        ) is True
+
 
 # =============================================================================
 # upsert_company_file

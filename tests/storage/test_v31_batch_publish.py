@@ -43,9 +43,9 @@ class TestV31Migration:
     """Tests for v31 batch publish DDL."""
 
     @pytest.mark.asyncio
-    async def test_schema_version_is_31(self):
-        """CURRENT_SCHEMA_VERSION should be 31."""
-        assert CURRENT_SCHEMA_VERSION == 31
+    async def test_schema_version_is_at_least_31(self):
+        """CURRENT_SCHEMA_VERSION should be >= 31."""
+        assert CURRENT_SCHEMA_VERSION >= 31
 
     @pytest.mark.asyncio
     async def test_publish_batches_table_exists(self, store):

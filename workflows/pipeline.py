@@ -178,6 +178,9 @@ class PipelineConfig:
     use_phase_g_identity_resolution: bool = False  # Enable blocking-first fuzzy entity resolution
     use_claim_facts: bool = False  # Enable bi-temporal claim facts (SCD-2)
 
+    # Phase 2: Functional schema extraction
+    use_functional_schema: bool = False  # Enable LLM schema extraction in pipeline
+
     # Phase 1a: Canonical identity + thin files
     use_thin_files: bool = False  # Enable thin file upsert + promotion sweep
 
@@ -226,6 +229,7 @@ class PipelineConfig:
             use_investor_matching=os.getenv("ENABLE_INVESTOR_MATCHING", "false").lower() == "true",
             use_phase_g_identity_resolution=os.getenv("USE_PHASE_G_IDENTITY_RESOLUTION", "false").lower() == "true",
             use_claim_facts=os.getenv("USE_CLAIM_FACTS", "false").lower() == "true",
+            use_functional_schema=os.getenv("ENABLE_FUNCTIONAL_SCHEMA", "false").lower() == "true",
             use_thin_files=os.getenv("USE_THIN_FILES", "false").lower() == "true",
             # Timeout configuration
             collector_connect_timeout=float(os.getenv("COLLECTOR_CONNECT_TIMEOUT", "10.0")),
@@ -273,6 +277,9 @@ class PipelineStats:
 
     # Shadow logging stats
     shadow_logs_written: int = 0
+
+    # Functional schema stats (Phase 2)
+    schemas_extracted: int = 0
 
     # Identity / thin file stats (Phase 1a)
     sweep_evaluated: int = 0   # candidates examined by promotion sweep
@@ -451,6 +458,16 @@ class DiscoveryPipeline:
 
         # Feature states for SHADOW experimentation (Phase A)
         self._feature_registry = FeatureRegistry()
+
+        # Functional schema extractor (Phase 2)
+        self._schema_extractor = None
+        if self.config.use_functional_schema:
+            try:
+                from consumer.functional_extractor import FunctionalExtractor
+                self._schema_extractor = FunctionalExtractor()
+                logger.info("Functional schema extractor initialized")
+            except (ImportError, ValueError) as e:
+                logger.warning(f"Functional schema extractor not available: {e}")
 
         # Phase C: Boilerplate detection in SHADOW mode
         self._boilerplate_detector = BoilerplateDetector()
@@ -852,6 +869,7 @@ class DiscoveryPipeline:
             stats.prospects_created = process_stats["prospects_created"]
             stats.prospects_updated = process_stats["prospects_updated"]
             stats.prospects_skipped = process_stats["prospects_skipped"]
+            stats.schemas_extracted = process_stats.get("schemas_extracted", 0)
 
             if not dry_run:
                 outbox_stats = await self._drain_notion_outbox(limit=self.config.batch_size)
@@ -1346,6 +1364,8 @@ class DiscoveryPipeline:
             "thesis_rejected": 0,
             "thesis_held": 0,
             "thesis_passed": 0,
+            # Functional schema stats (Phase 2)
+            "schemas_extracted": 0,
             # Phase G Sprint 2 stats
             "phase_g_entities_resolved": 0,
             "phase_g_merges": 0,
@@ -1445,6 +1465,10 @@ class DiscoveryPipeline:
                     stats["thesis_held"] += 1
                 elif thesis_routing == RoutingDecision.QUALIFIED:
                     stats["thesis_passed"] += 1
+
+                # Track schema extraction
+                if result.get("schema_extracted"):
+                    stats["schemas_extracted"] += 1
 
             except Exception as e:
                 logger.exception(f"Error processing company {canonical_key}")
@@ -1815,6 +1839,41 @@ class DiscoveryPipeline:
             except Exception as e:
                 logger.warning(f"Thesis filtering failed (non-fatal): {e}")
 
+        # Functional schema extraction (Phase 2, optional)
+        schema_extracted = False
+        if self._schema_extractor:
+            try:
+                company_id = signals[0].company_id
+                if company_id and not await self._store.has_active_schema(company_id):
+                    # Select best signal (highest confidence, prefer sec_edgar > job_postings > news_api)
+                    _source_prio = {"sec_edgar": 0, "job_postings": 1, "news_api": 2}
+                    best = sorted(
+                        signals,
+                        key=lambda s: (-s.confidence, _source_prio.get(s.source_api, 99)),
+                    )[0]
+                    signal_data = {
+                        "title": best.company_name or canonical_key,
+                        "source_context": (
+                            " ".join(consolidated.descriptions)
+                            if consolidated and consolidated.descriptions
+                            else ""
+                        ),
+                        "source_api": best.source_api or "unknown",
+                    }
+                    schema = await self._schema_extractor.extract(
+                        signal_data,
+                        company_id=company_id,
+                        evidence_signal_ids=[s.id for s in signals],
+                    )
+                    if schema:
+                        await self._store.save_functional_schema(schema.to_storage_dict())
+                        schema_extracted = True
+                        logger.info(
+                            f"Schema extracted for {canonical_key}: {schema.customer_archetype}"
+                        )
+            except Exception as e:
+                logger.warning(f"Schema extraction failed for {canonical_key} (non-fatal): {e}")
+
         # Run through SignalProcessor gating (if enabled)
         gating_applied = False
         gating_triggered = False
@@ -2043,6 +2102,8 @@ class DiscoveryPipeline:
             "enrichment_boost": enrichment_boost,
             # Thesis filtering
             "thesis_routing": thesis_routing,
+            # Functional schema
+            "schema_extracted": schema_extracted,
         }
 
     async def _push_to_notion(

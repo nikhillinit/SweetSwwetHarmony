@@ -34,7 +34,7 @@ logger = logging.getLogger(__name__)
 # PROMPT CONFIGURATION
 # =============================================================================
 
-CLASSIFIER_PROMPT_VERSION = "v1.3.0-gemini-cot"
+CLASSIFIER_PROMPT_VERSION = "v1.4.0-gemini-adjacent"
 
 CLASSIFIER_SYSTEM_PROMPT = """You are a venture capital analyst evaluating early-stage consumer startups.
 
@@ -54,6 +54,16 @@ We invest in PRE-SEED to SERIES A consumer companies:
 - Services/Consulting/Agencies
 - Late-stage companies (Series B+)
 - Hardware-only (no software/data moat)
+
+## Adjacent Categories (Edge Cases — Evaluate Carefully)
+These categories are SOMETIMES in thesis depending on execution:
+- Creator Economy: In thesis if consumer-facing (e.g., creator monetization tools for individual creators). Out of thesis if B2B SaaS for brands.
+- Pet Tech: In thesis if consumer product (pet food DTC, pet health app). Out of thesis if B2B vet software.
+- EdTech: In thesis if consumer learning app (language learning, tutoring marketplace). Out of thesis if enterprise LMS.
+- FinTech: In thesis if consumer financial wellness (budgeting app, savings). Out of thesis if B2B payments infra.
+- FoodTech: In thesis if consumer-facing (meal kit, restaurant, food delivery). Out of thesis if B2B food supply chain.
+
+When classifying edge cases, ask: "Is the END USER an individual consumer making a personal purchase decision?"
 
 ## Output Format
 Respond ONLY with valid JSON (no markdown, no code blocks):
