@@ -4498,9 +4498,17 @@ async def cmd_triage_list(args):
             SELECT s.id, s.company_name, s.canonical_key, s.confidence,
                    s.signal_type, s.source_api, s.raw_data,
                    COALESCE(sp.status, 'pending') as status,
-                   s.detected_at, s.company_id
+                   s.detected_at, s.company_id,
+                   fs.problem_solved_text,
+                   fs.customer_archetype,
+                   fs.schema_confidence,
+                   fs.is_advisory,
+                   fs.approach_text,
+                   fs.evidence_signal_ids
             FROM signals s
             LEFT JOIN signal_processing sp ON sp.signal_id = s.id
+            LEFT JOIN functional_schemas fs
+                ON fs.company_id = s.company_id AND fs.is_active = 1
             WHERE COALESCE(sp.status, 'pending') = ?
         """
         params: list = [status_filter]
@@ -4521,8 +4529,8 @@ async def cmd_triage_list(args):
             return
 
         # Print header
-        print(f"\n{'ID':>6}  {'Company':<25}  {'Summary':<40}  {'Conf':>5}  {'Source':<15}  {'Status':<10}")
-        print("-" * 110)
+        print(f"\n{'ID':>6}  {'Company':<25}  {'Problem':<40}  {'Archetype':<13}  {'Conf':>5}  {'Source':<15}  {'Status':<10}")
+        print("-" * 125)
 
         for row in rows:
             sig_id = row[0]
@@ -4533,26 +4541,45 @@ async def cmd_triage_list(args):
             raw_data_str = row[6] or "{}"
             status = row[7]
 
-            # Extract summary from raw_data
-            try:
-                raw_data = json.loads(raw_data_str)
-                summary = (
-                    raw_data.get("description")
-                    or raw_data.get("title")
-                    or raw_data.get("name")
-                    or signal_type
-                )
-            except (json.JSONDecodeError, TypeError):
-                summary = signal_type
+            # Functional schema columns (indices 10-15)
+            problem_text = row[10] or ""
+            archetype = row[11] or ""
+            is_advisory = row[13]
 
-            summary = (summary or "")[:40]
+            if problem_text:
+                display_problem = problem_text[:40]
+            else:
+                # Fallback to raw_data summary
+                try:
+                    raw_data = json.loads(raw_data_str)
+                    display_problem = (
+                        raw_data.get("description")
+                        or raw_data.get("title")
+                        or raw_data.get("name")
+                        or signal_type
+                    )
+                except (json.JSONDecodeError, TypeError):
+                    display_problem = signal_type
+                display_problem = (display_problem or "")[:40]
+
+            if archetype:
+                display_archetype = archetype + "*" if is_advisory else archetype
+            else:
+                display_archetype = "\u2014"
+
             source = source_api[:15] if source_api else ""
 
-            print(f"{sig_id:>6}  {company:<25}  {summary:<40}  {confidence:>5.2f}  {source:<15}  {status:<10}")
+            print(f"{sig_id:>6}  {company:<25}  {display_problem:<40}  {display_archetype:<13}  {confidence:>5.2f}  {source:<15}  {status:<10}")
 
             if verbose_mode:
                 detected_at = row[8] or ""
+                approach = row[14] or ""
+                evidence = row[15] or ""
                 print(f"        Detected: {detected_at}  Type: {signal_type}  Key: {row[2]}")
+                if approach:
+                    print(f"        Approach: {approach}")
+                if evidence:
+                    print(f"        Evidence: {evidence}")
 
         print(f"\nShowing {len(rows)} signal(s) with status '{status_filter}'")
 
@@ -4674,13 +4701,22 @@ async def cmd_export_queue(args):
     await store.initialize()
 
     try:
-        # Build query with optional filters
+        # Build query with optional filters (Phase 2: LEFT JOIN functional_schemas + thesis_classifications)
         query = """
             SELECT s.id, s.company_name, s.canonical_key, s.confidence,
                    s.signal_type, s.source_api, s.detected_at,
-                   COALESCE(sp.status, 'pending') as status, s.company_id
+                   COALESCE(sp.status, 'pending') as status, s.company_id,
+                   fs.problem_solved_text,
+                   fs.customer_archetype,
+                   fs.schema_confidence,
+                   fs.is_advisory,
+                   tc.category as thesis_category,
+                   tc.rationale as thesis_rationale
             FROM signals s
             LEFT JOIN signal_processing sp ON sp.signal_id = s.id
+            LEFT JOIN functional_schemas fs
+                ON fs.company_id = s.company_id AND fs.is_active = 1
+            LEFT JOIN thesis_classifications tc ON tc.signal_id = s.id
             WHERE 1=1
         """
         params = []
@@ -4702,8 +4738,31 @@ async def cmd_export_queue(args):
 
         cursor = await store._db.execute(query, params)
         rows = await cursor.fetchall()
-        columns = ["signal_id", "company_name", "canonical_key", "confidence",
-                    "signal_type", "source_api", "detected_at", "status", "company_id"]
+
+        columns = [
+            "signal_id", "company_name", "canonical_key", "confidence",
+            "signal_type", "source_api", "detected_at", "status", "company_id",
+            "problem_solved", "customer_archetype", "schema_confidence",
+            "thesis_category", "thesis_rationale",
+        ]
+
+        # Post-process rows: advisory * suffix, convert NULLs to empty strings
+        output_rows = []
+        for row in rows:
+            row = list(row)
+            # Advisory flag is at index 12 (is_advisory); archetype at index 10
+            is_advisory = row[12]
+            archetype = row[10] or ""
+            if is_advisory and archetype:
+                archetype = archetype + "*"
+            # Replace row fields: remove is_advisory column, keep processed archetype
+            output_rows.append(
+                row[:10]                            # signal_id..problem_solved_text
+                + [archetype]                       # customer_archetype (with * if advisory)
+                + [row[11] or ""]                   # schema_confidence
+                + [row[13] or ""]                   # thesis_category
+                + [row[14] or ""]                   # thesis_rationale
+            )
 
         # Write CSV output
         output_file = getattr(args, "out", None)
@@ -4711,14 +4770,14 @@ async def cmd_export_queue(args):
             with open(output_file, "w", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)
                 writer.writerow(columns)
-                writer.writerows(rows)
-            print(f"Exported {len(rows)} signals to {output_file}")
+                writer.writerows(output_rows)
+            print(f"Exported {len(output_rows)} signals to {output_file}")
         else:
             writer = csv.writer(sys.stdout)
             writer.writerow(columns)
-            writer.writerows(rows)
+            writer.writerows(output_rows)
             # Print summary to stderr so it doesn't mix with CSV data
-            print(f"\n# Exported {len(rows)} signals", file=sys.stderr)
+            print(f"\n# Exported {len(output_rows)} signals", file=sys.stderr)
 
     finally:
         await store.close()
