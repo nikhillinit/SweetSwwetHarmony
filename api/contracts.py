@@ -329,6 +329,28 @@ class ListResponse(BaseModel, Generic[T]):
 # REQUEST HELPERS
 # =============================================================================
 
+def feature_disabled_response(
+    feature_name: str,
+    env_var_hint: str,
+    request_id: Optional[str] = None,
+) -> HTTPException:
+    """Build a 423 Locked response for a disabled write feature.
+
+    Usage:
+        raise feature_disabled_response("merge_writes", "MERGE_WRITES_ENABLED")
+    """
+    return HTTPException(
+        status_code=423,
+        detail=ErrorDetail(
+            error="locked",
+            code="FEATURE_DISABLED",
+            message=f"Write feature '{feature_name}' is currently disabled.",
+            detail={"env_var": env_var_hint, "action": f"Set {env_var_hint}=active"},
+            request_id=request_id,
+        ).model_dump(exclude_none=True),
+    )
+
+
 def get_request_id(request: Request) -> Optional[str]:
     """Extract request ID from middleware-injected state."""
     return getattr(request.state, "request_id", None)

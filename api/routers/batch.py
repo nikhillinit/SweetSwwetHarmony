@@ -206,7 +206,7 @@ async def commit_batch_endpoint(
         )
     except DeliveryPolicyError as e:
         raise error_response(
-            403, "forbidden", "DELIVERY_POLICY_BLOCKED", str(e),
+            423, "locked", "FEATURE_DISABLED", str(e),
         )
     except BatchError as e:
         raise error_response(

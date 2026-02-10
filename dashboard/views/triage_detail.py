@@ -74,7 +74,7 @@ def render_triage_detail_page():
         _render_thesis_tab(detail)
 
     with tab_ach:
-        _render_ach_tab(client, review_id, detail)
+        _render_ach_tab_v2(client, review_id, detail)
 
     with tab_audit:
         _render_audit_tab(detail)
@@ -141,35 +141,37 @@ def _render_thesis_tab(detail):
 
 
 def _render_ach_tab(client, review_id, detail):
-    """Render ACH analysis or rebuild button."""
+    """Render ACH analysis or rebuild button (legacy fallback)."""
+    _render_ach_tab_v2(client, review_id, detail)
+
+
+def _render_ach_tab_v2(client, review_id, detail):
+    """Render enhanced ACH matrix view with grid, narratives, and rebuild."""
+    from dashboard.views.ach_matrix import render_ach_view
+
     ach = detail.get("ach_summary")
 
-    # Try fetching from API if not in detail
+    # Try fetching full ACH data from API if not in detail
     if not ach:
         ach_result = client.get_triage_ach(review_id)
         if ach_result and not ach_result.get("error"):
             ach = ach_result.get("data", ach_result)
 
     if ach:
-        top_h = ach.get("top_hypothesis", "—")
-        top_s = ach.get("top_score")
-        bull = ach.get("bull_summary", "")
-        bear = ach.get("bear_summary", "")
-        diff_count = ach.get("differentiator_count", 0)
-
-        st.metric("Top Hypothesis", top_h)
-        if top_s is not None:
-            st.metric("Score", f"{top_s:.1f}")
-
-        if bull:
-            st.markdown(f"**Bull Case:** {bull}")
-        if bear:
-            st.markdown(f"**Bear Case:** {bear}")
-        if diff_count:
-            st.caption(f"{diff_count} differentiating evidence items")
+        # Extract tribunal data if present in the ACH response
+        tribunal_data = None
+        if ach.get("bull_summary") or ach.get("bear_summary"):
+            tribunal_data = {
+                "bull_summary": ach.get("bull_summary", ""),
+                "bear_summary": ach.get("bear_summary", ""),
+                "differentiators": ach.get("differentiators", []),
+                "differentiator_count": ach.get("differentiator_count", 0),
+            }
+        render_ach_view(ach, tribunal_data)
     else:
         st.info("No ACH analysis available. Click Rebuild to generate one.")
 
+    # Rebuild + Export buttons
     if st.button("Rebuild ACH", key="rebuild_ach"):
         with st.spinner("Building ACH analysis..."):
             rebuild_result = client.rebuild_triage_ach(review_id)
