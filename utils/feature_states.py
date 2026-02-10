@@ -137,6 +137,12 @@ DEFAULT_FEATURES: Dict[str, FeatureConfig] = {
         state=FeatureState.SHADOW,
         description="Homepage, README markers, commercial deps, legal maturity",
     ),
+    # Wave 2: Shadow entity resolution
+    "shadow_entity_resolution": FeatureConfig(
+        name="shadow_entity_resolution",
+        state=FeatureState.OFF,
+        description="Shadow mode Phase G entity resolution alongside Phase 1a identity",
+    ),
     # Phase B: Thesis matching SHADOW logging
     "thesis_match": FeatureConfig(
         name="thesis_match",
