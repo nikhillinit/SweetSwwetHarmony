@@ -4,6 +4,8 @@ TDD tests for:
 - FeatureRegistry integration in DiscoveryPipeline
 - Shadow logging during signal processing
 - Shadow stats in PipelineStats
+- Wave 2: Shadow entity comparison (_run_shadow_entity_comparison)
+- Wave 2: PipelineConfig.use_shadow_entity_resolution flag
 """
 
 import asyncio
@@ -535,5 +537,271 @@ class TestPipelineThesisMatchShadow:
                     assert "v2_shadow" in computed, f"v2_shadow not in computed: {computed.keys()}"
 
                 await pipeline.close()
+        finally:
+            os.unlink(db_path)
+
+
+# =============================================================================
+# WAVE 2: SHADOW ENTITY RESOLUTION CONFIG TESTS
+# =============================================================================
+
+class TestPipelineConfigShadowEntity:
+    """Tests for PipelineConfig.use_shadow_entity_resolution flag."""
+
+    def test_shadow_disabled_by_default(self):
+        """use_shadow_entity_resolution should default to False."""
+        config = PipelineConfig()
+        assert config.use_shadow_entity_resolution is False
+
+    def test_shadow_flag_from_env(self, monkeypatch):
+        """USE_SHADOW_ENTITY_RESOLUTION=1 should enable the flag."""
+        monkeypatch.setenv("USE_SHADOW_ENTITY_RESOLUTION", "1")
+        config = PipelineConfig.from_env()
+        assert config.use_shadow_entity_resolution is True
+
+    def test_shadow_flag_from_env_true(self, monkeypatch):
+        """USE_SHADOW_ENTITY_RESOLUTION=true should enable the flag."""
+        monkeypatch.setenv("USE_SHADOW_ENTITY_RESOLUTION", "true")
+        config = PipelineConfig.from_env()
+        assert config.use_shadow_entity_resolution is True
+
+    def test_shadow_flag_from_env_false(self, monkeypatch):
+        """USE_SHADOW_ENTITY_RESOLUTION=false should keep the flag disabled."""
+        monkeypatch.setenv("USE_SHADOW_ENTITY_RESOLUTION", "false")
+        config = PipelineConfig.from_env()
+        assert config.use_shadow_entity_resolution is False
+
+
+# =============================================================================
+# WAVE 2: SHADOW ENTITY COMPARISON UNIT TESTS
+# =============================================================================
+
+class TestRunShadowEntityComparison:
+    """Unit tests for DiscoveryPipeline._run_shadow_entity_comparison.
+
+    All external dependencies (ReadOnlyIdentityStore, run_shadow_comparison,
+    store_shadow_run, etc.) are fully mocked.
+    """
+
+    def _make_pipeline(self, **config_overrides):
+        """Create a DiscoveryPipeline with shadow entity enabled."""
+        defaults = dict(
+            notion_api_key="test",
+            notion_database_id="test-db",
+            use_shadow_entity_resolution=True,
+        )
+        defaults.update(config_overrides)
+        config = PipelineConfig(**defaults)
+        pipeline = DiscoveryPipeline(config)
+        return pipeline
+
+    @pytest.mark.asyncio
+    async def test_shadow_comparison_success_flow(self):
+        """Happy path: shadow comparison runs and stores results."""
+        pipeline = self._make_pipeline()
+        pipeline._store = MagicMock()
+        pipeline._identity_store = MagicMock()
+
+        mock_result = MagicMock()
+        mock_result.status = "completed"
+        mock_result.total_signals = 50
+        mock_result.agreements = 45
+        mock_result.disagreements_count = 5
+        mock_result.agreement_rate = 0.9
+        mock_result.disagreements = []  # No over_merge disagreements
+
+        with patch(
+            "storage.readonly_identity_store.ReadOnlyIdentityStore"
+        ) as MockROStore, patch(
+            "intelligence.shadow_entity_evaluator.run_shadow_comparison",
+            new_callable=AsyncMock,
+            return_value=mock_result,
+        ), patch(
+            "intelligence.shadow_entity_evaluator.store_shadow_run",
+            new_callable=AsyncMock,
+            return_value=42,
+        ), patch(
+            "intelligence.shadow_entity_evaluator.ShadowRunConfig"
+        ) as MockConfig:
+            mock_ro_instance = AsyncMock()
+            MockROStore.return_value = mock_ro_instance
+            MockConfig.from_env.return_value = MagicMock()
+
+            result = await pipeline._run_shadow_entity_comparison([])
+
+            assert result["status"] == "completed"
+            assert result["agreements"] == 45
+            assert result["shadow_run_id"] == 42
+
+    @pytest.mark.asyncio
+    async def test_shadow_no_identity_store_returns_skipped(self):
+        """Should return skipped if no identity store is available."""
+        pipeline = self._make_pipeline()
+        pipeline._store = MagicMock()
+        pipeline._identity_store = None
+
+        result = await pipeline._run_shadow_entity_comparison([])
+
+        assert result["status"] == "skipped"
+        assert result["reason"] == "no_identity_store"
+
+    @pytest.mark.asyncio
+    async def test_shadow_circuit_breaker_opens_after_failures(self):
+        """Circuit breaker should open after 3 consecutive failures."""
+        pipeline = self._make_pipeline()
+        pipeline._store = MagicMock()
+        pipeline._identity_store = MagicMock()
+
+        with patch(
+            "storage.readonly_identity_store.ReadOnlyIdentityStore"
+        ) as MockROStore, patch(
+            "intelligence.shadow_entity_evaluator.run_shadow_comparison",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("Connection refused"),
+        ), patch(
+            "intelligence.shadow_entity_evaluator.ShadowRunConfig"
+        ) as MockConfig:
+            mock_ro_instance = AsyncMock()
+            MockROStore.return_value = mock_ro_instance
+            MockConfig.from_env.return_value = MagicMock()
+
+            # First 3 calls fail, tripping the breaker
+            for i in range(3):
+                result = await pipeline._run_shadow_entity_comparison([])
+                assert result["status"] == "failed", f"Call {i+1} should fail"
+
+    @pytest.mark.asyncio
+    async def test_shadow_circuit_breaker_records_skipped(self):
+        """When circuit is open, should record a skipped run."""
+        pipeline = self._make_pipeline()
+        pipeline._store = MagicMock()
+        pipeline._identity_store = MagicMock()
+
+        with patch(
+            "storage.readonly_identity_store.ReadOnlyIdentityStore"
+        ) as MockROStore, patch(
+            "intelligence.shadow_entity_evaluator.run_shadow_comparison",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("Failure"),
+        ), patch(
+            "intelligence.shadow_entity_evaluator.store_skipped_shadow_run",
+            new_callable=AsyncMock,
+        ) as mock_store_skipped, patch(
+            "intelligence.shadow_entity_evaluator.ShadowRunConfig"
+        ) as MockConfig:
+            mock_ro_instance = AsyncMock()
+            MockROStore.return_value = mock_ro_instance
+            MockConfig.from_env.return_value = MagicMock()
+
+            # Trip the circuit breaker (3 failures)
+            for _ in range(3):
+                await pipeline._run_shadow_entity_comparison([])
+
+            # Next call should be skipped due to open circuit
+            result = await pipeline._run_shadow_entity_comparison([])
+            assert result["status"] == "skipped"
+            assert result["reason"] == "circuit_breaker_open"
+            mock_store_skipped.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_shadow_generates_merge_suggestions_on_over_merge(self):
+        """Should call generate_merge_suggestions when over_merge disagreements exist."""
+        pipeline = self._make_pipeline()
+        pipeline._store = MagicMock()
+        pipeline._identity_store = MagicMock()
+
+        mock_disagreement = MagicMock()
+        mock_disagreement.disagreement_type = "over_merge"
+
+        mock_result = MagicMock()
+        mock_result.status = "completed"
+        mock_result.total_signals = 10
+        mock_result.agreements = 8
+        mock_result.disagreements_count = 2
+        mock_result.agreement_rate = 0.8
+        mock_result.disagreements = [mock_disagreement]
+
+        with patch(
+            "storage.readonly_identity_store.ReadOnlyIdentityStore"
+        ) as MockROStore, patch(
+            "intelligence.shadow_entity_evaluator.run_shadow_comparison",
+            new_callable=AsyncMock,
+            return_value=mock_result,
+        ), patch(
+            "intelligence.shadow_entity_evaluator.store_shadow_run",
+            new_callable=AsyncMock,
+            return_value=99,
+        ), patch(
+            "intelligence.shadow_entity_evaluator.ShadowRunConfig"
+        ) as MockConfig, patch(
+            "intelligence.merge_suggestions.generate_merge_suggestions",
+            new_callable=AsyncMock,
+        ) as mock_gen:
+            mock_ro_instance = AsyncMock()
+            MockROStore.return_value = mock_ro_instance
+            MockConfig.from_env.return_value = MagicMock()
+
+            result = await pipeline._run_shadow_entity_comparison([])
+
+            assert result["status"] == "completed"
+            mock_gen.assert_called_once()
+            call_kwargs = mock_gen.call_args
+            # Verify shadow_run_id is passed
+            assert call_kwargs.kwargs.get("shadow_run_id") == 99
+
+    @pytest.mark.asyncio
+    async def test_shadow_fails_gracefully(self):
+        """Exceptions should be caught and return error status."""
+        pipeline = self._make_pipeline()
+        pipeline._store = MagicMock()
+        pipeline._identity_store = MagicMock()
+
+        with patch(
+            "storage.readonly_identity_store.ReadOnlyIdentityStore"
+        ) as MockROStore, patch(
+            "intelligence.shadow_entity_evaluator.run_shadow_comparison",
+            new_callable=AsyncMock,
+            side_effect=ValueError("Unexpected data format"),
+        ), patch(
+            "intelligence.shadow_entity_evaluator.ShadowRunConfig"
+        ) as MockConfig:
+            mock_ro_instance = AsyncMock()
+            MockROStore.return_value = mock_ro_instance
+            MockConfig.from_env.return_value = MagicMock()
+
+            result = await pipeline._run_shadow_entity_comparison([])
+
+            assert result["status"] == "failed"
+            assert "Unexpected data format" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_shadow_not_called_when_disabled(self):
+        """Pipeline should skip shadow comparison when config flag is False."""
+        fd, db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+
+        try:
+            config = PipelineConfig(
+                notion_api_key="test",
+                notion_database_id="test-db",
+                db_path=db_path,
+                use_shadow_entity_resolution=False,
+            )
+            pipeline = DiscoveryPipeline(config)
+            await pipeline.initialize()
+
+            # The config should be False
+            assert pipeline.config.use_shadow_entity_resolution is False
+
+            # Mock _run_shadow_entity_comparison to verify it is NOT called
+            pipeline._run_shadow_entity_comparison = AsyncMock()
+
+            # Run processing (dry run, empty)
+            await pipeline._process_signals_stage(dry_run=True)
+
+            # Shadow comparison should not have been invoked
+            pipeline._run_shadow_entity_comparison.assert_not_called()
+
+            await pipeline.close()
         finally:
             os.unlink(db_path)

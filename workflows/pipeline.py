@@ -178,6 +178,9 @@ class PipelineConfig:
     use_phase_g_identity_resolution: bool = False  # Enable blocking-first fuzzy entity resolution
     use_claim_facts: bool = False  # Enable bi-temporal claim facts (SCD-2)
 
+    # Wave 2: Shadow entity resolution
+    use_shadow_entity_resolution: bool = False  # Enable shadow Phase G comparison
+
     # Phase 2: Functional schema extraction
     use_functional_schema: bool = False  # Enable LLM schema extraction in pipeline
 
@@ -228,6 +231,7 @@ class PipelineConfig:
             use_exit_predictor=os.getenv("ENABLE_EXIT_PREDICTOR", "false").lower() == "true",
             use_investor_matching=os.getenv("ENABLE_INVESTOR_MATCHING", "false").lower() == "true",
             use_phase_g_identity_resolution=os.getenv("USE_PHASE_G_IDENTITY_RESOLUTION", "false").lower() == "true",
+            use_shadow_entity_resolution=os.getenv("USE_SHADOW_ENTITY_RESOLUTION", "false").lower() in ("true", "1"),
             use_claim_facts=os.getenv("USE_CLAIM_FACTS", "false").lower() == "true",
             use_functional_schema=os.getenv("ENABLE_FUNCTIONAL_SCHEMA", "false").lower() == "true",
             use_thin_files=os.getenv("USE_THIN_FILES", "false").lower() == "true",
@@ -1406,6 +1410,15 @@ class DiscoveryPipeline:
                 f"({stats['phase_g_merges']} merges)"
             )
 
+        # Wave 2: Shadow entity resolution (read-only comparison)
+        if self.config.use_shadow_entity_resolution:
+            try:
+                shadow_stats = await self._run_shadow_entity_comparison(pending)
+                stats["shadow_entity"] = shadow_stats
+            except Exception as e:
+                logger.warning("Shadow entity comparison failed (non-fatal): %s", e)
+                stats["shadow_entity"] = {"error": str(e)}
+
         # Consolidate signals if enabled
         consolidated_map: Dict[str, ConsolidatedSignal] = {}
         if self._consolidator:
@@ -2362,6 +2375,92 @@ class DiscoveryPipeline:
                 )
 
         return regrouped
+
+    async def _run_shadow_entity_comparison(
+        self,
+        pending_signals: List[StoredSignal],
+    ) -> Dict[str, Any]:
+        """Run shadow entity comparison (read-only, fail-open).
+
+        Wraps in circuit breaker. On failure or circuit-open, records
+        a visibility artifact and returns error stats.
+        """
+        from utils.circuit_breaker import CircuitBreaker, CircuitOpenError
+        from storage.readonly_identity_store import ReadOnlyIdentityStore
+        from intelligence.shadow_entity_evaluator import (
+            ShadowRunConfig, run_shadow_comparison, store_shadow_run,
+            store_skipped_shadow_run,
+        )
+
+        # Lazily initialize circuit breaker (module-level would also work)
+        if not hasattr(self, "_shadow_circuit_breaker"):
+            self._shadow_circuit_breaker = CircuitBreaker(
+                "shadow_entity", failure_threshold=3, recovery_timeout=300
+            )
+
+        cb = self._shadow_circuit_breaker
+
+        # Check circuit state
+        if cb.state == "open":
+            logger.info("Shadow entity circuit breaker OPEN — recording skipped run")
+            await store_skipped_shadow_run(self._store, reason="circuit_breaker_open")
+            return {"status": "skipped", "reason": "circuit_breaker_open"}
+
+        # Build ReadOnlyIdentityStore if needed
+        if not hasattr(self, "_ro_identity_store") or self._ro_identity_store is None:
+            if self._identity_store:
+                self._ro_identity_store = ReadOnlyIdentityStore(
+                    self._identity_store,
+                    db_path=self.config.db_path,
+                )
+                await self._ro_identity_store.initialize()
+            else:
+                return {"status": "skipped", "reason": "no_identity_store"}
+
+        config = ShadowRunConfig.from_env()
+
+        try:
+            async def _do_shadow():
+                return await run_shadow_comparison(
+                    self._store, self._ro_identity_store, config
+                )
+
+            result = await cb.call(_do_shadow)
+            shadow_run_id = await store_shadow_run(self._store, result)
+
+            # Auto-generate merge suggestions if over_merge disagreements exist
+            over_merges = [
+                d for d in result.disagreements
+                if d.disagreement_type == "over_merge"
+            ]
+            if over_merges:
+                try:
+                    from intelligence.merge_suggestions import generate_merge_suggestions
+                    await generate_merge_suggestions(
+                        self._store,
+                        self._ro_identity_store,
+                        shadow_run_id=shadow_run_id,
+                        config=config,
+                    )
+                except Exception as e:
+                    logger.warning("Merge suggestion generation failed (non-fatal): %s", e)
+
+            return {
+                "status": result.status,
+                "total_signals": result.total_signals,
+                "agreements": result.agreements,
+                "disagreements": result.disagreements_count,
+                "agreement_rate": result.agreement_rate,
+                "shadow_run_id": shadow_run_id,
+            }
+
+        except CircuitOpenError:
+            logger.info("Shadow entity circuit breaker tripped — recording skipped run")
+            await store_skipped_shadow_run(self._store, reason="circuit_breaker_open")
+            return {"status": "skipped", "reason": "circuit_breaker_open"}
+        except Exception as e:
+            logger.warning("Shadow entity comparison failed: %s", e, exc_info=True)
+            return {"status": "failed", "error": str(e)}
 
     async def _apply_phase_g_identity_resolution(
         self,
