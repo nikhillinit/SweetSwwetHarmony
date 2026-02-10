@@ -2124,15 +2124,16 @@ def main():
             "Schedules": "Manage pipeline schedules",
             "Cost Analysis": "Cost tracking & forecasting",
             "Ops Monitoring": "Ops health & metrics",
+            "Hunter": "Pattern-driven deal sourcing sandbox",
         }
 
         # Add Health view at the start, then existing views
         if has_notion and has_db:
-            view_options = ["Health", "Triage", "Batch Publish", "Inbox", "Pipeline", "Signals", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring", "Schedules", "Cost Analysis", "Ops Monitoring"]
+            view_options = ["Health", "Triage", "Batch Publish", "Inbox", "Pipeline", "Signals", "Hunter", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring", "Schedules", "Cost Analysis", "Ops Monitoring"]
         elif has_notion:
-            view_options = ["Health", "Triage", "Batch Publish", "Inbox", "Pipeline", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring", "Schedules", "Cost Analysis", "Ops Monitoring"]
+            view_options = ["Health", "Triage", "Batch Publish", "Inbox", "Pipeline", "Hunter", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring", "Schedules", "Cost Analysis", "Ops Monitoring"]
         else:
-            view_options = ["Health", "Triage", "Batch Publish", "Inbox", "Signals", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring", "Schedules", "Cost Analysis", "Ops Monitoring"]
+            view_options = ["Health", "Triage", "Batch Publish", "Inbox", "Signals", "Hunter", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring", "Schedules", "Cost Analysis", "Ops Monitoring"]
 
         view = st.radio(
             "View",
@@ -2374,6 +2375,13 @@ def main():
             "min_confidence": min_conf,
         }
         render_signals_view(signals, filters)
+
+    # ==========================================================================
+    # HUNTER SANDBOX VIEW
+    # ==========================================================================
+    elif view == "Hunter":
+        from dashboard.views.hunter import render_hunter_page
+        render_hunter_page()
 
     # ==========================================================================
     # MINI-SCOUT VIEW
