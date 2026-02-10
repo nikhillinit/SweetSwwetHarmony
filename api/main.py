@@ -29,6 +29,7 @@ from api.middleware import ExceptionHandlerMiddleware, RequestIdMiddleware
 from utils.logging_config import configure_logging, startup_check
 
 from api.routers import actions, batch, companies, public, auth, health, jobs, entities, scheduler, triage
+from api.routers import merge_review, canary
 from api.auth.jwt_auth import seed_default_users
 from storage.signal_store import SignalStore
 
@@ -125,6 +126,8 @@ app.include_router(public.router, prefix="/api/v1")
 app.include_router(scheduler.router, prefix="/api/v1")
 app.include_router(triage.router, prefix="/api/v1")
 app.include_router(batch.router, prefix="/api/v1")
+app.include_router(merge_review.router, prefix="/api/v1")
+app.include_router(canary.router, prefix="/api/v1")
 
 
 # =============================================================================
