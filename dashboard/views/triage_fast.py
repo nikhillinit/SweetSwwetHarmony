@@ -2,7 +2,10 @@
 Fast Pass Triage View — paginated triage table with quick actions.
 
 Features:
-- Sidebar filters (status, confidence, source, search)
+- Sidebar filters (status, confidence, source, search, date range, sort)
+- Source API multi-select with predefined collector options
+- Sortable columns (confidence, detected_at, company_name)
+- Row count display with "has more" indicator
 - Cursor-based pagination with history stack for Prev
 - @st.cache_data with TTL + cache buster for stale-after-action
 - Quick-action approve/reject/defer with updated_at provenance
@@ -12,10 +15,23 @@ Features:
 from __future__ import annotations
 
 import uuid
+from datetime import date
 
 import streamlit as st
 
 from dashboard.api_client import APIClient
+
+# Predefined source API options matching collector inventory
+SOURCE_API_OPTIONS = [
+    "github",
+    "sec_edgar",
+    "news_api",
+    "job_postings",
+    "domain_whois",
+    "hacker_news",
+    "companies_house",
+    "rss_feeds",
+]
 
 
 def render_triage_fast_page():
@@ -46,9 +62,38 @@ def render_triage_fast_page():
         )
         min_confidence = confidence_range if confidence_range > 0 else None
 
-        source_filter = st.text_input("Source API", placeholder="e.g. github")
+        source_selections = st.multiselect(
+            "Source APIs",
+            SOURCE_API_OPTIONS,
+            default=[],
+        )
+        source_filter = ",".join(source_selections) if source_selections else ""
 
         search_text = st.text_input("Search Company", placeholder="Company name...")
+
+        st.markdown("### Date Range")
+        date_range = st.date_input(
+            "Detected At",
+            value=(),
+            help="Filter by signal detection date range",
+        )
+        start_date = None
+        end_date = None
+        if isinstance(date_range, (list, tuple)) and len(date_range) == 2:
+            start_date = date_range[0].isoformat()
+            end_date = date_range[1].isoformat()
+
+        st.markdown("### Sort")
+        sort_by = st.selectbox(
+            "Sort By",
+            ["confidence", "detected_at", "company_name"],
+        )
+        sort_order_label = st.radio(
+            "Order",
+            ["Descending", "Ascending"],
+            horizontal=True,
+        )
+        sort_order = "desc" if sort_order_label == "Descending" else "asc"
 
     # Check filter changes → reset cursor
     current_filters = {
@@ -56,6 +101,10 @@ def render_triage_fast_page():
         "min_confidence": min_confidence,
         "source_api": source_filter,
         "search": search_text,
+        "start_date": start_date,
+        "end_date": end_date,
+        "sort_by": sort_by,
+        "sort_order": sort_order,
     }
     prev_filters = st.session_state.get("triage_prev_filters", {})
     if current_filters != prev_filters:
@@ -82,6 +131,10 @@ def render_triage_fast_page():
         search=search_text or None,
         cursor=st.session_state.triage_cursor,
         cache_buster=st.session_state.triage_cache_buster,
+        start_date=start_date,
+        end_date=end_date,
+        sort_by=sort_by,
+        sort_order=sort_order,
     )
 
     if result and result.get("error"):
@@ -104,7 +157,10 @@ def render_triage_fast_page():
     # -------------------------------------------------------------------------
     # TRIAGE TABLE
     # -------------------------------------------------------------------------
-    st.markdown(f"**{len(items)} items** on this page")
+    if has_more:
+        st.markdown(f"**Showing {len(items)} of more**")
+    else:
+        st.markdown(f"**Showing {len(items)} items**")
 
     for item in items:
         review_id = item.get("review_id")
@@ -166,6 +222,10 @@ def _fetch_triage_list(
     search=None,
     cursor=None,
     cache_buster=0,
+    start_date=None,
+    end_date=None,
+    sort_by=None,
+    sort_order=None,
 ):
     """Fetch triage list with caching. cache_buster invalidates after actions."""
     return _client.list_triage(
@@ -174,6 +234,10 @@ def _fetch_triage_list(
         source_api=source_api,
         search=search,
         cursor=cursor,
+        start_date=start_date,
+        end_date=end_date,
+        sort_by=sort_by,
+        sort_order=sort_order,
     )
 
 

@@ -83,6 +83,30 @@ UPDATE app_meta SET value = '37' WHERE key = 'schema_version';
 
 ---
 
+## v40: Merge Lifecycle (merge_proposals) — Wave 4
+
+### Downgrade SQL
+```sql
+DROP INDEX IF EXISTS idx_merge_proposals_active;
+DROP INDEX IF EXISTS idx_merge_proposals_loser;
+DROP INDEX IF EXISTS idx_merge_proposals_winner;
+DROP INDEX IF EXISTS idx_merge_proposals_status;
+DROP INDEX IF EXISTS idx_merge_proposals_suggestion;
+DROP TABLE IF EXISTS merge_proposals;
+UPDATE app_meta SET value = '39' WHERE key = 'schema_version';
+```
+
+### Data Impact
+- **merge_proposals**: All merge proposal history (including before_snapshot, cascade_report) is lost.
+- **Risk**: Medium — active applied merges lose their rollback capability (before_snapshot gone).
+- **Pre-rollback**: Verify no merges are in `proposed` or `approved` state. Rollback any `applied` merges first if possible.
+- **Post-rollback**: Merge suggestion data (`merge_suggestions` table) is NOT affected.
+
+### Feature Flag Cleanup
+After rollback, set `MERGE_WRITES_ENABLED=disabled` to prevent API errors from missing table.
+
+---
+
 ## Emergency Recovery
 
 If migration fails mid-way:
