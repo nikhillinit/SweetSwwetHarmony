@@ -2276,6 +2276,46 @@ Environment variables:
         help="Output file path (default: stdout)",
     )
 
+    # --- hunter command group ---
+    hunter_parser = subparsers.add_parser(
+        "hunter",
+        help="Active Hunter sandbox — pattern-driven deal sourcing",
+    )
+    hunter_sub = hunter_parser.add_subparsers(dest="hunter_cmd")
+
+    hunter_gen_parser = hunter_sub.add_parser("generate", help="Generate queries from patterns or seeds")
+    hunter_gen_parser.add_argument("--bootstrap", type=str, help="Path to seeds JSON file")
+    hunter_gen_parser.add_argument("--db-path", type=str, help="Database path")
+
+    hunter_run_parser = hunter_sub.add_parser("run", help="Execute hunter queries")
+    hunter_run_parser.add_argument("--dry-run", action="store_true", help="Create queries but don't execute")
+    hunter_run_parser.add_argument("--db-path", type=str, help="Database path")
+    hunter_run_parser.add_argument("--collector", type=str, default="github", help="Collector to use")
+
+    hunter_status_parser = hunter_sub.add_parser("status", help="Show hunter run status")
+    hunter_status_parser.add_argument("--run-id", type=str, help="Specific run ID")
+    hunter_status_parser.add_argument("--db-path", type=str, help="Database path")
+
+    hunter_review_parser = hunter_sub.add_parser("review", help="List results pending review")
+    hunter_review_parser.add_argument("--run-id", type=str, help="Filter by run ID")
+    hunter_review_parser.add_argument("--status", type=str, default="pending", help="Result status filter")
+    hunter_review_parser.add_argument("--limit", type=int, default=20, help="Max results")
+    hunter_review_parser.add_argument("--db-path", type=str, help="Database path")
+
+    hunter_fb_parser = hunter_sub.add_parser("feedback", help="Provide feedback on a result")
+    hunter_fb_parser.add_argument("result_id", type=int, help="Result ID")
+    hunter_fb_parser.add_argument("status", choices=["relevant", "not_relevant"], help="Feedback status")
+    hunter_fb_parser.add_argument("--reason", type=str, help="Feedback reason")
+    hunter_fb_parser.add_argument("--db-path", type=str, help="Database path")
+
+    hunter_promote_parser = hunter_sub.add_parser("promote", help="Promote a result to signals")
+    hunter_promote_parser.add_argument("result_id", type=int, help="Result ID to promote")
+    hunter_promote_parser.add_argument("--db-path", type=str, help="Database path")
+
+    hunter_budget_parser = hunter_sub.add_parser("budget", help="Show budget status")
+    hunter_budget_parser.add_argument("--date", type=str, help="Budget date (YYYY-MM-DD)")
+    hunter_budget_parser.add_argument("--db-path", type=str, help="Database path")
+
     # --- import-csv command ---
     import_parser = subparsers.add_parser(
         "import-csv",
@@ -5541,6 +5581,186 @@ async def cmd_publish_list(args):
         await store.close()
 
 
+# =============================================================================
+# HUNTER SUBCOMMANDS
+# =============================================================================
+
+
+async def cmd_hunter_generate(args):
+    """Generate hunter queries from patterns or seed file."""
+    import json as _json
+    from storage.signal_store import SignalStore
+    from intelligence.pattern_miner import mine_patterns, ManualSeed
+    from intelligence.query_generator import generate_queries
+    from storage.hunter_result_store import get_active_negative_keywords
+
+    db_path = getattr(args, "db_path", None) or os.environ.get("DISCOVERY_DB_PATH", "signals.db")
+    store = SignalStore(db_path)
+    await store.initialize()
+    try:
+        seeds = None
+        if getattr(args, "bootstrap", None):
+            with open(args.bootstrap, "r") as f:
+                raw_seeds = _json.load(f)
+            seeds = [ManualSeed(**s) for s in raw_seeds]
+
+        templates = await mine_patterns(store, manual_seeds=seeds)
+        neg_kws = await get_active_negative_keywords(store)
+        queries = generate_queries(templates, neg_kws)
+
+        print(f"Generated {len(queries)} queries from {len(templates)} templates:")
+        for q in queries:
+            print(f"  [{q.collector}] {q.query_text[:80]}")
+    finally:
+        await store.close()
+
+
+async def cmd_hunter_run(args):
+    """Execute a hunter run."""
+    from storage.signal_store import SignalStore
+    from intelligence.pattern_miner import mine_patterns
+    from intelligence.query_generator import generate_queries
+    from storage.hunter_result_store import get_active_negative_keywords
+    from workflows.active_hunter import execute_hunter_run
+
+    db_path = getattr(args, "db_path", None) or os.environ.get("DISCOVERY_DB_PATH", "signals.db")
+    store = SignalStore(db_path)
+    await store.initialize()
+    try:
+        templates = await mine_patterns(store)
+        neg_kws = await get_active_negative_keywords(store)
+        queries = generate_queries(templates, neg_kws)
+
+        if not queries:
+            print("No queries generated. Use 'hunter generate --bootstrap seeds.json' first.")
+            return
+
+        dry_run = getattr(args, "dry_run", False)
+        result = await execute_hunter_run(store, queries, dry_run=dry_run)
+
+        print(f"Hunter run: {result.get('run_id', 'N/A')}")
+        print(f"  Executed: {result.get('executed', 0)}")
+        print(f"  Skipped: {result.get('skipped', 0)}")
+        print(f"  Failed: {result.get('failed', 0)}")
+        print(f"  Results: {result.get('total_results', 0)} ({result.get('new_results', 0)} new)")
+    finally:
+        await store.close()
+
+
+async def cmd_hunter_status(args):
+    """Show hunter run status."""
+    from storage.signal_store import SignalStore
+    from workflows.run_manager import list_runs, RunType
+
+    db_path = getattr(args, "db_path", None) or os.environ.get("DISCOVERY_DB_PATH", "signals.db")
+    store = SignalStore(db_path)
+    await store.initialize()
+    try:
+        runs = await list_runs(store, run_type=RunType.HUNTER.value, limit=10)
+        if not runs:
+            print("No hunter runs found.")
+            return
+        for run in runs:
+            print(f"  [{run.status.value}] {run.id} — {run.created_at}")
+    finally:
+        await store.close()
+
+
+async def cmd_hunter_review(args):
+    """List hunter results pending review."""
+    from storage.signal_store import SignalStore
+    from storage.hunter_result_store import get_results_for_run
+
+    db_path = getattr(args, "db_path", None) or os.environ.get("DISCOVERY_DB_PATH", "signals.db")
+    store = SignalStore(db_path)
+    await store.initialize()
+    try:
+        run_id = getattr(args, "run_id", None)
+        status = getattr(args, "status", "pending")
+        limit = getattr(args, "limit", 20)
+
+        if not run_id:
+            cursor = await store._db.execute(
+                "SELECT id FROM run_history WHERE run_type = 'hunter' ORDER BY created_at DESC LIMIT 1"
+            )
+            row = await cursor.fetchone()
+            if not row:
+                print("No hunter runs found.")
+                return
+            run_id = row[0]
+
+        results = await get_results_for_run(store, run_id, status=status, limit=limit)
+        print(f"Run {run_id}: {len(results)} results (status={status})")
+        for r in results:
+            known = " [KNOWN]" if r["already_known"] else ""
+            score = f" score={r['thesis_fit_score']:.2f}" if r["thesis_fit_score"] else ""
+            print(f"  #{r['id']} {r['company_name']}{known}{score} — {r['status']}")
+    finally:
+        await store.close()
+
+
+async def cmd_hunter_feedback(args):
+    """Provide feedback on a hunter result."""
+    from storage.signal_store import SignalStore
+    from storage.hunter_result_store import update_result_status
+
+    db_path = getattr(args, "db_path", None) or os.environ.get("DISCOVERY_DB_PATH", "signals.db")
+    store = SignalStore(db_path)
+    await store.initialize()
+    try:
+        await update_result_status(
+            store, args.result_id, args.status,
+            operator_feedback=getattr(args, "reason", None),
+            actor="cli_operator",
+        )
+        print(f"Result #{args.result_id} marked as '{args.status}'")
+    finally:
+        await store.close()
+
+
+async def cmd_hunter_promote(args):
+    """Promote a hunter result to the signals table."""
+    from storage.signal_store import SignalStore
+    from workflows.hunter_promotion import promote_hunter_result
+
+    db_path = getattr(args, "db_path", None) or os.environ.get("DISCOVERY_DB_PATH", "signals.db")
+    store = SignalStore(db_path)
+    await store.initialize()
+    try:
+        result = await promote_hunter_result(store, args.result_id, actor="cli_operator")
+        if result.collision:
+            print(f"Collision: canonical key already exists as signal #{result.signal_id}")
+        elif result.status == "already_promoted":
+            print(f"Already promoted as signal #{result.signal_id}")
+        else:
+            print(f"Promoted to signal #{result.signal_id}")
+    finally:
+        await store.close()
+
+
+async def cmd_hunter_budget(args):
+    """Show hunter budget status."""
+    from storage.signal_store import SignalStore
+    from storage.hunter_result_store import get_budget_summary
+
+    db_path = getattr(args, "db_path", None) or os.environ.get("DISCOVERY_DB_PATH", "signals.db")
+    budget_date = getattr(args, "date", None) or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    store = SignalStore(db_path)
+    await store.initialize()
+    try:
+        summary = await get_budget_summary(store, budget_date)
+        print(f"Budget for {budget_date}:")
+        g = summary.get("global", {})
+        if g:
+            print(f"  Global: {g.get('cost_units', 0):.1f}/{g.get('cost_cap', 'N/A')} cost units")
+        for coll, info in summary.get("collectors", {}).items():
+            print(f"  {coll}: {info['queries_executed']}/{info.get('queries_cap', 'N/A')} queries")
+        if not g and not summary.get("collectors"):
+            print("  No budget activity today.")
+    finally:
+        await store.close()
+
+
 async def main():
     """Main entry point"""
 
@@ -5745,6 +5965,28 @@ async def main():
                     sys.exit(1)
             else:
                 print("Publish command requires a subcommand (create, preview, commit, abort, list)")
+                sys.exit(1)
+        elif args.command == "hunter":
+            if hasattr(args, "hunter_cmd") and args.hunter_cmd:
+                if args.hunter_cmd == "generate":
+                    await cmd_hunter_generate(args)
+                elif args.hunter_cmd == "run":
+                    await cmd_hunter_run(args)
+                elif args.hunter_cmd == "status":
+                    await cmd_hunter_status(args)
+                elif args.hunter_cmd == "review":
+                    await cmd_hunter_review(args)
+                elif args.hunter_cmd == "feedback":
+                    await cmd_hunter_feedback(args)
+                elif args.hunter_cmd == "promote":
+                    await cmd_hunter_promote(args)
+                elif args.hunter_cmd == "budget":
+                    await cmd_hunter_budget(args)
+                else:
+                    print(f"Unknown hunter command: {args.hunter_cmd}")
+                    sys.exit(1)
+            else:
+                print("Hunter command requires a subcommand (generate, run, status, review, feedback, promote, budget)")
                 sys.exit(1)
         else:
             print(f"Unknown command: {args.command}")
