@@ -65,6 +65,7 @@ from storage.migrations.v35_platform_hardening import V35_PLATFORM_HARDENING_DDL
 from storage.migrations.v36_wave1_triage import V36_WAVE1_TRIAGE_DDL
 from storage.migrations.v37_ach_analyses import V37_ACH_ANALYSES_DDL
 from storage.migrations.v38_wave2_shadow_canary import V38_WAVE2_SHADOW_CANARY_DDL
+from storage.migrations.v39_active_hunter import V39_ACTIVE_HUNTER_DDL
 
 if TYPE_CHECKING:
     from workflows.pipeline import PipelineStats, CollectorMetrics
@@ -78,7 +79,7 @@ logger = logging.getLogger(__name__)
 # SCHEMA VERSION
 # =============================================================================
 
-CURRENT_SCHEMA_VERSION = 38
+CURRENT_SCHEMA_VERSION = 39
 
 # SQL for creating tables (migrations applied in order)
 MIGRATIONS = {
@@ -1724,6 +1725,7 @@ MIGRATIONS = {
     36: V36_WAVE1_TRIAGE_DDL,
     37: V37_ACH_ANALYSES_DDL,
     38: V38_WAVE2_SHADOW_CANARY_DDL,
+    39: V39_ACTIVE_HUNTER_DDL,
 }
 
 
