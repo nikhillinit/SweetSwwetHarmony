@@ -424,6 +424,10 @@ class APIClient:
         search: Optional[str] = None,
         cursor: Optional[str] = None,
         limit: int = 50,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
     ) -> Optional[Dict[str, Any]]:
         """List triage items with filters and cursor pagination."""
         params: Dict[str, Any] = {"limit": limit}
@@ -437,6 +441,14 @@ class APIClient:
             params["search"] = search
         if cursor:
             params["cursor"] = cursor
+        if start_date:
+            params["start_date"] = start_date
+        if end_date:
+            params["end_date"] = end_date
+        if sort_by:
+            params["sort_by"] = sort_by
+        if sort_order:
+            params["sort_order"] = sort_order
         return self.get("/triage", params=params)
 
     def get_triage_detail(self, review_id: int) -> Optional[Dict[str, Any]]:
