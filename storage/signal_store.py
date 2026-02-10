@@ -66,6 +66,7 @@ from storage.migrations.v36_wave1_triage import V36_WAVE1_TRIAGE_DDL
 from storage.migrations.v37_ach_analyses import V37_ACH_ANALYSES_DDL
 from storage.migrations.v38_wave2_shadow_canary import V38_WAVE2_SHADOW_CANARY_DDL
 from storage.migrations.v39_active_hunter import V39_ACTIVE_HUNTER_DDL
+from storage.migrations.v40_merge_lifecycle import V40_MERGE_LIFECYCLE_DDL
 
 if TYPE_CHECKING:
     from workflows.pipeline import PipelineStats, CollectorMetrics
@@ -1726,6 +1727,7 @@ MIGRATIONS = {
     37: V37_ACH_ANALYSES_DDL,
     38: V38_WAVE2_SHADOW_CANARY_DDL,
     39: V39_ACTIVE_HUNTER_DDL,
+    40: V40_MERGE_LIFECYCLE_DDL,
 }
 
 

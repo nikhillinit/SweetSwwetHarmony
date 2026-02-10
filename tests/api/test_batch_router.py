@@ -421,7 +421,7 @@ class TestBatchCommit:
 
     @pytest.mark.asyncio
     async def test_commit_real_delivery_policy_blocked(self, seeded):
-        """Real commit (dry_run=False) with DELIVERY_MODE=staging_only should 403."""
+        """Real commit (dry_run=False) with DELIVERY_MODE=staging_only should 423."""
         client, store = seeded
         create_resp = await client.post(
             "/api/v1/batches", json={}, headers=_auth_header(Role.GP),
@@ -434,8 +434,8 @@ class TestBatchCommit:
             json={"expected_items_hash": items_hash, "dry_run": False},
             headers=_auth_header(Role.GP),
         )
-        # staging_only blocks real commits
-        assert resp.status_code == 403
+        # staging_only blocks real commits — 423 Locked (not 403)
+        assert resp.status_code == 423
 
     @pytest.mark.asyncio
     async def test_commit_analyst_forbidden(self, seeded):

@@ -22,6 +22,7 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, Query, Request
+from pydantic import BaseModel, Field
 
 from api.auth.rbac import OperatorContext, Permission, require_permission
 from api.contracts import (
@@ -32,6 +33,7 @@ from api.contracts import (
     check_idempotency_conflict,
     check_version,
     error_response,
+    feature_disabled_response,
     get_idempotency_key,
     payload_fingerprint,
     store_idempotency_db,
@@ -528,6 +530,225 @@ async def defer_review(
     return await _execute_triage_action(
         request, review_id, "defer", body, operator, idempotency_key,
     )
+
+
+# =============================================================================
+# BULK TRIAGE ENDPOINT
+# =============================================================================
+
+class BulkTriageItemRequest(BaseModel):
+    """Single item in a bulk triage request."""
+    review_id: int
+    updated_at: str
+
+
+class BulkTriageRequest(BaseModel):
+    """Request body for bulk triage action."""
+    action: str = Field(..., description="approve, reject, or defer")
+    items: list[BulkTriageItemRequest] = Field(
+        ..., min_length=1, max_length=200,
+    )
+    reason: str = Field(..., min_length=3, max_length=500)
+
+
+class BulkTriageItemResult(BaseModel):
+    """Per-item result in bulk triage response."""
+    review_id: int
+    status: str  # success, not_found, invalid_transition, concurrency_conflict
+    message: str = ""
+
+
+class BulkTriageResponse(BaseModel):
+    """Response for bulk triage action."""
+    succeeded: int
+    failed: int
+    items: list[BulkTriageItemResult]
+
+
+_BULK_CHUNK_SIZE = 20
+
+
+@router.post(
+    "/bulk",
+    response_model=BaseResponse[BulkTriageResponse],
+)
+async def bulk_triage(
+    body: BulkTriageRequest,
+    request: Request,
+    operator: OperatorContext = Depends(
+        require_permission(Permission.BULK_TRIAGE)
+    ),
+    idempotency_key: Optional[str] = Depends(get_idempotency_key),
+):
+    """Bulk approve/reject/defer with per-item optimistic concurrency."""
+    from workflows.feature_guards import (
+        FeatureDisabledError, WriteFeature, assert_write_enabled,
+    )
+    from api.contracts import feature_disabled_response
+
+    # Feature guard
+    try:
+        assert_write_enabled(WriteFeature.BULK_TRIAGE)
+    except FeatureDisabledError as e:
+        raise feature_disabled_response(
+            e.feature.value, e.env_var,
+            request_id=getattr(request.state, "request_id", None),
+        )
+
+    # Validate action
+    if body.action not in _ACTION_MAP:
+        raise error_response(
+            422, "validation_error", "VALIDATION_ERROR",
+            f"Invalid action '{body.action}'. Must be: approve, reject, or defer",
+        )
+
+    # Require idempotency key for bulk operations
+    if not idempotency_key:
+        raise error_response(
+            422, "validation_error", "VALIDATION_ERROR",
+            "Idempotency-Key header is required for bulk operations",
+        )
+
+    store = request.app.state.store
+    db = store._db
+    new_status = _ACTION_MAP[body.action]
+    route = "bulk_triage"
+
+    # Canonical payload hash (sort items by review_id for deterministic hash)
+    sorted_items = sorted(body.items, key=lambda x: x.review_id)
+    p_hash = payload_fingerprint(
+        body.action, body.reason,
+        ":".join(str(i.review_id) for i in sorted_items),
+    )
+
+    # Check idempotency (L2 - SQLite)
+    await check_idempotency_conflict(
+        db, idempotency_key, route, "bulk", p_hash,
+    )
+    cached = await check_idempotency_db(db, idempotency_key, route, "bulk")
+    if cached:
+        return BaseResponse(data=BulkTriageResponse(**cached.body))
+
+    now = datetime.now(timezone.utc).isoformat()
+    results: list[BulkTriageItemResult] = []
+    succeeded = 0
+    failed = 0
+
+    # Process in chunks
+    for chunk_start in range(0, len(sorted_items), _BULK_CHUNK_SIZE):
+        chunk = sorted_items[chunk_start:chunk_start + _BULK_CHUNK_SIZE]
+
+        async with store.transaction_immediate() as tx:
+            for item in chunk:
+                try:
+                    # Fetch current review
+                    cursor = await tx.execute(
+                        "SELECT status, updated_at FROM review_items WHERE id = ?",
+                        (item.review_id,),
+                    )
+                    row = await cursor.fetchone()
+                    if not row:
+                        results.append(BulkTriageItemResult(
+                            review_id=item.review_id,
+                            status="not_found",
+                            message=f"Review {item.review_id} not found",
+                        ))
+                        failed += 1
+                        continue
+
+                    current_status, current_updated_at = row[0], row[1]
+
+                    # Optimistic concurrency
+                    if item.updated_at != current_updated_at:
+                        results.append(BulkTriageItemResult(
+                            review_id=item.review_id,
+                            status="concurrency_conflict",
+                            message=f"Review {item.review_id} was modified",
+                        ))
+                        failed += 1
+                        continue
+
+                    # Validate transition
+                    allowed = VALID_TRANSITIONS.get(current_status, [])
+                    if new_status not in allowed:
+                        results.append(BulkTriageItemResult(
+                            review_id=item.review_id,
+                            status="invalid_transition",
+                            message=f"Cannot {body.action} review {item.review_id}: "
+                                    f"current status '{current_status}'",
+                        ))
+                        failed += 1
+                        continue
+
+                    # Update status
+                    await tx.execute(
+                        """UPDATE review_items
+                           SET status = ?, updated_at = ?,
+                               decided_at = ?, decided_by = ?, reason = ?
+                           WHERE id = ?""",
+                        (new_status, now, now, operator.actor_label, body.reason, item.review_id),
+                    )
+
+                    # Audit event
+                    await tx.execute(
+                        """INSERT INTO audit_events (
+                            action_type, entity_type, entity_id,
+                            actor_id, actor_email, actor_role,
+                            before_state, after_state,
+                            reason, correlation_id, metadata,
+                            created_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            f"bulk_triage_{body.action}",
+                            "review_item",
+                            str(item.review_id),
+                            operator.user_id,
+                            operator.email,
+                            operator.role.value if hasattr(operator.role, "value") else str(operator.role),
+                            json.dumps({"status": current_status}),
+                            json.dumps({"status": new_status}),
+                            body.reason,
+                            operator.request_id,
+                            None,
+                            now,
+                        ),
+                    )
+
+                    results.append(BulkTriageItemResult(
+                        review_id=item.review_id,
+                        status="success",
+                        message=f"Review {item.review_id} {body.action}d",
+                    ))
+                    succeeded += 1
+
+                except Exception as exc:
+                    # Per-item failure doesn't abort the chunk
+                    logger.warning(
+                        "Bulk triage item %d failed: %s", item.review_id, exc,
+                    )
+                    results.append(BulkTriageItemResult(
+                        review_id=item.review_id,
+                        status="error",
+                        message=str(exc),
+                    ))
+                    failed += 1
+
+    response_body = BulkTriageResponse(
+        succeeded=succeeded, failed=failed, items=results,
+    )
+
+    # Store idempotency
+    await store_idempotency_db(
+        db, idempotency_key, route, "bulk",
+        p_hash, 200, response_body.model_dump(),
+    )
+    await db.commit()
+
+    logger.info(
+        "Bulk triage %s: %d succeeded, %d failed, by %s",
+        body.action, succeeded, failed, operator.actor_label,
+    )
+    return BaseResponse(data=response_body)
 
 
 # =============================================================================

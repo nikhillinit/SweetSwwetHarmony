@@ -37,6 +37,22 @@ VALID_DELIVERY_MODES = frozenset({
     "auto_publish",
 })
 
+# Write feature env vars and their valid values.
+WRITE_FEATURE_ENV_VARS = {
+    "MERGE_WRITES_ENABLED": {
+        "description": "Entity merge write operations",
+        "valid": frozenset({"disabled", "shadow", "active"}),
+    },
+    "BULK_TRIAGE_ENABLED": {
+        "description": "Bulk triage actions",
+        "valid": frozenset({"disabled", "active"}),
+    },
+    "HUNTER_PROMOTE_ENABLED": {
+        "description": "Hunter result promotion",
+        "valid": frozenset({"disabled", "active"}),
+    },
+}
+
 # Threshold env vars that must be in [0.0, 1.0] when set.
 # Maps env var name -> human-readable description.
 THRESHOLD_ENV_VARS = {
@@ -162,6 +178,41 @@ def _validate_thresholds() -> List[ConfigIssue]:
     return issues
 
 
+def _validate_write_features() -> List[ConfigIssue]:
+    """Validate write feature env vars have valid values."""
+    issues: List[ConfigIssue] = []
+
+    for env_var, info in WRITE_FEATURE_ENV_VARS.items():
+        raw = os.environ.get(env_var)
+        if raw is None:
+            issues.append(ConfigIssue(
+                level="info",
+                key=env_var,
+                message=f"Not set, defaults to disabled ({info['description']})",
+            ))
+            continue
+
+        normalized = raw.strip().lower()
+        if normalized in info["valid"]:
+            issues.append(ConfigIssue(
+                level="info",
+                key=env_var,
+                message=f"Set to {normalized} ({info['description']})",
+            ))
+        else:
+            issues.append(ConfigIssue(
+                level="error",
+                key=env_var,
+                message=(
+                    f"'{raw}' is not valid. "
+                    f"Valid values: {', '.join(sorted(info['valid']))} "
+                    f"({info['description']})"
+                ),
+            ))
+
+    return issues
+
+
 def _validate_notion_keys() -> List[ConfigIssue]:
     """Check that Notion API key and database ID are configured."""
     issues: List[ConfigIssue] = []
@@ -213,6 +264,7 @@ def validate_config() -> List[ConfigIssue]:
     issues: List[ConfigIssue] = []
     issues.extend(_validate_delivery_mode())
     issues.extend(_validate_thresholds())
+    issues.extend(_validate_write_features())
     issues.extend(_validate_notion_keys())
     return issues
 
