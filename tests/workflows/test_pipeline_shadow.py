@@ -10,6 +10,7 @@ TDD tests for:
 
 import asyncio
 import os
+import shutil
 import sys
 import tempfile
 from datetime import datetime, timezone
@@ -24,6 +25,51 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 
 from workflows.pipeline import DiscoveryPipeline, PipelineConfig, PipelineStats
 from utils.feature_states import FeatureRegistry, FeatureState
+
+
+# =============================================================================
+# MODULE-LEVEL FIXTURES: pre-migrated DB template (runs 40 migrations once)
+# =============================================================================
+
+@pytest.fixture(scope="module")
+def template_db_path():
+    """Create a pre-migrated template DB once per module.
+
+    Runs all 40 SignalStore migrations a single time, then each test copies
+    this file instead of re-running migrations from scratch.
+    """
+    fd, path = tempfile.mkstemp(suffix="_template.db")
+    os.close(fd)
+
+    loop = asyncio.new_event_loop()
+    try:
+        async def _create():
+            from storage.signal_store import SignalStore
+            store = SignalStore(db_path=path)
+            await store.initialize()
+            await store.close()
+        loop.run_until_complete(_create())
+    finally:
+        loop.close()
+
+    yield path
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
+@pytest.fixture
+def pipeline_db(template_db_path):
+    """Copy the template DB for per-test isolation."""
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    shutil.copy2(template_db_path, path)
+    yield path
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
 
 
 # =============================================================================
@@ -98,65 +144,54 @@ class TestPipelineShadowLogging:
     """Tests for shadow logging during signal processing."""
 
     @pytest.mark.asyncio
-    async def test_pipeline_logs_shadow_computations(self):
+    async def test_pipeline_logs_shadow_computations(self, pipeline_db):
         """Pipeline should log shadow computations for enabled features."""
-        # Create temp DB
-        fd, db_path = tempfile.mkstemp(suffix=".db")
-        os.close(fd)
+        config = PipelineConfig(
+            notion_api_key="test",
+            notion_database_id="test-db",
+            db_path=pipeline_db,
+            warmup_suppression_cache=False,
+        )
+        pipeline = DiscoveryPipeline(config)
+        await pipeline.initialize()
 
-        try:
+        # Add a test signal
+        signal_id = await pipeline._store.save_signal(
+            signal_type="github_spike",
+            source_api="github",
+            canonical_key="github_org:test-company",
+            company_name="Test Company",
+            confidence=0.7,
+            raw_data={"stars": 500},
+        )
+
+        # Process the signal (dry run to avoid Notion calls)
+        await pipeline.process_pending(dry_run=True)
+
+        # Check shadow logs were written
+        logs = await pipeline._store.get_shadow_logs()
+        # Should have some shadow logs if features are enabled
+        # (exact count depends on which features are in SHADOW mode)
+
+        await pipeline.close()
+
+    @pytest.mark.asyncio
+    async def test_pipeline_skips_shadow_for_off_features(self, pipeline_db):
+        """Pipeline should not log for OFF features."""
+        with patch.dict(os.environ, {"FEATURE_BOILERPLATE_DEFENSE": "off"}):
             config = PipelineConfig(
                 notion_api_key="test",
                 notion_database_id="test-db",
-                db_path=db_path,
+                db_path=pipeline_db,
+                warmup_suppression_cache=False,
             )
             pipeline = DiscoveryPipeline(config)
             await pipeline.initialize()
 
-            # Add a test signal
-            signal_id = await pipeline._store.save_signal(
-                signal_type="github_spike",
-                source_api="github",
-                canonical_key="github_org:test-company",
-                company_name="Test Company",
-                confidence=0.7,
-                raw_data={"stars": 500},
-            )
-
-            # Process the signal (dry run to avoid Notion calls)
-            await pipeline.process_pending(dry_run=True)
-
-            # Check shadow logs were written
-            logs = await pipeline._store.get_shadow_logs()
-            # Should have some shadow logs if features are enabled
-            # (exact count depends on which features are in SHADOW mode)
+            # Verify feature is OFF
+            assert not pipeline._feature_registry.is_enabled("boilerplate_defense")
 
             await pipeline.close()
-        finally:
-            os.unlink(db_path)
-
-    @pytest.mark.asyncio
-    async def test_pipeline_skips_shadow_for_off_features(self):
-        """Pipeline should not log for OFF features."""
-        fd, db_path = tempfile.mkstemp(suffix=".db")
-        os.close(fd)
-
-        try:
-            with patch.dict(os.environ, {"FEATURE_BOILERPLATE_DEFENSE": "off"}):
-                config = PipelineConfig(
-                    notion_api_key="test",
-                    notion_database_id="test-db",
-                    db_path=db_path,
-                )
-                pipeline = DiscoveryPipeline(config)
-                await pipeline.initialize()
-
-                # Verify feature is OFF
-                assert not pipeline._feature_registry.is_enabled("boilerplate_defense")
-
-                await pipeline.close()
-        finally:
-            os.unlink(db_path)
 
 
 # =============================================================================
@@ -167,29 +202,24 @@ class TestPipelineShadowStats:
     """Tests for shadow stats tracking in pipeline runs."""
 
     @pytest.mark.asyncio
-    async def test_process_signals_tracks_shadow_logs(self):
+    async def test_process_signals_tracks_shadow_logs(self, pipeline_db):
         """_process_signals_stage should count shadow logs."""
-        fd, db_path = tempfile.mkstemp(suffix=".db")
-        os.close(fd)
+        config = PipelineConfig(
+            notion_api_key="test",
+            notion_database_id="test-db",
+            db_path=pipeline_db,
+            warmup_suppression_cache=False,
+        )
+        pipeline = DiscoveryPipeline(config)
+        await pipeline.initialize()
 
-        try:
-            config = PipelineConfig(
-                notion_api_key="test",
-                notion_database_id="test-db",
-                db_path=db_path,
-            )
-            pipeline = DiscoveryPipeline(config)
-            await pipeline.initialize()
+        # Process (empty, but should work)
+        stats = await pipeline._process_signals_stage(dry_run=True)
 
-            # Process (empty, but should work)
-            stats = await pipeline._process_signals_stage(dry_run=True)
+        # Stats dict should have shadow_logs key
+        assert "shadow_logs" in stats or stats.get("shadow_logs", 0) >= 0
 
-            # Stats dict should have shadow_logs key
-            assert "shadow_logs" in stats or stats.get("shadow_logs", 0) >= 0
-
-            await pipeline.close()
-        finally:
-            os.unlink(db_path)
+        await pipeline.close()
 
 
 # =============================================================================
@@ -224,84 +254,171 @@ class TestPipelineBoilerplateDefense:
         assert pipeline._feature_registry.is_enabled("boilerplate_defense")
 
     @pytest.mark.asyncio
-    async def test_boilerplate_detection_logs_to_shadow(self):
+    async def test_boilerplate_detection_logs_to_shadow(self, pipeline_db):
         """Pipeline should log boilerplate detection results to shadow_log."""
-        fd, db_path = tempfile.mkstemp(suffix=".db")
-        os.close(fd)
+        config = PipelineConfig(
+            notion_api_key="test",
+            notion_database_id="test-db",
+            db_path=pipeline_db,
+            warmup_suppression_cache=False,
+        )
+        pipeline = DiscoveryPipeline(config)
+        await pipeline.initialize()
 
-        try:
-            config = PipelineConfig(
-                notion_api_key="test",
-                notion_database_id="test-db",
-                db_path=db_path,
-            )
-            pipeline = DiscoveryPipeline(config)
-            await pipeline.initialize()
-
-            # Add a signal with Next.js boilerplate deps
-            signal_id = await pipeline._store.save_signal(
-                signal_type="github_spike",
-                source_api="github",
-                canonical_key="github_org:nextjs-starter",
-                company_name="NextJS Starter",
-                confidence=0.7,
-                raw_data={
-                    "package_json": {
-                        "dependencies": {
-                            "next": "^13.0.0",
-                            "react": "^18.0.0",
-                            "react-dom": "^18.0.0",
-                        }
+        # Add a signal with Next.js boilerplate deps
+        signal_id = await pipeline._store.save_signal(
+            signal_type="github_spike",
+            source_api="github",
+            canonical_key="github_org:nextjs-starter",
+            company_name="NextJS Starter",
+            confidence=0.7,
+            raw_data={
+                "package_json": {
+                    "dependencies": {
+                        "next": "^13.0.0",
+                        "react": "^18.0.0",
+                        "react-dom": "^18.0.0",
                     }
-                },
-            )
+                }
+            },
+        )
 
-            # Process the signal (dry run)
-            await pipeline.process_pending(dry_run=True)
+        # Process the signal (dry run)
+        await pipeline.process_pending(dry_run=True)
 
-            # Check shadow logs for boilerplate_defense
-            logs = await pipeline._store.get_shadow_logs(feature_name="boilerplate_defense")
+        # Check shadow logs for boilerplate_defense
+        logs = await pipeline._store.get_shadow_logs(feature_name="boilerplate_defense")
 
-            # Should have at least one log entry
-            assert len(logs) >= 1
+        # Should have at least one log entry
+        assert len(logs) >= 1
 
-            # Verify log content
-            log = logs[0]
-            assert log["feature_name"] == "boilerplate_defense"
-            assert "nextjs-starter" in log["canonical_key"]
+        # Verify log content
+        log = logs[0]
+        assert log["feature_name"] == "boilerplate_defense"
+        assert "nextjs-starter" in log["canonical_key"]
 
-            await pipeline.close()
-        finally:
-            os.unlink(db_path)
+        await pipeline.close()
 
     @pytest.mark.asyncio
-    async def test_boilerplate_detection_detects_match(self):
+    async def test_boilerplate_detection_detects_match(self, pipeline_db):
         """Pipeline should detect Next.js boilerplate as boilerplate."""
-        fd, db_path = tempfile.mkstemp(suffix=".db")
-        os.close(fd)
+        config = PipelineConfig(
+            notion_api_key="test",
+            notion_database_id="test-db",
+            db_path=pipeline_db,
+            warmup_suppression_cache=False,
+        )
+        pipeline = DiscoveryPipeline(config)
+        await pipeline.initialize()
 
-        try:
+        # Add a signal with exact Next.js basic deps
+        signal_id = await pipeline._store.save_signal(
+            signal_type="github_spike",
+            source_api="github",
+            canonical_key="github_org:boilerplate-project",
+            company_name="Boilerplate Project",
+            confidence=0.7,
+            raw_data={
+                "package_json": {
+                    "dependencies": {
+                        "next": "^13.0.0",
+                        "react": "^18.0.0",
+                        "react-dom": "^18.0.0",
+                    }
+                }
+            },
+        )
+
+        # Process the signal (dry run)
+        await pipeline.process_pending(dry_run=True)
+
+        # Check shadow logs
+        logs = await pipeline._store.get_shadow_logs(feature_name="boilerplate_defense")
+
+        # Verify detection result
+        assert len(logs) >= 1
+        import json
+        computed = json.loads(logs[0]["computed_value"]) if isinstance(logs[0]["computed_value"], str) else logs[0]["computed_value"]
+
+        assert computed["best_match"] is not None
+        assert computed["best_match"]["is_boilerplate"] is True
+        assert computed["best_match"]["signature_id"] == "nextjs_basic_template"
+
+        await pipeline.close()
+
+    @pytest.mark.asyncio
+    async def test_boilerplate_no_match_for_unique_project(self, pipeline_db):
+        """Pipeline should not flag unique projects as boilerplate."""
+        config = PipelineConfig(
+            notion_api_key="test",
+            notion_database_id="test-db",
+            db_path=pipeline_db,
+            warmup_suppression_cache=False,
+        )
+        pipeline = DiscoveryPipeline(config)
+        await pipeline.initialize()
+
+        # Add a signal with unique deps
+        signal_id = await pipeline._store.save_signal(
+            signal_type="github_spike",
+            source_api="github",
+            canonical_key="github_org:unique-project",
+            company_name="Unique Project",
+            confidence=0.7,
+            raw_data={
+                "package_json": {
+                    "dependencies": {
+                        "custom-lib": "^1.0.0",
+                        "proprietary-sdk": "^2.0.0",
+                    }
+                }
+            },
+        )
+
+        # Process the signal (dry run)
+        await pipeline.process_pending(dry_run=True)
+
+        # Check shadow logs
+        logs = await pipeline._store.get_shadow_logs(feature_name="boilerplate_defense")
+
+        # Should still log (SHADOW mode logs everything)
+        assert len(logs) >= 1
+        import json
+        computed = json.loads(logs[0]["computed_value"]) if isinstance(logs[0]["computed_value"], str) else logs[0]["computed_value"]
+
+        # Should not be flagged as boilerplate
+        assert computed["best_match"] is None or computed["best_match"]["is_boilerplate"] is False
+
+        await pipeline.close()
+
+    @pytest.mark.asyncio
+    async def test_boilerplate_off_skips_detection(self, pipeline_db):
+        """When boilerplate_defense is OFF, should skip detection."""
+        with patch.dict(os.environ, {"FEATURE_BOILERPLATE_DEFENSE": "off"}):
             config = PipelineConfig(
                 notion_api_key="test",
                 notion_database_id="test-db",
-                db_path=db_path,
+                db_path=pipeline_db,
+                warmup_suppression_cache=False,
             )
             pipeline = DiscoveryPipeline(config)
             await pipeline.initialize()
 
-            # Add a signal with exact Next.js basic deps
+            # Verify feature is OFF
+            assert not pipeline._feature_registry.is_enabled("boilerplate_defense")
+
+            # Add a signal with boilerplate deps
             signal_id = await pipeline._store.save_signal(
                 signal_type="github_spike",
                 source_api="github",
-                canonical_key="github_org:boilerplate-project",
-                company_name="Boilerplate Project",
+                canonical_key="github_org:test-off",
+                company_name="Test Off",
                 confidence=0.7,
                 raw_data={
                     "package_json": {
                         "dependencies": {
                             "next": "^13.0.0",
                             "react": "^18.0.0",
-                            "react-dom": "^18.0.0",
                         }
                     }
                 },
@@ -310,118 +427,11 @@ class TestPipelineBoilerplateDefense:
             # Process the signal (dry run)
             await pipeline.process_pending(dry_run=True)
 
-            # Check shadow logs
+            # Check shadow logs - should be empty for boilerplate_defense
             logs = await pipeline._store.get_shadow_logs(feature_name="boilerplate_defense")
-
-            # Verify detection result
-            assert len(logs) >= 1
-            import json
-            computed = json.loads(logs[0]["computed_value"]) if isinstance(logs[0]["computed_value"], str) else logs[0]["computed_value"]
-
-            assert computed["best_match"] is not None
-            assert computed["best_match"]["is_boilerplate"] is True
-            assert computed["best_match"]["signature_id"] == "nextjs_basic_template"
+            assert len(logs) == 0
 
             await pipeline.close()
-        finally:
-            os.unlink(db_path)
-
-    @pytest.mark.asyncio
-    async def test_boilerplate_no_match_for_unique_project(self):
-        """Pipeline should not flag unique projects as boilerplate."""
-        fd, db_path = tempfile.mkstemp(suffix=".db")
-        os.close(fd)
-
-        try:
-            config = PipelineConfig(
-                notion_api_key="test",
-                notion_database_id="test-db",
-                db_path=db_path,
-            )
-            pipeline = DiscoveryPipeline(config)
-            await pipeline.initialize()
-
-            # Add a signal with unique deps
-            signal_id = await pipeline._store.save_signal(
-                signal_type="github_spike",
-                source_api="github",
-                canonical_key="github_org:unique-project",
-                company_name="Unique Project",
-                confidence=0.7,
-                raw_data={
-                    "package_json": {
-                        "dependencies": {
-                            "custom-lib": "^1.0.0",
-                            "proprietary-sdk": "^2.0.0",
-                        }
-                    }
-                },
-            )
-
-            # Process the signal (dry run)
-            await pipeline.process_pending(dry_run=True)
-
-            # Check shadow logs
-            logs = await pipeline._store.get_shadow_logs(feature_name="boilerplate_defense")
-
-            # Should still log (SHADOW mode logs everything)
-            assert len(logs) >= 1
-            import json
-            computed = json.loads(logs[0]["computed_value"]) if isinstance(logs[0]["computed_value"], str) else logs[0]["computed_value"]
-
-            # Should not be flagged as boilerplate
-            assert computed["best_match"] is None or computed["best_match"]["is_boilerplate"] is False
-
-            await pipeline.close()
-        finally:
-            os.unlink(db_path)
-
-    @pytest.mark.asyncio
-    async def test_boilerplate_off_skips_detection(self):
-        """When boilerplate_defense is OFF, should skip detection."""
-        fd, db_path = tempfile.mkstemp(suffix=".db")
-        os.close(fd)
-
-        try:
-            with patch.dict(os.environ, {"FEATURE_BOILERPLATE_DEFENSE": "off"}):
-                config = PipelineConfig(
-                    notion_api_key="test",
-                    notion_database_id="test-db",
-                    db_path=db_path,
-                )
-                pipeline = DiscoveryPipeline(config)
-                await pipeline.initialize()
-
-                # Verify feature is OFF
-                assert not pipeline._feature_registry.is_enabled("boilerplate_defense")
-
-                # Add a signal with boilerplate deps
-                signal_id = await pipeline._store.save_signal(
-                    signal_type="github_spike",
-                    source_api="github",
-                    canonical_key="github_org:test-off",
-                    company_name="Test Off",
-                    confidence=0.7,
-                    raw_data={
-                        "package_json": {
-                            "dependencies": {
-                                "next": "^13.0.0",
-                                "react": "^18.0.0",
-                            }
-                        }
-                    },
-                )
-
-                # Process the signal (dry run)
-                await pipeline.process_pending(dry_run=True)
-
-                # Check shadow logs - should be empty for boilerplate_defense
-                logs = await pipeline._store.get_shadow_logs(feature_name="boilerplate_defense")
-                assert len(logs) == 0
-
-                await pipeline.close()
-        finally:
-            os.unlink(db_path)
 
 
 # =============================================================================
@@ -432,29 +442,84 @@ class TestPipelineThesisMatchShadow:
     """Tests for thesis_match shadow logging with v2_shadow support."""
 
     @pytest.mark.asyncio
-    async def test_thesis_match_shadow_log_not_double_encoded(self):
+    async def test_thesis_match_shadow_log_not_double_encoded(self, pipeline_db):
         """Shadow log computed_value should be a dict, not a JSON string of JSON."""
-        fd, db_path = tempfile.mkstemp(suffix=".db")
-        os.close(fd)
+        config = PipelineConfig(
+            notion_api_key="test",
+            notion_database_id="test-db",
+            db_path=pipeline_db,
+            use_thesis_filter=True,
+            warmup_suppression_cache=False,
+        )
+        pipeline = DiscoveryPipeline(config)
+        await pipeline.initialize()
 
-        try:
+        # Add a signal with clear thesis match content
+        signal_id = await pipeline._store.save_signal(
+            signal_type="github_spike",
+            source_api="github",
+            canonical_key="github_org:meal-kit-company",
+            company_name="Meal Kit Co",
+            confidence=0.7,
+            raw_data={"description": "Healthy meal kit delivery startup"},
+        )
+
+        # Process the signal (dry run)
+        await pipeline.process_pending(dry_run=True)
+
+        # Check shadow logs for thesis_match
+        logs = await pipeline._store.get_shadow_logs(feature_name="thesis_match")
+
+        # Should have at least one log entry
+        assert len(logs) >= 1
+
+        log = logs[0]
+        computed = log["computed_value"]
+
+        # The computed_value should be JSON-parsed automatically by get_shadow_logs
+        # If it's still a string, it was double-encoded
+        if isinstance(computed, str):
+            import json
+            parsed = json.loads(computed)
+            # If we can parse it AGAIN and get a dict, it was double-encoded
+            # (string -> parsed string containing JSON -> parse that to dict)
+            # The value should be parseable only ONCE.
+            try:
+                double_parsed = json.loads(parsed)
+                # If this succeeds, it was double-encoded - FAIL
+                pytest.fail(
+                    f"computed_value was double-encoded: first parse gave "
+                    f"{type(parsed).__name__}, second parse gave {type(double_parsed).__name__}"
+                )
+            except (TypeError, json.JSONDecodeError):
+                # Expected: parsed is already a dict, not a JSON string
+                pass
+
+        await pipeline.close()
+
+    @pytest.mark.asyncio
+    async def test_thesis_match_shadow_includes_v2_shadow(self, pipeline_db):
+        """Shadow log should include v2_shadow when ThesisMatcher is in shadow mode."""
+        # Set v2 to shadow mode via env
+        with patch.dict(os.environ, {"THESIS_MATCHER_V2_ENABLEMENT": "shadow"}):
             config = PipelineConfig(
                 notion_api_key="test",
                 notion_database_id="test-db",
-                db_path=db_path,
+                db_path=pipeline_db,
                 use_thesis_filter=True,
+                warmup_suppression_cache=False,
             )
             pipeline = DiscoveryPipeline(config)
             await pipeline.initialize()
 
-            # Add a signal with clear thesis match content
+            # Add a signal with negative keyword to trigger shadow diff
             signal_id = await pipeline._store.save_signal(
                 signal_type="github_spike",
                 source_api="github",
-                canonical_key="github_org:meal-kit-company",
-                company_name="Meal Kit Co",
+                canonical_key="github_org:enterprise-food",
+                company_name="Enterprise Food Co",
                 confidence=0.7,
-                raw_data={"description": "Healthy meal kit delivery startup"},
+                raw_data={"description": "Enterprise food delivery platform"},
             )
 
             # Process the signal (dry run)
@@ -463,82 +528,17 @@ class TestPipelineThesisMatchShadow:
             # Check shadow logs for thesis_match
             logs = await pipeline._store.get_shadow_logs(feature_name="thesis_match")
 
-            # Should have at least one log entry
-            assert len(logs) >= 1
-
-            log = logs[0]
-            computed = log["computed_value"]
-
-            # The computed_value should be JSON-parsed automatically by get_shadow_logs
-            # If it's still a string, it was double-encoded
-            if isinstance(computed, str):
+            if len(logs) >= 1:
+                log = logs[0]
                 import json
-                parsed = json.loads(computed)
-                # If we can parse it AGAIN and get a dict, it was double-encoded
-                # (string → parsed string containing JSON → parse that to dict)
-                # The value should be parseable only ONCE.
-                try:
-                    double_parsed = json.loads(parsed)
-                    # If this succeeds, it was double-encoded - FAIL
-                    pytest.fail(
-                        f"computed_value was double-encoded: first parse gave "
-                        f"{type(parsed).__name__}, second parse gave {type(double_parsed).__name__}"
-                    )
-                except (TypeError, json.JSONDecodeError):
-                    # Expected: parsed is already a dict, not a JSON string
-                    pass
+                computed = log["computed_value"]
+                if isinstance(computed, str):
+                    computed = json.loads(computed)
+
+                # Should have v2_shadow field
+                assert "v2_shadow" in computed, f"v2_shadow not in computed: {computed.keys()}"
 
             await pipeline.close()
-        finally:
-            os.unlink(db_path)
-
-    @pytest.mark.asyncio
-    async def test_thesis_match_shadow_includes_v2_shadow(self):
-        """Shadow log should include v2_shadow when ThesisMatcher is in shadow mode."""
-        fd, db_path = tempfile.mkstemp(suffix=".db")
-        os.close(fd)
-
-        try:
-            # Set v2 to shadow mode via env
-            with patch.dict(os.environ, {"THESIS_MATCHER_V2_ENABLEMENT": "shadow"}):
-                config = PipelineConfig(
-                    notion_api_key="test",
-                    notion_database_id="test-db",
-                    db_path=db_path,
-                    use_thesis_filter=True,
-                )
-                pipeline = DiscoveryPipeline(config)
-                await pipeline.initialize()
-
-                # Add a signal with negative keyword to trigger shadow diff
-                signal_id = await pipeline._store.save_signal(
-                    signal_type="github_spike",
-                    source_api="github",
-                    canonical_key="github_org:enterprise-food",
-                    company_name="Enterprise Food Co",
-                    confidence=0.7,
-                    raw_data={"description": "Enterprise food delivery platform"},
-                )
-
-                # Process the signal (dry run)
-                await pipeline.process_pending(dry_run=True)
-
-                # Check shadow logs for thesis_match
-                logs = await pipeline._store.get_shadow_logs(feature_name="thesis_match")
-
-                if len(logs) >= 1:
-                    log = logs[0]
-                    import json
-                    computed = log["computed_value"]
-                    if isinstance(computed, str):
-                        computed = json.loads(computed)
-
-                    # Should have v2_shadow field
-                    assert "v2_shadow" in computed, f"v2_shadow not in computed: {computed.keys()}"
-
-                await pipeline.close()
-        finally:
-            os.unlink(db_path)
 
 
 # =============================================================================
@@ -775,33 +775,28 @@ class TestRunShadowEntityComparison:
             assert "Unexpected data format" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_shadow_not_called_when_disabled(self):
+    async def test_shadow_not_called_when_disabled(self, pipeline_db):
         """Pipeline should skip shadow comparison when config flag is False."""
-        fd, db_path = tempfile.mkstemp(suffix=".db")
-        os.close(fd)
+        config = PipelineConfig(
+            notion_api_key="test",
+            notion_database_id="test-db",
+            db_path=pipeline_db,
+            use_shadow_entity_resolution=False,
+            warmup_suppression_cache=False,
+        )
+        pipeline = DiscoveryPipeline(config)
+        await pipeline.initialize()
 
-        try:
-            config = PipelineConfig(
-                notion_api_key="test",
-                notion_database_id="test-db",
-                db_path=db_path,
-                use_shadow_entity_resolution=False,
-            )
-            pipeline = DiscoveryPipeline(config)
-            await pipeline.initialize()
+        # The config should be False
+        assert pipeline.config.use_shadow_entity_resolution is False
 
-            # The config should be False
-            assert pipeline.config.use_shadow_entity_resolution is False
+        # Mock _run_shadow_entity_comparison to verify it is NOT called
+        pipeline._run_shadow_entity_comparison = AsyncMock()
 
-            # Mock _run_shadow_entity_comparison to verify it is NOT called
-            pipeline._run_shadow_entity_comparison = AsyncMock()
+        # Run processing (dry run, empty)
+        await pipeline._process_signals_stage(dry_run=True)
 
-            # Run processing (dry run, empty)
-            await pipeline._process_signals_stage(dry_run=True)
+        # Shadow comparison should not have been invoked
+        pipeline._run_shadow_entity_comparison.assert_not_called()
 
-            # Shadow comparison should not have been invoked
-            pipeline._run_shadow_entity_comparison.assert_not_called()
-
-            await pipeline.close()
-        finally:
-            os.unlink(db_path)
+        await pipeline.close()
