@@ -261,6 +261,7 @@ class TestEdgeCases:
         await store.initialize()
         trials = await store.get_trials_for_entity("nonexistent:entity")
         assert trials == []
+        await store.close()
 
     @pytest.mark.asyncio
     async def test_save_trial_with_minimal_fields(self):
@@ -274,6 +275,7 @@ class TestEdgeCases:
         )
         trial_id = await store.save_clinical_trial(trial)
         assert trial_id is not None
+        await store.close()
 
     @pytest.mark.asyncio
     async def test_save_trial_with_empty_conditions(self):
@@ -290,6 +292,7 @@ class TestEdgeCases:
         trials = await store.get_trials_for_entity("health:empty")
         assert len(trials) == 1
         assert trials[0].conditions == []
+        await store.close()
 
     @pytest.mark.asyncio
     async def test_trials_with_null_dates_ordered_last(self):
@@ -321,3 +324,4 @@ class TestEdgeCases:
         # Trial with date should come first
         assert trials[0].start_date is not None
         assert trials[1].start_date is None
+        await store.close()

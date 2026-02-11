@@ -223,6 +223,7 @@ class TestCommunityCollectorsInPipeline:
 
                     pipeline = DiscoveryPipeline(config=pipeline_config)
                     pipeline._store = mock_store
+                    pipeline._initialized = True  # Skip real init (opens DB + Notion)
 
                     # Run both community collectors
                     results = await pipeline.run_collectors(
@@ -255,6 +256,7 @@ class TestCommunityCollectorsInPipeline:
 
                     pipeline = DiscoveryPipeline(config=pipeline_config)
                     pipeline._store = mock_store
+                    pipeline._initialized = True  # Skip real init (opens DB + Notion)
 
                     # Run mixed collectors
                     results = await pipeline.run_collectors(

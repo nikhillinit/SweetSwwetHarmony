@@ -13,6 +13,7 @@ class TestConsumerEnrichmentStore:
         store = ConsumerEnrichmentStore(":memory:")
         await store.initialize()
         assert store._db is not None
+        await store.close()
 
     @pytest.mark.asyncio
     async def test_save_brand_sentiment(self):
@@ -35,6 +36,7 @@ class TestConsumerEnrichmentStore:
         sentiments = await store.get_brand_sentiment_for_entity("test-entity")
         assert len(sentiments) == 1
         assert sentiments[0].overall_sentiment == 0.7
+        await store.close()
 
     @pytest.mark.asyncio
     async def test_save_community_metrics(self):
@@ -57,3 +59,4 @@ class TestConsumerEnrichmentStore:
         metrics = await store.get_community_metrics_for_entity("test-entity")
         assert len(metrics) == 1
         assert metrics[0].total_users == 10000
+        await store.close()

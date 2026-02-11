@@ -68,6 +68,7 @@ class TestRelationshipStoreSchema:
 
         assert row is not None
         assert row[0] == "domain_relationships"
+        await store.close()
 
     @pytest.mark.asyncio
     async def test_schema_has_required_columns(self, temp_db):
@@ -97,6 +98,7 @@ class TestRelationshipStoreSchema:
         }
 
         assert required_columns.issubset(column_names)
+        await store.close()
 
 
 class TestDomainEdgeOperations:
@@ -124,6 +126,7 @@ class TestDomainEdgeOperations:
         assert strength is not None
         assert strength.intro_count == 2
         assert strength.reply_count == 1
+        await store.close()
 
     @pytest.mark.asyncio
     async def test_upsert_domain_edge_updates_existing(self, temp_db):
@@ -161,6 +164,7 @@ class TestDomainEdgeOperations:
         assert strength.intro_count == 3
         assert strength.reply_count == 2
         assert strength.total_messages == 10
+        await store.close()
 
     @pytest.mark.asyncio
     async def test_email_hash_privacy(self, temp_db):
@@ -190,6 +194,7 @@ class TestDomainEdgeOperations:
         email_hash = row[0]
         assert email not in email_hash  # Should be hashed
         assert len(email_hash) >= 32  # SHA256 or similar
+        await store.close()
 
 
 class TestDomainStrength:
@@ -205,6 +210,7 @@ class TestDomainStrength:
 
         strength = await store.get_domain_strength("user@example.com", "nonexistent.com")
         assert strength is None
+        await store.close()
 
     @pytest.mark.asyncio
     async def test_get_domain_strength_returns_data(self, temp_db):
@@ -234,6 +240,7 @@ class TestDomainStrength:
         assert strength.reply_rate == pytest.approx(0.2)  # 2/10
         assert strength.strength_score >= 0.0
         assert strength.strength_score <= 1.0
+        await store.close()
 
     @pytest.mark.asyncio
     async def test_deterministic_strength_score(self, temp_db):
@@ -258,6 +265,7 @@ class TestDomainStrength:
         strength2 = await store.get_domain_strength("user@example.com", "investor.com")
 
         assert strength1.strength_score == strength2.strength_score
+        await store.close()
 
 
 class TestDatabaseIsolation:
@@ -274,6 +282,7 @@ class TestDatabaseIsolation:
         # Verify the database file is NOT signals.db
         assert "signals.db" not in temp_db
         assert os.path.exists(temp_db)
+        await store.close()
 
     @pytest.mark.asyncio
     async def test_no_relationship_data_in_signals_db(self, temp_db):
@@ -340,6 +349,7 @@ class TestStrengthScoreFormula:
 
         strength = await store.get_domain_strength("user@example.com", "cold.com")
         assert strength.strength_score < 0.5  # Should be low without intros
+        await store.close()
 
     @pytest.mark.asyncio
     async def test_many_intros_high_score(self, temp_db):
@@ -360,6 +370,7 @@ class TestStrengthScoreFormula:
 
         strength = await store.get_domain_strength("user@example.com", "warm.com")
         assert strength.strength_score > 0.7  # Should be high with many intros
+        await store.close()
 
     @pytest.mark.asyncio
     async def test_stale_relationship_lower_score(self, temp_db):
@@ -385,6 +396,7 @@ class TestStrengthScoreFormula:
 
         # Should be lower than recent contact with same intro_count
         assert strength.recency_score < 0.1  # Very stale
+        await store.close()
 
 
 # =============================================================================
@@ -411,6 +423,7 @@ class TestLPRelationshipSchema:
         # Phase 4 additions
         lp_columns = {"source", "lp_status", "lp_name"}
         assert lp_columns.issubset(column_names), f"Missing LP columns: {lp_columns - column_names}"
+        await store.close()
 
 
 class TestLPRelationshipUpsert:
@@ -438,6 +451,7 @@ class TestLPRelationshipUpsert:
         assert lp_rel.lp_status == "Docs Signed"
         assert lp_rel.lp_name == "John Smith"
         assert lp_rel.source == "notion_lp"
+        await store.close()
 
     @pytest.mark.asyncio
     async def test_upsert_lp_relationship_updates_existing(self, temp_db):
@@ -468,6 +482,7 @@ class TestLPRelationshipUpsert:
         lp_rel = await store.get_lp_relationship("user@example.com", "lp-firm.com")
         assert lp_rel.lp_status == "Docs Signed"
         assert lp_rel.notion_score == pytest.approx(0.95)
+        await store.close()
 
     @pytest.mark.asyncio
     async def test_lp_relationship_preserves_gmail_data(self, temp_db):
@@ -504,6 +519,7 @@ class TestLPRelationshipUpsert:
         # LP data should also be there
         lp_rel = await store.get_lp_relationship("user@example.com", "combined.com")
         assert lp_rel.lp_status == "Verbal Confirm"
+        await store.close()
 
 
 class TestLPRelationshipQuery:
@@ -519,6 +535,7 @@ class TestLPRelationshipQuery:
 
         lp_rel = await store.get_lp_relationship("user@example.com", "nonexistent.com")
         assert lp_rel is None
+        await store.close()
 
     @pytest.mark.asyncio
     async def test_get_lp_relationship_returns_data(self, temp_db):
@@ -544,6 +561,7 @@ class TestLPRelationshipQuery:
         assert lp_rel.lp_name == "Fund Manager"
         assert lp_rel.source == "notion_lp"
         assert lp_rel.notion_score == pytest.approx(0.40)
+        await store.close()
 
 
 class TestCombinedRelationshipQuery:
@@ -573,6 +591,7 @@ class TestCombinedRelationshipQuery:
         assert combined.gmail_score > 0
         assert combined.notion_score is None
         assert combined.lp_status is None
+        await store.close()
 
     @pytest.mark.asyncio
     async def test_get_combined_relationship_lp_only(self, temp_db):
@@ -596,6 +615,7 @@ class TestCombinedRelationshipQuery:
         assert combined.gmail_score is None
         assert combined.notion_score == pytest.approx(0.95)
         assert combined.lp_status == "Docs Signed"
+        await store.close()
 
     @pytest.mark.asyncio
     async def test_get_combined_relationship_both_sources(self, temp_db):
@@ -632,3 +652,4 @@ class TestCombinedRelationshipQuery:
         assert combined.notion_score == pytest.approx(0.70)
         assert combined.lp_status == "Verbal Confirm"
         assert combined.lp_name == "Combined Person"
+        await store.close()
