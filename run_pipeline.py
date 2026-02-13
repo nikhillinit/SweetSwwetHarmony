@@ -85,6 +85,7 @@ import json
 import logging
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Add parent directory to path for imports
@@ -1920,7 +1921,7 @@ async def cmd_shadow_status(args) -> int:
         volumes = {}
         volume_queries = {
             "thesis_classifications": (
-                "SELECT COUNT(*) FROM thesis_classifications WHERE created_at >= ?",
+                "SELECT COUNT(*) FROM thesis_classifications WHERE classified_at >= ?",
                 (cutoff,),
             ),
             "merge_suggestions": (
@@ -1958,7 +1959,7 @@ async def cmd_shadow_status(args) -> int:
                         ELSE 0
                     END) as agreed
                 FROM thesis_classifications
-                WHERE created_at >= ?
+                WHERE classified_at >= ?
             """
             async with store._db.execute(agree_query, (cutoff,)) as cursor:
                 row = await cursor.fetchone()
@@ -5017,7 +5018,7 @@ async def cmd_shadow_backfill(args):
         # Group by (source, month) buckets for stratified sampling
         buckets = defaultdict(list)
         for row in rows:
-            signal_id, canonical_key, company_name, source_api, raw_data_json, created_at = row
+            signal_id, canonical_key, company_name, source_api, raw_data_json, created_at, _company_id = row
 
             # Parse month from created_at (format: YYYY-MM-DD or ISO timestamp)
             try:
@@ -5060,7 +5061,7 @@ async def cmd_shadow_backfill(args):
         errors = 0
 
         for row in sampled:
-            signal_id, canonical_key, company_name, source_api, raw_data_json, created_at = row
+            signal_id, canonical_key, company_name, source_api, raw_data_json, created_at, _company_id = row
 
             # Parse raw_data
             try:
@@ -6354,27 +6355,27 @@ async def cmd_hunter_budget(args):
 
 async def cmd_drift_check(args):
     """Run SPC check (read-only)."""
-    from storage.signal_store import SignalStore
+    import sqlite3
     from monitoring.spc_monitor import SPCMonitor, VALID_SPC_METRICS
 
     db_path = getattr(args, "db_path", None) or os.environ.get("DISCOVERY_DB_PATH", "signals.db")
-    store = SignalStore(db_path)
-    await store.initialize()
-    try:
-        monitor = SPCMonitor()
-        metrics_to_check = getattr(args, "metrics", None) or list(VALID_SPC_METRICS)
+    monitor = SPCMonitor()
+    metrics_to_check = getattr(args, "metrics", None) or list(VALID_SPC_METRICS)
 
+    with sqlite3.connect(db_path) as conn:
         for metric in metrics_to_check:
-            limits = await monitor.compute_control_limits(store._db, metric)
+            limits = monitor.compute_control_limits(conn, metric)
             if limits is None:
                 print(f"  {metric}: insufficient data")
                 continue
-            result = await monitor.check_metric(store._db, metric, limits.mean)
-            print(f"  {metric}: {result.verdict} (mean={limits.mean:.4f}, UCL={limits.ucl:.4f}, LCL={limits.lcl:.4f}, method={limits.method})")
+            result = monitor.check_metric(conn, metric, limits.mean)
+            print(
+                f"  {metric}: {result.verdict} "
+                f"(mean={limits.mean:.4f}, UCL={limits.ucl:.4f}, "
+                f"LCL={limits.lcl:.4f}, method={limits.method})"
+            )
             for alert in result.alerts:
                 print(f"    ALERT: {alert.message}")
-    finally:
-        await store.close()
 
 
 async def cmd_drift_aggregate(args):
@@ -6425,7 +6426,8 @@ async def cmd_drift_alerts(args):
         print(f"{'ID':>5}  {'Type':<25}  {'Sev':<10}  {'Status':<14}  {'Message'}")
         print("-" * 100)
         for row in rows:
-            print(f"{row[0]:>5}  {row[1]:<25}  {row[2]:<10}  {row[5]:<14}  {row[4][:60]}")
+            message = ((row[4] or "")[:60]).encode("ascii", "replace").decode("ascii")
+            print(f"{row[0]:>5}  {row[1]:<25}  {row[2]:<10}  {row[5]:<14}  {message}")
     finally:
         await store.close()
 

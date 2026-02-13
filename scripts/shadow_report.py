@@ -166,6 +166,7 @@ async def cmd_export(args: argparse.Namespace) -> int:
 
     logger.info(f"Exporting thesis_match shadow logs from last {args.since_days} days")
 
+    store = None
     try:
         store = SignalStore(db_path=args.db_path)
         await store.initialize()
@@ -208,6 +209,9 @@ async def cmd_export(args: argparse.Namespace) -> int:
     except Exception as e:
         logger.error(f"Export failed: {e}")
         return 2
+    finally:
+        if store is not None:
+            await store.close()
 
 
 # =============================================================================

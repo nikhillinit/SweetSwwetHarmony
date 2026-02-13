@@ -218,14 +218,22 @@ class ThesisFilter:
 
         # Stage 2: LLM classification
         llm_result = None
-        if self.llm_classifier:
+        llm_classifier = self.llm_classifier
+        if llm_classifier:
             try:
                 signal_data = {
                     "title": company_name or "Unknown",
                     "source_context": text,
                     "source_api": "pipeline",
                 }
-                llm_result = await self._llm_classifier.classify(signal_data)
+                llm_candidate = await llm_classifier.classify(signal_data)
+                if self._is_operational_llm_failure(llm_candidate):
+                    logger.warning(
+                        "LLM returned operational failure payload; "
+                        "falling back to keyword-only routing"
+                    )
+                else:
+                    llm_result = llm_candidate
             except Exception as e:
                 logger.error(f"LLM classification failed: {e}")
 
@@ -316,6 +324,42 @@ class ThesisFilter:
             adjustment = self.config.negative_keyword_penalty
 
         return adjustment
+
+    def _is_operational_llm_failure(self, llm_result: Any) -> bool:
+        """
+        Detect synthetic exclusion payloads emitted when the LLM backend fails.
+
+        LLM operational failures currently use the same schema as normal results
+        (`category="excluded"` and `thesis_fit_score=0.0`) with a failure rationale.
+        These should fail open to keyword routing.
+        """
+        if llm_result is None:
+            return False
+
+        if getattr(llm_result, "category", None) != "excluded":
+            return False
+
+        score = getattr(llm_result, "thesis_fit_score", None)
+        if score is None:
+            return True
+
+        try:
+            score_value = float(score)
+        except (TypeError, ValueError):
+            return False
+
+        if score_value != 0.0:
+            return False
+
+        rationale = (getattr(llm_result, "rationale", "") or "").lower()
+        failure_markers = (
+            "classification failed",
+            "rate limit exceeded",
+            "circuit breaker open",
+            "gemini unavailable",
+            "failed to parse response",
+        )
+        return any(marker in rationale for marker in failure_markers)
 
     async def save_classification(
         self,
