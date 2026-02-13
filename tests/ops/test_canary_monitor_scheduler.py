@@ -136,6 +136,34 @@ def test_ensure_schedule_config_drift_warning(scheduler):
     assert any("cron mismatch" in w for w in warnings)
 
 
+def test_ensure_schedule_no_mutation_on_drift(scheduler):
+    """ensure_schedule with drift warnings does NOT update/mutate the existing row.
+
+    This is the non-mutation invariant: warnings are advisory only.
+    """
+    config = _canary_config()
+    sid, _, _ = scheduler.ensure_schedule(config)
+
+    # Snapshot the DB row before calling with different config
+    original = scheduler.get_schedule(sid)
+
+    # Call with different cron, mode, and enabled — should warn but NOT write
+    different = _canary_config(cron_expression="0 */3 * * *")
+    sid2, created, warnings = scheduler.ensure_schedule(different)
+    assert created is False
+    assert len(warnings) >= 1  # at least cron mismatch
+
+    # Verify the DB row is unchanged
+    after = scheduler.get_schedule(sid)
+    assert after["cron_expression"] == original["cron_expression"]
+    assert after["mode"] == original["mode"]
+    assert after["enabled"] == original["enabled"]
+    assert after["dry_run"] == original["dry_run"]
+    assert after["collectors"] == original["collectors"]
+    assert after["max_retries"] == original["max_retries"]
+    assert after["updated_at"] == original["updated_at"]
+
+
 def test_ensure_schedule_malformed_collectors_json(scheduler):
     """Manually corrupt collectors to invalid JSON → emits warning, does not crash."""
     config = _canary_config()
