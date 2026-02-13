@@ -26,4 +26,22 @@ RSS_CATEGORIES=startup,health_tech,cpg (optional, filter feed categories)
 
 # OpenAI Integration (for multi-LLM strategy iteration)
 OPENAI_API_KEY=sk-xxx (get at platform.openai.com/api-keys)
+
+# Startup config validation
+STRICT_CONFIG_VALIDATION=false  # true = abort startup on config errors; false (default) = log and continue
 ```
+
+## STRICT_CONFIG_VALIDATION Behavior
+
+| STRICT_CONFIG_VALIDATION | Config errors present | Result |
+|--------------------------|----------------------|--------|
+| `false` (default) | yes | Log warnings, continue startup |
+| `false` | no | Log info, continue startup |
+| `true` | yes | Abort startup (RuntimeError in API / exit 1 in CLI) |
+| `true` | no | Log info, continue startup |
+
+Config validation runs automatically on both API and CLI startup. It checks:
+- `DELIVERY_MODE` validity
+- Confidence threshold bounds (0.0-1.0)
+- Write feature env var values
+- Notion key presence (errors when `DELIVERY_MODE` requires Notion)

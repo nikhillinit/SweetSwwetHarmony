@@ -6095,6 +6095,13 @@ async def main():
     # Setup logging
     setup_logging(verbose=args.verbose)
 
+    # Config validation
+    from utils.config_validator import validate_config, print_config_report
+    config_issues = validate_config()
+    has_errors = print_config_report(config_issues)
+    if os.getenv("STRICT_CONFIG_VALIDATION", "false").lower() == "true" and has_errors:
+        sys.exit(1)
+
     # Check for command
     if not args.command:
         parser.print_help()

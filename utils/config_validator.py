@@ -218,15 +218,23 @@ def _validate_write_features() -> List[ConfigIssue]:
 
 
 def _validate_notion_keys() -> List[ConfigIssue]:
-    """Check that Notion API key and database ID are configured."""
+    """Check that Notion API key and database ID are configured.
+
+    When DELIVERY_MODE requires Notion (manual_publish, batch_publish,
+    auto_publish), missing keys are errors. Otherwise they are warnings.
+    """
     issues: List[ConfigIssue] = []
+    delivery_mode = os.environ.get("DELIVERY_MODE", "staging_only").strip().lower()
+    needs_notion = delivery_mode in ("manual_publish", "batch_publish", "auto_publish")
 
     notion_key = os.environ.get("NOTION_API_KEY", "").strip()
     if not notion_key:
+        level = "error" if needs_notion else "warning"
         issues.append(ConfigIssue(
-            level="warning",
+            level=level,
             key="NOTION_API_KEY",
-            message="Not configured (Notion push will fail)",
+            message=f"Not configured (required for {delivery_mode})"
+                    if needs_notion else "Not configured (Notion push will fail)",
         ))
     else:
         issues.append(ConfigIssue(
@@ -237,10 +245,12 @@ def _validate_notion_keys() -> List[ConfigIssue]:
 
     notion_db = os.environ.get("NOTION_DATABASE_ID", "").strip()
     if not notion_db:
+        level = "error" if needs_notion else "warning"
         issues.append(ConfigIssue(
-            level="warning",
+            level=level,
             key="NOTION_DATABASE_ID",
-            message="Not configured (Notion push will fail)",
+            message=f"Not configured (required for {delivery_mode})"
+                    if needs_notion else "Not configured (Notion push will fail)",
         ))
     else:
         issues.append(ConfigIssue(
