@@ -1887,6 +1887,42 @@ async def cmd_eval_results(args):
 
 
 # =============================================================================
+# ACTIVATION READINESS CHECK
+# =============================================================================
+
+async def cmd_activation_check(args) -> int:
+    """Check activation readiness for the given step."""
+    db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+    store = SignalStore(db_path=db_path)
+    try:
+        await store.initialize()
+        from monitoring.activation_gate import check_activation_readiness
+
+        result = await check_activation_readiness(store, step=args.step)
+
+        if getattr(args, "json_output", False):
+            print(json.dumps(result.to_dict(), indent=2))
+        else:
+            symbol = {"ready": "+", "warn": "!", "blocked": "X"}.get(result.verdict, "?")
+            print(f"[{symbol}] Activation Step {result.step}: {result.verdict.upper()}")
+            if result.canary_verdict:
+                age = f" ({result.canary_run_age_hours}h old)" if result.canary_run_age_hours else ""
+                print(f"    Canary: {result.canary_verdict} (pass_rate={result.canary_pass_rate}){age}")
+            else:
+                print("    Canary: no data")
+            if result.open_critical_alerts or result.open_warning_alerts:
+                print(f"    Alerts: {result.open_critical_alerts} critical, {result.open_warning_alerts} warning")
+            if result.reasons:
+                for reason in result.reasons:
+                    print(f"    - {reason}")
+            print(f"    Can proceed: {result.can_proceed}")
+
+        return 0 if result.can_proceed else 1
+    finally:
+        await store.close()
+
+
+# =============================================================================
 # CLI ARGUMENT PARSER
 # =============================================================================
 
@@ -3547,6 +3583,24 @@ Examples:
         help="Filter by batch status",
     )
     publish_list_parser.add_argument(
+        "--db-path", type=str, default=None,
+        help="Path to SQLite database (overrides env var)",
+    )
+
+    # Activation readiness check
+    activation_parser = subparsers.add_parser(
+        "activation-check",
+        help="Check activation readiness for a given step (1-4)",
+    )
+    activation_parser.add_argument(
+        "--step", type=int, default=1, choices=[1, 2, 3, 4],
+        help="Activation step to check (default: 1)",
+    )
+    activation_parser.add_argument(
+        "--json", dest="json_output", action="store_true",
+        help="Output as JSON",
+    )
+    activation_parser.add_argument(
         "--db-path", type=str, default=None,
         help="Path to SQLite database (overrides env var)",
     )
@@ -6346,6 +6400,8 @@ async def main():
             else:
                 print("Drift command requires a subcommand (check, aggregate, alerts, ack, snooze, resolve, recommend, gc, export-metrics)")
                 sys.exit(1)
+        elif args.command == "activation-check":
+            exit_code = await cmd_activation_check(args)
         else:
             print(f"Unknown command: {args.command}")
             parser.print_help()

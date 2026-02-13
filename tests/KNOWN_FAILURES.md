@@ -1,8 +1,8 @@
 # Known Test Failures Baseline
 
-**Commit:** 856689f693463e4ae885315f50f60daf4e8efd3c
+**Commit:** ec250a1
 **Date:** 2026-02-13
-**Collected:** 6735 tests, 0 collection errors
+**Collected:** 6861 tests, 0 collection errors
 **Known failures:** 6
 
 ## Policy

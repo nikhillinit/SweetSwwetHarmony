@@ -417,3 +417,96 @@ push with correct `notion_page_id` persisted; error contracts verified; no leake
 2. **M1:** Strict/non-strict validation behavior verified in API and CLI tests; activation runbook reviewed with rollback commands per stage
 3. **M3:** `dry_run=False` + `DELIVERY_MODE=batch_publish` performs push in controlled test; error contract tests pass for 503/423/409; resource lifecycle test passes for repeated commits
 4. **Full sprint:** All new tests pass; existing tests still collect cleanly; smoke suite green
+
+---
+
+# Post-M2 Exit Criteria (M2.4 Complete)
+## Summary
+
+This block closes M2 with objective evidence and defines a clean, low-risk handoff into M4.
+
+
+
+- commit_sha
+- date_utc
+- pytest_collect_count
+- collection_errors
+- regression command used
+
+### 2. Regression Gate (Required)
+
+
+python -m pytest tests/api/ tests/integration/ tests/workflows/test_batch_publisher.py --tb=short
+
+- Pass condition:
+- zero new collection errors vs G0 baseline
+
+### 3. S0 Canary Consistency (Required)
+
+- One of the following must be documented:
+
+
+- notion_page_id persisted
+- batch_commit audit entry present
+
+2. Fallback: If dry-run only, explicitly mark S0 as "dry-run validated" and make non-dry-run canary a pre-M4 gate
+   item.
+
+
+- Startup probe hardening is deployed and documented with rollback steps.
+- /api/v1/health/metrics serves valid OpenMetrics text and fails open on ops collector errors.
+- M2.4 rate limiting is implemented and verified (middleware enabled, behavior tested, exemptions documented).
+
+### 5. M2.4 Completion Evidence (Required)
+
+- Include:
+- configured limits and scope (which routes/roles)
+- rollback/toggle procedure if limits cause operator friction
+
+## M4 Entry Gate
+M4 may start only when all items below are checked:
+
+- [x] Post-M2 baseline artifact committed
+- [x] Regression gate passing with no new failures
+- [x] S0 canary status resolved (non-dry-run preferred)
+- [x] M2.1/M2.2/M2.3/M2.4 evidence linked
+
+---
+
+## Phase M4: Activation Readiness
+**Status:** COMPLETE
+**Purpose:** Automated gates so operators can check readiness before each activation step.
+
+### M4 Evidence
+- `monitoring/activation_gate.py` -- step-specific policy (STEP_POLICY matrix)
+- `GET /health/activation-readiness?step=N` -- unauthenticated, 422 on invalid step
+- `/health/detailed` includes `activation_readiness` component (2s timeout guardrail)
+- Batch commit soft gate with `audit_events.record_event()` on non-ready verdict
+- `python run_pipeline.py activation-check --step N` CLI command
+- `docs/runbooks/feature-activation.md` updated with gate commands + step thresholds
+
+### M4 Test Coverage
+| File | Tests |
+|------|-------|
+| `tests/monitoring/test_activation_gate.py` | 9 |
+| `tests/api/test_activation_readiness_api.py` | 8 |
+| `tests/api/test_batch_activation_gate.py` | 4 |
+| `tests/cli/test_activation_readiness_cli.py` | 5 |
+| `tests/smoke/test_smoke_suite.py` (additions) | 2 |
+| **Total new tests** | **28** |
+
+## Evidence Links Section (Template)
+
+- Baseline artifact: tests/baseline_snapshot.json (or successor)
+- Known failures: tests/KNOWN_FAILURES.md
+- CI gate run: <workflow run URL>
+- Canary evidence: <log/query/screenshot links>
+- Metrics endpoint validation: <test or curl output reference>
+- Rate limiting evidence: <test output + config reference>
+- Branch protection config: <settings/ruleset reference>
+
+## Defaults and Assumptions
+
+- Deployment target remains Systemd VM.
+- Gate philosophy is "prevent regression," not "force zero historical defects."
+- Pre-existing known failures are allowed only with explicit ownership and tracking.
