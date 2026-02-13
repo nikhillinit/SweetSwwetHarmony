@@ -1887,6 +1887,143 @@ async def cmd_eval_results(args):
 
 
 # =============================================================================
+# SHADOW STATUS
+# =============================================================================
+
+async def cmd_shadow_status(args) -> int:
+    """Show shadow feature flag state and data volumes."""
+    db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+    days = getattr(args, "days", 7)
+    json_output = getattr(args, "json_output", False)
+
+    # Feature flag state
+    flags = {
+        "LLM_THESIS_MODE": os.getenv("LLM_THESIS_MODE", "off"),
+        "ML_ENABLEMENT": os.getenv("ML_ENABLEMENT", "disabled"),
+        "V2_ENABLEMENT": os.getenv("V2_ENABLEMENT", "disabled"),
+        "USE_SHADOW_ENTITY_RESOLUTION": os.getenv("USE_SHADOW_ENTITY_RESOLUTION", "false"),
+        "MERGE_WRITES_ENABLED": os.getenv("MERGE_WRITES_ENABLED", "disabled"),
+        "DELIVERY_MODE": os.getenv("DELIVERY_MODE", "staging_only"),
+        "BULK_TRIAGE_ENABLED": os.getenv("BULK_TRIAGE_ENABLED", "disabled"),
+        "HUNTER_PROMOTE_ENABLED": os.getenv("HUNTER_PROMOTE_ENABLED", "disabled"),
+        "USE_PHASE_G_IDENTITY_RESOLUTION": os.getenv("USE_PHASE_G_IDENTITY_RESOLUTION", "false"),
+        "USE_CLAIM_FACTS": os.getenv("USE_CLAIM_FACTS", "false"),
+    }
+
+    store = SignalStore(db_path=db_path)
+    try:
+        await store.initialize()
+        from datetime import timedelta
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+        # Shadow data volumes
+        volumes = {}
+        volume_queries = {
+            "thesis_classifications": (
+                "SELECT COUNT(*) FROM thesis_classifications WHERE created_at >= ?",
+                (cutoff,),
+            ),
+            "merge_suggestions": (
+                "SELECT COUNT(*) FROM merge_suggestions WHERE created_at >= ?",
+                (cutoff,),
+            ),
+            "entity_blocking_index": (
+                "SELECT COUNT(*) FROM entity_blocking_index",
+                (),
+            ),
+        }
+
+        async with store._db.execute("SELECT name FROM sqlite_master WHERE type='table'") as cursor:
+            existing_tables = {row[0] for row in await cursor.fetchall()}
+
+        for table, (query, params) in volume_queries.items():
+            if table in existing_tables:
+                async with store._db.execute(query, params) as cursor:
+                    row = await cursor.fetchone()
+                    volumes[table] = row[0] if row else 0
+            else:
+                volumes[table] = None  # table doesn't exist
+
+        # Quick health metrics
+        health = {}
+
+        # LLM vs keyword agreement rate
+        if volumes.get("thesis_classifications") and volumes["thesis_classifications"] > 0:
+            agree_query = """
+                SELECT
+                    COUNT(*) as total,
+                    SUM(CASE
+                        WHEN keyword_score >= 0.7 AND thesis_fit_score >= 0.7 THEN 1
+                        WHEN keyword_score < 0.4 AND (thesis_fit_score IS NULL OR thesis_fit_score < 0.4) THEN 1
+                        ELSE 0
+                    END) as agreed
+                FROM thesis_classifications
+                WHERE created_at >= ?
+            """
+            async with store._db.execute(agree_query, (cutoff,)) as cursor:
+                row = await cursor.fetchone()
+                if row and row[0] > 0:
+                    health["llm_agreement_rate"] = round(row[1] / row[0], 3)
+                    health["llm_total_classifications"] = row[0]
+
+        # Merge suggestion rejection rate
+        if volumes.get("merge_suggestions") and volumes["merge_suggestions"] > 0:
+            reject_query = """
+                SELECT
+                    COUNT(*) as total,
+                    SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected
+                FROM merge_suggestions
+                WHERE created_at >= ?
+            """
+            async with store._db.execute(reject_query, (cutoff,)) as cursor:
+                row = await cursor.fetchone()
+                if row and row[0] > 0:
+                    health["merge_rejection_rate"] = round(row[1] / row[0], 3)
+                    health["merge_total_suggestions"] = row[0]
+
+        result = {
+            "period_days": days,
+            "flags": flags,
+            "volumes": volumes,
+            "health": health,
+        }
+
+        if json_output:
+            print(json.dumps(result, indent=2))
+        else:
+            print(f"Shadow Status (last {days} days)")
+            print("=" * 60)
+
+            print("\nFeature Flags:")
+            for flag, value in flags.items():
+                active = value not in ("off", "disabled", "false", "staging_only")
+                marker = "*" if active else " "
+                print(f"  [{marker}] {flag} = {value}")
+
+            print(f"\nShadow Data Volumes (last {days}d):")
+            for table, count in volumes.items():
+                if count is None:
+                    print(f"  {table}: (table not created)")
+                else:
+                    print(f"  {table}: {count:,} rows")
+
+            if health:
+                print("\nQuick Health:")
+                if "llm_agreement_rate" in health:
+                    print(f"  LLM/keyword agreement: {health['llm_agreement_rate']:.1%} ({health['llm_total_classifications']} classified)")
+                if "merge_rejection_rate" in health:
+                    print(f"  Merge rejection rate: {health['merge_rejection_rate']:.1%} ({health['merge_total_suggestions']} suggestions)")
+            else:
+                print("\nQuick Health: no shadow data in period")
+
+            print(f"\nFor detailed analysis: python scripts/shadow_report.py report ...")
+
+        return 0
+    finally:
+        await store.close()
+
+
+# =============================================================================
 # ACTIVATION READINESS CHECK
 # =============================================================================
 
@@ -1918,6 +2055,251 @@ async def cmd_activation_check(args) -> int:
             print(f"    Can proceed: {result.can_proceed}")
 
         return 0 if result.can_proceed else 1
+    finally:
+        await store.close()
+
+
+# =============================================================================
+# PHASE G CHECK
+# =============================================================================
+
+async def cmd_phase_g_check(args) -> int:
+    """Check Phase G entity resolution readiness."""
+    db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+    store = SignalStore(db_path=db_path)
+    try:
+        await store.initialize()
+        from monitoring.phase_g_readiness import check_phase_g_readiness
+
+        result = await check_phase_g_readiness(store)
+
+        if getattr(args, "json_output", False):
+            print(json.dumps(result.to_dict(), indent=2))
+        else:
+            symbol = {"ready": "+", "warn": "!", "blocked": "X"}.get(result.verdict, "?")
+            print(f"[{symbol}] Phase G Readiness: {result.verdict.upper()}")
+            for reason in result.reasons:
+                print(f"    - {reason}")
+            if result.metrics:
+                print("    Metrics:")
+                for k, v in result.metrics.items():
+                    print(f"      {k}: {v}")
+            print(f"    Can proceed: {result.can_proceed}")
+
+        return 0 if result.can_proceed else 1
+    finally:
+        await store.close()
+
+
+# =============================================================================
+# ENTITY MERGE PREVIEW (read-only)
+# =============================================================================
+
+async def cmd_entity_merge_preview(args) -> int:
+    """Preview pending entity merges without applying them."""
+    db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+    limit = getattr(args, "limit", 10)
+    json_output = getattr(args, "json_output", False)
+
+    store = SignalStore(db_path=db_path)
+    try:
+        await store.initialize()
+        db = store._db
+
+        # Check if merge_suggestions table exists
+        async with db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='merge_suggestions'"
+        ) as cursor:
+            if not await cursor.fetchone():
+                print("No merge_suggestions table found.")
+                return 0
+
+        # Query proposed merge pairs
+        async with db.execute("""
+            SELECT
+                ms.id,
+                ms.entity_a_company_id,
+                ms.entity_b_company_id,
+                ms.entity_a_canonical_key,
+                ms.entity_b_canonical_key,
+                ms.entity_a_company_name,
+                ms.entity_b_company_name,
+                ms.match_type,
+                ms.similarity_score,
+                ms.created_at
+            FROM merge_suggestions ms
+            WHERE ms.status = 'proposed'
+            ORDER BY ms.similarity_score DESC, ms.created_at DESC
+            LIMIT ?
+        """, (limit,)) as cursor:
+            rows = await cursor.fetchall()
+
+        if not rows:
+            if json_output:
+                print(json.dumps({"previews": [], "count": 0}))
+            else:
+                print("No proposed merge suggestions found.")
+            return 0
+
+        previews = []
+        for row in rows:
+            (
+                suggestion_id, entity_a, entity_b,
+                key_a, key_b, name_a, name_b,
+                match_type, similarity, created_at,
+            ) = row
+
+            # Determine lexmin winner
+            winner = min(entity_a, entity_b)
+            loser = max(entity_a, entity_b)
+
+            # Count what would be affected (read-only queries)
+            async with db.execute(
+                "SELECT COUNT(*) FROM signals WHERE company_id = ?", (loser,)
+            ) as c:
+                signals_affected = (await c.fetchone())[0]
+
+            review_items_affected = 0
+            async with db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='review_items'"
+            ) as c:
+                if await c.fetchone():
+                    async with db.execute(
+                        "SELECT COUNT(*) FROM review_items WHERE company_id = ?", (loser,)
+                    ) as c2:
+                        review_items_affected = (await c2.fetchone())[0]
+
+            files_affected = 0
+            async with db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='company_files'"
+            ) as c:
+                if await c.fetchone():
+                    async with db.execute(
+                        "SELECT COUNT(*) FROM company_files WHERE company_id = ?", (loser,)
+                    ) as c2:
+                        files_affected = (await c2.fetchone())[0]
+
+            previews.append({
+                "suggestion_id": suggestion_id,
+                "winner": winner,
+                "loser": loser,
+                "winner_key": key_a if entity_a == winner else key_b,
+                "loser_key": key_b if entity_a == winner else key_a,
+                "winner_name": name_a if entity_a == winner else name_b,
+                "loser_name": name_b if entity_a == winner else name_a,
+                "match_type": match_type,
+                "similarity": similarity,
+                "signals_affected": signals_affected,
+                "review_items_affected": review_items_affected,
+                "files_affected": files_affected,
+                "created_at": created_at,
+            })
+
+        if json_output:
+            print(json.dumps({"previews": previews, "count": len(previews)}, indent=2))
+        else:
+            print(f"Entity Merge Preview ({len(previews)} proposed)")
+            print("=" * 90)
+            for p in previews:
+                print(f"\n  Suggestion #{p['suggestion_id']} ({p['match_type']}, similarity={p['similarity']:.2f})")
+                print(f"    Winner: {p['winner']} ({p['winner_name'] or p['winner_key']})")
+                print(f"    Loser:  {p['loser']} ({p['loser_name'] or p['loser_key']})")
+                print(f"    Impact: {p['signals_affected']} signals, {p['review_items_affected']} reviews, {p['files_affected']} files")
+
+        return 0
+    finally:
+        await store.close()
+
+
+# =============================================================================
+# ENTITY AUDIT
+# =============================================================================
+
+async def cmd_entity_audit(args) -> int:
+    """Audit recent entity migrations and integrity."""
+    db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+    days = getattr(args, "days", 7)
+    json_output = getattr(args, "json_output", False)
+
+    store = SignalStore(db_path=db_path)
+    try:
+        await store.initialize()
+        db = store._db
+        from datetime import timedelta
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+        # Check tables exist
+        async with db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ) as cursor:
+            existing = {row[0] for row in await cursor.fetchall()}
+
+        report = {"period_days": days, "migrations": [], "lifo_intact": True, "orphaned_count": 0}
+
+        # Recent migrations
+        if "entity_migrations" in existing:
+            async with db.execute("""
+                SELECT from_entity_id, to_entity_id, merge_reason, merged_at
+                FROM entity_migrations
+                WHERE merged_at >= ?
+                ORDER BY merged_at DESC
+            """, (cutoff,)) as cursor:
+                for row in await cursor.fetchall():
+                    report["migrations"].append({
+                        "from_entity_id": row[0],
+                        "to_entity_id": row[1],
+                        "merge_reason": row[2],
+                        "merged_at": row[3],
+                    })
+
+            # LIFO chain integrity: check no circular references
+            async with db.execute("""
+                SELECT em1.from_entity_id
+                FROM entity_migrations em1
+                JOIN entity_migrations em2 ON em1.to_entity_id = em2.from_entity_id
+                WHERE em2.to_entity_id = em1.from_entity_id
+            """) as cursor:
+                circular = await cursor.fetchall()
+                if circular:
+                    report["lifo_intact"] = False
+                    report["circular_refs"] = len(circular)
+
+        # Orphaned entity_ids
+        async with db.execute("""
+            SELECT COUNT(DISTINCT s.company_id) FROM signals s
+            WHERE s.company_id IS NOT NULL
+              AND s.company_id IN (
+                  SELECT from_entity_id FROM entity_migrations
+              )
+              AND s.company_id NOT IN (
+                  SELECT to_entity_id FROM entity_migrations
+              )
+        """) as cursor:
+            report["orphaned_count"] = (await cursor.fetchone())[0]
+
+        if json_output:
+            print(json.dumps(report, indent=2))
+        else:
+            print(f"Entity Audit (last {days} days)")
+            print("=" * 60)
+
+            migrations = report["migrations"]
+            if migrations:
+                print(f"\nRecent Migrations ({len(migrations)}):")
+                for m in migrations:
+                    print(f"  {m['from_entity_id']} -> {m['to_entity_id']}")
+                    print(f"    reason: {m['merge_reason']}, at: {m['merged_at']}")
+            else:
+                print("\nNo migrations in period.")
+
+            lifo = "INTACT" if report["lifo_intact"] else "BROKEN"
+            print(f"\nLIFO Chain Integrity: {lifo}")
+
+            orphaned = report["orphaned_count"]
+            status = "CLEAN" if orphaned == 0 else f"WARNING ({orphaned} orphaned)"
+            print(f"Orphaned Entity IDs: {status}")
+
+        return 0
     finally:
         await store.close()
 
@@ -3601,6 +3983,82 @@ Examples:
         help="Output as JSON",
     )
     activation_parser.add_argument(
+        "--db-path", type=str, default=None,
+        help="Path to SQLite database (overrides env var)",
+    )
+
+    # -------------------------------------------------------------------------
+    # Shadow Status
+    # -------------------------------------------------------------------------
+    shadow_status_parser = subparsers.add_parser(
+        "shadow-status",
+        help="Shadow observability — view feature flag state and shadow data volumes",
+    )
+    shadow_status_parser.add_argument(
+        "--days", type=int, default=7,
+        help="Look-back period in days (default: 7)",
+    )
+    shadow_status_parser.add_argument(
+        "--json", dest="json_output", action="store_true",
+        help="Output as JSON",
+    )
+    shadow_status_parser.add_argument(
+        "--db-path", type=str, default=None,
+        help="Path to SQLite database (overrides env var)",
+    )
+
+    # -------------------------------------------------------------------------
+    # Phase G Check
+    # -------------------------------------------------------------------------
+    phase_g_parser = subparsers.add_parser(
+        "phase-g-check",
+        help="Check Phase G entity resolution readiness",
+    )
+    phase_g_parser.add_argument(
+        "--json", dest="json_output", action="store_true",
+        help="Output as JSON",
+    )
+    phase_g_parser.add_argument(
+        "--db-path", type=str, default=None,
+        help="Path to SQLite database (overrides env var)",
+    )
+
+    # -------------------------------------------------------------------------
+    # Entity Merge Preview (read-only)
+    # -------------------------------------------------------------------------
+    merge_preview_parser = subparsers.add_parser(
+        "entity-merge-preview",
+        help="Preview pending entity merges (read-only, no mutations)",
+    )
+    merge_preview_parser.add_argument(
+        "--limit", type=int, default=10,
+        help="Max merge pairs to display (default: 10)",
+    )
+    merge_preview_parser.add_argument(
+        "--json", dest="json_output", action="store_true",
+        help="Output as JSON",
+    )
+    merge_preview_parser.add_argument(
+        "--db-path", type=str, default=None,
+        help="Path to SQLite database (overrides env var)",
+    )
+
+    # -------------------------------------------------------------------------
+    # Entity Audit
+    # -------------------------------------------------------------------------
+    entity_audit_parser = subparsers.add_parser(
+        "entity-audit",
+        help="Audit recent entity migrations and integrity",
+    )
+    entity_audit_parser.add_argument(
+        "--days", type=int, default=7,
+        help="Look-back period in days (default: 7)",
+    )
+    entity_audit_parser.add_argument(
+        "--json", dest="json_output", action="store_true",
+        help="Output as JSON",
+    )
+    entity_audit_parser.add_argument(
         "--db-path", type=str, default=None,
         help="Path to SQLite database (overrides env var)",
     )
@@ -6402,6 +6860,14 @@ async def main():
                 sys.exit(1)
         elif args.command == "activation-check":
             exit_code = await cmd_activation_check(args)
+        elif args.command == "shadow-status":
+            exit_code = await cmd_shadow_status(args)
+        elif args.command == "phase-g-check":
+            exit_code = await cmd_phase_g_check(args)
+        elif args.command == "entity-merge-preview":
+            exit_code = await cmd_entity_merge_preview(args)
+        elif args.command == "entity-audit":
+            exit_code = await cmd_entity_audit(args)
         else:
             print(f"Unknown command: {args.command}")
             parser.print_help()
