@@ -12,6 +12,9 @@ step has run clean for the specified monitoring period.
 - `STRICT_CONFIG_VALIDATION=true` in production `.env`
 - Canary golden set defined (`monitoring/canary_checker.py`)
 - SPC baseline computed (`monitoring/spc_monitor.py`)
+- Pre-flight check passes: `python scripts/preflight_check.py --json`
+- Recent backup exists: `python scripts/backup_db.py`
+- See [Operator Quickstart](../operator-quickstart.md) for initial setup
 
 ### Automated Gate Check (M4)
 
@@ -45,6 +48,12 @@ Exit code 0 = can proceed (ready or warn). Exit code 1 = blocked.
 ## Step 1: Shadow Activation (observe, no mutations)
 
 **Duration:** Run for 48h minimum before advancing.
+
+**Before starting:**
+```bash
+python scripts/preflight_check.py --json     # Must pass
+python scripts/backup_db.py                   # Pre-step backup
+```
 
 **Gate check:** `python run_pipeline.py activation-check --step 1`
 
@@ -84,6 +93,12 @@ USE_SHADOW_ENTITY_RESOLUTION=false
 
 **Duration:** Run for 48h minimum before advancing.
 
+**Before starting:**
+```bash
+python scripts/preflight_check.py --json     # Must pass
+python scripts/backup_db.py                   # Pre-step backup
+```
+
 **Gate check:** `python run_pipeline.py activation-check --step 2`
 
 **Set these env vars:**
@@ -122,6 +137,12 @@ V2_ENABLEMENT=shadow
 
 **Duration:** Run for 24h minimum before advancing.
 
+**Before starting:**
+```bash
+python scripts/preflight_check.py --json     # Must pass
+python scripts/backup_db.py                   # Pre-step backup
+```
+
 **Gate check:** `python run_pipeline.py activation-check --step 3`
 
 **Set these env vars:**
@@ -156,6 +177,12 @@ HUNTER_PROMOTE_ENABLED=disabled
 ## Step 4: Batch Activation (after Step 3 clean)
 
 **Duration:** Ongoing (production state).
+
+**Before starting:**
+```bash
+python scripts/preflight_check.py --json     # Must pass
+python scripts/backup_db.py                   # Pre-step backup
+```
 
 **Gate check:** `python run_pipeline.py activation-check --step 4`
 
