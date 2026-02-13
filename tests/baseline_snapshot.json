@@ -1,8 +1,8 @@
 {
-  "commit": "ec250a1",
+  "commit": "8178550",
   "date": "2026-02-13",
-  "milestone": "M2 Ops Hardening complete",
-  "tests_collected": 6861,
+  "milestone": "M7 Production Readiness Gate complete",
+  "tests_collected": 6935,
   "collection_errors": 0,
   "exit_code": 0,
   "known_failures": 6,
@@ -16,17 +16,43 @@
   "smoke_suite_skipped": 3,
   "smoke_suite_skipped_reason": "Activation-aware checks skip when features disabled (LLM, drift, Notion)",
   "smoke_suite_file": "tests/smoke/test_smoke_suite.py",
+  "regression_gate": {
+    "command": "pytest tests/api/ tests/integration/ tests/workflows/test_batch_publisher.py tests/smoke/ --tb=short -q",
+    "passed": 608,
+    "skipped": 4,
+    "failed": 0,
+    "baseline_m6": {"passed": 583, "skipped": 4},
+    "delta": "+25 tests (M7 activation simulation + backup integration)"
+  },
   "activation_checks_verified": {
     "LLM_THESIS_MODE=shadow": "PASSED (GOOGLE_API_KEY present)",
     "DRIFT_MONITORING_ENABLED=active": "PASSED (SPCMonitor instantiates)",
     "DELIVERY_MODE=batch_publish": "PASSED (NOTION_API_KEY + NOTION_DATABASE_ID present)"
   },
-  "m2_evidence": {
-    "ci_workflow": ".github/workflows/regression-gate.yml",
-    "startup_probe": "api/startup_probe.py",
-    "openmetrics_endpoint": "GET /api/v1/health/metrics",
-    "rate_limiting": "api/middleware/rate_limit.py",
-    "tests_added": 54,
-    "milestone_commit": "ec250a1"
+  "m7_evidence": {
+    "backup_restore_tests": 15,
+    "env_validation_tests": 10,
+    "preflight_tests": 24,
+    "activation_simulation_tests": 21,
+    "backup_integration_tests": 4,
+    "total_m7_tests": 74,
+    "files_created": [
+      "scripts/backup_db.py",
+      "scripts/restore_db.py",
+      "scripts/validate_env.py",
+      "scripts/preflight_check.py",
+      ".env.production.template",
+      "docs/operator-quickstart.md",
+      "tests/scripts/test_backup_restore.py",
+      "tests/scripts/test_validate_env.py",
+      "tests/scripts/test_preflight_check.py",
+      "tests/integration/test_activation_simulation.py",
+      "tests/integration/test_backup_integration.py"
+    ],
+    "files_modified": [
+      "docs/runbooks/feature-activation.md",
+      "tests/baseline_snapshot.json"
+    ],
+    "milestone_commit": "8178550"
   }
 }

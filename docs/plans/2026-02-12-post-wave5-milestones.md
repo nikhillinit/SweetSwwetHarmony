@@ -495,6 +495,41 @@ M4 may start only when all items below are checked:
 | `tests/smoke/test_smoke_suite.py` (additions) | 2 |
 | **Total new tests** | **28** |
 
+## M7 Production Readiness Gate — Evidence
+
+**Date:** 2026-02-13
+**Commit:** 8178550
+
+### Regression Gate
+- **Command:** `pytest tests/api/ tests/integration/ tests/workflows/test_batch_publisher.py tests/smoke/ --tb=short -q`
+- **Result:** 608 passed, 4 skipped, 0 failed
+- **Baseline (M6):** 583 passed, 4 skipped
+- **Delta:** +25 tests (no regressions)
+
+### M7 Test Summary
+| Test File | Tests |
+|-----------|-------|
+| `tests/scripts/test_backup_restore.py` | 15 |
+| `tests/scripts/test_validate_env.py` | 10 |
+| `tests/scripts/test_preflight_check.py` | 24 |
+| `tests/integration/test_activation_simulation.py` | 21 |
+| `tests/integration/test_backup_integration.py` | 4 |
+| **Total new tests** | **74** |
+
+### Artifacts Created
+- `scripts/backup_db.py` — Online SQLite backup with rotation
+- `scripts/restore_db.py` — Validated restore with API guard
+- `scripts/validate_env.py` — Standalone env validation
+- `scripts/preflight_check.py` — 9-check pre-activation checklist
+- `.env.production.template` — Production env var template
+- `docs/operator-quickstart.md` — Day-1 operator guide
+
+### Artifacts Modified
+- `docs/runbooks/feature-activation.md` — Added pre-flight + backup before each step
+- `tests/baseline_snapshot.json` — Updated with M7 evidence
+
+---
+
 ## Evidence Links Section (Template)
 
 - Baseline artifact: tests/baseline_snapshot.json (or successor)
