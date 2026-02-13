@@ -24,6 +24,13 @@ import getpass
 from datetime import datetime, timezone
 from typing import Optional
 
+# Load environment variables from .env for local CLI parity with run_pipeline.py.
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 from ops.storage import OpsStorage
 
 

@@ -210,7 +210,14 @@ class CanaryChecker:
 
         for golden in self.golden_set.signals:
             cursor = await db.execute(
-                "SELECT confidence FROM signals WHERE id = ?",
+                """
+                SELECT tc.thesis_fit_score, s.confidence
+                FROM signals s
+                LEFT JOIN thesis_classifications tc ON tc.signal_id = s.id
+                WHERE s.id = ?
+                ORDER BY tc.classified_at DESC, tc.id DESC
+                LIMIT 1
+                """,
                 (golden.signal_id,),
             )
             row = await cursor.fetchone()
@@ -230,7 +237,9 @@ class CanaryChecker:
                 )
                 continue
 
-            actual = row[0]
+            # Prefer thesis_fit_score when available; otherwise fall back to raw
+            # collector confidence for backward compatibility.
+            actual = row[0] if row[0] is not None else row[1]
             if actual is None:
                 results.append(
                     CanaryResult(
@@ -329,11 +338,11 @@ async def build_golden_set_from_labels(
 
     cursor = await db.execute(
         """
-        SELECT sqm.signal_id, s.canonical_key, sqm.label
+        SELECT sqm.signal_id, s.canonical_key, sqm.human_label
         FROM signal_quality_metrics sqm
         JOIN signals s ON s.id = sqm.signal_id
-        WHERE sqm.label IN ('TP', 'FP')
-        ORDER BY sqm.created_at DESC
+        WHERE sqm.human_label IN ('TP', 'FP')
+        ORDER BY sqm.labeled_at DESC
         LIMIT 200
         """,
     )
