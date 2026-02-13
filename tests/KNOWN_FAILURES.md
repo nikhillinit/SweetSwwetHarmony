@@ -28,10 +28,31 @@ permissive delivery mode. They pass when `DELIVERY_MODE=batch_publish` or higher
 | 5 | `tests/workflows/test_confidence_routing.py::TestConfidenceBasedRouting::test_high_confidence_single_source_strict_mode_needs_review` |
 | 6 | `tests/workflows/test_confidence_routing.py::TestConfidenceBasedRouting::test_multi_source_aggregation_before_routing` |
 
-## Error Detail
+## Error Detail (confidence routing)
 
 ```
 workflows.delivery_policy.DeliveryPolicyError: Notion write blocked: intent=auto_push
 is not allowed in DELIVERY_MODE=staging_only.
 Set DELIVERY_MODE to a permissive mode to proceed.
 ```
+
+## Additional Known Intermittent Failure
+
+**Owner:** audit event actor ordering (Phase 1a emergency halt path)
+
+| # | Test Node ID |
+|---|-------------|
+| 7 | `tests/integration/test_phase1a_identity.py::TestEmergencyHalt::test_publish_queued_emergency_halt` |
+
+### Error Detail (emergency halt)
+
+```
+assert audit[3] == "compliance_officer"
+AssertionError: assert 'system' == 'compliance_officer'
+```
+
+**Root cause:** The test queries `audit_events` for a `status_transition` event and
+expects `actor_id="compliance_officer"`, but the review store records the automatic
+halt transition with `actor_id="system"`. The test assumption does not account for
+the two-event sequence (system halt + officer reject). Intermittent because audit
+event ordering can vary by insertion timing.
