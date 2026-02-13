@@ -98,12 +98,77 @@ explicit `shutdown()`. Verified against `connectors/notion_transport.py`.
 
 ---
 
+### 2026-02-13 — G0 Baseline Integrity Gate: COMPLETE
+
+Commit `88d43af` on main. Collection error fixed, smoke suite created (13 tests:
+10 pass, 3 skip), baseline artifact generated.
+
+### 2026-02-13 — M1 Production Activation: COMPLETE
+
+Commits `a95168a`, `5974df3` on main. Config validation wired into API lifespan +
+CLI startup, activation runbook created, 14 new tests. SPCMonitor constructor fixed.
+6759 tests, 0 collection errors.
+
+### 2026-02-13 — M3 Batch Publish Wire-up: COMPLETE
+
+**Files modified (5):**
+- `api/main.py` — NotionTransport + NotionConnector in lifespan (fail-open, shutdown on teardown)
+- `api/routers/batch.py` — Replaced TODO with NotionPusher wiring; 503 for missing connector
+- `api/routers/entities.py` — Real COUNT(*) query replacing `len(results)` for pagination total
+- `api/routers/companies.py` — Real COUNT(*) query replacing `len(results)` for pagination total
+- `tests/api/test_batch_router.py` — Fixture updated: `notion_connector` mock added for M3 compatibility
+
+**Files created (2):**
+- `tests/api/test_batch_real_commit.py` — 14 tests (dry-run regression, 503, 423, TOCTOU, mock push, partial failure, audit)
+- `tests/integration/test_delivery_mode_progression.py` — 6 tests (staging->manual->batch progression, envelope consistency)
+
+**New tests:** 20 (14 + 6)
+**Regression gate:** 490 passed (API + integration + batch workflow)
+
+**M3 Gate verified:** `dry_run=False` + `DELIVERY_MODE=batch_publish` + valid connector
+-> real Notion push with correct `notion_page_id` persisted; error contracts verified.
+
+---
+
+### Post-M3 Stabilization Checkpoint (before next milestone)
+
+Before advancing to M4 or any M3-adjacent work:
+
+1. **Canary publish:** Run one controlled non-dry-run batch publish against Notion
+   staging database (`DELIVERY_MODE=batch_publish`, 1-2 items max). Verify:
+   - `notion_page_id` persisted on `batch_items` row
+   - Audit log entry with `action_type=batch_commit` present
+   - Error envelope shape in API logs (503/423/409 as applicable)
+2. **Log review:** Confirm NotionTransport startup/shutdown messages appear in
+   API logs (`NotionConnector initialized (app-scoped)` / `NotionTransport shut down`)
+3. **Gate pass:** Only proceed to next milestone after canary confirms real Notion
+   round-trip with correct persistence.
+
+---
+
+### Pre-Merge Regression Gate (M3/M4-adjacent changes)
+
+Required command before merging any change touching batch publish, delivery policy,
+Notion wiring, or pagination:
+
+```bash
+python -m pytest tests/api/ tests/integration/ tests/workflows/test_batch_publisher.py -v --tb=short
+```
+
+Expected: **490+ passed, 0 failed** (count increases as tests are added).
+
+This gate covers: all API routers (296), batch e2e (15), delivery mode progression (6),
+batch real commit (14), batch publisher workflow (12), and remaining integration tests.
+
+---
+
 ## Next Steps
 - [x] User review of milestone priorities and strategy
 - [x] Select first milestone to execute (G0 -> M1 -> M3)
 - [x] Write implementation plan with task-level detail (v1)
 - [x] Incorporate v2 reviewer refinements (9 findings, all accepted)
-- [ ] Create feature branch for sprint
-- [ ] Begin G0: fix collection error, generate baseline artifact, create smoke suite
-- [ ] Begin M1: wire config validator (API + CLI), create activation runbook
-- [ ] Begin M3: initialize app-scoped Notion connector, wire batch commit, test error contracts
+- [x] G0: fix collection error, generate baseline artifact, create smoke suite
+- [x] M1: wire config validator (API + CLI), create activation runbook
+- [x] M3: initialize app-scoped Notion connector, wire batch commit, test error contracts
+- [ ] Post-M3 stabilization checkpoint (canary publish + log review)
+- [ ] Decide next milestone (M4 or M2)

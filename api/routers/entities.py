@@ -246,6 +246,39 @@ async def list_entities(
             has_alerts=(row[16] or 0) > 0,
         ))
 
+    # Count total matching entities (same filters, no LIMIT/OFFSET)
+    count_query = """
+        SELECT COUNT(*) FROM (
+            SELECT s.canonical_key
+            FROM signals s
+            LEFT JOIN entity_stages es ON s.canonical_key = es.entity_key
+            LEFT JOIN thesis_classifications tc ON s.id = tc.signal_id
+            WHERE 1=1
+    """
+    count_params: List[Any] = []
+
+    if stage:
+        count_query += " AND es.stage = ?"
+        count_params.append(stage)
+    if owner:
+        count_query += " AND es.owner = ?"
+        count_params.append(owner)
+    if search:
+        count_query += " AND s.company_name LIKE ?"
+        count_params.append(f"%{search}%")
+    if has_alerts:
+        count_query += " AND (SELECT COUNT(*) FROM entity_alerts ea WHERE ea.entity_key = s.canonical_key AND ea.status = 'pending') > 0"
+
+    count_query += """
+            GROUP BY s.canonical_key
+            HAVING MAX(s.confidence) >= ?
+        )
+    """
+    count_params.append(min_confidence)
+
+    cursor = await db.execute(count_query, count_params)
+    total = (await cursor.fetchone())[0]
+
     # Get stage counts
     cursor = await db.execute("""
         SELECT COALESCE(es.stage, 'Inbox') as stage, COUNT(DISTINCT s.canonical_key)
@@ -257,7 +290,7 @@ async def list_entities(
 
     return EntityListResponse(
         entities=entities,
-        total=len(entities),  # TODO: Add proper count query
+        total=total,
         page=page,
         page_size=page_size,
         stages=stages,
