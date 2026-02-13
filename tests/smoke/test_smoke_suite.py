@@ -182,3 +182,44 @@ class TestConfigValidationSmoke:
         issues = validate_config()
         result = print_config_report(issues)
         assert isinstance(result, bool)
+
+
+# =============================================================================
+# 5. ACTIVATION-AWARE CHECKS (M1.6)
+# =============================================================================
+
+class TestActivationSmoke:
+    """Feature-aware smoke tests -- only run assertions when features are active."""
+
+    def test_gemini_reachable_if_llm_active(self):
+        """If LLM_THESIS_MODE != off, verify Gemini API key is configured."""
+        mode = os.environ.get("LLM_THESIS_MODE", "off").strip().lower()
+        if mode == "off":
+            pytest.skip("LLM_THESIS_MODE=off -- Gemini check not needed")
+        api_key = os.environ.get("GOOGLE_API_KEY", "").strip()
+        assert api_key, (
+            f"LLM_THESIS_MODE={mode} but GOOGLE_API_KEY is not configured"
+        )
+
+    def test_spc_engine_queryable_if_drift_active(self, store):
+        """If DRIFT_MONITORING_ENABLED=active, verify SPC monitor can init."""
+        mode = os.environ.get("DRIFT_MONITORING_ENABLED", "disabled").strip().lower()
+        if mode != "active":
+            pytest.skip("DRIFT_MONITORING_ENABLED != active -- SPC check not needed")
+        from monitoring.spc_monitor import SPCMonitor
+        monitor = SPCMonitor(store)
+        assert monitor is not None
+
+    def test_notion_reachable_if_delivery_active(self):
+        """If DELIVERY_MODE != staging_only, verify Notion keys are configured."""
+        mode = os.environ.get("DELIVERY_MODE", "staging_only").strip().lower()
+        if mode == "staging_only":
+            pytest.skip("DELIVERY_MODE=staging_only -- Notion check not needed")
+        api_key = os.environ.get("NOTION_API_KEY", "").strip()
+        db_id = os.environ.get("NOTION_DATABASE_ID", "").strip()
+        assert api_key, (
+            f"DELIVERY_MODE={mode} but NOTION_API_KEY is not configured"
+        )
+        assert db_id, (
+            f"DELIVERY_MODE={mode} but NOTION_DATABASE_ID is not configured"
+        )

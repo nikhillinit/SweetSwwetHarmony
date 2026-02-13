@@ -27,6 +27,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from api.middleware import ExceptionHandlerMiddleware, RequestIdMiddleware
 from utils.logging_config import configure_logging, startup_check
+from utils.config_validator import validate_config
 
 from api.routers import actions, batch, companies, public, auth, health, jobs, entities, scheduler, triage
 from api.routers import merge_review, canary, hunter
@@ -55,6 +56,16 @@ async def lifespan(app: FastAPI):
     issues = startup_check()
     for issue in issues:
         logger.warning("Startup check: %s", issue)
+
+    # Config validation
+    config_issues = validate_config()
+    log_levels = {"error": logging.ERROR, "warning": logging.WARNING, "info": logging.INFO}
+    for ci in config_issues:
+        logger.log(log_levels.get(ci.level, logging.INFO), "Config %s: %s", ci.key, ci.message)
+
+    if os.getenv("STRICT_CONFIG_VALIDATION", "false").lower() == "true":
+        if any(ci.level == "error" for ci in config_issues):
+            raise RuntimeError("Config validation failed -- see logs above")
 
     # Initialize store
     store = SignalStore()

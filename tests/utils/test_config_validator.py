@@ -223,6 +223,63 @@ class TestNotionKeyValidation:
         assert len(notion_warnings) == 1
 
 
+class TestNotionKeyDeliveryModeAware:
+    """Tests for delivery-mode-aware Notion key validation (M1.0)."""
+
+    def test_staging_only_missing_keys_are_warnings(self, monkeypatch):
+        """staging_only does not require Notion -- missing keys are warnings."""
+        monkeypatch.setenv("DELIVERY_MODE", "staging_only")
+        monkeypatch.delenv("NOTION_API_KEY", raising=False)
+        monkeypatch.delenv("NOTION_DATABASE_ID", raising=False)
+        issues = validate_config()
+        notion_issues = [i for i in issues if "NOTION" in i.key]
+        errors = [i for i in notion_issues if i.level == "error"]
+        warnings = [i for i in notion_issues if i.level == "warning"]
+        assert len(errors) == 0
+        assert len(warnings) == 2
+
+    def test_batch_publish_missing_keys_are_errors(self, monkeypatch):
+        """batch_publish requires Notion -- missing keys must be errors."""
+        monkeypatch.setenv("DELIVERY_MODE", "batch_publish")
+        monkeypatch.delenv("NOTION_API_KEY", raising=False)
+        monkeypatch.delenv("NOTION_DATABASE_ID", raising=False)
+        issues = validate_config()
+        notion_issues = [i for i in issues if "NOTION" in i.key]
+        errors = [i for i in notion_issues if i.level == "error"]
+        assert len(errors) == 2
+        assert all("required" in e.message.lower() for e in errors)
+
+    def test_batch_publish_with_keys_present_is_info(self, monkeypatch):
+        """batch_publish + keys present -- no errors or warnings."""
+        monkeypatch.setenv("DELIVERY_MODE", "batch_publish")
+        monkeypatch.setenv("NOTION_API_KEY", "secret_real_key")
+        monkeypatch.setenv("NOTION_DATABASE_ID", "real_db_id")
+        issues = validate_config()
+        notion_issues = [i for i in issues if "NOTION" in i.key]
+        errors = [i for i in notion_issues if i.level == "error"]
+        warnings = [i for i in notion_issues if i.level == "warning"]
+        assert len(errors) == 0
+        assert len(warnings) == 0
+
+    def test_auto_publish_missing_database_id_is_error(self, monkeypatch):
+        """auto_publish + missing NOTION_DATABASE_ID -- error on that key."""
+        monkeypatch.setenv("DELIVERY_MODE", "auto_publish")
+        monkeypatch.setenv("NOTION_API_KEY", "secret_real_key")
+        monkeypatch.delenv("NOTION_DATABASE_ID", raising=False)
+        issues = validate_config()
+        db_errors = [
+            i for i in issues
+            if i.key == "NOTION_DATABASE_ID" and i.level == "error"
+        ]
+        assert len(db_errors) == 1
+        # NOTION_API_KEY should be info (present)
+        key_issues = [
+            i for i in issues
+            if i.key == "NOTION_API_KEY" and i.level == "info"
+        ]
+        assert len(key_issues) == 1
+
+
 # =============================================================================
 # print_config_report
 # =============================================================================
