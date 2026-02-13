@@ -25,7 +25,7 @@ from datetime import datetime, timezone
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.middleware import ExceptionHandlerMiddleware, RequestIdMiddleware
+from api.middleware import ExceptionHandlerMiddleware, RateLimitMiddleware, RequestIdMiddleware
 from utils.logging_config import configure_logging, startup_check
 from utils.config_validator import validate_config
 
@@ -133,8 +133,10 @@ app = FastAPI(
 
 # Production middleware (order matters: outermost executes first)
 # 1. RequestId — assigns X-Request-ID to every request
-# 2. ExceptionHandler — catches unhandled exceptions, returns clean JSON 500
+# 2. RateLimit — per-IP rate limiting with path-based tiers
+# 3. ExceptionHandler — catches unhandled exceptions, returns clean JSON 500
 app.add_middleware(ExceptionHandlerMiddleware)
+app.add_middleware(RateLimitMiddleware)
 app.add_middleware(RequestIdMiddleware)
 
 # CORS configuration for Streamlit frontend

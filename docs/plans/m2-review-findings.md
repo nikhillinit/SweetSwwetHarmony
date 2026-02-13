@@ -283,3 +283,24 @@ User's proposed gates with my annotations:
 
 **Additional gate I'd add:**
 - "Zero new collection errors in `pytest --collect-only`" -- preserves the G0 baseline
+
+---
+
+## Post-Implementation Outcomes (2026-02-13)
+
+Summary of which recommendations were shipped vs deferred.
+
+| Finding | Recommendation | Outcome |
+|---------|---------------|---------|
+| F1: M2 scope | Add M2 to sprint plan | SHIPPED — `docs/plans/m2-task-plan.md` with 4 phases + S0 prerequisite |
+| F2: Existing assets | Don't duplicate docs/health endpoints | FOLLOWED — M2 only fills gaps |
+| F3: ExecStartPost | Use health-check wrapper script (Option 2) | SHIPPED — `scripts/healthcheck_startup.py` (Python stdlib, 17 tests). ExecStartPost mechanism kept but mitigated with retry polling script, not raw shell+curl. Type=notify deferred to future. |
+| F4: Rate limiting | Deprioritize to COULD-HAVE | FOLLOWED — M2.4, implementing now as stretch goal |
+| F5: Prometheus | Minimal text/plain formatter only | SHIPPED — `GET /api/v1/health/metrics` returns OpenMetrics text (15 tests). No Prometheus deployment. |
+| F6: CI gate | Highest-ROI, reorder to #1 | SHIPPED — `.github/workflows/regression-gate.yml` + branch protection ruleset #12778551. Verified end-to-end. |
+| F7: Stabilization | Promote to hard Phase S0 prerequisite | SHIPPED — S0 passed (dry-run scope; non-dry-run canary deferred to first real batch publish per activation runbook) |
+| F8: Priority order | CI > startup > metrics > rate limit | FOLLOWED — implemented in exactly this order (M2.1 → M2.2 → M2.3 → M2.4) |
+| F9: Exit gates | MoSCoW categorization | FOLLOWED — MUST gates (CI, startup, zero new errors) all pass. SHOULD gate (OpenMetrics) passes. COULD gate (rate limit) in progress. |
+| C1: Metrics path | Use `/api/v1/health/metrics` | SHIPPED — correct path confirmed in implementation |
+| C2: curl dependency | Switch to Python stdlib | SHIPPED — `http.client` only, zero external deps |
+| C3: CI enforcement | Specify branch protection check name | SHIPPED — `Core Regression Suite` check required via GitHub ruleset |
