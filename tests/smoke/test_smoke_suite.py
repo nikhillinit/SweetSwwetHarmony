@@ -201,14 +201,15 @@ class TestActivationSmoke:
             f"LLM_THESIS_MODE={mode} but GOOGLE_API_KEY is not configured"
         )
 
-    def test_spc_engine_queryable_if_drift_active(self, store):
+    def test_spc_engine_queryable_if_drift_active(self):
         """If DRIFT_MONITORING_ENABLED=active, verify SPC monitor can init."""
         mode = os.environ.get("DRIFT_MONITORING_ENABLED", "disabled").strip().lower()
         if mode != "active":
             pytest.skip("DRIFT_MONITORING_ENABLED != active -- SPC check not needed")
         from monitoring.spc_monitor import SPCMonitor
-        monitor = SPCMonitor(store)
+        monitor = SPCMonitor()
         assert monitor is not None
+        assert hasattr(monitor, "compute_control_limits")
 
     def test_notion_reachable_if_delivery_active(self):
         """If DELIVERY_MODE != staging_only, verify Notion keys are configured."""
