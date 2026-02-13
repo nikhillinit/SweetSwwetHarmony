@@ -341,9 +341,10 @@ class TestAuditLogViaMigration:
 
     @pytest.mark.asyncio
     async def test_signal_store_version_is_27(self):
-        """CURRENT_SCHEMA_VERSION should be 27."""
-        from storage.signal_store import CURRENT_SCHEMA_VERSION
-        assert CURRENT_SCHEMA_VERSION == 27
+        """CURRENT_SCHEMA_VERSION should be >= 27 with v27 migration present."""
+        from storage.signal_store import CURRENT_SCHEMA_VERSION, MIGRATIONS
+        assert CURRENT_SCHEMA_VERSION >= 27, f"v27 migration requires schema >= 27, got {CURRENT_SCHEMA_VERSION}"
+        assert 27 in MIGRATIONS, "v27 migration missing from MIGRATIONS dict"
 
     @pytest.mark.asyncio
     async def test_migration_27_in_migrations_dict(self):

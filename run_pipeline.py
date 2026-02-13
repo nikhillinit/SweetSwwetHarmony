@@ -2316,6 +2316,80 @@ Environment variables:
     hunter_budget_parser.add_argument("--date", type=str, help="Budget date (YYYY-MM-DD)")
     hunter_budget_parser.add_argument("--db-path", type=str, help="Database path")
 
+    # --- drift command group ---
+    drift_parser = subparsers.add_parser(
+        "drift",
+        help="Drift monitoring — SPC checks, daily aggregation, alert management",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="""
+Drift monitoring commands for SPC quality checks and alert management.
+
+  drift check          Run SPC check (read-only)
+  drift aggregate      Aggregate daily metrics
+  drift alerts         List drift alerts
+  drift ack            Acknowledge an alert
+  drift snooze         Snooze an alert
+  drift resolve        Resolve an alert
+  drift recommend      Generate recommendations (read-only)
+  drift gc             Delete old metrics/alerts
+  drift export-metrics Export metrics to CSV/JSONL
+""",
+    )
+    drift_sub = drift_parser.add_subparsers(dest="drift_cmd")
+
+    # drift check
+    drift_check_parser = drift_sub.add_parser("check", help="Run SPC check (read-only)")
+    drift_check_parser.add_argument("--metrics", nargs="*", help="Specific metrics to check")
+    drift_check_parser.add_argument("--db-path", type=str, help="Database path")
+
+    # drift aggregate
+    drift_agg_parser = drift_sub.add_parser("aggregate", help="Aggregate daily metrics")
+    drift_agg_parser.add_argument("--days", type=int, default=90, help="Days to backfill (default: 90)")
+    drift_agg_parser.add_argument("--db-path", type=str, help="Database path")
+
+    # drift alerts
+    drift_alerts_parser = drift_sub.add_parser("alerts", help="List drift alerts")
+    drift_alerts_parser.add_argument("--status", type=str, choices=["open", "acknowledged", "snoozed", "resolved"], help="Filter by status")
+    drift_alerts_parser.add_argument("--limit", type=int, default=50, help="Max alerts to show (default: 50)")
+    drift_alerts_parser.add_argument("--db-path", type=str, help="Database path")
+
+    # drift ack
+    drift_ack_parser = drift_sub.add_parser("ack", help="Acknowledge an alert")
+    drift_ack_parser.add_argument("alert_id", type=int, help="Alert ID to acknowledge")
+    drift_ack_parser.add_argument("--reason", type=str, required=True, help="Reason for acknowledgement")
+    drift_ack_parser.add_argument("--db-path", type=str, help="Database path")
+
+    # drift snooze
+    drift_snooze_parser = drift_sub.add_parser("snooze", help="Snooze an alert")
+    drift_snooze_parser.add_argument("alert_id", type=int, help="Alert ID to snooze")
+    drift_snooze_parser.add_argument("--hours", type=int, required=True, help="Hours to snooze (1-168)")
+    drift_snooze_parser.add_argument("--reason", type=str, help="Reason for snooze")
+    drift_snooze_parser.add_argument("--db-path", type=str, help="Database path")
+
+    # drift resolve
+    drift_resolve_parser = drift_sub.add_parser("resolve", help="Resolve an alert")
+    drift_resolve_parser.add_argument("alert_id", type=int, help="Alert ID to resolve")
+    drift_resolve_parser.add_argument("--reason", type=str, required=True, help="Resolution reason")
+    drift_resolve_parser.add_argument("--db-path", type=str, help="Database path")
+
+    # drift recommend
+    drift_rec_parser = drift_sub.add_parser("recommend", help="Generate recommendations (read-only)")
+    drift_rec_parser.add_argument("--days", type=int, default=7, help="Lookback days (default: 7)")
+    drift_rec_parser.add_argument("--db-path", type=str, help="Database path")
+
+    # drift gc
+    drift_gc_parser = drift_sub.add_parser("gc", help="Delete old metrics/alerts")
+    drift_gc_parser.add_argument("--metrics-days", type=int, default=365, help="Keep metrics newer than N days (default: 365)")
+    drift_gc_parser.add_argument("--alerts-days", type=int, default=180, help="Keep alerts newer than N days (default: 180)")
+    drift_gc_parser.add_argument("--db-path", type=str, help="Database path")
+
+    # drift export-metrics
+    drift_export_parser = drift_sub.add_parser("export-metrics", help="Export metrics to CSV/JSONL")
+    drift_export_parser.add_argument("--days", type=int, default=365, help="Export last N days (default: 365)")
+    drift_export_parser.add_argument("--format", type=str, choices=["csv", "jsonl"], default="csv", help="Output format (default: csv)")
+    drift_export_parser.add_argument("--out", type=str, help="Output file path")
+    drift_export_parser.add_argument("--db-path", type=str, help="Database path")
+
     # --- import-csv command ---
     import_parser = subparsers.add_parser(
         "import-csv",
@@ -5761,6 +5835,257 @@ async def cmd_hunter_budget(args):
         await store.close()
 
 
+# =============================================================================
+# DRIFT COMMANDS
+# =============================================================================
+
+
+async def cmd_drift_check(args):
+    """Run SPC check (read-only)."""
+    from storage.signal_store import SignalStore
+    from monitoring.spc_monitor import SPCMonitor, VALID_SPC_METRICS
+
+    db_path = getattr(args, "db_path", None) or os.environ.get("DISCOVERY_DB_PATH", "signals.db")
+    store = SignalStore(db_path)
+    await store.initialize()
+    try:
+        monitor = SPCMonitor()
+        metrics_to_check = getattr(args, "metrics", None) or list(VALID_SPC_METRICS)
+
+        for metric in metrics_to_check:
+            limits = await monitor.compute_control_limits(store._db, metric)
+            if limits is None:
+                print(f"  {metric}: insufficient data")
+                continue
+            result = await monitor.check_metric(store._db, metric, limits.mean)
+            print(f"  {metric}: {result.verdict} (mean={limits.mean:.4f}, UCL={limits.ucl:.4f}, LCL={limits.lcl:.4f}, method={limits.method})")
+            for alert in result.alerts:
+                print(f"    ALERT: {alert.message}")
+    finally:
+        await store.close()
+
+
+async def cmd_drift_aggregate(args):
+    """Aggregate daily metrics."""
+    from storage.signal_store import SignalStore
+    from monitoring.daily_aggregator import backfill_daily_metrics
+    from workflows.feature_guards import assert_write_enabled, WriteFeature
+
+    assert_write_enabled(WriteFeature.DRIFT_MONITORING)
+
+    db_path = getattr(args, "db_path", None) or os.environ.get("DISCOVERY_DB_PATH", "signals.db")
+    days = getattr(args, "days", 90)
+    store = SignalStore(db_path)
+    await store.initialize()
+    try:
+        count = await backfill_daily_metrics(store._db, days=days)
+        print(f"Aggregated metrics for {count} dates (backfill {days} days).")
+    finally:
+        await store.close()
+
+
+async def cmd_drift_alerts(args):
+    """List drift alerts."""
+    from storage.signal_store import SignalStore
+
+    db_path = getattr(args, "db_path", None) or os.environ.get("DISCOVERY_DB_PATH", "signals.db")
+    store = SignalStore(db_path)
+    await store.initialize()
+    try:
+        status_filter = getattr(args, "status", None)
+        limit = getattr(args, "limit", 50)
+
+        query = "SELECT id, alert_type, severity, metric_name, message, status, created_at FROM canary_drift_alerts"
+        params = []
+        if status_filter:
+            query += " WHERE status = ?"
+            params.append(status_filter)
+        query += " ORDER BY created_at DESC LIMIT ?"
+        params.append(limit)
+
+        cursor = await store._db.execute(query, params)
+        rows = await cursor.fetchall()
+
+        if not rows:
+            print("No drift alerts found.")
+            return
+
+        print(f"{'ID':>5}  {'Type':<25}  {'Sev':<10}  {'Status':<14}  {'Message'}")
+        print("-" * 100)
+        for row in rows:
+            print(f"{row[0]:>5}  {row[1]:<25}  {row[2]:<10}  {row[5]:<14}  {row[4][:60]}")
+    finally:
+        await store.close()
+
+
+async def cmd_drift_ack(args):
+    """Acknowledge a drift alert."""
+    from storage.signal_store import SignalStore
+    from monitoring.alert_escalation import acknowledge_alert
+    from workflows.feature_guards import assert_write_enabled, WriteFeature
+
+    assert_write_enabled(WriteFeature.DRIFT_MONITORING)
+
+    db_path = getattr(args, "db_path", None) or os.environ.get("DISCOVERY_DB_PATH", "signals.db")
+    store = SignalStore(db_path)
+    await store.initialize()
+    try:
+        result = await acknowledge_alert(store, args.alert_id, "cli-operator", args.reason)
+        if result.success:
+            print(f"Alert #{args.alert_id} acknowledged.")
+        else:
+            print(f"Failed: {result.error}")
+    finally:
+        await store.close()
+
+
+async def cmd_drift_snooze(args):
+    """Snooze a drift alert."""
+    from storage.signal_store import SignalStore
+    from monitoring.alert_escalation import snooze_alert
+    from workflows.feature_guards import assert_write_enabled, WriteFeature
+
+    assert_write_enabled(WriteFeature.DRIFT_MONITORING)
+
+    db_path = getattr(args, "db_path", None) or os.environ.get("DISCOVERY_DB_PATH", "signals.db")
+    store = SignalStore(db_path)
+    await store.initialize()
+    try:
+        reason = getattr(args, "reason", None) or "Snoozed via CLI"
+        result = await snooze_alert(store, args.alert_id, "cli-operator", args.hours, reason)
+        if result.success:
+            print(f"Alert #{args.alert_id} snoozed for {args.hours}h.")
+        else:
+            print(f"Failed: {result.error}")
+    finally:
+        await store.close()
+
+
+async def cmd_drift_resolve(args):
+    """Resolve a drift alert."""
+    from storage.signal_store import SignalStore
+    from monitoring.alert_escalation import resolve_alert
+    from workflows.feature_guards import assert_write_enabled, WriteFeature
+
+    assert_write_enabled(WriteFeature.DRIFT_MONITORING)
+
+    db_path = getattr(args, "db_path", None) or os.environ.get("DISCOVERY_DB_PATH", "signals.db")
+    store = SignalStore(db_path)
+    await store.initialize()
+    try:
+        result = await resolve_alert(store, args.alert_id, "cli-operator", args.reason)
+        if result.success:
+            print(f"Alert #{args.alert_id} resolved.")
+        else:
+            print(f"Failed: {result.error}")
+    finally:
+        await store.close()
+
+
+async def cmd_drift_recommend(args):
+    """Generate drift recommendations."""
+    from storage.signal_store import SignalStore
+    from monitoring.drift_recommendations import generate_recommendations
+
+    db_path = getattr(args, "db_path", None) or os.environ.get("DISCOVERY_DB_PATH", "signals.db")
+    days = getattr(args, "days", 7)
+    store = SignalStore(db_path)
+    await store.initialize()
+    try:
+        recs = await generate_recommendations(store, lookback_days=days)
+        if not recs:
+            print("No recommendations at this time.")
+            return
+        for r in recs:
+            print(f"  [{r.priority.upper()}] {r.type}: {r.message}")
+            if r.action_template:
+                print(f"    Action: {r.action_template}")
+    finally:
+        await store.close()
+
+
+async def cmd_drift_gc(args):
+    """Delete old metrics and alerts."""
+    from storage.signal_store import SignalStore
+    from workflows.feature_guards import assert_write_enabled, WriteFeature
+
+    assert_write_enabled(WriteFeature.DRIFT_MONITORING)
+
+    db_path = getattr(args, "db_path", None) or os.environ.get("DISCOVERY_DB_PATH", "signals.db")
+    metrics_days = getattr(args, "metrics_days", 365)
+    alerts_days = getattr(args, "alerts_days", 180)
+    store = SignalStore(db_path)
+    await store.initialize()
+    try:
+        from datetime import timedelta
+        metrics_cutoff = (datetime.now(timezone.utc) - timedelta(days=metrics_days)).strftime("%Y-%m-%d")
+        alerts_cutoff = (datetime.now(timezone.utc) - timedelta(days=alerts_days)).isoformat()
+
+        cursor = await store._db.execute("DELETE FROM quality_metrics_daily WHERE metric_date < ?", (metrics_cutoff,))
+        metrics_deleted = cursor.rowcount
+        cursor = await store._db.execute("DELETE FROM canary_drift_alerts WHERE created_at < ?", (alerts_cutoff,))
+        alerts_deleted = cursor.rowcount
+        await store._db.commit()
+
+        print(f"GC complete: deleted {metrics_deleted} metric rows (>{metrics_days}d), {alerts_deleted} alerts (>{alerts_days}d).")
+    finally:
+        await store.close()
+
+
+async def cmd_drift_export_metrics(args):
+    """Export daily metrics to CSV or JSONL."""
+    import csv as csv_mod
+    import json as json_mod
+    from storage.signal_store import SignalStore
+
+    db_path = getattr(args, "db_path", None) or os.environ.get("DISCOVERY_DB_PATH", "signals.db")
+    days = getattr(args, "days", 365)
+    fmt = getattr(args, "format", "csv")
+    out_path = getattr(args, "out", None)
+
+    from datetime import timedelta
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%d")
+
+    store = SignalStore(db_path)
+    await store.initialize()
+    try:
+        cursor = await store._db.execute(
+            "SELECT metric_date, metric_name, segment_type, segment_key, value, n, created_at, updated_at "
+            "FROM quality_metrics_daily WHERE metric_date >= ? ORDER BY metric_date, metric_name",
+            (cutoff,),
+        )
+        rows = await cursor.fetchall()
+
+        if not rows:
+            print("No metrics to export.")
+            return
+
+        cols = ["metric_date", "metric_name", "segment_type", "segment_key", "value", "n", "created_at", "updated_at"]
+        output_lines = []
+
+        if fmt == "csv":
+            import io
+            buf = io.StringIO()
+            writer = csv_mod.writer(buf)
+            writer.writerow(cols)
+            for row in rows:
+                writer.writerow(row)
+            output_lines.append(buf.getvalue())
+        else:
+            for row in rows:
+                output_lines.append(json_mod.dumps(dict(zip(cols, row))))
+
+        content = "\n".join(output_lines) if fmt == "jsonl" else output_lines[0]
+        if out_path:
+            with open(out_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            print(f"Exported {len(rows)} rows to {out_path}")
+        else:
+            print(content)
+    finally:
+        await store.close()
+
+
 async def main():
     """Main entry point"""
 
@@ -5987,6 +6312,32 @@ async def main():
                     sys.exit(1)
             else:
                 print("Hunter command requires a subcommand (generate, run, status, review, feedback, promote, budget)")
+                sys.exit(1)
+        elif args.command == "drift":
+            if hasattr(args, "drift_cmd") and args.drift_cmd:
+                if args.drift_cmd == "check":
+                    await cmd_drift_check(args)
+                elif args.drift_cmd == "aggregate":
+                    await cmd_drift_aggregate(args)
+                elif args.drift_cmd == "alerts":
+                    await cmd_drift_alerts(args)
+                elif args.drift_cmd == "ack":
+                    await cmd_drift_ack(args)
+                elif args.drift_cmd == "snooze":
+                    await cmd_drift_snooze(args)
+                elif args.drift_cmd == "resolve":
+                    await cmd_drift_resolve(args)
+                elif args.drift_cmd == "recommend":
+                    await cmd_drift_recommend(args)
+                elif args.drift_cmd == "gc":
+                    await cmd_drift_gc(args)
+                elif args.drift_cmd == "export-metrics":
+                    await cmd_drift_export_metrics(args)
+                else:
+                    print(f"Unknown drift command: {args.drift_cmd}")
+                    sys.exit(1)
+            else:
+                print("Drift command requires a subcommand (check, aggregate, alerts, ack, snooze, resolve, recommend, gc, export-metrics)")
                 sys.exit(1)
         else:
             print(f"Unknown command: {args.command}")

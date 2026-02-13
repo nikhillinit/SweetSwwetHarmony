@@ -58,6 +58,7 @@ from dashboard.views.health import render_health_page
 from dashboard.views.ops_health import render_ops_health_page
 from dashboard.views.scheduler import render_scheduler_page
 from dashboard.views.cost_analysis import render_cost_analysis_page
+from dashboard.views.drift_monitoring import render_drift_monitoring_page
 
 # =============================================================================
 # CONFIG
@@ -2129,11 +2130,11 @@ def main():
 
         # Add Health view at the start, then existing views
         if has_notion and has_db:
-            view_options = ["Health", "Triage", "Batch Publish", "Inbox", "Pipeline", "Signals", "Hunter", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring", "Schedules", "Cost Analysis", "Ops Monitoring"]
+            view_options = ["Health", "Triage", "Batch Publish", "Inbox", "Pipeline", "Signals", "Hunter", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring", "Schedules", "Cost Analysis", "Ops Monitoring", "Drift Monitoring"]
         elif has_notion:
-            view_options = ["Health", "Triage", "Batch Publish", "Inbox", "Pipeline", "Hunter", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring", "Schedules", "Cost Analysis", "Ops Monitoring"]
+            view_options = ["Health", "Triage", "Batch Publish", "Inbox", "Pipeline", "Hunter", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring", "Schedules", "Cost Analysis", "Ops Monitoring", "Drift Monitoring"]
         else:
-            view_options = ["Health", "Triage", "Batch Publish", "Inbox", "Signals", "Hunter", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring", "Schedules", "Cost Analysis", "Ops Monitoring"]
+            view_options = ["Health", "Triage", "Batch Publish", "Inbox", "Signals", "Hunter", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring", "Schedules", "Cost Analysis", "Ops Monitoring", "Drift Monitoring"]
 
         view = st.radio(
             "View",
@@ -2432,6 +2433,12 @@ def main():
     # ==========================================================================
     elif view == "Ops Monitoring":
         render_ops_health_page()
+
+    # ==========================================================================
+    # DRIFT MONITORING VIEW
+    # ==========================================================================
+    elif view == "Drift Monitoring":
+        render_drift_monitoring_page()
 
     # Footer
     st.markdown("""

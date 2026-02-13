@@ -13,6 +13,9 @@ from monitoring.drift_detector import (
     DriftAlert,
     DriftResult,
     _safe_json,
+    _cap_correlation_ids,
+    _classify_drift_category,
+    compute_signature_key,
     detect_drift,
     store_drift_alerts,
 )
@@ -417,6 +420,66 @@ class TestSafeJson:
     def test_non_string_non_collection(self):
         """Integer input returns None (cannot be parsed)."""
         assert _safe_json(42) is None
+
+
+# =============================================================================
+# Wave 5: drift_category, signature_key, dedup, correlation cap
+# =============================================================================
+
+
+class TestDriftCategory:
+    """Test drift category classification."""
+
+    def test_pass_rate_drop_is_concept_drift(self):
+        assert _classify_drift_category("pass_rate_drop") == "concept_drift"
+
+    def test_individual_drift_is_model_drift(self):
+        assert _classify_drift_category("individual_drift") == "model_drift"
+
+    def test_archetype_regression_is_data_drift(self):
+        assert _classify_drift_category("archetype_regression") == "data_drift"
+
+
+class TestSignatureKey:
+    """Test signature key computation (D15)."""
+
+    def test_deterministic(self):
+        key1 = compute_signature_key("pass_rate_drop", "concept_drift", "pass_rate")
+        key2 = compute_signature_key("pass_rate_drop", "concept_drift", "pass_rate")
+        assert key1 == key2
+
+    def test_different_segments_produce_different_keys(self):
+        key1 = compute_signature_key("spc_violation", "concept_drift", "fp_rate",
+                                     "collector", "github")
+        key2 = compute_signature_key("spc_violation", "concept_drift", "fp_rate",
+                                     "collector", "sec_edgar")
+        assert key1 != key2
+
+
+class TestCorrelationIdCap:
+    """Test correlation ID capping (D24)."""
+
+    def test_cap_at_25(self):
+        import json
+        existing = json.dumps(list(range(24)))
+        result = _cap_correlation_ids(existing, "new_id")
+        ids = json.loads(result)
+        assert len(ids) == 25
+        assert ids[-1] == "new_id"
+
+    def test_cap_overflow_trims_oldest(self):
+        import json
+        existing = json.dumps(list(range(30)))
+        result = _cap_correlation_ids(existing, "new_id")
+        ids = json.loads(result)
+        assert len(ids) == 25
+        assert ids[-1] == "new_id"
+
+    def test_none_existing_starts_fresh(self):
+        import json
+        result = _cap_correlation_ids(None, "first_id")
+        ids = json.loads(result)
+        assert ids == ["first_id"]
 
 
 if __name__ == "__main__":
