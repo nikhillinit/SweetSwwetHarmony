@@ -8,7 +8,10 @@ These tests are intentionally lightweight and non-mutating:
 - Drift alerts list (read-only)
 - Config validation callable
 
-Run: pytest tests/smoke/ -v
+Pre-commit verification (run before every commit):
+    python -m pytest --collect-only -q && python -m pytest tests/smoke/ -q
+
+Baseline reference: tests/baseline_snapshot.json, tests/KNOWN_FAILURES.md
 """
 
 import asyncio
