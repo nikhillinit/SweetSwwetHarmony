@@ -97,9 +97,12 @@ async def store():
 
 @pytest_asyncio.fixture
 async def client(store):
+    from unittest.mock import MagicMock
     app = FastAPI()
     app.state.store = store
     app.state.write_lock = asyncio.Lock()
+    app.state.notion_connector = MagicMock()  # non-None sentinel for M3 wiring
+    app.state.notion_transport = MagicMock()
     app.include_router(batch_mod.router, prefix="/api/v1")
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:

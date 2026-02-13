@@ -189,10 +189,30 @@ async def commit_batch_endpoint(
             },
         )
 
+    # Construct pusher for real commits
+    pusher = None
+    if not body.dry_run:
+        connector = getattr(request.app.state, "notion_connector", None)
+        if connector is None:
+            raise error_response(
+                503, "service_unavailable", "NOTION_NOT_CONFIGURED",
+                "Batch commit requires NOTION_API_KEY and NOTION_DATABASE_ID. "
+                "This is a configuration issue, not retryable.",
+            )
+        from verification.verification_gate_v2 import VerificationGate
+        from workflows.notion_pusher import NotionPusher
+        gate = VerificationGate(strict_mode=False)
+        pusher = NotionPusher(
+            signal_store=store,
+            notion_connector=connector,
+            verification_gate=gate,
+            dry_run=False,
+        )
+
     try:
-        # TODO: Wire NotionPusher for real commits (pusher=None → dry-run only)
         result = await commit_batch(
             store, batch_id,
+            pusher=pusher,
             dry_run=body.dry_run,
             actor=operator.actor_label,
         )

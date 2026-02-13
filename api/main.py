@@ -76,6 +76,31 @@ async def lifespan(app: FastAPI):
     # Write lock for single-writer pattern (SQLite concurrency)
     app.state.write_lock = asyncio.Lock()
 
+    # Initialize Notion connector (app-scoped, lifecycle-managed)
+    from connectors.notion_transport import NotionTransport
+    from connectors.notion_connector_v2 import NotionConnector
+    try:
+        notion_api_key = os.environ["NOTION_API_KEY"]
+        notion_db_id = os.environ["NOTION_DATABASE_ID"]
+        transport = NotionTransport(api_key=notion_api_key)
+        await transport.start()
+        connector = NotionConnector(
+            api_key=notion_api_key,
+            database_id=notion_db_id,
+            transport=transport,
+        )
+        app.state.notion_transport = transport
+        app.state.notion_connector = connector
+        logger.info("NotionConnector initialized (app-scoped)")
+    except (KeyError, ValueError) as e:
+        app.state.notion_transport = None
+        app.state.notion_connector = None
+        logger.warning("Notion not configured: %s -- batch commit unavailable", e)
+    except Exception as e:
+        app.state.notion_transport = None
+        app.state.notion_connector = None
+        logger.warning("Notion transport failed to start: %s -- batch commit unavailable", e)
+
     # Seed default users (always seed unless PRODUCTION=true)
     if os.getenv("PRODUCTION", "false").lower() != "true":
         seed_default_users()
@@ -86,6 +111,9 @@ async def lifespan(app: FastAPI):
     # Graceful shutdown
     logger.info("Shutting down — closing store")
     await store.close()
+    if getattr(app.state, "notion_transport", None):
+        await app.state.notion_transport.shutdown()
+        logger.info("NotionTransport shut down")
     logger.info("Shutdown complete")
 
 

@@ -123,6 +123,24 @@ async def get_inbox(
         offset=offset,
     )
 
+    # Count total matching companies (same filters, no LIMIT/OFFSET)
+    db = store._db
+    if db:
+        cursor = await db.execute(
+            """SELECT COUNT(*) FROM (
+                   SELECT s.canonical_key
+                   FROM signals s
+                   LEFT JOIN company_state cs ON s.canonical_key = cs.canonical_key
+                   WHERE COALESCE(cs.status, 'inbox') = ?
+                     AND s.confidence >= ?
+                   GROUP BY s.canonical_key
+               )""",
+            (status, min_confidence),
+        )
+        total = (await cursor.fetchone())[0]
+    else:
+        total = len(companies)
+
     return InboxResponse(
         companies=[
             InboxCompanyResponse(
@@ -140,7 +158,7 @@ async def get_inbox(
             )
             for c in companies
         ],
-        total=len(companies),  # TODO: Add count query for true pagination
+        total=total,
         page=page,
         page_size=page_size,
     )
