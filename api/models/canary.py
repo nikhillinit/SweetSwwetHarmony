@@ -39,7 +39,7 @@ class DriftAlertDTO(BaseModel):
     """Drift alert for API consumers."""
 
     id: int
-    canary_run_id: int
+    canary_run_id: Optional[int] = None
     alert_type: str
     severity: str
     signal_id: Optional[int] = None
@@ -50,9 +50,50 @@ class DriftAlertDTO(BaseModel):
     delta: Optional[float] = None
     message: str
     status: str
+    drift_category: Optional[str] = None
+    signature_key: Optional[str] = None
+    occurrence_count: int = 1
+    last_seen_at: Optional[str] = None
     acknowledged_by: Optional[str] = None
     acknowledged_at: Optional[str] = None
+    resolved_by: Optional[str] = None
+    resolved_at: Optional[str] = None
+    resolution: Optional[str] = None
+    snoozed_until: Optional[str] = None
+    snooze_count: int = 0
     created_at: str
+
+
+class AlertAckRequest(BaseModel):
+    """Request to acknowledge an alert."""
+    reason: str = Field(..., min_length=1)
+
+
+class AlertSnoozeRequest(BaseModel):
+    """Request to snooze an alert."""
+    hours: int = Field(..., ge=1, le=168)
+    reason: Optional[str] = None
+
+
+class AlertResolveRequest(BaseModel):
+    """Request to resolve an alert."""
+    resolution: str = Field(..., min_length=1)
+
+
+class AlertStatsDTO(BaseModel):
+    """Drift alert statistics."""
+    open: int = 0
+    acknowledged: int = 0
+    snoozed: int = 0
+    resolved: int = 0
+    mtta_mean_seconds: Optional[float] = None
+    mtta_p50_seconds: Optional[float] = None
+    mtta_p95_seconds: Optional[float] = None
+
+
+class SPCCheckRequest(BaseModel):
+    """Request for SPC check."""
+    metrics: Optional[list[str]] = None
 
 
 class CanaryTriggerRequest(BaseModel):

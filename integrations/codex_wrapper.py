@@ -85,9 +85,9 @@ class ForensicPhase(str, Enum):
 
 
 # Default model configuration
-# Model ID must match OpenAI's naming: gpt-5.2-codex (not gpt5-2)
-# See: https://platform.openai.com/docs/models/gpt-5.2-codex
-DEFAULT_MODEL = "gpt-5.2-codex"
+# Model ID must match OpenAI's naming: gpt-5.3-codex (not gpt5-3)
+# See: https://platform.openai.com/docs/models/gpt-5.3-codex
+DEFAULT_MODEL = "gpt-5.3-codex"
 DEFAULT_REASONING_LEVEL = ReasoningLevel.HIGH
 
 
@@ -149,7 +149,7 @@ class CodexCLI:
             sandbox_mode: Sandbox isolation level (default: read-only)
             approval_mode: Action approval mode (default: suggest only)
             timeout_seconds: Max execution time (default: 5 minutes)
-            model: Model to use (default: gpt-5.2-codex)
+            model: Model to use (default: gpt-5.3-codex)
             reasoning_level: Reasoning effort level (default: high)
         """
         self.sandbox_mode = sandbox_mode

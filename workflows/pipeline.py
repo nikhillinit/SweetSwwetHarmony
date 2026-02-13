@@ -1737,6 +1737,7 @@ class DiscoveryPipeline:
                 # Check LLM mode (off/shadow/active)
                 llm_mode = os.getenv("LLM_THESIS_MODE", "off").lower()
                 skip_llm = (llm_mode == "off")  # Shadow and active both call LLM
+                is_shadow = (llm_mode == "shadow")
 
                 thesis_result = await self._thesis_filter.classify(
                     description,
@@ -1745,52 +1746,117 @@ class DiscoveryPipeline:
                 )
                 thesis_routing = thesis_result.routing
 
-                # Route based on thesis result
-                if thesis_result.routing == RoutingDecision.REJECTED:
-                    logger.info(f"Thesis REJECTED: {canonical_key}")
-                    # Mark signals as rejected and update status
-                    for sig in signals:
-                        await self._store.mark_rejected(
-                            sig.id,
-                            f"Thesis rejected: negative keywords {thesis_result.negative_keywords}",
+                # Shadow logging — always before routing (Bug 0.10 fix)
+                # Written when thesis_match feature is enabled. Routing is also
+                # reconstructable from classification row data when shadow log
+                # is unavailable.
+                if self._feature_registry.is_enabled("thesis_match"):
+                    try:
+                        shadow_data = {
+                            "keyword_score": thesis_result.keyword_score,
+                            "keyword_category": thesis_result.keyword_category,
+                            "keyword_matches": thesis_result.keyword_matches,
+                            "negative_keywords": thesis_result.negative_keywords,
+                            "intent_phrases_matched": thesis_result.intent_phrases_matched,
+                            "domain_match": thesis_result.domain_match,
+                            "domain_blacklisted": thesis_result.domain_blacklisted,
+                            "routing": thesis_result.routing.value,
+                            "confidence_adjustment": thesis_result.confidence_adjustment,
+                            "v2_shadow": thesis_result.v2_shadow,
+                        }
+                        await self._store.log_shadow_computation(
+                            feature_name="thesis_match",
+                            canonical_key=canonical_key,
+                            computed_value=shadow_data,
+                            signal_id=signals[0].id if signals else None,
                         )
-                    await self._store.update_signal_status(
-                        canonical_key,
-                        "rejected",
-                        error_message=f"Thesis rejected: {thesis_result.negative_keywords}",
-                    )
-                    # Stats tracked via returned dict in _process_signals_stage
-                    return {
-                        "decision": PushDecision.REJECT,
-                        "reason": f"Thesis rejected: {thesis_result.negative_keywords}",
-                        "thesis_routing": thesis_routing,
-                        "gating_applied": False,
-                        "enrichment_boost": enrichment_boost,
-                    }
-                elif thesis_result.routing == RoutingDecision.HELD:
-                    logger.info(f"Thesis HELD: {canonical_key}")
-                    # Update status to 'held' for dashboard visibility
-                    await self._store.update_signal_status(
-                        canonical_key,
-                        "held",
-                        error_message=f"Thesis held: score {thesis_result.keyword_score:.2f} below threshold",
-                    )
-                    # Stats tracked via returned dict in _process_signals_stage
-                    return {
-                        "decision": PushDecision.HOLD,
-                        "reason": f"Thesis held: score {thesis_result.keyword_score:.2f} below threshold",
-                        "thesis_routing": thesis_routing,
-                        "gating_applied": False,
-                        "enrichment_boost": enrichment_boost,
-                    }
-                else:
-                    # QUALIFIED - continue processing (stats tracked via returned dict)
-                    pass
+                        self._run_stats.shadow_logs_written += 1
+                    except Exception as e:
+                        logger.debug(f"Failed to log thesis_match shadow (non-fatal): {e}")
 
-                # Check for competitors (only for qualified signals)
+                # Route based on thesis result (with per-path classification persistence)
+                _classification_persisted = False
+                if thesis_result.routing == RoutingDecision.REJECTED:
+                    # Persist classification for rejected signal (no competitor data)
+                    if self._store and signals:
+                        try:
+                            await self._store.save_thesis_classification(
+                                signal_id=signals[0].id,
+                                canonical_key=canonical_key,
+                                keyword_score=thesis_result.keyword_score,
+                                keyword_category=thesis_result.keyword_category,
+                                negative_keywords=thesis_result.negative_keywords,
+                                thesis_fit_score=thesis_result.llm_score,
+                                category=thesis_result.llm_category,
+                                rationale=thesis_result.llm_rationale,
+                                competitor_flag=False,
+                                competitor_match=None,
+                            )
+                            _classification_persisted = True
+                        except Exception as e:
+                            logger.warning(f"Failed to save thesis classification (non-fatal): {e}")
+                    if not is_shadow:
+                        logger.info(f"Thesis REJECTED: {canonical_key}")
+                        for sig in signals:
+                            await self._store.mark_rejected(
+                                sig.id,
+                                f"Thesis rejected: negative keywords {thesis_result.negative_keywords}",
+                            )
+                        await self._store.update_signal_status(
+                            canonical_key,
+                            "rejected",
+                            error_message=f"Thesis rejected: {thesis_result.negative_keywords}",
+                        )
+                        return {
+                            "decision": PushDecision.REJECT,
+                            "reason": f"Thesis rejected: {thesis_result.negative_keywords}",
+                            "thesis_routing": thesis_routing,
+                            "gating_applied": False,
+                            "enrichment_boost": enrichment_boost,
+                        }
+                    else:
+                        logger.info(f"Thesis REJECTED (shadow, observed-only): {canonical_key}")
+
+                elif thesis_result.routing == RoutingDecision.HELD:
+                    # Persist classification for held signal (no competitor data)
+                    if self._store and signals:
+                        try:
+                            await self._store.save_thesis_classification(
+                                signal_id=signals[0].id,
+                                canonical_key=canonical_key,
+                                keyword_score=thesis_result.keyword_score,
+                                keyword_category=thesis_result.keyword_category,
+                                negative_keywords=thesis_result.negative_keywords,
+                                thesis_fit_score=thesis_result.llm_score,
+                                category=thesis_result.llm_category,
+                                rationale=thesis_result.llm_rationale,
+                                competitor_flag=False,
+                                competitor_match=None,
+                            )
+                            _classification_persisted = True
+                        except Exception as e:
+                            logger.warning(f"Failed to save thesis classification (non-fatal): {e}")
+                    if not is_shadow:
+                        logger.info(f"Thesis HELD: {canonical_key}")
+                        await self._store.update_signal_status(
+                            canonical_key,
+                            "held",
+                            error_message=f"Thesis held: score {thesis_result.keyword_score:.2f} below threshold",
+                        )
+                        return {
+                            "decision": PushDecision.HOLD,
+                            "reason": f"Thesis held: score {thesis_result.keyword_score:.2f} below threshold",
+                            "thesis_routing": thesis_routing,
+                            "gating_applied": False,
+                            "enrichment_boost": enrichment_boost,
+                        }
+                    else:
+                        logger.info(f"Thesis HELD (shadow, observed-only): {canonical_key}")
+
+                # QUALIFIED (or shadow fall-through):
+                # Competitor detection stays in qualified-only flow
                 competitor_match = None
                 if self._competitor_detector and thesis_result.keyword_category:
-                    # description already computed above
                     competitor_match = self._competitor_detector.check(
                         thesis_result.keyword_category,
                         description,
@@ -1801,8 +1867,9 @@ class DiscoveryPipeline:
                             f"similar to {competitor_match.portfolio_company}"
                         )
 
-                # Save classification to DB (with competitor info)
-                if self._store and signals:
+                # Persist classification with competitor data (qualified path only —
+                # skip if already persisted for shadow-rejected/held signals)
+                if self._store and signals and not _classification_persisted:
                     try:
                         await self._store.save_thesis_classification(
                             signal_id=signals[0].id,
@@ -1818,33 +1885,6 @@ class DiscoveryPipeline:
                         )
                     except Exception as e:
                         logger.warning(f"Failed to save thesis classification (non-fatal): {e}")
-
-                # Phase B: SHADOW logging for thesis match details
-                # Phase 0B-3: Fixed double-encoding - pass dict directly, include v2_shadow
-                if self._feature_registry.is_enabled("thesis_match"):
-                    try:
-                        shadow_data = {
-                            "keyword_score": thesis_result.keyword_score,
-                            "keyword_category": thesis_result.keyword_category,
-                            "keyword_matches": thesis_result.keyword_matches,
-                            "negative_keywords": thesis_result.negative_keywords,
-                            "intent_phrases_matched": thesis_result.intent_phrases_matched,
-                            "domain_match": thesis_result.domain_match,
-                            "domain_blacklisted": thesis_result.domain_blacklisted,
-                            "routing": thesis_result.routing.value,
-                            "confidence_adjustment": thesis_result.confidence_adjustment,
-                            # Phase 0B-3: Include v2_shadow for shadow mode comparison
-                            "v2_shadow": thesis_result.v2_shadow,
-                        }
-                        await self._store.log_shadow_computation(
-                            feature_name="thesis_match",
-                            canonical_key=canonical_key,
-                            computed_value=shadow_data,  # Pass dict, not JSON string
-                            signal_id=signals[0].id if signals else None,
-                        )
-                        self._run_stats.shadow_logs_written += 1
-                    except Exception as e:
-                        logger.debug(f"Failed to log thesis_match shadow (non-fatal): {e}")
 
                 # Apply confidence adjustment to enrichment boost
                 enrichment_boost += thesis_result.confidence_adjustment

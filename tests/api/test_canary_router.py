@@ -343,5 +343,103 @@ class TestListDriftAlerts:
         assert all(item["severity"] == "critical" for item in data["data"])
 
 
+# =============================================================================
+# ALERT MUTATION TESTS (Wave 5)
+# =============================================================================
+
+
+class TestAlertAcknowledge:
+    """Tests for POST /canary/drift-alerts/{id}/acknowledge."""
+
+    @pytest.mark.asyncio
+    async def test_ack_alert(self, client, store, monkeypatch):
+        monkeypatch.setenv("DRIFT_MONITORING_ENABLED", "active")
+        await _seed_canary_run(store, run_id=1, run_ref="cr-ack")
+        await _seed_drift_alert(store, alert_id=1, canary_run_id=1, status="open")
+
+        resp = await client.post(
+            "/api/v1/canary/drift-alerts/1/acknowledge",
+            json={"reason": "Investigating"},
+            headers=_auth_header(Role.ANALYST),
+        )
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["status"] == "acknowledged"
+
+    @pytest.mark.asyncio
+    async def test_ack_alert_feature_disabled(self, client, store, monkeypatch):
+        monkeypatch.delenv("DRIFT_MONITORING_ENABLED", raising=False)
+        await _seed_canary_run(store, run_id=1, run_ref="cr-ack-disabled")
+        await _seed_drift_alert(store, alert_id=1, canary_run_id=1, status="open")
+
+        resp = await client.post(
+            "/api/v1/canary/drift-alerts/1/acknowledge",
+            json={"reason": "test"},
+            headers=_auth_header(Role.ANALYST),
+        )
+        assert resp.status_code == 423
+
+
+class TestAlertResolve:
+    """Tests for POST /canary/drift-alerts/{id}/resolve."""
+
+    @pytest.mark.asyncio
+    async def test_resolve_alert(self, client, store, monkeypatch):
+        monkeypatch.setenv("DRIFT_MONITORING_ENABLED", "active")
+        await _seed_canary_run(store, run_id=1, run_ref="cr-resolve")
+        await _seed_drift_alert(store, alert_id=1, canary_run_id=1, status="open")
+
+        resp = await client.post(
+            "/api/v1/canary/drift-alerts/1/resolve",
+            json={"resolution": "False alarm"},
+            headers=_auth_header(Role.ANALYST),
+        )
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["status"] == "resolved"
+
+    @pytest.mark.asyncio
+    async def test_resolve_not_found(self, client, store, monkeypatch):
+        monkeypatch.setenv("DRIFT_MONITORING_ENABLED", "active")
+
+        resp = await client.post(
+            "/api/v1/canary/drift-alerts/99999/resolve",
+            json={"resolution": "Missing"},
+            headers=_auth_header(Role.ANALYST),
+        )
+        assert resp.status_code == 404
+
+
+class TestAlertStats:
+    """Tests for GET /canary/drift-alerts/stats."""
+
+    @pytest.mark.asyncio
+    async def test_stats_empty(self, client, store):
+        resp = await client.get(
+            "/api/v1/canary/drift-alerts/stats",
+            headers=_auth_header(Role.READONLY),
+        )
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["open"] == 0
+        assert data["acknowledged"] == 0
+
+    @pytest.mark.asyncio
+    async def test_stats_with_alerts(self, client, store):
+        await _seed_canary_run(store, run_id=1, run_ref="cr-stats")
+        await _seed_drift_alert(store, alert_id=1, canary_run_id=1, status="open")
+        await _seed_drift_alert(store, alert_id=2, canary_run_id=1, status="open")
+        await _seed_drift_alert(store, alert_id=3, canary_run_id=1, status="resolved")
+
+        resp = await client.get(
+            "/api/v1/canary/drift-alerts/stats",
+            headers=_auth_header(Role.READONLY),
+        )
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["open"] == 2
+        assert data["resolved"] == 1
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])

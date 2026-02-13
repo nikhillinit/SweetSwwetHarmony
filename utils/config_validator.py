@@ -51,6 +51,10 @@ WRITE_FEATURE_ENV_VARS = {
         "description": "Hunter result promotion",
         "valid": frozenset({"disabled", "active"}),
     },
+    "DRIFT_MONITORING_ENABLED": {
+        "description": "Drift monitoring and alert mutations",
+        "valid": frozenset({"disabled", "active"}),
+    },
 }
 
 # Threshold env vars that must be in [0.0, 1.0] when set.

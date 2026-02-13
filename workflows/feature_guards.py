@@ -33,6 +33,7 @@ class WriteFeature(str, Enum):
     MERGE_WRITES = "merge_writes"
     BULK_TRIAGE = "bulk_triage"
     HUNTER_PROMOTE = "hunter_promote"
+    DRIFT_MONITORING = "drift_monitoring"
 
 
 class WriteMode(str, Enum):
@@ -71,6 +72,7 @@ _FEATURE_ENV_MAP: dict[WriteFeature, str] = {
     WriteFeature.MERGE_WRITES: "MERGE_WRITES_ENABLED",
     WriteFeature.BULK_TRIAGE: "BULK_TRIAGE_ENABLED",
     WriteFeature.HUNTER_PROMOTE: "HUNTER_PROMOTE_ENABLED",
+    WriteFeature.DRIFT_MONITORING: "DRIFT_MONITORING_ENABLED",
 }
 
 # Valid modes per feature. Merge supports shadow; others don't.
@@ -78,6 +80,7 @@ _VALID_MODES: dict[WriteFeature, frozenset[str]] = {
     WriteFeature.MERGE_WRITES: frozenset({"disabled", "shadow", "active"}),
     WriteFeature.BULK_TRIAGE: frozenset({"disabled", "active"}),
     WriteFeature.HUNTER_PROMOTE: frozenset({"disabled", "active"}),
+    WriteFeature.DRIFT_MONITORING: frozenset({"disabled", "active"}),
 }
 
 

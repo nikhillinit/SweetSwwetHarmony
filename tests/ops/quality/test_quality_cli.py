@@ -50,7 +50,16 @@ class TestRegisterQualityCommands:
                 break
 
         assert quality_subs is not None, "quality sub-subparsers not found"
-        assert len(quality_subs) == 14, f"Expected 14 subcommands, got {len(quality_subs)}: {list(quality_subs.keys())}"
+        required_commands = {
+            "label", "stats", "sync-status-events", "backfill-outcomes",
+            "backfill-snapshot", "export", "find-patterns", "propose-tuning",
+            "apply-tuning", "thesis-classify", "thesis-classify-batch",
+            "thesis-disagreement-report", "key-suggestions", "propose-patterns",
+            "list-proposals", "review-proposal", "expire-proposals", "enrich",
+        }
+        actual_commands = set(quality_subs.keys())
+        missing = required_commands - actual_commands
+        assert not missing, f"Missing required subcommands: {missing}"
 
 
 class TestLabelArgsParsing:

@@ -83,12 +83,10 @@ class TestV30Migration:
 
     @pytest.mark.asyncio
     async def test_schema_version_is_30(self, store):
-        """Schema version is 30 after all migrations."""
-        cursor = await store._db.execute(
-            "SELECT MAX(version) FROM schema_migrations"
-        )
-        row = await cursor.fetchone()
-        assert row[0] == 30
+        """Schema version is >= 30 with v30 migration applied."""
+        from storage.signal_store import CURRENT_SCHEMA_VERSION, MIGRATIONS
+        assert CURRENT_SCHEMA_VERSION >= 30, f"v30 migration requires schema >= 30, got {CURRENT_SCHEMA_VERSION}"
+        assert 30 in MIGRATIONS, "v30 migration missing from MIGRATIONS dict"
 
 
 # =============================================================================

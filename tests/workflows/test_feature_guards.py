@@ -143,3 +143,25 @@ class TestIsFeatureEnabled:
     def test_shadow_returns_true(self, monkeypatch):
         monkeypatch.setenv("MERGE_WRITES_ENABLED", "shadow")
         assert is_feature_enabled(WriteFeature.MERGE_WRITES) is True
+
+
+class TestDriftMonitoring:
+    """Test DRIFT_MONITORING feature guard."""
+
+    def test_disabled_by_default(self, monkeypatch):
+        monkeypatch.delenv("DRIFT_MONITORING_ENABLED", raising=False)
+        assert get_write_mode(WriteFeature.DRIFT_MONITORING) == WriteMode.DISABLED
+
+    def test_active_passes(self, monkeypatch):
+        monkeypatch.setenv("DRIFT_MONITORING_ENABLED", "active")
+        mode = assert_write_enabled(WriteFeature.DRIFT_MONITORING)
+        assert mode == WriteMode.ACTIVE
+
+    def test_disabled_raises(self, monkeypatch):
+        monkeypatch.delenv("DRIFT_MONITORING_ENABLED", raising=False)
+        with pytest.raises(FeatureDisabledError) as exc_info:
+            assert_write_enabled(WriteFeature.DRIFT_MONITORING)
+        err = exc_info.value
+        assert err.feature == WriteFeature.DRIFT_MONITORING
+        assert err.env_var == "DRIFT_MONITORING_ENABLED"
+        assert err.current_mode == "disabled"

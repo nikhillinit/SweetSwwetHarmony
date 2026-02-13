@@ -11,12 +11,20 @@ and config_hash. Generates drift alerts for:
 
 When no compatible baseline exists: verdict='no_baseline', zero alerts.
 Minimum 3 signals per stratum before firing stratified alerts.
+
+Wave 5 additions:
+- drift_category classification (D4-style: concept/model/data drift)
+- signature_key for alert dedup (D15, D18)
+- DB-enforced dedup with IntegrityError fallback (D23)
+- Correlation ID cap at 25 entries (D24)
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
@@ -28,6 +36,57 @@ logger = logging.getLogger(__name__)
 
 # Minimum signals per stratum for stratified alerts
 MIN_STRATUM_SIZE = 3
+
+# Maximum correlation IDs to store per alert (D24)
+MAX_CORRELATION_IDS = 25
+
+# Drift category mapping
+_DRIFT_CATEGORY_MAP = {
+    "pass_rate_drop": "concept_drift",
+    "pass_rate_improvement": "concept_drift",
+    "individual_drift": "model_drift",
+    "archetype_regression": "data_drift",
+    "archetype_improvement": "data_drift",
+    "spc_violation": "concept_drift",
+    "trend_alert": "concept_drift",
+    "calibration_drift": "model_drift",
+}
+
+
+def compute_signature_key(
+    alert_type: str,
+    drift_category: Optional[str],
+    metric_name: str,
+    segment_type: str = "overall",
+    segment_key: str = "",
+) -> str:
+    """Compute deterministic dedup signature (D15).
+
+    Includes segment dimensions to prevent collapsing distinct incidents.
+    """
+    parts = [
+        alert_type,
+        drift_category or "unknown",
+        metric_name,
+        segment_type or "global",
+        segment_key or "global",
+    ]
+    raw = "|".join(parts)
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
+def _cap_correlation_ids(existing_json: Optional[str], new_id: str) -> str:
+    """Cap correlation IDs to last MAX_CORRELATION_IDS entries (D24)."""
+    try:
+        ids = json.loads(existing_json) if existing_json else []
+    except (json.JSONDecodeError, TypeError):
+        ids = []
+    if not isinstance(ids, list):
+        ids = []
+    ids.append(new_id)
+    # Keep only the last N
+    ids = ids[-MAX_CORRELATION_IDS:]
+    return json.dumps(ids)
 
 
 @dataclass
@@ -43,6 +102,10 @@ class DriftAlert:
     actual_value: Optional[float] = None
     delta: Optional[float] = None
     message: str = ""
+    drift_category: Optional[str] = None
+    signature_key: Optional[str] = None
+    segment_type: str = "overall"
+    segment_key: str = ""
 
 
 @dataclass
@@ -257,45 +320,107 @@ async def detect_drift(
     return result
 
 
+def _classify_drift_category(alert_type: str) -> Optional[str]:
+    """Map alert_type to drift_category."""
+    return _DRIFT_CATEGORY_MAP.get(alert_type)
+
+
+def _enrich_alert(alert: DriftAlert) -> DriftAlert:
+    """Add drift_category and signature_key to an alert."""
+    if alert.drift_category is None:
+        alert.drift_category = _classify_drift_category(alert.alert_type)
+    if alert.signature_key is None:
+        alert.signature_key = compute_signature_key(
+            alert.alert_type,
+            alert.drift_category,
+            alert.metric_name,
+            alert.segment_type,
+            alert.segment_key,
+        )
+    return alert
+
+
 async def store_drift_alerts(
     store: "SignalStore",
     canary_run_id: int,
     alerts: List[DriftAlert],
+    correlation_id: Optional[str] = None,
 ) -> int:
-    """Persist drift alerts to canary_drift_alerts table.
+    """Persist drift alerts with dedup via signature_key (D18, D23).
+
+    Uses DB-enforced partial unique index for dedup. Falls back to
+    explicit UPDATE on IntegrityError (D23).
 
     Returns:
-        Number of alerts stored.
+        Number of alerts stored or updated.
     """
     db = store._db
     now = datetime.now(timezone.utc).isoformat()
     count = 0
+    corr_id = correlation_id or str(canary_run_id)
 
     for alert in alerts:
-        await db.execute(
-            """
-            INSERT INTO canary_drift_alerts (
-                canary_run_id, alert_type, severity,
-                signal_id, canonical_key, metric_name,
-                expected_value, actual_value, delta,
-                message, status, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
-            """,
-            (
-                canary_run_id,
-                alert.alert_type,
-                alert.severity,
-                alert.signal_id,
-                alert.canonical_key,
-                alert.metric_name,
-                alert.expected_value,
-                alert.actual_value,
-                alert.delta,
-                alert.message,
-                now,
-            ),
-        )
-        count += 1
+        _enrich_alert(alert)
+        initial_corr_json = json.dumps([corr_id])
+
+        try:
+            # Primary path: UPSERT with partial-index conflict target (D18)
+            await db.execute(
+                """INSERT INTO canary_drift_alerts (
+                    canary_run_id, alert_type, severity,
+                    signal_id, canonical_key, metric_name,
+                    expected_value, actual_value, delta,
+                    message, status, drift_category, signature_key,
+                    occurrence_count, last_seen_at, correlation_ids_json,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, 1, ?, ?, ?)
+                ON CONFLICT(signature_key) WHERE status IN ('open','snoozed')
+                DO UPDATE SET
+                    last_seen_at = excluded.last_seen_at,
+                    occurrence_count = occurrence_count + 1,
+                    correlation_ids_json = excluded.correlation_ids_json""",
+                (
+                    canary_run_id,
+                    alert.alert_type,
+                    alert.severity,
+                    alert.signal_id,
+                    alert.canonical_key,
+                    alert.metric_name,
+                    alert.expected_value,
+                    alert.actual_value,
+                    alert.delta,
+                    alert.message,
+                    alert.drift_category,
+                    alert.signature_key,
+                    now,
+                    initial_corr_json,
+                    now,
+                ),
+            )
+            count += 1
+        except (sqlite3.IntegrityError, Exception) as exc:
+            # Fallback path (D23): explicit UPDATE for active alerts
+            if "UNIQUE constraint" in str(exc) or isinstance(exc, sqlite3.IntegrityError):
+                # Read existing correlation_ids, cap and update
+                cursor = await db.execute(
+                    "SELECT correlation_ids_json FROM canary_drift_alerts "
+                    "WHERE signature_key = ? AND status IN ('open','snoozed')",
+                    (alert.signature_key,),
+                )
+                row = await cursor.fetchone()
+                capped_json = _cap_correlation_ids(
+                    row[0] if row else None, corr_id
+                )
+                await db.execute(
+                    "UPDATE canary_drift_alerts SET last_seen_at=?, "
+                    "occurrence_count=occurrence_count+1, "
+                    "correlation_ids_json=? "
+                    "WHERE signature_key=? AND status IN ('open','snoozed')",
+                    (now, capped_json, alert.signature_key),
+                )
+                count += 1
+            else:
+                raise
 
     await db.commit()
     return count
