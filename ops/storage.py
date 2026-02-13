@@ -203,7 +203,7 @@ class OpsStorage:
                 name TEXT NOT NULL UNIQUE,
                 cron_expression TEXT NOT NULL,
                 collectors TEXT DEFAULT '[]',
-                mode TEXT DEFAULT 'full' CHECK(mode IN ('full', 'collect', 'process')),
+                mode TEXT DEFAULT 'full' CHECK(mode IN ('full', 'collect', 'process', 'quality-sync', 'quality-classify', 'quality-patterns', 'canary-monitor')),
                 dry_run INTEGER DEFAULT 0,
                 enabled INTEGER DEFAULT 1,
                 max_retries INTEGER DEFAULT 0,

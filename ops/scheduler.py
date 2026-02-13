@@ -9,9 +9,12 @@ Uses ops/storage.py tables: pipeline_schedules, pipeline_run_history.
 
 import json
 import logging
+import os
+import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+from pathlib import Path
 from typing import List, Optional
 
 from croniter import croniter
@@ -19,6 +22,8 @@ from croniter import croniter
 from ops.storage import OpsStorage
 
 logger = logging.getLogger(__name__)
+
+_REPO_ROOT = str(Path(__file__).resolve().parent.parent)
 
 
 # ---------------------------------------------------------------------------
@@ -99,7 +104,7 @@ class PipelineScheduler:
                         name TEXT NOT NULL UNIQUE,
                         cron_expression TEXT NOT NULL,
                         collectors TEXT DEFAULT '[]',
-                        mode TEXT DEFAULT 'full' CHECK(mode IN ('full', 'collect', 'process', 'quality-sync', 'quality-classify', 'quality-patterns')),
+                        mode TEXT DEFAULT 'full' CHECK(mode IN ('full', 'collect', 'process', 'quality-sync', 'quality-classify', 'quality-patterns', 'canary-monitor')),
                         dry_run INTEGER DEFAULT 0,
                         enabled INTEGER DEFAULT 1,
                         max_retries INTEGER DEFAULT 0,
@@ -124,7 +129,7 @@ class PipelineScheduler:
                         name TEXT NOT NULL UNIQUE,
                         cron_expression TEXT NOT NULL,
                         collectors TEXT DEFAULT '[]',
-                        mode TEXT DEFAULT 'full' CHECK(mode IN ('full', 'collect', 'process', 'quality-sync', 'quality-classify', 'quality-patterns')),
+                        mode TEXT DEFAULT 'full' CHECK(mode IN ('full', 'collect', 'process', 'quality-sync', 'quality-classify', 'quality-patterns', 'canary-monitor')),
                         dry_run INTEGER DEFAULT 0,
                         enabled INTEGER DEFAULT 1,
                         max_retries INTEGER DEFAULT 0,
@@ -238,6 +243,49 @@ class PipelineScheduler:
                 (schedule_id,),
             ).fetchone()
             return row
+
+    def get_schedule_by_name(self, name: str) -> Optional[dict]:
+        with self.storage.read_transaction() as conn:
+            conn.row_factory = _dict_factory
+            row = conn.execute(
+                "SELECT * FROM pipeline_schedules WHERE name = ?", (name,),
+            ).fetchone()
+            return row
+
+    def ensure_schedule(self, config: ScheduleConfig) -> tuple:
+        """Idempotent create. Returns (id, created, warnings).
+
+        Warns on ALL field drift (R6-4), not just cron/mode. All warnings are
+        non-blocking — the schedule is NOT modified, just reported.
+        """
+        existing = self.get_schedule_by_name(config.name)
+        if existing:
+            warnings = []
+            if existing["cron_expression"] != config.cron_expression:
+                warnings.append(f"cron mismatch: DB='{existing['cron_expression']}' vs requested='{config.cron_expression}'")
+            if existing["mode"] != config.mode:
+                warnings.append(f"mode mismatch: DB='{existing['mode']}' vs requested='{config.mode}'")
+            if bool(existing["enabled"]) != config.enabled:
+                warnings.append(f"enabled mismatch: DB={bool(existing['enabled'])} vs requested={config.enabled}")
+            if bool(existing["dry_run"]) != config.dry_run:
+                warnings.append(f"dry_run mismatch: DB={bool(existing['dry_run'])} vs requested={config.dry_run}")
+            try:
+                existing_collectors = json.loads(existing["collectors"]) if existing["collectors"] else []
+            except (json.JSONDecodeError, TypeError):
+                warnings.append("collectors malformed in DB (cannot parse), skipping comparison")
+                existing_collectors = None
+            if existing_collectors is not None and existing_collectors != config.collectors:
+                warnings.append(f"collectors mismatch: DB={existing_collectors} vs requested={config.collectors}")
+            try:
+                existing_max_retries = int(existing.get("max_retries", 0))
+            except (TypeError, ValueError):
+                warnings.append("max_retries malformed in DB (cannot parse), skipping comparison")
+                existing_max_retries = None
+            if existing_max_retries is not None and existing_max_retries != config.max_retries:
+                warnings.append(f"max_retries mismatch: DB={existing_max_retries} vs requested={config.max_retries}")
+            return existing["id"], False, warnings
+        sid = self.create_schedule(config)
+        return sid, True, []
 
     def list_schedules(self) -> List[dict]:
         with self.storage.read_transaction() as conn:
@@ -535,6 +583,106 @@ class PipelineScheduler:
             logger.error(f"Pattern detection failed: {e}")
             raise
 
+    # -----------------------------------------------------------------------
+    # Canary monitor execution handler
+    # -----------------------------------------------------------------------
+
+    async def _execute_canary_monitor(self, run_id: int, schedule: dict) -> dict:
+        import asyncio
+        # R4-1: Derive DB path from OpsStorage (same as CLI --db), NOT env var
+        db_path = os.path.abspath(self.storage.db_path)
+        python = sys.executable
+        repo_root = _REPO_ROOT
+        artifacts_dir = os.path.join(repo_root, "artifacts", "cadence")
+        os.makedirs(artifacts_dir, exist_ok=True)
+        # R6-3: Read per invocation so runtime env changes apply
+        step_timeout = int(os.getenv("CANARY_STEP_TIMEOUT_SECONDS", "300"))
+
+        # R4-1 + MO-4: Ensure subprocesses use the same DB path
+        sub_env = {**os.environ, "DISCOVERY_DB_PATH": db_path}
+
+        steps = [
+            {"name": "canary", "cmd": [python, "-m", "monitoring.canary_checker", "run",
+                                        "--db", db_path, "--store-results"], "required": True},
+            {"name": "drift", "cmd": [python, os.path.join(repo_root, "run_pipeline.py"),
+                                       "drift", "check", "--db-path", db_path], "required": True},
+            {"name": "activation", "cmd": [python, os.path.join(repo_root, "run_pipeline.py"),
+                                            "activation-check", "--step", "2", "--json",
+                                            "--db-path", db_path], "required": True},
+        ]
+
+        # Optional shadow export — gate on LLM_THESIS_MODE (R2-5, R3-5)
+        llm_mode = os.getenv("LLM_THESIS_MODE", "off").lower()
+        if llm_mode in ("shadow", "active"):
+            shadow_out = os.path.join(artifacts_dir, "shadow_cadence.jsonl")
+            steps.append({"name": "shadow-export", "cmd": [
+                python, os.path.join(repo_root, "scripts", "shadow_report.py"),
+                "export", "--db-path", db_path, "--since-days", "1",
+                "--limit", "2000", "--out", shadow_out], "required": False})
+
+        results = {}
+        failure_error = None
+        try:
+            for step in steps:
+                try:
+                    proc = await asyncio.create_subprocess_exec(
+                        *step["cmd"],
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                        cwd=repo_root,
+                        env=sub_env,
+                    )
+                    try:
+                        stdout, stderr = await asyncio.wait_for(
+                            proc.communicate(), timeout=step_timeout
+                        )
+                    except asyncio.TimeoutError:
+                        proc.kill()
+                        await proc.communicate()  # reap
+                        msg = f"step '{step['name']}' timed out after {step_timeout}s"
+                        logger.error(f"canary-monitor {msg}")
+                        results[step["name"]] = {"returncode": -1, "stdout": "", "stderr": msg}
+                        if step["required"]:
+                            failure_error = RuntimeError(f"canary-monitor required {msg}")
+                            break
+                        continue
+
+                    results[step["name"]] = {
+                        "returncode": proc.returncode,
+                        "stdout": stdout.decode(errors="replace"),
+                        "stderr": stderr.decode(errors="replace"),
+                    }
+                    logger.info(f"canary-monitor step '{step['name']}' exited {proc.returncode}")
+
+                    if proc.returncode != 0 and step["required"]:
+                        failure_error = RuntimeError(
+                            f"canary-monitor required step '{step['name']}' failed "
+                            f"(exit {proc.returncode}): {stderr.decode(errors='replace')[:500]}"
+                        )
+                        break
+                    elif proc.returncode != 0:
+                        logger.warning(f"canary-monitor optional step '{step['name']}' failed, continuing")
+
+                except asyncio.CancelledError:
+                    raise  # R6-2: Don't swallow cancellation
+                except Exception as e:
+                    # R5-1: Catch spawn failures (bad path, permission denied, etc.)
+                    msg = f"step '{step['name']}' spawn failed: {e}"
+                    logger.error(f"canary-monitor {msg}")
+                    results[step["name"]] = {"returncode": -2, "stdout": "", "stderr": str(e)}
+                    if step["required"]:
+                        failure_error = RuntimeError(f"canary-monitor required {msg}")
+                        break
+        finally:
+            # R3-1: Always write artifact, even with partial results
+            _write_cadence_artifact(artifacts_dir, run_id, results,
+                                    error=str(failure_error) if failure_error else None)
+
+        if failure_error:
+            raise failure_error
+
+        return results
+
     # Execute (calls the actual pipeline)
     # -----------------------------------------------------------------------
 
@@ -592,6 +740,14 @@ class PipelineScheduler:
                     "signals_processed": mode_result.get("patterns_detected", 0),
                     "signals_pushed": 0,
                     "collectors_failed": 0
+                }
+            elif mode == "canary-monitor":
+                mode_result = await self._execute_canary_monitor(run_id, schedule)
+                stats_dict = {
+                    "signals_found": 0,
+                    "signals_processed": len([r for r in mode_result.values() if r["returncode"] == 0]),
+                    "signals_pushed": 0,
+                    "collectors_failed": len([r for r in mode_result.values() if r["returncode"] != 0]),
                 }
             else:
                 # Default: full pipeline execution
@@ -719,6 +875,44 @@ class PipelineScheduler:
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+def _write_cadence_artifact(artifacts_dir: str, run_id: int, results: dict,
+                            error: str | None = None) -> None:
+    """Write JSON summary + append JSONL ledger line. Always called (even on failure)."""
+    ts = datetime.now(timezone.utc).isoformat()
+
+    def _trim(text: str, max_chars: int = 2048) -> str:
+        """First/last ~2K chars for triage (MO-5, R5-3: char-based, not byte-based)."""
+        if len(text) <= max_chars * 2:
+            return text
+        return text[:max_chars] + "\n...[trimmed]...\n" + text[-max_chars:]
+
+    entry = {
+        "run_id": run_id,
+        "timestamp": ts,
+        "steps": {
+            k: {
+                "returncode": v["returncode"],
+                "stdout_trimmed": _trim(v.get("stdout", "")),
+                "stderr_trimmed": _trim(v.get("stderr", "")),
+            }
+            for k, v in results.items()
+        },
+        "all_passed": all(v["returncode"] == 0 for v in results.values()) if results else False,
+        "error": error,
+    }
+
+    try:
+        summary_path = os.path.join(artifacts_dir, "latest_summary.json")
+        with open(summary_path, "w", encoding="utf-8") as f:
+            json.dump(entry, f, indent=2)
+
+        ledger_path = os.path.join(artifacts_dir, "cadence_ledger.jsonl")
+        with open(ledger_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception as e:  # R6-1: Catch OSError + UnicodeEncodeError + anything else
+        logger.warning(f"Failed to write cadence artifact: {e}")
+
 
 def _dict_factory(cursor, row):
     return {col[0]: row[idx] for idx, col in enumerate(cursor.description)}
