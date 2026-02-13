@@ -218,7 +218,7 @@ class ThesisFilter:
 
         # Stage 2: LLM classification
         llm_result = None
-        if self._llm_classifier:
+        if self.llm_classifier:
             try:
                 signal_data = {
                     "title": company_name or "Unknown",
