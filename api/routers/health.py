@@ -295,6 +295,23 @@ async def get_activation_readiness(
     return result.to_dict()
 
 
+@router.get("/phase-g-readiness")
+async def get_phase_g_readiness(
+    store: SignalStore = Depends(get_store),
+):
+    """
+    Check Phase G entity resolution readiness.
+
+    Evaluates whether entity identity tables, shadow data, and merge quality
+    meet the threshold for safe activation. Separate from activation-readiness
+    (which stays integer steps 1-4).
+    """
+    from monitoring.phase_g_readiness import check_phase_g_readiness
+
+    result = await check_phase_g_readiness(store)
+    return result.to_dict()
+
+
 @router.get("/collectors", response_model=List[CollectorHealth])
 async def get_collector_health(
     store: SignalStore = Depends(get_store),
