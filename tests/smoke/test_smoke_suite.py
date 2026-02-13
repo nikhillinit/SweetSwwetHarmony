@@ -224,3 +224,29 @@ class TestActivationSmoke:
         assert db_id, (
             f"DELIVERY_MODE={mode} but NOTION_DATABASE_ID is not configured"
         )
+
+
+# =============================================================================
+# 6. ACTIVATION GATE SMOKE (M4)
+# =============================================================================
+
+class TestActivationGateSmoke:
+    """Verify activation gate is callable on a fresh DB."""
+
+    @pytest.mark.asyncio
+    async def test_gate_callable_on_fresh_db(self, store):
+        """check_activation_readiness runs without error on fresh DB."""
+        from monitoring.activation_gate import check_activation_readiness
+
+        result = await check_activation_readiness(store, step=1)
+        assert result.verdict in ("ready", "warn", "blocked")
+        assert isinstance(result.reasons, list)
+
+    @pytest.mark.asyncio
+    async def test_step1_returns_warn_with_no_canary(self, store):
+        """Step 1 on fresh DB (no canary data) returns 'warn'."""
+        from monitoring.activation_gate import check_activation_readiness
+
+        result = await check_activation_readiness(store, step=1)
+        assert result.verdict == "warn"
+        assert result.can_proceed is True

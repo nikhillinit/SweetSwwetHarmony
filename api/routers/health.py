@@ -9,12 +9,13 @@ Provides detailed health and monitoring endpoints:
 - GET /health/database - Database stats and integrity
 """
 
+import asyncio
 import logging
 import os
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, field_validator
 
@@ -205,7 +206,32 @@ async def get_detailed_health(
             message="Signal health monitor not available",
         ))
 
-    # 3. Relationship health
+    # 3. Activation readiness (2s timeout guardrail)
+    try:
+        from monitoring.activation_gate import check_activation_readiness
+
+        gate_result = await asyncio.wait_for(
+            check_activation_readiness(store, step=1),
+            timeout=2.0,
+        )
+        gate_status_map = {"ready": "healthy", "warn": "degraded", "blocked": "unhealthy"}
+        components.append(ComponentHealth(
+            name="activation_readiness",
+            status=gate_status_map.get(gate_result.verdict, "unknown"),
+            message=f"Step 1: {gate_result.verdict}" + (
+                f" ({'; '.join(gate_result.reasons)})" if gate_result.reasons else ""
+            ),
+            last_checked=datetime.now(timezone.utc),
+            details=gate_result.to_dict(),
+        ))
+    except (asyncio.TimeoutError, Exception) as e:
+        components.append(ComponentHealth(
+            name="activation_readiness",
+            status="unknown",
+            message=f"check timed out" if isinstance(e, asyncio.TimeoutError) else f"check failed: {e}",
+        ))
+
+    # 4. Relationship health
     relationships = None
     if RELATIONSHIP_HEALTH_AVAILABLE:
         # RelationshipHealthMonitor requires store and user_email for full checks
@@ -247,6 +273,26 @@ async def get_detailed_health(
         relationships=relationships,
         alerts=alerts,
     )
+
+
+@router.get("/activation-readiness")
+async def get_activation_readiness(
+    step: int = Query(1, ge=1, le=4, description="Activation step (1-4)"),
+    store: SignalStore = Depends(get_store),
+):
+    """
+    Check activation readiness for the given step.
+
+    Step-specific policy:
+    - Step 1 (Shadow): lenient -- observe only
+    - Step 2 (Low-risk): moderate -- some writes
+    - Step 3 (Write): strict -- manual push, triage
+    - Step 4 (Batch): strict -- batch commit, merges
+    """
+    from monitoring.activation_gate import check_activation_readiness
+
+    result = await check_activation_readiness(store, step=step)
+    return result.to_dict()
 
 
 @router.get("/collectors", response_model=List[CollectorHealth])
