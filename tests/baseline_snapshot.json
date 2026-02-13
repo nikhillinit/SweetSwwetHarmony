@@ -1,0 +1,12 @@
+{
+  "commit": "856689f693463e4ae885315f50f60daf4e8efd3c",
+  "date": "2026-02-12",
+  "tests_collected": 6745,
+  "collection_errors": 0,
+  "exit_code": 0,
+  "known_failures": 6,
+  "known_failures_file": "tests/workflows/test_confidence_routing.py",
+  "known_failures_reason": "DELIVERY_MODE=staging_only blocks Notion writes",
+  "smoke_suite_tests": 10,
+  "smoke_suite_file": "tests/smoke/test_smoke_suite.py"
+}
