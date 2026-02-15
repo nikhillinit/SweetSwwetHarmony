@@ -53,9 +53,9 @@ USER harmonic
 
 EXPOSE 8000
 
-# Health probe — uses only stdlib, polls /api/v1/health
+# Health probe — discover-and-poll (tries /health first, then OpenAPI discovery)
 HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
-    CMD python scripts/healthcheck_startup.py || exit 1
+    CMD python scripts/healthcheck_startup.py --retries 1 --delay 0 || exit 1
 
 # Default: run API server (single-worker for SQLite single-writer safety)
 CMD ["python", "-m", "uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
