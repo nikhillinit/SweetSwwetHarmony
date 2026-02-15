@@ -65,8 +65,8 @@ async def healthy_client(store):
     app.state.store = store
     app.state.write_lock = asyncio.Lock()
 
-    # Root health endpoint (mirrors api/main.py:179)
-    @app.get("/api/v1/health")
+    # Root health endpoint (mirrors api/main.py:179 — mounted at /health)
+    @app.get("/health")
     async def health_check():
         try:
             stats = await app.state.store.get_stats()
@@ -93,27 +93,33 @@ class TestHealthContractAgreement:
 
     @pytest.mark.asyncio
     async def test_health_endpoint_returns_200_on_healthy_store(self, healthy_client):
-        """API /api/v1/health should return 200 when the store is healthy."""
-        resp = await healthy_client.get("/api/v1/health")
+        """API /health should return 200 when the store is healthy."""
+        resp = await healthy_client.get("/health")
         assert resp.status_code == 200
 
     def test_healthcheck_script_returns_true_on_200(self):
-        """The healthcheck script considers 200 as healthy."""
+        """The healthcheck script considers 2xx as healthy."""
         from unittest.mock import MagicMock, patch
 
         mock_conn = MagicMock()
         mock_resp = MagicMock()
         mock_resp.status = 200
+        mock_resp.read.return_value = b'{"status":"healthy"}'
         mock_conn.getresponse.return_value = mock_resp
 
         with patch("scripts.healthcheck_startup.http.client.HTTPConnection", return_value=mock_conn):
             from scripts.healthcheck_startup import check_health
-            assert check_health() is True
+            assert check_health("127.0.0.1", 8000, "/health") is True
 
-    def test_healthcheck_script_targets_api_v1_health(self):
-        """The healthcheck script must target /api/v1/health (matching the endpoint)."""
+    def test_healthcheck_script_default_path_is_health(self):
+        """The healthcheck script default PATH must be /health (matching the endpoint)."""
         from scripts.healthcheck_startup import PATH
-        assert PATH == "/api/v1/health"
+        assert PATH == "/health"
+
+    def test_healthcheck_default_candidates_include_health(self):
+        """DEFAULT_CANDIDATES must list /health first."""
+        from scripts.healthcheck_startup import DEFAULT_CANDIDATES
+        assert DEFAULT_CANDIDATES[0] == "/health"
 
 
 # =============================================================================
