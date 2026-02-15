@@ -1,0 +1,28 @@
+# =============================================================================
+# Discovery Engine — Development Compose
+# =============================================================================
+# Usage:
+#   docker compose up        # start API
+#   docker compose up -d     # start detached
+#   docker compose logs -f   # follow logs
+#   docker compose down      # stop
+# =============================================================================
+
+services:
+  api:
+    build: .
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      # Mount directory (not single file) for SQLite WAL/-shm/-wal safety
+      - ./data:/app/data
+      - ./.env:/app/.env:ro
+    env_file: .env
+    environment:
+      - DISCOVERY_DB_PATH=/app/data/signals.db
+    healthcheck:
+      test: ["CMD", "python", "scripts/healthcheck_startup.py"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped

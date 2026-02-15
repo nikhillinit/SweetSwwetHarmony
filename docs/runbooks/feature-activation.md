@@ -12,10 +12,50 @@ step has run clean for the specified monitoring period.
 - `STRICT_CONFIG_VALIDATION=true` in production `.env`
 - Canary golden set defined (`monitoring/canary_checker.py`)
 - SPC baseline computed (`monitoring/spc_monitor.py`)
+- Pre-flight check passes: `python scripts/preflight_check.py --json`
+- Recent backup exists: `python scripts/backup_db.py`
+- See [Operator Quickstart](../operator-quickstart.md) for initial setup
+
+### Automated Gate Check (M4)
+
+Before advancing to any step, run the activation readiness gate:
+
+```bash
+# Check readiness for a specific step
+python run_pipeline.py activation-check --step N
+
+# JSON output for automation
+python run_pipeline.py activation-check --step N --json
+
+# API endpoint (no auth required)
+curl http://localhost:8000/api/v1/health/activation-readiness?step=N
+```
+
+Exit code 0 = can proceed (ready or warn). Exit code 1 = blocked.
+
+**Step-specific policy thresholds:**
+
+| Condition | Step 1 (Shadow) | Step 2 (Low-risk) | Step 3 (Write) | Step 4 (Batch) |
+|-----------|-----------------|-------------------|----------------|----------------|
+| No canary data | warn | warn | **blocked** | **blocked** |
+| Canary verdict=fail | **blocked** | **blocked** | **blocked** | **blocked** |
+| Canary verdict=degraded | warn | **blocked** | **blocked** | **blocked** |
+| Canary stale (>threshold) | warn | warn | **blocked** | **blocked** |
+| Critical drift alert open | **blocked** | **blocked** | **blocked** | **blocked** |
+| Warning drift alert open | pass | warn | warn | **blocked** |
+| Max canary age (hours) | 48 | 48 | 24 | 24 |
 
 ## Step 1: Shadow Activation (observe, no mutations)
 
 **Duration:** Run for 48h minimum before advancing.
+
+**Before starting:**
+```bash
+python scripts/preflight_check.py --json     # Must pass
+python scripts/backup_db.py                   # Pre-step backup
+```
+
+**Gate check:** `python run_pipeline.py activation-check --step 1`
 
 **Set these env vars:**
 
@@ -53,6 +93,14 @@ USE_SHADOW_ENTITY_RESOLUTION=false
 
 **Duration:** Run for 48h minimum before advancing.
 
+**Before starting:**
+```bash
+python scripts/preflight_check.py --json     # Must pass
+python scripts/backup_db.py                   # Pre-step backup
+```
+
+**Gate check:** `python run_pipeline.py activation-check --step 2`
+
 **Set these env vars:**
 
 ```bash
@@ -89,6 +137,14 @@ V2_ENABLEMENT=shadow
 
 **Duration:** Run for 24h minimum before advancing.
 
+**Before starting:**
+```bash
+python scripts/preflight_check.py --json     # Must pass
+python scripts/backup_db.py                   # Pre-step backup
+```
+
+**Gate check:** `python run_pipeline.py activation-check --step 3`
+
 **Set these env vars:**
 
 ```bash
@@ -121,6 +177,14 @@ HUNTER_PROMOTE_ENABLED=disabled
 ## Step 4: Batch Activation (after Step 3 clean)
 
 **Duration:** Ongoing (production state).
+
+**Before starting:**
+```bash
+python scripts/preflight_check.py --json     # Must pass
+python scripts/backup_db.py                   # Pre-step backup
+```
+
+**Gate check:** `python run_pipeline.py activation-check --step 4`
 
 **Set these env vars:**
 

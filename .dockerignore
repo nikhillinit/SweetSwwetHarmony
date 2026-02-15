@@ -1,0 +1,57 @@
+# =============================================================================
+# Docker Build Exclusions
+# =============================================================================
+
+# Version control
+.git/
+.gitignore
+
+# Database files (mounted as volume at runtime)
+*.db
+*.db-wal
+*.db-shm
+
+# Environment / secrets (bind-mounted at runtime)
+.env
+.env.*
+!.env.example
+
+# ML models (large, not needed for API)
+models/
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+
+# Tests and docs (not needed in production image)
+tests/
+docs/
+
+# Development tooling
+.worktrees/
+.claude/
+.github/
+NUL
+
+# Generated data files
+*.csv
+*.jsonl
+*.backup*
+eval_results_*.json
+health_*.json
+dataset_*.csv
+collect_out.txt
+session_summary.md
+oss_integration_plan.md
+
+# Misc development artifacts
+quality_ops_skills_and_scripts/
+signals.db.pre-quality-backup
+signals.db.local-backup-*
+check_keys.py
+view_signals.py
+view_signals_detail.py
+view_unlabeled.py
+
+# NOTE: Do NOT exclude *.json globally — config/*.json is runtime-required

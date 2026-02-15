@@ -30,6 +30,8 @@ EnvironmentFile=/opt/sweetharmony/.env
 
 # API Server (FastAPI)
 ExecStart=/opt/sweetharmony/.venv/bin/uvicorn api.main:app --host 0.0.0.0 --port 8000
+ExecStartPost=/opt/sweetharmony/.venv/bin/python /opt/sweetharmony/scripts/healthcheck_startup.py
+TimeoutStartSec=45
 
 # Restart policy
 Restart=always

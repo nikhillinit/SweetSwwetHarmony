@@ -13,6 +13,7 @@ All error mapping follows the contracts.py error_response pattern.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -189,6 +190,47 @@ async def commit_batch_endpoint(
             },
         )
 
+    # Soft activation gate (real commits only -- never blocks, just logs/audits)
+    gate_metadata = None
+    if not body.dry_run:
+        try:
+            from monitoring.activation_gate import check_activation_readiness
+
+            gate_result = await asyncio.wait_for(
+                check_activation_readiness(store, step=4),
+                timeout=2.0,
+            )
+            gate_metadata = gate_result.to_dict()
+
+            if gate_result.verdict != "ready":
+                logger.warning(
+                    "batch_commit_gate_override",
+                    extra={
+                        "batch_id": batch_id,
+                        "gate_verdict": gate_result.verdict,
+                        "gate_reasons": gate_result.reasons,
+                        "actor": operator.actor_label,
+                    },
+                )
+                try:
+                    from storage.audit_events import record_event
+
+                    await record_event(
+                        store,
+                        action_type="batch_commit_gate_override",
+                        entity_type="batch",
+                        entity_id=batch_id,
+                        actor_id=operator.actor_label,
+                        metadata=gate_metadata,
+                    )
+                except Exception:
+                    logger.debug("Failed to record gate override audit event", exc_info=True)
+        except asyncio.TimeoutError:
+            gate_metadata = {"verdict": "timeout", "error": "gate check exceeded 2s"}
+        except Exception:
+            logger.debug("Activation gate check failed", exc_info=True)
+            gate_metadata = {"verdict": "error", "error": "gate check failed"}
+
     # Construct pusher for real commits
     pusher = None
     if not body.dry_run:
@@ -232,6 +274,10 @@ async def commit_batch_endpoint(
         raise error_response(
             400, "bad_request", "BATCH_COMMIT_FAILED", str(e),
         )
+
+    # Attach gate metadata to response (real commits only)
+    if gate_metadata is not None and isinstance(result, dict):
+        result["activation_gate"] = gate_metadata
 
     return BaseResponse(data=result)
 

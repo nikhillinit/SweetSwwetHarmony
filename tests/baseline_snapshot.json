@@ -1,21 +1,58 @@
 {
-  "commit": "a95168af1a2596b162b9caf4d1b461a3bc44524b",
-  "date": "2026-02-12",
-  "milestone": "M1 Production Activation complete",
-  "tests_collected": 6759,
+  "commit": "8178550",
+  "date": "2026-02-13",
+  "milestone": "M7 Production Readiness Gate complete",
+  "tests_collected": 6935,
   "collection_errors": 0,
   "exit_code": 0,
   "known_failures": 6,
   "known_failures_file": "tests/workflows/test_confidence_routing.py",
   "known_failures_reason": "DELIVERY_MODE=staging_only blocks Notion writes",
-  "smoke_suite_tests": 13,
-  "smoke_suite_passed": 10,
+  "known_intermittent": 1,
+  "known_intermittent_file": "tests/integration/test_phase1a_identity.py::TestEmergencyHalt::test_publish_queued_emergency_halt",
+  "known_intermittent_reason": "audit event actor ordering (system vs compliance_officer)",
+  "smoke_suite_tests": 15,
+  "smoke_suite_passed": 12,
   "smoke_suite_skipped": 3,
   "smoke_suite_skipped_reason": "Activation-aware checks skip when features disabled (LLM, drift, Notion)",
   "smoke_suite_file": "tests/smoke/test_smoke_suite.py",
+  "regression_gate": {
+    "command": "pytest tests/api/ tests/integration/ tests/workflows/test_batch_publisher.py tests/smoke/ --tb=short -q",
+    "passed": 608,
+    "skipped": 4,
+    "failed": 0,
+    "baseline_m6": {"passed": 583, "skipped": 4},
+    "delta": "+25 tests (M7 activation simulation + backup integration)"
+  },
   "activation_checks_verified": {
     "LLM_THESIS_MODE=shadow": "PASSED (GOOGLE_API_KEY present)",
     "DRIFT_MONITORING_ENABLED=active": "PASSED (SPCMonitor instantiates)",
     "DELIVERY_MODE=batch_publish": "PASSED (NOTION_API_KEY + NOTION_DATABASE_ID present)"
+  },
+  "m7_evidence": {
+    "backup_restore_tests": 15,
+    "env_validation_tests": 10,
+    "preflight_tests": 24,
+    "activation_simulation_tests": 21,
+    "backup_integration_tests": 4,
+    "total_m7_tests": 74,
+    "files_created": [
+      "scripts/backup_db.py",
+      "scripts/restore_db.py",
+      "scripts/validate_env.py",
+      "scripts/preflight_check.py",
+      ".env.production.template",
+      "docs/operator-quickstart.md",
+      "tests/scripts/test_backup_restore.py",
+      "tests/scripts/test_validate_env.py",
+      "tests/scripts/test_preflight_check.py",
+      "tests/integration/test_activation_simulation.py",
+      "tests/integration/test_backup_integration.py"
+    ],
+    "files_modified": [
+      "docs/runbooks/feature-activation.md",
+      "tests/baseline_snapshot.json"
+    ],
+    "milestone_commit": "8178550"
   }
 }
