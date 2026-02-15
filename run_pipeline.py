@@ -91,6 +91,10 @@ from pathlib import Path
 # Add parent directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
+# Fix Windows console encoding for Unicode symbols
+sys.stdout.reconfigure(errors='replace')
+sys.stderr.reconfigure(errors='replace')
+
 # Load environment variables from .env
 try:
     from dotenv import load_dotenv
@@ -388,7 +392,7 @@ async def cmd_collect(args):
         print()
 
         for result in results:
-            status_symbol = "✓" if result.status.value == "success" else "✗"
+            status_symbol = "[OK]" if result.status.value == "success" else "[FAIL]"
             print(f"{status_symbol} {result.collector}")
             print(f"  Status: {result.status.value}")
             print(f"  Signals found: {result.signals_found}")
