@@ -9,15 +9,17 @@ Provides detailed health and monitoring endpoints:
 - GET /health/database - Database stats and integrity
 """
 
+import asyncio
 import logging
 import os
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, field_validator
 
+from fastapi.responses import Response
 from storage.signal_store import SignalStore
 from api.health_bounds import BoundedParams
 
@@ -204,7 +206,32 @@ async def get_detailed_health(
             message="Signal health monitor not available",
         ))
 
-    # 3. Relationship health
+    # 3. Activation readiness (2s timeout guardrail)
+    try:
+        from monitoring.activation_gate import check_activation_readiness
+
+        gate_result = await asyncio.wait_for(
+            check_activation_readiness(store, step=1),
+            timeout=2.0,
+        )
+        gate_status_map = {"ready": "healthy", "warn": "degraded", "blocked": "unhealthy"}
+        components.append(ComponentHealth(
+            name="activation_readiness",
+            status=gate_status_map.get(gate_result.verdict, "unknown"),
+            message=f"Step 1: {gate_result.verdict}" + (
+                f" ({'; '.join(gate_result.reasons)})" if gate_result.reasons else ""
+            ),
+            last_checked=datetime.now(timezone.utc),
+            details=gate_result.to_dict(),
+        ))
+    except (asyncio.TimeoutError, Exception) as e:
+        components.append(ComponentHealth(
+            name="activation_readiness",
+            status="unknown",
+            message=f"check timed out" if isinstance(e, asyncio.TimeoutError) else f"check failed: {e}",
+        ))
+
+    # 4. Relationship health
     relationships = None
     if RELATIONSHIP_HEALTH_AVAILABLE:
         # RelationshipHealthMonitor requires store and user_email for full checks
@@ -246,6 +273,43 @@ async def get_detailed_health(
         relationships=relationships,
         alerts=alerts,
     )
+
+
+@router.get("/activation-readiness")
+async def get_activation_readiness(
+    step: int = Query(1, ge=1, le=4, description="Activation step (1-4)"),
+    store: SignalStore = Depends(get_store),
+):
+    """
+    Check activation readiness for the given step.
+
+    Step-specific policy:
+    - Step 1 (Shadow): lenient -- observe only
+    - Step 2 (Low-risk): moderate -- some writes
+    - Step 3 (Write): strict -- manual push, triage
+    - Step 4 (Batch): strict -- batch commit, merges
+    """
+    from monitoring.activation_gate import check_activation_readiness
+
+    result = await check_activation_readiness(store, step=step)
+    return result.to_dict()
+
+
+@router.get("/phase-g-readiness")
+async def get_phase_g_readiness(
+    store: SignalStore = Depends(get_store),
+):
+    """
+    Check Phase G entity resolution readiness.
+
+    Evaluates whether entity identity tables, shadow data, and merge quality
+    meet the threshold for safe activation. Separate from activation-readiness
+    (which stays integer steps 1-4).
+    """
+    from monitoring.phase_g_readiness import check_phase_g_readiness
+
+    result = await check_phase_g_readiness(store)
+    return result.to_dict()
 
 
 @router.get("/collectors", response_model=List[CollectorHealth])
@@ -457,6 +521,80 @@ async def get_job_health(
             "status": "unknown",
             "error": str(e),
         }
+
+
+# =============================================================================
+# OPENMETRICS ENDPOINT
+# =============================================================================
+
+OPENMETRICS_CONTENT_TYPE = "application/openmetrics-text; version=1.0.0; charset=utf-8"
+
+
+def _build_openmetrics_text() -> str:
+    """Build OpenMetrics exposition text from instrumentation + ops metrics."""
+    from utils.instrumentation import metrics
+
+    lines: list[str] = []
+    snap = metrics.snapshot()
+
+    # --- Counters ---
+    counters = snap.get("counters", {})
+    if counters:
+        lines.append("# TYPE discovery_counter counter")
+        lines.append("# HELP discovery_counter Application counter")
+        for name, value in sorted(counters.items()):
+            lines.append(f'discovery_counter{{name="{name}"}} {value}')
+
+    # --- Timers ---
+    timers = snap.get("timers", {})
+    if timers:
+        lines.append("# TYPE discovery_timer_count gauge")
+        lines.append("# HELP discovery_timer_count Timer invocation count")
+        lines.append("# TYPE discovery_timer_total_ms gauge")
+        lines.append("# HELP discovery_timer_total_ms Timer cumulative milliseconds")
+        lines.append("# TYPE discovery_timer_avg_ms gauge")
+        lines.append("# HELP discovery_timer_avg_ms Timer average milliseconds")
+        for name, stats in sorted(timers.items()):
+            lines.append(f'discovery_timer_count{{name="{name}"}} {stats["count"]}')
+            lines.append(f'discovery_timer_total_ms{{name="{name}"}} {stats["total_ms"]}')
+            lines.append(f'discovery_timer_avg_ms{{name="{name}"}} {stats["avg_ms"]}')
+
+    # --- Ops gauges (best-effort) ---
+    try:
+        collector = _get_ops_collector()
+        if collector is not None:
+            from fastapi.concurrency import run_in_threadpool
+            import asyncio
+            # This function is sync; ops collector is sync too
+            ops_snap = collector.collect()
+            lines.append("# TYPE discovery_health_pct gauge")
+            lines.append("# HELP discovery_health_pct Overall ops health percentage")
+            lines.append(f"discovery_health_pct {ops_snap.overall_health_pct}")
+            lines.append("# TYPE discovery_extractions_24h gauge")
+            lines.append("# HELP discovery_extractions_24h Signal extractions in last 24h")
+            lines.append(f"discovery_extractions_24h {ops_snap.extractions_24h}")
+            lines.append("# TYPE discovery_open_incidents gauge")
+            lines.append("# HELP discovery_open_incidents Currently open incidents")
+            lines.append(f"discovery_open_incidents {ops_snap.open_incidents}")
+    except Exception as e:
+        logger.debug("Ops metrics unavailable for /metrics: %s", e)
+
+    # OpenMetrics requires trailing EOF
+    lines.append("# EOF")
+    return "\n".join(lines) + "\n"
+
+
+@router.get("/metrics")
+async def get_openmetrics():
+    """Expose application metrics in OpenMetrics text format.
+
+    Scrape-ready for Prometheus. Includes:
+    - In-process counters from utils.instrumentation
+    - Timer statistics (count, total_ms, avg_ms)
+    - Ops gauges (health_pct, extractions_24h, open_incidents) when available
+    """
+    body = await run_in_threadpool(_build_openmetrics_text)
+    return Response(content=body, media_type=OPENMETRICS_CONTENT_TYPE)
 
 
 # =============================================================================

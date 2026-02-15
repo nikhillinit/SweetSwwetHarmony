@@ -429,6 +429,24 @@ class TestThesisFilterWithMockedLLM:
         assert result.llm_score is None
 
     @pytest.mark.asyncio
+    async def test_llm_failure_payload_falls_back_to_keywords(self, filter_instance):
+        """Operational-failure payloads should fail open to keyword routing."""
+        mock_llm = AsyncMock()
+        mock_llm.classify.return_value = MagicMock(
+            thesis_match=False,
+            thesis_fit_score=0.0,
+            category="excluded",
+            rationale="Classification failed: GOOGLE_API_KEY not set",
+        )
+        filter_instance._llm_classifier = mock_llm
+
+        result = await filter_instance.classify("Premium skincare brand with d2c model")
+        assert result.routing == RoutingDecision.QUALIFIED
+        assert result.llm_skipped is True
+        assert result.llm_score is None
+        assert result.llm_category is None
+
+    @pytest.mark.asyncio
     async def test_llm_rationale_captured(self, filter_instance):
         """LLM rationale should be captured in result."""
         mock_llm = AsyncMock()

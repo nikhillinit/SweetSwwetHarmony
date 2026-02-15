@@ -6,7 +6,7 @@ probes, and basic external observability. Gap-focused: only addresses what's
 missing, not what already exists.
 
 ## Current Phase
-M2.1 — CI Regression Gate (S0 passed)
+**M2 COMPLETE** — All 4 phases shipped, all exit gates passed
 
 ---
 

@@ -414,7 +414,19 @@ Respond with JSON classification only."""
                 cleaned = re.sub(r"\s*```$", "", cleaned)
 
             result = json.loads(cleaned)
-        except json.JSONDecodeError as e:
+            if isinstance(result, list):
+                dict_items = [item for item in result if isinstance(item, dict)]
+                if not dict_items:
+                    raise ValueError("Parsed JSON list did not contain an object")
+                if len(dict_items) > 1:
+                    logger.warning(
+                        "Gemini response returned a list with %d objects; using first",
+                        len(dict_items),
+                    )
+                result = dict_items[0]
+            if not isinstance(result, dict):
+                raise ValueError(f"Expected JSON object, got {type(result).__name__}")
+        except (json.JSONDecodeError, ValueError, TypeError) as e:
             logger.error(f"Failed to parse Gemini response: {e}\nResponse: {response_text[:200]}")
             return ThesisClassification(
                 thesis_match=False,

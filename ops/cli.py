@@ -24,6 +24,13 @@ import getpass
 from datetime import datetime, timezone
 from typing import Optional
 
+# Load environment variables from .env for local CLI parity with run_pipeline.py.
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 from ops.storage import OpsStorage
 
 
@@ -1346,6 +1353,79 @@ def schedule_add_quality_patterns_cmd(args):
     print(f"   Note: Pattern results stored in ops DB (pattern_runs table)")
 
 
+def schedule_tick_cmd(args):
+    """Execute all due enabled schedules (or one by --name)."""
+    import asyncio
+    storage = get_storage(args)
+    from ops.scheduler import PipelineScheduler
+    scheduler = PipelineScheduler(storage)
+
+    async def _tick():
+        if args.name:
+            sched = scheduler.get_schedule_by_name(args.name)
+            if not sched:
+                print(f"Error: schedule '{args.name}' not found")
+                return 1
+            if not sched["enabled"]:
+                print(f"Schedule '{args.name}' is disabled, skipping")
+                return 0
+            if not scheduler.should_run(sched["id"]):
+                print(f"Schedule '{args.name}' is not due, skipping")
+                return 0
+            targets = [sched]
+        else:
+            all_scheds = scheduler.list_schedules()
+            targets = [s for s in all_scheds if s["enabled"] and scheduler.should_run(s["id"])]
+
+        if not targets:
+            print("No schedules due")
+            return 0
+
+        failures = 0
+        for sched in targets:
+            print(f"Executing: {sched['name']} (id={sched['id']}, mode={sched['mode']})")
+            try:
+                result = await scheduler.execute_run(sched["id"])
+                status = result.get("status", "unknown")
+                print(f"  -> {status} (duration={result.get('duration_seconds', 0):.1f}s)")
+                if status == "failed":
+                    failures += 1
+            except Exception as e:
+                print(f"  -> ERROR: {e}")
+                failures += 1
+
+        return 1 if failures else 0
+
+    exit_code = asyncio.run(_tick())
+    sys.exit(exit_code)
+
+
+def schedule_add_canary_monitor_cmd(args):
+    """Create canary-monitor schedule (every 6h). Idempotent."""
+    storage = get_storage(args)
+    from ops.scheduler import PipelineScheduler, ScheduleConfig
+    scheduler = PipelineScheduler(storage)
+
+    config = ScheduleConfig(
+        name="canary-monitor-6h",
+        cron_expression="0 */6 * * *",
+        collectors=[],
+        mode="canary-monitor",
+        enabled=not args.disabled,
+    )
+
+    sid, created, warnings = scheduler.ensure_schedule(config)
+    if created:
+        print(f"Canary monitor schedule created: id={sid}")
+    else:
+        print(f"Canary monitor schedule already exists: id={sid}")
+    print(f"   Name: {config.name}")
+    print(f"   Mode: canary-monitor")
+    print(f"   Cron: 0 */6 * * * (every 6 hours)")
+    for w in warnings:
+        print(f"   WARNING: {w}")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Ops CLI - Internal Team Tool",
@@ -1530,7 +1610,7 @@ Tip:
     sched_add_p.add_argument("name", help="Schedule name (unique)")
     sched_add_p.add_argument("cron_expression", help="Cron expression (e.g. '0 2 * * *')")
     sched_add_p.add_argument("--collectors", default="", help="Comma-separated collector names")
-    sched_add_p.add_argument("--mode", choices=["full", "collect", "process", "quality-sync", "quality-classify", "quality-patterns"], default="full", help="Pipeline mode")
+    sched_add_p.add_argument("--mode", choices=["full", "collect", "process", "quality-sync", "quality-classify", "quality-patterns", "canary-monitor"], default="full", help="Pipeline mode")
     sched_add_p.add_argument("--dry-run", action="store_true", help="Enable dry-run mode")
     sched_add_p.set_defaults(func=schedule_add_cmd)
 
@@ -1574,6 +1654,17 @@ Tip:
     sched_add_qpatt_p = schedule_sub.add_parser("add-quality-patterns", help="Create quality-patterns schedule (weekly Sun 3am)")
     sched_add_qpatt_p.add_argument("--disabled", action="store_true", help="Create in disabled state")
     sched_add_qpatt_p.set_defaults(func=schedule_add_quality_patterns_cmd)
+
+    # Canary monitor convenience commands
+    sched_add_canary_p = schedule_sub.add_parser("add-canary-monitor",
+        help="Create canary-monitor schedule (every 6h, idempotent)")
+    sched_add_canary_p.add_argument("--disabled", action="store_true",
+        help="Create in disabled state")
+    sched_add_canary_p.set_defaults(func=schedule_add_canary_monitor_cmd)
+
+    sched_tick_p = schedule_sub.add_parser("tick", help="Execute all due schedules (or one by --name)")
+    sched_tick_p.add_argument("--name", help="Execute only the schedule with this name")
+    sched_tick_p.set_defaults(func=schedule_tick_cmd)
 
     # ── quality ops commands ────────────────────────────────────────
     try:
