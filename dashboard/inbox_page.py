@@ -11,13 +11,12 @@ import httpx
 from typing import List, Dict, Any, Optional
 
 from dashboard.components.company_card import render_company_card
+from dashboard.api_client import API_BASE_URL, check_api_connection
 
 
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
-
-API_BASE_URL = "http://127.0.0.1:8000/api/v1"
 
 STATUS_OPTIONS = {
     "inbox": "New Deals",
@@ -41,16 +40,6 @@ STATUS_DESCRIPTIONS = {
 def get_api_client() -> httpx.Client:
     """Get HTTP client for API calls."""
     return httpx.Client(base_url=API_BASE_URL, timeout=10.0)
-
-
-def check_api_health() -> bool:
-    """Check if API is healthy."""
-    try:
-        with httpx.Client(timeout=3.0) as client:
-            response = client.get(f"{API_BASE_URL.replace('/api/v1', '')}/health")
-            return response.status_code == 200
-    except:
-        return False
 
 
 @st.cache_data(ttl=30)
@@ -313,7 +302,7 @@ def render_sidebar_controls() -> Dict[str, Any]:
         st.rerun()
 
     # API status
-    api_healthy = check_api_health()
+    api_healthy = check_api_connection()
     if api_healthy:
         st.sidebar.success("API Connected")
     else:
@@ -341,7 +330,7 @@ def render_inbox_page():
     filters = render_sidebar_controls()
 
     # Check API health first
-    if not check_api_health():
+    if not check_api_connection():
         render_api_error("The API server is not responding.")
         return
 

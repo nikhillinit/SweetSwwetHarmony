@@ -9,8 +9,7 @@ import streamlit as st
 import httpx
 from typing import Optional
 
-# API Configuration
-API_BASE_URL = "http://127.0.0.1:8000/api/v1"
+from dashboard.api_client import API_BASE_URL
 
 
 def get_api_client() -> httpx.Client:

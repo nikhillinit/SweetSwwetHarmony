@@ -16,6 +16,8 @@ Usage:
     health = client.get_health_detailed()
 """
 
+import os
+
 import streamlit as st
 import httpx
 from datetime import datetime, timezone
@@ -26,8 +28,26 @@ from dataclasses import dataclass
 # CONFIGURATION
 # =============================================================================
 
-API_BASE_URL = "http://127.0.0.1:8000/api/v1"
+API_BASE_URL = os.getenv("API_BASE_URL", "http://127.0.0.1:8000/api/v1")
 API_TIMEOUT = 10.0
+
+
+# =============================================================================
+# RESPONSE HELPERS
+# =============================================================================
+
+def is_error(result) -> bool:
+    """Check if an API result is an error (None, or has error key)."""
+    return not result or (isinstance(result, dict) and bool(result.get("error")))
+
+
+def error_msg(result) -> str:
+    """Extract human-readable message from an error result."""
+    if not result:
+        return "No response from API"
+    if isinstance(result, dict):
+        return result.get("message") or result.get("detail") or str(result)
+    return str(result)
 
 
 # =============================================================================
@@ -494,6 +514,19 @@ class APIClient:
         return self._post_with_idempotency(
             f"/triage/{review_id}/defer",
             json={"reason": reason, "updated_at": updated_at},
+            idempotency_key=idempotency_key,
+        )
+
+    def bulk_triage(
+        self,
+        action: str,
+        items: list,
+        idempotency_key: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Bulk approve/reject/defer multiple triage items."""
+        return self._post_with_idempotency(
+            "/triage/bulk",
+            json={"action": action, "items": items},
             idempotency_key=idempotency_key,
         )
 
