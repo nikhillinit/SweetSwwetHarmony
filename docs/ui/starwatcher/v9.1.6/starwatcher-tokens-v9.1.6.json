@@ -1,0 +1,624 @@
+{
+  "_meta": {
+    "name": "Starwatcher Editorial Data Art Tokens (Final Integrated v9.1.6.5)",
+    "version": "9.1.6",
+    "revised": "2026-02-18",
+    "description": "Complete visual foundation for the Starwatcher constellation viewer. Every color, font, spacing, shadow, motion, elevation, and responsive value. Two themes: 'press_on_light' (primary) and 'cosmic_dark' (alternative).",
+    "usage": "Import into your CSS-in-JS, Tailwind config, or build pipeline. Token names are semantic (what it's for) not visual (what it looks like). All values are final — do not override without updating this file.",
+    "companion_files": [
+      "starwatcher-contract.ts   — integration contract (props, events, data model)",
+      "starwatcher-status-map.ts — status→shape→color mapping"
+    ],
+    "changelog_v9": [
+      "Fixed text_muted contrast to meet WCAG AA 4.5:1 on panel backgrounds",
+      "Added separate focus ring colors per theme for reliable 3:1 focus visibility",
+      "Replaced fixed isolation_halo color with dynamic status-color semantic",
+      "Updated node_sizing to 12–24px range for touch accessibility (44px hit area)",
+      "Added sqrt scale_formula option for thesis-score sizing",
+      "Added explicit dark-mode status colors (no more underspecified desaturation rule)",
+      "Added canvas_typography mapping for node/cluster/tooltip text",
+      "Added filter_diff tokens for draft vs applied preview states",
+      "Formalized reduced_motion behavior as explicit token section"
+    ],
+    "changelog_v9_1": [
+      "Added skeleton tokens for initial_load and transitioning states",
+      "Added stale_indicator component tokens and elevation layer",
+      "No breaking changes to existing v9 palettes/spacing; v9.1 is additive"
+    ],
+    "changelog_v9_1_2": [
+      "Resolved z-index collision: stale_indicator now sits below panels (zIndex 90)",
+      "Added elevation + zIndex token for progressive_disclosure indicator"
+    ],
+    "changelog_v9_1_3": [
+      "Added overlay_stacks.top_right_pills to prevent stale_indicator/progressive_disclosure overlap",
+      "Documented top-right pill stacking: prefer overlay_stacks over hardcoded offsets",
+      "No breaking changes; additive layout primitives"
+    ],
+    "changelog_v9_1_4": [
+      "Removed/renamed legacy per-component offsets in favor of overlay_stacks.top_right_pills (prevents accidental magic-number positioning).",
+      "Deprecated fixed cluster_border color token; cluster borders are dynamic dominant-status color with a fixed opacity (see contract/status-map)."
+    ],
+    "changelog_v9_1_6": [
+      "No visual token changes; version bump to align with backend reference implementation and contract clarifications."
+    ]
+  },
+  "color": {
+    "_comment": "———— PRIMARY BRAND ————  Teal is the signature color of Press On Ventures. Used for interactive elements, selected states, thesis-score glow, and edge rendering.",
+    "primary": {
+      "50": "#E6FAF6",
+      "100": "#B3F0E3",
+      "200": "#80E6D0",
+      "300": "#4DDBBD",
+      "400": "#26D4AE",
+      "500": "#0FA68A",
+      "600": "#0C8A73",
+      "700": "#096E5C",
+      "800": "#065245",
+      "900": "#03362E",
+      "base": "#0FA68A",
+      "base_dark_mode": "#2DB299",
+      "_usage": "base → buttons, links, selected borders, legend highlights, edge color. 50–100 → subtle backgrounds. 700–900 → text on light backgrounds. base_dark_mode → replaces base in cosmic_dark theme for WCAG AA contrast."
+    },
+    "_comment_neutral": "———— NEUTRAL ————  Grays for text, backgrounds, borders, structural elements.",
+    "neutral": {
+      "0": "#FFFFFF",
+      "50": "#F8F9FA",
+      "100": "#F1F3F5",
+      "200": "#E9ECEF",
+      "300": "#DEE2E6",
+      "400": "#CED4DA",
+      "500": "#ADB5BD",
+      "600": "#868E96",
+      "700": "#495057",
+      "800": "#343A40",
+      "900": "#212529",
+      "950": "#16191D",
+      "_usage": "Light → 0:page bg, 50:card bg, 200:borders, 700:body text, 900:headings. Dark → 950:page bg, 900:card bg, 700:borders, 200:body text, 50:headings."
+    },
+    "_comment_status": "———— PIPELINE STATUS ————  Each deal stage has a unique color. Used in nodes, legend chips, inspect panel header, and cluster dominant-color rendering. Must stay in sync with starwatcher-status-map.ts. Access via PipelineStatusId, not Notion label strings.",
+    "status": {
+      "source": {
+        "base": "#868E96",
+        "base_dark": "#9BA2AA",
+        "light_bg": "#F1F3F5",
+        "dark_bg": "#2D3035",
+        "label": "Source",
+        "meaning": "Discovered, not yet contacted"
+      },
+      "initial_meeting": {
+        "base": "#4C9AFF",
+        "base_dark": "#6BAEFF",
+        "light_bg": "#E8F2FF",
+        "dark_bg": "#1A2E4A",
+        "label": "Initial Meeting / Call",
+        "meaning": "First conversation happened"
+      },
+      "diligence": {
+        "base": "#F5A623",
+        "base_dark": "#F7B84D",
+        "light_bg": "#FFF5E0",
+        "dark_bg": "#3D2E10",
+        "label": "Diligence",
+        "meaning": "Actively evaluating"
+      },
+      "tracking": {
+        "base": "#A78BFA",
+        "base_dark": "#B9A3FB",
+        "light_bg": "#F3EEFF",
+        "dark_bg": "#2A2240",
+        "label": "Tracking",
+        "meaning": "On the radar, not active now"
+      },
+      "committed": {
+        "base": "#0FA68A",
+        "base_dark": "#2DB299",
+        "light_bg": "#E6FAF6",
+        "dark_bg": "#0D2E27",
+        "label": "Committed",
+        "meaning": "Decided to invest, deal in progress"
+      },
+      "funded": {
+        "base": "#10B981",
+        "base_dark": "#34D399",
+        "light_bg": "#ECFDF5",
+        "dark_bg": "#0D3024",
+        "label": "Funded",
+        "meaning": "Deal closed, money wired"
+      },
+      "passed": {
+        "base": "#EF4444",
+        "base_dark": "#F87171",
+        "light_bg": "#FEF2F2",
+        "dark_bg": "#3B1515",
+        "label": "Passed",
+        "meaning": "Evaluated, we declined"
+      },
+      "lost": {
+        "base": "#F97316",
+        "base_dark": "#FB923C",
+        "light_bg": "#FFF7ED",
+        "dark_bg": "#3B2510",
+        "label": "Lost",
+        "meaning": "Wanted to invest, lost the deal"
+      }
+    },
+    "_comment_semantic": "———— SEMANTIC ————  UI feedback colors. Used for toasts, alerts, form validation.",
+    "semantic": {
+      "success": {
+        "base": "#10B981",
+        "bg": "#ECFDF5",
+        "text": "#065F46"
+      },
+      "warning": {
+        "base": "#F5A623",
+        "bg": "#FFF5E0",
+        "text": "#92400E"
+      },
+      "error": {
+        "base": "#EF4444",
+        "bg": "#FEF2F2",
+        "text": "#991B1B"
+      },
+      "info": {
+        "base": "#4C9AFF",
+        "bg": "#E8F2FF",
+        "text": "#1E40AF"
+      }
+    },
+    "_comment_dataviz": "———— DATA VISUALIZATION ————  Edge, glow, halo, and cluster colors. Separate from status colors.",
+    "dataviz": {
+      "edge_strong": "rgba(15, 166, 138, 0.6)",
+      "edge_medium": "rgba(15, 166, 138, 0.3)",
+      "edge_weak": "rgba(15, 166, 138, 0.12)",
+      "glow_high": "rgba(15, 166, 138, 0.35)",
+      "glow_low": "rgba(15, 166, 138, 0.08)",
+      "hover_halo": "rgba(15, 166, 138, 0.20)",
+      "isolation_halo_opacity": 0.5,
+      "isolation_halo_radius_multiplier": 1.5,
+      "_isolation_halo_note": "Isolation halo color is ALWAYS the node's own status color at isolation_halo_opacity. There is no fixed color — it is computed at runtime from STATUS_COLOR_MAP[theme][status]. This value was previously a hardcoded teal; that was incorrect.",
+      "cluster_aggregate_edge": "rgba(15, 166, 138, 0.25)",
+      "_deprecated_cluster_border": "rgba(15, 166, 138, 0.40)",
+      "cluster_border_opacity": 0.4,
+      "_cluster_border_note": "Cluster border color is the dominant status color; apply opacity cluster_border_opacity (0.40)."
+    }
+  },
+  "typography": {
+    "_comment": "———— FONTS ————  Editorial aesthetic: refined serif headings, clean sans body, monospace for data. Load via Google Fonts: Instrument+Serif&family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500",
+    "fontFamily": {
+      "heading": "'Instrument Serif', 'Georgia', serif",
+      "body": "'DM Sans', 'Helvetica Neue', sans-serif",
+      "mono": "'JetBrains Mono', 'Fira Code', monospace",
+      "_note": "Instrument Serif for the 'editorial' feel. DM Sans for data labels (highly legible at small sizes). JetBrains Mono for IDs, scores, and technical content."
+    },
+    "fontSize": {
+      "xs": "0.6875rem",
+      "sm": "0.8125rem",
+      "base": "0.9375rem",
+      "md": "1.0625rem",
+      "lg": "1.25rem",
+      "xl": "1.5rem",
+      "2xl": "1.875rem",
+      "3xl": "2.25rem",
+      "_usage": "xs → node labels on canvas. sm → captions, metadata. base → body text. lg → panel headers. 2xl → page headings. 3xl → hero/welcome only."
+    },
+    "fontWeight": {
+      "normal": 400,
+      "medium": 500,
+      "semibold": 600,
+      "bold": 700
+    },
+    "lineHeight": {
+      "tight": 1.25,
+      "normal": 1.5,
+      "relaxed": 1.75
+    },
+    "letterSpacing": {
+      "tight": "-0.01em",
+      "normal": "0em",
+      "wide": "0.02em",
+      "caps": "0.08em",
+      "_usage": "caps → small uppercase labels (status chips, section headers, legend categories)."
+    },
+    "canvas_typography": {
+      "_comment": "Mapping of font tokens to canvas-rendered text elements. These are rendered by Deck.gl TextLayer, not CSS — values here are used to configure the layer.",
+      "node_label": {
+        "size": "xs",
+        "weight": 500,
+        "max_width_px": 120,
+        "family": "body"
+      },
+      "cluster_label": {
+        "size": "sm",
+        "weight": 600,
+        "family": "body"
+      },
+      "tooltip_header": {
+        "size": "sm",
+        "weight": 600,
+        "family": "heading"
+      },
+      "tooltip_body": {
+        "size": "xs",
+        "weight": 400,
+        "family": "body"
+      },
+      "tooltip_score": {
+        "size": "xs",
+        "weight": 500,
+        "family": "mono"
+      }
+    }
+  },
+  "spacing": {
+    "_comment": "4px base unit. All spacing must be a multiple of this value.",
+    "0": "0px",
+    "1": "4px",
+    "2": "8px",
+    "3": "12px",
+    "4": "16px",
+    "5": "20px",
+    "6": "24px",
+    "8": "32px",
+    "10": "40px",
+    "12": "48px",
+    "16": "64px",
+    "20": "80px",
+    "24": "96px"
+  },
+  "shadows": {
+    "_comment": "Layered shadow system. Must match the elevation tokens below.",
+    "sm": "0 1px 2px rgba(0, 0, 0, 0.05)",
+    "md": "0 2px 8px rgba(0, 0, 0, 0.08), 0 1px 2px rgba(0, 0, 0, 0.04)",
+    "lg": "0 4px 12px rgba(0, 0, 0, 0.15)",
+    "xl": "0 8px 24px rgba(0, 0, 0, 0.20)",
+    "glow": "0 0 16px rgba(15, 166, 138, 0.3)",
+    "glow_strong": "0 0 24px rgba(15, 166, 138, 0.5)",
+    "_usage": "sm → status chips, small cards. md → inspect panel, sidebar. lg → modals, command palette. xl → share modal. glow → high-thesis nodes. glow_strong → selected + high thesis."
+  },
+  "borders": {
+    "width": {
+      "thin": "1px",
+      "medium": "2px",
+      "thick": "3px"
+    },
+    "radius": {
+      "sm": "4px",
+      "md": "8px",
+      "lg": "12px",
+      "xl": "16px",
+      "full": "9999px",
+      "_usage": "sm → inputs, table cells. md → cards, panels. lg → modals. full → node shapes, avatar badges, status chips."
+    }
+  },
+  "motion": {
+    "_comment": "All animations MUST respect prefers-reduced-motion. If enabled, skip all non-essential animations (shimmer, glow pulse, crossfade) — only preserve position changes that convey information (camera movement to a searched node).",
+    "duration": {
+      "instant": "100ms",
+      "fast": "150ms",
+      "normal": "300ms",
+      "slow": "500ms",
+      "camera": "800ms",
+      "_usage": "instant → hover state changes. fast → tooltip show/hide, button feedback. normal → panel open/close, filter transitions. slow → camera pan to searched node. camera → cluster zoom-in animation."
+    },
+    "easing": {
+      "default": "cubic-bezier(0.4, 0, 0.2, 1)",
+      "in": "cubic-bezier(0.4, 0, 1, 1)",
+      "out": "cubic-bezier(0.0, 0, 0.2, 1)",
+      "spring": "cubic-bezier(0.34, 1.56, 0.64, 1)",
+      "_usage": "default → most transitions. out → panel/modal entry. in → panel/modal exit. spring → node selection bounce, toast entry."
+    },
+    "camera": {
+      "interruptible": true,
+      "_note": "All camera animations (pan-to-node, cluster zoom, permalink restore) MUST be interruptible. If the user pans or zooms during an animation, the animation stops immediately and the user takes control."
+    },
+    "reduced_motion": {
+      "_comment": "When reducedMotion prop is true (detected from system preference), these overrides apply.",
+      "camera_animation": "instant",
+      "shimmer_loading": "disabled",
+      "node_entrance": "disabled",
+      "tooltip_delay": "0ms",
+      "crossfade": "instant",
+      "glow_pulse": "disabled",
+      "cluster_zoom": "instant",
+      "_note": "Essential camera repositioning (navigate-to-node, zoom-to-cluster) still occurs but snaps rather than interpolating. All decorative animations are fully disabled."
+    }
+  },
+  "elevation": {
+    "_comment": "Z-index and shadow layering for stacked UI elements. Higher z-index = closer to the user.",
+    "canvas": {
+      "zIndex": 0,
+      "shadow": "none",
+      "_note": "The WebGL constellation surface."
+    },
+    "selection_tray": {
+      "zIndex": 50,
+      "shadow": "0 -2px 8px rgba(0, 0, 0, 0.08)",
+      "_note": "Bottom-of-canvas selection chips."
+    },
+    "legend": {
+      "zIndex": 50,
+      "shadow": "0 2px 8px rgba(0, 0, 0, 0.08)",
+      "_note": "Interactive legend overlay."
+    },
+    "panels": {
+      "zIndex": 100,
+      "shadow": "0 4px 12px rgba(0, 0, 0, 0.15)",
+      "_note": "Inspect panel, sidebar."
+    },
+    "tooltips": {
+      "zIndex": 150,
+      "shadow": "0 2px 8px rgba(0, 0, 0, 0.12)",
+      "_note": "Node hover tooltips."
+    },
+    "context_menu": {
+      "zIndex": 200,
+      "shadow": "0 4px 12px rgba(0, 0, 0, 0.15)",
+      "_note": "Right-click context menu."
+    },
+    "modals": {
+      "zIndex": 300,
+      "shadow": "0 8px 24px rgba(0, 0, 0, 0.20)",
+      "_note": "Command palette, share modal. Uses backdrop blur.",
+      "backdropFilter": "blur(4px)",
+      "backdrop_perf_note": "backdrop-filter on top of WebGL canvas can cause frame drops on low-end GPUs. Fall back to a solid semi-transparent overlay (rgba(0,0,0,0.4)) if the user's device reports < 30fps during the blur."
+    },
+    "toasts": {
+      "zIndex": 400,
+      "shadow": "0 4px 12px rgba(0, 0, 0, 0.15)",
+      "_note": "Toast notifications. Highest layer — always visible over modals."
+    },
+    "stale_indicator": {
+      "zIndex": 90,
+      "shadow": "0 4px 12px rgba(0, 0, 0, 0.15)",
+      "_note": "Data freshness pill. Lives on the canvas overlay layer (below panels and modals) so it does not pierce modal backdrops."
+    },
+    "mini_map": {
+      "zIndex": 75,
+      "shadow": "0 2px 8px rgba(0, 0, 0, 0.08)",
+      "_note": "Optional mini-map overlay. Above legend/tray, below panels and modals."
+    },
+    "progressive_disclosure": {
+      "zIndex": 90,
+      "shadow": "0 2px 8px rgba(0, 0, 0, 0.08)",
+      "_note": "Thesis visibility indicator pill. Stacks below panels/modals, above legend/tray, and should not collide with stale_indicator."
+    }
+  },
+  "focus": {
+    "ring_width": "2px",
+    "ring_offset": "2px",
+    "ring_style": "solid",
+    "ring_color_light": "#096E5C",
+    "ring_color_dark": "#2DB299",
+    "_note": "Applied to every interactive element on :focus-visible. ring_color_light uses primary-700 for reliable ≥7:1 contrast on white/light surfaces. ring_color_dark uses base_dark_mode for contrast on dark surfaces. Previous single-color approach (primary base #0FA68A) was borderline at ~3.1:1 on white."
+  },
+  "density": {
+    "_comment": "Controls UI compactness. 'comfortable' is default for overview browsing. 'compact' for data-table and comparison views.",
+    "comfortable": {
+      "row_height": "48px",
+      "cell_padding": "12px 16px",
+      "icon_size": "20px"
+    },
+    "compact": {
+      "row_height": "36px",
+      "cell_padding": "6px 12px",
+      "icon_size": "16px"
+    }
+  },
+  "breakpoints": {
+    "_comment": "Responsive breakpoints. The component adapts layout at each threshold.",
+    "mobile": "640px",
+    "tablet": "1024px",
+    "desktop": "1440px",
+    "_responsive_behaviors": {
+      "below_mobile": "Canvas fills full viewport. Inspect panel becomes a bottom sheet (50% height, draggable to 90%). Legend collapses to a single-row horizontal scroll. Selection tray becomes a floating pill. Context menu uses bottom sheet pattern. Command palette fills full width.",
+      "mobile_to_tablet": "Canvas takes 60% width, inspect panel is a slide-over from the right (40% width). Legend is a collapsible sidebar section.",
+      "above_tablet": "Canvas and inspect panel side-by-side. Legend floats as an overlay on the canvas. Full toolbar visible."
+    }
+  },
+  "node_sizing": {
+    "_comment": "How node visual size scales with thesis score and LOD level. Updated v9: minimum 12px radius ensures 24px diameter for reliable 44px touch targets with padding.",
+    "base_radius": 12,
+    "min_radius": 12,
+    "max_radius": 24,
+    "scale_formula": "min_radius + sqrt(thesisScore) * (max_radius - min_radius)",
+    "_scale_note": "Square-root scaling ensures high-thesis nodes are visually prominent. A node with thesisScore 0.0 renders at 12px radius (24px diameter). A node with 1.0 renders at 24px radius (48px diameter). The sqrt curve gives a gentle ramp that emphasizes top-tier companies.",
+    "lod_overrides": {
+      "full": {
+        "min_radius": 12,
+        "max_radius": 24
+      },
+      "reduced": {
+        "min_radius": 12,
+        "max_radius": 16
+      },
+      "minimal": {
+        "min_radius": 12,
+        "max_radius": 12
+      }
+    },
+    "hit_area": {
+      "min_diameter": 44,
+      "_note": "Regardless of visual radius, the interactive hit area for tap/click must be at least 44px diameter (WCAG 2.5.5 Target Size). Pad the hit area if the visual radius is smaller."
+    }
+  },
+  "filter_diff": {
+    "_comment": "Visual tokens for the Draft vs Applied filter preview state. When a draft filter set is pending, nodes that would be filtered out are dimmed and nodes that would newly appear get a preview pulse.",
+    "dimmed_opacity": 0.15,
+    "preview_pulse_border": "2px solid #0FA68A",
+    "preview_pulse_animation": "pulse 1.5s ease-in-out infinite",
+    "ghost_outline_opacity": 0.4,
+    "_note": "When draft is present: dim all nodes that WOULD be filtered out to dimmed_opacity. Show a ghost outline at ghost_outline_opacity for nodes that would newly appear. Preview pulse animates the border of newly-appearing nodes. v9.1.1: preview_pulse_border_webgl added for canvas usage; preview_pulse_border_css retained for DOM.",
+    "preview_pulse_border_css": "2px solid var(--color-primary-base)",
+    "preview_pulse_border_webgl": {
+      "width_px": 2,
+      "color_light": "#0FA68A",
+      "color_dark": "#2DB299",
+      "_note": "Use these values for WebGL/Deck.gl layers; CSS variables do not apply on canvas."
+    }
+  },
+  "status_chip": {
+    "_comment": "Status chips must NOT use status color as text color — it fails WCAG AA on tinted backgrounds. Use this chip pattern instead.",
+    "background": "status.light_bg (light theme) / status.dark_bg (dark theme)",
+    "text_color": "text_primary (neutral 900 light / neutral 50 dark)",
+    "accent": "status-colored dot (6px circle) or miniature shape icon to the left of the label",
+    "_note": "The accent dot/shape reinforces the shape encoding for colorblind users. Never use the status base color as text."
+  },
+  "themes": {
+    "_comment": "Theme-specific surface overrides. Token values above are the 'press_on_light' defaults.",
+    "press_on_light": {
+      "canvas_bg": "#FFFFFF",
+      "panel_bg": "#F8F9FA",
+      "text_primary": "#212529",
+      "text_secondary": "#495057",
+      "text_muted": "#5C636A",
+      "border": "#E9ECEF",
+      "node_default_fill": "#DEE2E6",
+      "tooltip_bg": "#FFFFFF",
+      "tooltip_border": "#E9ECEF",
+      "context_menu_bg": "#FFFFFF",
+      "selection_tray_bg": "#F8F9FA",
+      "command_palette_bg": "#FFFFFF",
+      "_text_muted_note": "v9: darkened from #868E96 to #5C636A. Previous value gave ~3.15:1 contrast on panel_bg (#F8F9FA) — below WCAG AA 4.5:1. New value gives ~5.5:1."
+    },
+    "cosmic_dark": {
+      "canvas_bg": "#16191D",
+      "panel_bg": "#212529",
+      "text_primary": "#F1F3F5",
+      "text_secondary": "#CED4DA",
+      "text_muted": "#868E96",
+      "border": "#495057",
+      "node_default_fill": "#495057",
+      "tooltip_bg": "#343A40",
+      "tooltip_border": "#495057",
+      "context_menu_bg": "#343A40",
+      "selection_tray_bg": "#212529",
+      "command_palette_bg": "#212529",
+      "_note": "In dark mode: primary teal shifts to #2DB299 for WCAG AA contrast. Status colors use explicit base_dark values from color.status (no ad-hoc desaturation). Semantic background colors use the dark_bg values from color.status.",
+      "_dark_text_muted_note": "#868E96 on #212529 gives ~4.8:1 — passes WCAG AA."
+    }
+  },
+  "skeleton": {
+    "_comment": "Loading skeleton visual primitives for the constellation canvas. Use reduced_motion to disable shimmer.",
+    "initial_load": {
+      "node_count": 20,
+      "pattern": "shimmer",
+      "background_light": "#F1F3F5",
+      "shimmer_color_light": "#E9ECEF",
+      "background_dark": "#212529",
+      "shimmer_color_dark": "#343A40",
+      "animation": "sweep 1.5s infinite",
+      "_note": "Render placeholder nodes + subtle shimmer while WebGL layers initialize and data loads."
+    },
+    "transitioning": {
+      "crossfade_duration_ms": 300,
+      "spinner": "indeterminate_bar",
+      "bar_height": "2px",
+      "_note": "Use a top-edge bar while filters/search cause layout transitions."
+    }
+  },
+  "overlay_stacks": {
+    "_comment": "Layout primitives for stacking multiple overlay elements without hardcoded offsets.",
+    "top_right_pills": {
+      "_comment": "Used for stacking stale_indicator + progressive_disclosure (and future pills).",
+      "position": "top-right",
+      "offset": {
+        "top": "12px",
+        "right": "12px"
+      },
+      "gap": "8px",
+      "max_width": "320px",
+      "zIndex": 90,
+      "_note": "Render as a vertical flex/stack container. First child is topmost. Keep below panels (100) so slide-overs can cover it."
+    }
+  },
+  "stale_indicator": {
+    "_comment": "Top-right data freshness indicator. Intended to be subtle but noticeable.",
+    "position": "top-right",
+    "padding": {
+      "x": "12px",
+      "y": "8px"
+    },
+    "radius": "9999px",
+    "font": {
+      "size": "0.8125rem",
+      "weight": 600
+    },
+    "light": {
+      "bg": "#FFF5E0",
+      "border": "#F5A623",
+      "text": "#92400E"
+    },
+    "dark": {
+      "bg": "#3D2E10",
+      "border": "#F7B84D",
+      "text": "#FDE68A"
+    },
+    "_note": "If stale=false, hide. If stale=true, show message + optional action (e.g., Refresh). Prefer rendering inside overlay_stacks.top_right_pills; offset is legacy fallback. (v9.1.4: 'offset' renamed to '_legacy_offset' — prefer overlay_stacks.top_right_pills positioning.)",
+    "_legacy_offset": {
+      "top": "12px",
+      "right": "12px"
+    }
+  },
+  "mini_map": {
+    "_comment": "Optional overview mini-map for large constellations. Simplified dots + viewport rectangle.",
+    "sizes_px": {
+      "small": 100,
+      "medium": 150
+    },
+    "padding": {
+      "x": "8px",
+      "y": "8px"
+    },
+    "radius": "12px",
+    "dot": {
+      "opacity": 0.7,
+      "radius_px": 2
+    },
+    "viewport_rect": {
+      "border_width_px": 2,
+      "border_light": "#0FA68A",
+      "border_dark": "#2DB299",
+      "bg_opacity": 0.05
+    },
+    "light": {
+      "bg": "#F8F9FA",
+      "border": "#E9ECEF",
+      "text": "#495057"
+    },
+    "dark": {
+      "bg": "#212529",
+      "border": "#495057",
+      "text": "#CED4DA"
+    },
+    "_note": "Mini-map should be click-to-pan; double-click zooms. Keep it cheap: no icons, no labels."
+  },
+  "progressive_disclosure": {
+    "_comment": "Indicator shown when thesis threshold hides nodes. Communicates hidden count + optional actions.",
+    "position": "top-right",
+    "padding": {
+      "x": "12px",
+      "y": "8px"
+    },
+    "radius": "9999px",
+    "font": {
+      "size": "0.8125rem",
+      "weight": 600
+    },
+    "light": {
+      "bg": "#F8F9FA",
+      "border": "#E9ECEF",
+      "text": "#495057"
+    },
+    "dark": {
+      "bg": "#212529",
+      "border": "#495057",
+      "text": "#CED4DA"
+    },
+    "_note": "Offset assumes stale_indicator occupies top-right; adjust if stale indicator is hidden. zIndex is defined in elevation.progressive_disclosure. Prefer rendering inside overlay_stacks.top_right_pills; offset is legacy fallback. (v9.1.4: 'offset' renamed to '_legacy_offset' — prefer overlay_stacks.top_right_pills positioning.)",
+    "zIndex": 90,
+    "_legacy_offset": {
+      "top": "52px",
+      "right": "12px"
+    }
+  }
+}

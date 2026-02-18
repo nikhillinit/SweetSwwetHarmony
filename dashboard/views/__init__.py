@@ -8,6 +8,7 @@ from dashboard.views.cost_analysis import render_cost_analysis_page
 from dashboard.views.triage_fast import render_triage_fast_page
 from dashboard.views.triage_detail import render_triage_detail_page
 from dashboard.views.batch_publish import render_batch_publish_page
+from dashboard.views.starwatcher import render_starwatcher_page
 
 __all__ = [
     "render_login_page",
@@ -18,4 +19,5 @@ __all__ = [
     "render_triage_fast_page",
     "render_triage_detail_page",
     "render_batch_publish_page",
+    "render_starwatcher_page",
 ]
