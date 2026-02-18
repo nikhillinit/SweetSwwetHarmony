@@ -20,10 +20,43 @@ from typing import List, Optional
 from croniter import croniter
 
 from ops.storage import OpsStorage
+from utils.git_utils import get_git_info, DETACHED
 
 logger = logging.getLogger(__name__)
 
+_TRUTHY = {"true", "1", "yes", "on", "y"}
+
 _REPO_ROOT = str(Path(__file__).resolve().parent.parent)
+
+
+def _branch_label(branch, sha):
+    """Human-readable label for the current git branch state."""
+    if branch is None:
+        return "unknown branch (git unavailable)"
+    if branch == DETACHED:
+        return f"detached HEAD ({sha})"
+    return branch
+
+
+def _append_cadence_ledger_event(event: str, reason: str, schedule_name: str,
+                                  git_branch=None, git_sha=None) -> None:
+    """Append a non-run event (e.g., 'blocked') to the cadence ledger."""
+    ledger_path = os.path.join(_REPO_ROOT, "artifacts", "cadence", "cadence_ledger.jsonl")
+    os.makedirs(os.path.dirname(ledger_path), exist_ok=True)
+    entry = {
+        "run_id": None,
+        "event": event,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "schedule_name": schedule_name,
+        "reason": reason,
+        "git_branch": git_branch,
+        "git_sha": git_sha,
+    }
+    try:
+        with open(ledger_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except Exception as e:
+        logger.warning(f"Failed to write cadence ledger event: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -587,7 +620,8 @@ class PipelineScheduler:
     # Canary monitor execution handler
     # -----------------------------------------------------------------------
 
-    async def _execute_canary_monitor(self, run_id: int, schedule: dict) -> dict:
+    async def _execute_canary_monitor(self, run_id: int, schedule: dict,
+                                      git_branch=None, git_sha=None) -> dict:
         import asyncio
         # R4-1: Derive DB path from OpsStorage (same as CLI --db), NOT env var
         db_path = os.path.abspath(self.storage.db_path)
@@ -676,7 +710,8 @@ class PipelineScheduler:
         finally:
             # R3-1: Always write artifact, even with partial results
             _write_cadence_artifact(artifacts_dir, run_id, results,
-                                    error=str(failure_error) if failure_error else None)
+                                    error=str(failure_error) if failure_error else None,
+                                    git_branch=git_branch, git_sha=git_sha)
 
         if failure_error:
             raise failure_error
@@ -693,6 +728,28 @@ class PipelineScheduler:
 
         schedule_name = schedule["name"]
         mode = schedule["mode"]
+
+        # Branch-safety guardrail
+        branch, sha = get_git_info()
+        if branch != "main":
+            label = _branch_label(branch, sha)
+            logger.warning(
+                "Schedule '%s' executing on %s. Code may differ from production.",
+                schedule_name, label,
+            )
+            if (mode == "canary-monitor"
+                    and os.getenv("REQUIRE_MAIN_FOR_CANARY", "").lower().strip() in _TRUTHY):
+                _append_cadence_ledger_event(
+                    event="blocked",
+                    reason=f"Branch guardrail: on {label}, not 'main'",
+                    schedule_name=schedule_name,
+                    git_branch=branch,
+                    git_sha=sha,
+                )
+                raise RuntimeError(
+                    f"Canary monitor blocked: on {label}, not 'main'. "
+                    f"Set REQUIRE_MAIN_FOR_CANARY=false to override."
+                )
 
         # Phase 9: Acquire lock to prevent overlapping runs
         if not self._acquire_lock(schedule_name):
@@ -742,7 +799,9 @@ class PipelineScheduler:
                     "collectors_failed": 0
                 }
             elif mode == "canary-monitor":
-                mode_result = await self._execute_canary_monitor(run_id, schedule)
+                mode_result = await self._execute_canary_monitor(
+                    run_id, schedule, git_branch=branch, git_sha=sha,
+                )
                 stats_dict = {
                     "signals_found": 0,
                     "signals_processed": len([r for r in mode_result.values() if r["returncode"] == 0]),
@@ -877,7 +936,9 @@ class PipelineScheduler:
 # ---------------------------------------------------------------------------
 
 def _write_cadence_artifact(artifacts_dir: str, run_id: int, results: dict,
-                            error: str | None = None) -> None:
+                            error: str | None = None,
+                            git_branch: str | None = None,
+                            git_sha: str | None = None) -> None:
     """Write JSON summary + append JSONL ledger line. Always called (even on failure)."""
     ts = datetime.now(timezone.utc).isoformat()
 
@@ -890,6 +951,8 @@ def _write_cadence_artifact(artifacts_dir: str, run_id: int, results: dict,
     entry = {
         "run_id": run_id,
         "timestamp": ts,
+        "git_branch": git_branch,
+        "git_sha": git_sha,
         "steps": {
             k: {
                 "returncode": v["returncode"],
