@@ -86,7 +86,7 @@ def _render_spc_tab(client: APIClient):
         return
 
     if not result or result.get("error"):
-        msg = result.get("error", {}).get("message", "Unknown error") if result else "No response"
+        msg = result.get("message", "Unknown error") if result else "No response"
         st.info(f"SPC check unavailable: {msg}")
         return
 
