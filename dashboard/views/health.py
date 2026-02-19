@@ -242,10 +242,16 @@ def render_collectors_section(client: APIClient):
                 with st.spinner(f"Starting {name}..."):
                     result = client.start_collect_job(collector=name)
                     if result and not result.get("error"):
-                        st.success(f"Started job: {result.get('id', 'unknown')[:8]}")
+                        job_id = result.get('id', 'unknown')[:8]
+                        st.session_state[f"last_run_{name}"] = f"Job {job_id} started successfully"
                         st.rerun()
                     else:
-                        st.error(result.get("message", "Failed to start job"))
+                        st.error(result.get("message", "Failed to start collector. Check the API server logs."))
+
+            # Show persistent feedback from previous run (survives rerun)
+            if f"last_run_{name}" in st.session_state:
+                st.success(st.session_state[f"last_run_{name}"])
+                del st.session_state[f"last_run_{name}"]
 
         st.divider()
 

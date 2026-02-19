@@ -86,8 +86,8 @@ def _render_spc_tab(client: APIClient):
         return
 
     if not result or result.get("error"):
-        msg = result.get("message", "Unknown error") if result else "No response"
-        st.info(f"SPC check unavailable: {msg}")
+        msg = result.get("message", "No SPC data available yet. Run the canary monitor to generate control chart data.") if result else "Could not reach the API server."
+        st.info(msg)
         return
 
     data = result.get("data", {})
