@@ -28,31 +28,26 @@ def run_async(coro):
 
 
 def inject_monitoring_css():
-    """Inject custom CSS for monitoring page."""
+    """Inject custom CSS for monitoring page (light theme, consistent with app)."""
     st.markdown("""
     <style>
-    /* Dark theme - Press On Ventures style */
-    .stApp {
-        background-color: #0a0a0a;
-        color: #E1D8D1;
-    }
-
-    /* Card styling */
+    /* Card styling — light theme consistent with main app */
     .monitor-card {
-        border: 1px solid #2a2520;
-        border-radius: 4px;
+        border: 1px solid #E5E7EB;
+        border-radius: 8px;
         padding: 1rem 1.25rem;
         margin-bottom: 0.75rem;
-        background: #111111;
+        background: #FFFFFF;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
     }
 
     /* Alert card with severity color */
     .alert-card {
-        border: 1px solid #2a2520;
-        border-radius: 4px;
+        border: 1px solid #E5E7EB;
+        border-radius: 8px;
         padding: 1rem 1.25rem;
         margin-bottom: 0.75rem;
-        background: #111111;
+        background: #FFFFFF;
     }
 
     .alert-high {
@@ -90,25 +85,25 @@ def inject_monitoring_css():
     }
 
     .severity-high {
-        background: #7F1D1D;
-        color: #FCA5A5;
+        background: #FEE2E2;
+        color: #991B1B;
     }
 
     .severity-medium {
-        background: #78350F;
-        color: #FCD34D;
+        background: #FEF3C7;
+        color: #92400E;
     }
 
     .severity-low {
-        background: #064E3B;
-        color: #6EE7B7;
+        background: #D1FAE5;
+        color: #065F46;
     }
 
     /* Label styling */
     .label {
         font-size: 0.7rem;
         font-weight: 600;
-        color: #7a7267;
+        color: #6B7280;
         text-transform: uppercase;
         letter-spacing: 0.1em;
     }
@@ -117,12 +112,12 @@ def inject_monitoring_css():
     .metric-value {
         font-size: 2rem;
         font-weight: 700;
-        color: #E1D8D1;
+        color: #1F2937;
     }
 
     .metric-label {
         font-size: 0.8rem;
-        color: #7a7267;
+        color: #6B7280;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -279,10 +274,10 @@ def render_overview(monitor_store):
             st.markdown(f"""
             <div class="monitor-card" style="display: flex; justify-content: space-between; align-items: center;">
                 <div>
-                    <span style="color: #7a7267;">{run['started_at'][:16]}</span>
+                    <span style="color: #6B7280;">{run['started_at'][:16]}</span>
                 </div>
                 <div>
-                    <span style="color: #9CA3AF;">
+                    <span style="color: #4B5563;">
                         {run['watches_checked']} checked,
                         {run['snapshots_taken']} snapshots
                     </span>
@@ -293,7 +288,7 @@ def render_overview(monitor_store):
                     </span>
                 </div>
                 <div>
-                    <span style="color: #7a7267;">{duration:.1f}s</span>
+                    <span style="color: #6B7280;">{duration:.1f}s</span>
                 </div>
             </div>
             """, unsafe_allow_html=True)
@@ -331,12 +326,12 @@ def render_watches(monitor_store):
         <div class="monitor-card">
             <div style="display: flex; justify-content: space-between; align-items: flex-start;">
                 <div>
-                    <div style="font-weight: 600; color: #E1D8D1;">{watch.canonical_key}</div>
-                    <div style="font-size: 0.85rem; color: #7a7267;">{watch.url}</div>
+                    <div style="font-weight: 600; color: #1F2937;">{watch.canonical_key}</div>
+                    <div style="font-size: 0.85rem; color: #6B7280;">{watch.url}</div>
                 </div>
                 <div style="text-align: right;">
                     <div class="{status_class}">{status_text}</div>
-                    <div style="font-size: 0.75rem; color: #7a7267;">
+                    <div style="font-size: 0.75rem; color: #6B7280;">
                         {watch.watch_type} | {watch.interval_seconds // 3600}h interval
                     </div>
                 </div>
@@ -380,12 +375,12 @@ def render_diffs(monitor_store):
         <div class="alert-card alert-{'high' if diff.severity_score >= 0.8 else 'medium' if diff.severity_score >= 0.4 else 'low'}">
             <div style="display: flex; justify-content: space-between; align-items: flex-start;">
                 <div>
-                    <div style="font-weight: 600; color: #E1D8D1;">Watch #{diff.watch_id}</div>
-                    <div style="font-size: 0.85rem; color: #9CA3AF;">{changes_text}</div>
+                    <div style="font-weight: 600; color: #1F2937;">Watch #{diff.watch_id}</div>
+                    <div style="font-size: 0.85rem; color: #4B5563;">{changes_text}</div>
                 </div>
                 <div style="text-align: right;">
                     <span class="severity-badge {sev_class}">{diff.severity_score:.2f}</span>
-                    <div style="font-size: 0.75rem; color: #7a7267; margin-top: 0.25rem;">{time_ago}</div>
+                    <div style="font-size: 0.75rem; color: #6B7280; margin-top: 0.25rem;">{time_ago}</div>
                 </div>
             </div>
             {_render_diff_summary(diff)}
@@ -419,7 +414,7 @@ def _render_diff_summary(diff) -> str:
         return ""
 
     return f"""
-    <div style="margin-top: 0.5rem; font-size: 0.8rem; color: #7a7267;">
+    <div style="margin-top: 0.5rem; font-size: 0.8rem; color: #6B7280;">
         {' | '.join(parts)}
     </div>
     """
@@ -450,17 +445,17 @@ def render_alerts(monitor_store):
             <div class="alert-card alert-{'high' if alert.severity_score >= 0.8 else 'medium' if alert.severity_score >= 0.4 else 'low'}">
                 <div style="display: flex; justify-content: space-between; align-items: flex-start;">
                     <div>
-                        <div style="font-weight: 600; color: #E1D8D1;">
+                        <div style="font-weight: 600; color: #1F2937;">
                             {alert.alert_reason.replace('_', ' ').title()}
                         </div>
-                        <div style="font-size: 0.85rem; color: #9CA3AF;">
+                        <div style="font-size: 0.85rem; color: #4B5563;">
                             Watch #{alert.watch_id}
                             {f' | Diff #{alert.diff_id}' if alert.diff_id else ''}
                         </div>
                     </div>
                     <div style="text-align: right;">
                         <span class="severity-badge {sev_class}">{alert.severity_score:.2f}</span>
-                        <div style="font-size: 0.75rem; color: #7a7267; margin-top: 0.25rem;">{time_ago}</div>
+                        <div style="font-size: 0.75rem; color: #6B7280; margin-top: 0.25rem;">{time_ago}</div>
                     </div>
                 </div>
             </div>

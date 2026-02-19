@@ -44,11 +44,11 @@ def render_ops_health_page():
         ops_health = client.get("/health/ops")
     except Exception as e:
         st.error(f"Could not fetch ops health: {e}")
-        st.info("Ensure the API server is running and ops tables are initialized.")
+        st.info("Check that the API server is running. You may need to start it with `python -m api.app`.")
         return
 
     if not ops_health or "error" in ops_health:
-        st.warning("Ops layer not initialized. Run the pipeline first.")
+        st.warning("No ops data found yet. Run the pipeline at least once to populate monitoring metrics.")
         return
 
     # Tabs layout
