@@ -145,9 +145,10 @@ def test_main_no_warning(mock_git, scheduler, caplog):
 # ---------------------------------------------------------------------------
 
 @patch("ops.scheduler.get_git_info", return_value=("feature/x", "abc1234"))
-def test_strict_blocks_canary_non_main(mock_git, scheduler, monkeypatch):
+def test_strict_blocks_canary_non_main(mock_git, scheduler, monkeypatch, tmp_path):
     """REQUIRE_MAIN_FOR_CANARY=true blocks canary-monitor on non-main branch."""
     monkeypatch.setenv("REQUIRE_MAIN_FOR_CANARY", "true")
+    monkeypatch.setattr("ops.scheduler._REPO_ROOT", str(tmp_path))
     config = _canary_config()
     sid = scheduler.create_schedule(config)
 
@@ -183,9 +184,10 @@ def test_detached_head_warning(mock_git, scheduler, caplog):
 # ---------------------------------------------------------------------------
 
 @patch("ops.scheduler.get_git_info", return_value=(DETACHED, "abc1234"))
-def test_strict_blocks_canary_detached(mock_git, scheduler, monkeypatch):
+def test_strict_blocks_canary_detached(mock_git, scheduler, monkeypatch, tmp_path):
     """REQUIRE_MAIN_FOR_CANARY=true blocks canary-monitor on detached HEAD."""
     monkeypatch.setenv("REQUIRE_MAIN_FOR_CANARY", "true")
+    monkeypatch.setattr("ops.scheduler._REPO_ROOT", str(tmp_path))
     config = _canary_config()
     sid = scheduler.create_schedule(config)
 
@@ -221,9 +223,10 @@ def test_no_git_warning(mock_git, scheduler, caplog):
 # ---------------------------------------------------------------------------
 
 @patch("ops.scheduler.get_git_info", return_value=(None, None))
-def test_strict_blocks_canary_no_git(mock_git, scheduler, monkeypatch):
+def test_strict_blocks_canary_no_git(mock_git, scheduler, monkeypatch, tmp_path):
     """REQUIRE_MAIN_FOR_CANARY=true blocks canary-monitor when git unavailable."""
     monkeypatch.setenv("REQUIRE_MAIN_FOR_CANARY", "true")
+    monkeypatch.setattr("ops.scheduler._REPO_ROOT", str(tmp_path))
     config = _canary_config()
     sid = scheduler.create_schedule(config)
 
@@ -267,9 +270,10 @@ def test_artifact_contains_git_fields(tmp_path):
 # ---------------------------------------------------------------------------
 
 @patch("ops.scheduler.get_git_info", return_value=("feature/x", "abc1234"))
-def test_lenient_env_parsing(mock_git, scheduler, monkeypatch):
+def test_lenient_env_parsing(mock_git, scheduler, monkeypatch, tmp_path):
     """REQUIRE_MAIN_FOR_CANARY=YES (uppercase) still triggers block."""
     monkeypatch.setenv("REQUIRE_MAIN_FOR_CANARY", "YES")
+    monkeypatch.setattr("ops.scheduler._REPO_ROOT", str(tmp_path))
     config = _canary_config()
     sid = scheduler.create_schedule(config)
 
