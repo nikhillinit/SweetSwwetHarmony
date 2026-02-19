@@ -171,6 +171,16 @@ def render_triage_fast_page():
     if "triage_selected_ids" not in st.session_state:
         st.session_state.triage_selected_ids = set()
 
+    # Column headers
+    hcols = st.columns([0.5, 3, 1, 1, 1, 1, 2])
+    hcols[0].markdown("")
+    hcols[1].markdown("**Company**")
+    hcols[2].markdown("**Conf.**")
+    hcols[3].markdown("**Signals**")
+    hcols[4].markdown("**Source**")
+    hcols[5].markdown("**Category**")
+    hcols[6].markdown("**Actions**")
+
     for item in items:
         review_id = item.get("review_id")
         company = item.get("company_name", "Unknown")

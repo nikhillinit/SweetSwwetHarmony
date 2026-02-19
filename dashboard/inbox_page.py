@@ -7,11 +7,10 @@ Calls FastAPI backend for all data and actions.
 """
 
 import streamlit as st
-import httpx
 from typing import List, Dict, Any, Optional
 
 from dashboard.components.company_card import render_company_card
-from dashboard.api_client import API_BASE_URL, check_api_connection
+from dashboard.api_client import APIClient, check_api_connection, is_error, error_msg
 
 
 # =============================================================================
@@ -34,53 +33,38 @@ STATUS_DESCRIPTIONS = {
 
 
 # =============================================================================
-# API CLIENT
+# API HELPERS
 # =============================================================================
-
-def get_api_client() -> httpx.Client:
-    """Get HTTP client for API calls."""
-    return httpx.Client(base_url=API_BASE_URL, timeout=10.0)
-
 
 @st.cache_data(ttl=30)
 def fetch_inbox_companies(
+    _client,
     status: str = "inbox",
     min_confidence: float = 0.0,
     page: int = 1,
     page_size: int = 25,
 ) -> Dict[str, Any]:
-    """Fetch companies from API."""
-    try:
-        with get_api_client() as client:
-            response = client.get(
-                "/companies/inbox",
-                params={
-                    "status": status,
-                    "min_confidence": min_confidence,
-                    "page": page,
-                    "page_size": page_size,
-                }
-            )
-            if response.status_code == 200:
-                return response.json()
-            else:
-                return {"companies": [], "error": f"API error: {response.status_code}"}
-    except httpx.ConnectError:
-        return {"companies": [], "error": "Cannot connect to API server"}
-    except Exception as e:
-        return {"companies": [], "error": str(e)}
+    """Fetch companies from API via centralized APIClient."""
+    result = _client.get(
+        "/companies/inbox",
+        params={
+            "status": status,
+            "min_confidence": min_confidence,
+            "page": page,
+            "page_size": page_size,
+        },
+    )
+    if is_error(result):
+        return {"companies": [], "error": error_msg(result)}
+    return result
 
 
-def fetch_company_detail(canonical_key: str) -> Optional[Dict[str, Any]]:
+def fetch_company_detail(client: APIClient, canonical_key: str) -> Optional[Dict[str, Any]]:
     """Fetch single company details."""
-    try:
-        with get_api_client() as client:
-            response = client.get(f"/companies/{canonical_key}")
-            if response.status_code == 200:
-                return response.json()
-    except:
-        pass
-    return None
+    result = client.get(f"/companies/{canonical_key}")
+    if is_error(result):
+        return None
+    return result
 
 
 # =============================================================================
@@ -334,6 +318,8 @@ def render_inbox_page():
         render_api_error("The API server is not responding.")
         return
 
+    client = APIClient()
+
     # Create tabs for different statuses
     tabs = st.tabs(["New Deals", "Tracking", "Passed", "Pipeline"])
 
@@ -343,6 +329,7 @@ def render_inbox_page():
         with tab:
             # Fetch data for this status
             data = fetch_inbox_companies(
+                client,
                 status=status,
                 min_confidence=filters["min_confidence"],
                 page_size=filters["page_size"],

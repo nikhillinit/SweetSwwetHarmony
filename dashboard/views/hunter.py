@@ -16,7 +16,7 @@ import uuid
 
 import streamlit as st
 
-from dashboard.api_client import APIClient
+from dashboard.api_client import APIClient, is_error, error_msg
 
 
 def render_hunter_page():
@@ -33,7 +33,7 @@ def render_hunter_page():
 
         # Fetch recent runs
         runs_result = _fetch_runs(client, cache_buster=st.session_state.get("hunter_cache_buster", 0))
-        runs = runs_result.get("data", []) if runs_result and not runs_result.get("error") else []
+        runs = runs_result.get("data", []) if not is_error(runs_result) else []
 
         if runs:
             run_labels = [
@@ -116,7 +116,7 @@ def _render_queries_tab(client: APIClient, run_id: str):
     """Render queries table for the selected run."""
     queries_result = client.get(f"/hunter/runs/{run_id}/queries")
 
-    if not queries_result or queries_result.get("error"):
+    if is_error(queries_result):
         st.warning("Could not load queries.")
         return
 
@@ -126,6 +126,13 @@ def _render_queries_tab(client: APIClient, run_id: str):
         return
 
     st.markdown(f"**{len(queries)} queries**")
+
+    hcols = st.columns([2, 1, 1, 1, 1])
+    hcols[0].markdown("**Query**")
+    hcols[1].markdown("**Collector**")
+    hcols[2].markdown("**Status**")
+    hcols[3].markdown("**Results**")
+    hcols[4].markdown("**Cost**")
 
     for q in queries:
         cols = st.columns([2, 1, 1, 1, 1])
@@ -162,7 +169,7 @@ def _render_results_tab(
 
     results_data = client.get("/hunter/runs/{}/results".format(run_id), params=params)
 
-    if not results_data or results_data.get("error"):
+    if is_error(results_data):
         st.warning("Could not load results.")
         return
 
@@ -176,6 +183,13 @@ def _render_results_tab(
         return
 
     st.markdown(f"**{len(items)} results** on this page")
+
+    hcols = st.columns([3, 1, 1, 1, 2])
+    hcols[0].markdown("**Company**")
+    hcols[1].markdown("**Conf.**")
+    hcols[2].markdown("**Thesis**")
+    hcols[3].markdown("**Status**")
+    hcols[4].markdown("**Actions**")
 
     for item in items:
         result_id = item.get("id")
@@ -236,11 +250,11 @@ def _render_result_actions(client: APIClient, result_id: int, status: str, updat
                     f"/hunter/results/{result_id}/feedback",
                     json={"status": "relevant", "idempotency_key": idempotency_key},
                 )
-                if resp and not resp.get("error"):
+                if is_error(resp):
+                    st.error("Failed")
+                else:
                     st.session_state.hunter_cache_buster += 1
                     st.rerun()
-                else:
-                    st.error("Failed")
         with col_rej:
             if st.button("Not Rel", key=f"rej_{result_id}"):
                 idempotency_key = str(uuid.uuid4())
@@ -248,11 +262,11 @@ def _render_result_actions(client: APIClient, result_id: int, status: str, updat
                     f"/hunter/results/{result_id}/feedback",
                     json={"status": "not_relevant", "idempotency_key": idempotency_key},
                 )
-                if resp and not resp.get("error"):
+                if is_error(resp):
+                    st.error("Failed")
+                else:
                     st.session_state.hunter_cache_buster += 1
                     st.rerun()
-                else:
-                    st.error("Failed")
 
     elif status == "relevant":
         if st.button("Promote", key=f"promote_{result_id}"):
@@ -268,13 +282,13 @@ def _render_result_actions(client: APIClient, result_id: int, status: str, updat
                         f"/hunter/results/{result_id}/promote",
                         json={"idempotency_key": idempotency_key},
                     )
-                    if resp and not resp.get("error"):
+                    if is_error(resp):
+                        st.error("Promotion failed")
+                    else:
                         st.success("Promoted!")
                         st.session_state.hunter_cache_buster += 1
                         st.session_state.pop(f"confirm_promote_{result_id}", None)
                         st.rerun()
-                    else:
-                        st.error("Promotion failed")
             with col_no:
                 if st.button("No", key=f"confirm_no_{result_id}"):
                     st.session_state.pop(f"confirm_promote_{result_id}", None)
@@ -285,7 +299,7 @@ def _render_budget_tab(client: APIClient):
     """Render budget usage overview."""
     budget_result = client.get("/hunter/budget")
 
-    if not budget_result or budget_result.get("error"):
+    if is_error(budget_result):
         st.warning("Could not load budget data.")
         return
 

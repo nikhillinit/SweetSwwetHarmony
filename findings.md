@@ -1,117 +1,103 @@
-# Findings: Critical Review of UI Hardening Feedback v2.0
+# Findings: UI Audit — Gap Analysis & Design Review
 
 **Date:** 2026-02-18
-**Context:** Reviewing 4 contentions raised against the original UI hardening plan and assessing the v2.0 hardened proposal.
+**Context:** Comprehensive audit of all 15 dashboard views, API layer, and components on `feature/ui-polish-safe-sprint`.
 
 ---
 
-## Contention Verdicts Summary
+## Architecture Summary
 
-| # | Contention | Verdict | Rationale |
-|---|-----------|---------|-----------|
-| 1 | AttributeError Trap (API client returns None) | **INVALID** | API client returns `{"error": True, ...}` on ConnectError, never `None`; all views have guards |
-| 2 | `await` Signature Risk (generate_report sync) | **INVALID** (wrong diagnosis, real bug different) | `generate_report()` IS `async def`; actual bug is calling non-existent `check_health()` |
-| 3 | Health Endpoint Fragility (500 risk) | **PARTIALLY VALID** | Existing try/except prevents 500, but anomaly key mismatch IS real |
-| 4 | Pytest SQLite Contamination | **INVALID** | All tests use `tempfile.mkstemp()` temp DBs; no test touches `signals.db` |
-
----
-
-## Contention 1: The AttributeError Trap — INVALID
-
-### Claim
-> API client returns `False` or `None` when offline → `None.get("data")` → AttributeError
-
-### Evidence Against
-1. **API client generic methods** (`dashboard/api_client.py:149-191`) all return `{"error": True, "message": "..."}` on `httpx.ConnectError`, never `None`:
-   ```python
-   except httpx.ConnectError:
-       return {"error": True, "message": "Cannot connect to API server"}
-   ```
-
-2. **All 4 views** have defensive guards before `.get("data")`:
-   - `drift_monitoring.py:88`: `if not result or result.get("error"): return`
-   - `drift_monitoring.py:147`: `if not status or status.get("error"): return`
-   - `drift_monitoring.py:220`: `if stats_resp and not stats_resp.get("error"):`
-   - `hunter.py:36`: inline `if runs_result and not runs_result.get("error") else []`
-   - `hunter.py:119`: `if not queries_result or queries_result.get("error"): return`
-   - `hunter.py:165`: `if not results_data or results_data.get("error"): return`
-   - `batch_publish.py:66`: `if result and not result.get("error"):`
-   - `batch_publish.py:82`: `if not preview or preview.get("error"): return`
-   - `batch_publish.py:174`: `if not result or result.get("error"): return`
-   - `triage_fast.py:140-147`: `if is_error(result)` + `if not result or "data" not in result`
-
-3. **Test confirms** (`tests/dashboard/test_api_client.py:396-408`): `assert result["error"] is True`
-
-### Conclusion
-The `isinstance(data, dict)` guards proposed in v2.0 are **unnecessary**. The existing pattern is safe. The v2.0 proposal adds complexity for a non-existent problem.
+| Layer | Technology | Files |
+|-------|-----------|-------|
+| Dashboard | Streamlit (Python) | `dashboard/app.py` + 13 views |
+| API | FastAPI | `api/main.py` + 14 routers |
+| Visualization | HTML5 Canvas (Starwatcher v9.1.6) | `dashboard/views/starwatcher.py` |
+| CSS | Custom inline (~900 lines) | `dashboard/app.py:138-1050` |
+| Fonts | Inter Bold + Poppins | Google Fonts CDN |
+| Auth | JWT (session state) | `dashboard/api_client.py` |
 
 ---
 
-## Contention 2: The await Signature Risk — INVALID (but different bug exists)
+## Bug Findings
 
-### Claim
-> `generate_report()` might be synchronous; `await` on it would cause TypeError
+### BUG-1: Health API — Non-existent method call (CONFIRMED)
+- **Severity:** High
+- **Location:** `api/routers/health.py:174`
+- **Issue:** `await monitor.check_health()` — `SignalHealthMonitor` has no `check_health()` method
+- **Correct call:** `await monitor.generate_report()`
+- **Secondary issue:** Line 179 calls `.get("anomalies")` on a dataclass (not a dict) — needs `.to_dict()` first
+- **Tertiary issue:** Line 186 reads `anomaly.get("message")` but `SignalAnomaly.to_dict()` uses key `"description"`
+- **Current behavior:** Silently caught by `except Exception`, returns "Failed to check" status
+- **Source:** First identified in prior findings.md review (Contention 2)
 
-### Evidence Against
-`utils/signal_health.py:219`:
-```python
-async def generate_report(self, lookback_days: int = 30) -> HealthReport:
-```
-It IS async. The `inspect.iscoroutinefunction()` check proposed in v2.0 is unnecessary.
-
-### Actual Bug Found
-`api/routers/health.py:174` calls `monitor.check_health()` — **this method does NOT exist**. No `check_health` method anywhere in `signal_health.py`. The correct call is `monitor.generate_report()`.
-
-**Current behavior:** The `AttributeError: 'SignalHealthMonitor' object has no attribute 'check_health'` is silently caught by the try/except at line 196, resulting in a "Failed to check" status instead of actual health data.
-
-### Additional Bug
-Line 179 calls `health_report.get("anomalies")` — but `generate_report()` returns a `HealthReport` dataclass, not a dict. Need to call `.to_dict()` first, or access `.anomalies` directly.
-
----
-
-## Contention 3: Health Endpoint Fragility — PARTIALLY VALID
-
-### Valid Part
-The anomaly key mismatch IS real:
-- `SignalAnomaly.to_dict()` (`signal_health.py:98`): uses key `"description"`
-- Health router (`health.py:186`): reads key `"message"` → always returns `"Unknown anomaly"`
-
-### Invalid Part
-- The existing try/except at lines 196-201 **already prevents 500 errors**
-- **No external uptime monitors** found configured against `/health`
-- The v2.0 proposal's additional try/except is redundant
+### BUG-2: Inbox page bypasses APIClient
+- **Severity:** Medium
+- **Location:** `dashboard/inbox_page.py:40-42`
+- **Issue:** Uses raw `httpx.Client(base_url=API_BASE_URL)` instead of `APIClient()`
+- **Impact:** No centralized error handling, no auth headers, inconsistent response format
+- **All other 14 views** use `APIClient()` — this is the only outlier
 
 ---
 
-## Contention 4: Pytest SQLite Contamination — INVALID
+## Design Gap Findings
 
-### Evidence Against
-1. **All test fixtures** use `tempfile.mkstemp(suffix=".db")` — never `signals.db`
-2. **No import-time DB initialization** — `SignalStore()` doesn't connect until `.initialize()` is called
-3. **`DATABASE_URL` is NOT used** by this project's SQLite layer — `DISCOVERY_DB_PATH` is the relevant env var, but tests don't reference it
-4. **Production DB uses WAL mode** with 5s busy_timeout for additional safety
-5. **Canary runs in subprocess** — isolated process space
+### GAP-1: Missing column headers on 5 data tables
+All five views use `st.columns()` with data rows but no header row:
+
+| View | File:Line | Columns Shown |
+|------|-----------|---------------|
+| Triage Fast | `triage_fast.py:186` | Select, Company, Confidence, Signals, Source, Category, Actions |
+| Batch Preview | `batch_publish.py:106` | Company, Confidence, Key, Status |
+| Batch Active | `batch_publish.py:191` | Batch ID, Status, Items, Pushed, Created |
+| Hunter Queries | `hunter.py:131` | Query, Collector, Status, Results, Cost |
+| Hunter Results | `hunter.py:192` | Company, Confidence, Thesis, Status, Actions |
+
+### GAP-2: Error handling pattern divergence
+- `triage_fast.py` uses centralized `is_error()` / `error_msg()` helpers (good)
+- `batch_publish.py` and `hunter.py` use raw `.get("error")` checks (legacy pattern)
+- Not a bug, but inconsistency adds maintenance burden
+
+### GAP-3: Triage company name as button
+- `triage_fast.py:198` — company name rendered as `st.button()` for drill-down
+- Looks like a generic Streamlit button (not obviously clickable as a navigation link)
+- Enhancement: Could use a markdown link-styled approach or caption with callback
 
 ---
 
-## Assessment of v2.0 Hardened Proposal
+## What's Already Good (No Changes Needed)
 
-### Change 1: Type-Safe Null-Guard Sweep — UNNECESSARY
-- Adds `isinstance(data, dict)` checks to solve a problem that doesn't exist
-- API client never returns `None`; views already have error guards
-- Increases code complexity without benefit
-- **Recommendation:** Skip entirely
+| Area | Assessment |
+|------|-----------|
+| **Brand CSS** | 900 lines of custom CSS with Inter Bold + Poppins. Press On palette (dark/beige/white) is cohesive and editorial. |
+| **Empty states** | All views have user-friendly empty state messages with guidance. |
+| **Error guards** | API client returns `{"error": True, ...}` on failure — never None. All views handle this. |
+| **Pagination** | Cursor-based with history stack for "Previous". Consistent across triage, hunter, results. |
+| **Loading states** | `st.spinner()` used for all async operations. |
+| **Status colors** | 8-color palette mapped to Notion statuses. Consistent across views. |
+| **Feature flags** | Starwatcher gated behind `STARWATCHER_ENABLED`. Bulk triage returns 423 when disabled. |
+| **Idempotency** | All write actions use UUID4 idempotency keys. |
+| **Cache busting** | Session state counters invalidate `@st.cache_data` after mutations. |
+| **Test coverage** | 10 dashboard test files, 23 API test files, 51 Starwatcher adapter tests. |
 
-### Change 2: Health API Fix — PARTIALLY CORRECT, OVER-ENGINEERED
-- **Correct:** Method should be `generate_report()` not `check_health()`
-- **Correct:** Key should be `"description"` not `"message"`
-- **Over-engineered:** `inspect.iscoroutinefunction()` check is unnecessary (it IS async)
-- **Over-engineered:** Additional try/except is redundant (one already exists)
-- **Missing:** Need `.to_dict()` call since `generate_report()` returns dataclass, not dict
-- **Recommendation:** Simple 3-line fix, not the 20-line block proposed
+---
 
-### Verification Protocol — UNNECESSARY COMPLEXITY
-- `DATABASE_URL` is not used by this project's SQLite layer
-- Tests already use temp files — no contamination risk
-- Running tests during canary is safe
-- **Recommendation:** Use standard `pytest tests/dashboard/ tests/api/routers/ -v`
+## Contention Review (from prior findings.md)
+
+| Contention | Verdict | Action |
+|-----------|---------|--------|
+| AttributeError trap (API returns None) | INVALID | No action — API never returns None |
+| `await` signature risk | INVALID (different bug) | Fix BUG-1 instead |
+| Health endpoint 500 risk | PARTIALLY VALID | Fix BUG-1 (method + key + dict) |
+| Pytest SQLite contamination | INVALID | No action — tests use temp DBs |
+
+---
+
+## Priority Matrix
+
+| Priority | Item | Effort | Impact |
+|----------|------|--------|--------|
+| P0 | BUG-1: Health API fix | 15 min | Signal health data visible in dashboard |
+| P1 | BUG-2: Inbox APIClient refactor | 20 min | Consistent error handling across all views |
+| P1 | GAP-1: Column headers (5 tables) | 15 min | Immediate usability improvement |
+| P2 | GAP-2: Error helper consistency | 10 min | Code maintenance |
+| P3 | GAP-3: Triage button styling | 5 min | Minor UX polish |
