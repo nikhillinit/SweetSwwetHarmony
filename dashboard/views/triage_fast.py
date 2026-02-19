@@ -19,7 +19,7 @@ from datetime import date
 
 import streamlit as st
 
-from dashboard.api_client import APIClient
+from dashboard.api_client import APIClient, is_error, error_msg
 
 # Predefined source API options matching collector inventory
 SOURCE_API_OPTIONS = [
@@ -137,12 +137,13 @@ def render_triage_fast_page():
         sort_order=sort_order,
     )
 
-    if result and result.get("error"):
-        st.error(f"API Error: {result.get('message', result.get('detail', 'Unknown'))}")
+    if is_error(result):
+        st.error(f"Could not load triage data: {error_msg(result)}")
+        st.caption("Check that the API server is running, or adjust API_BASE_URL if needed.")
         return
 
     if not result or "data" not in result:
-        st.info("No triage items found matching your filters.")
+        st.warning("Unexpected API response. Try refreshing the page.")
         return
 
     items = result.get("data", [])
@@ -151,7 +152,11 @@ def render_triage_fast_page():
     next_cursor = meta.get("next_cursor")
 
     if not items:
-        st.info("No triage items found matching your filters.")
+        st.info(
+            "No items match your current filters. "
+            "Try widening the date range, lowering the confidence threshold, "
+            "or selecting additional source APIs in the sidebar."
+        )
         return
 
     # -------------------------------------------------------------------------
@@ -161,6 +166,20 @@ def render_triage_fast_page():
         st.markdown(f"**Showing {len(items)} of more**")
     else:
         st.markdown(f"**Showing {len(items)} items**")
+
+    # Initialize bulk selection state
+    if "triage_selected_ids" not in st.session_state:
+        st.session_state.triage_selected_ids = set()
+
+    # Column headers
+    hcols = st.columns([0.5, 3, 1, 1, 1, 1, 2])
+    hcols[0].markdown("")
+    hcols[1].markdown("**Company**")
+    hcols[2].markdown("**Conf.**")
+    hcols[3].markdown("**Signals**")
+    hcols[4].markdown("**Source**")
+    hcols[5].markdown("**Category**")
+    hcols[6].markdown("**Actions**")
 
     for item in items:
         review_id = item.get("review_id")
@@ -174,21 +193,88 @@ def render_triage_fast_page():
 
         conf_pct = f"{confidence:.0%}" if confidence is not None else "—"
 
-        cols = st.columns([3, 1, 1, 1, 1, 2])
+        cols = st.columns([0.5, 3, 1, 1, 1, 1, 2])
         with cols[0]:
+            checked = st.checkbox(
+                "Select",
+                key=f"bulk_{review_id}",
+                label_visibility="collapsed",
+            )
+            if checked:
+                st.session_state.triage_selected_ids.add(review_id)
+            else:
+                st.session_state.triage_selected_ids.discard(review_id)
+        with cols[1]:
             if st.button(f"{company}", key=f"select_{review_id}"):
                 st.session_state.triage_selected_id = review_id
                 st.rerun()
-        with cols[1]:
-            st.caption(conf_pct)
         with cols[2]:
-            st.caption(f"{signal_count} sig")
+            st.caption(conf_pct)
         with cols[3]:
-            st.caption(sources[:20] if sources else "—")
+            st.caption(f"{signal_count} sig")
         with cols[4]:
-            st.caption(category or "—")
+            st.caption(sources[:20] if sources else "—")
         with cols[5]:
+            st.caption(category or "—")
+        with cols[6]:
             _render_quick_actions(client, review_id, status, updated_at)
+
+    # -------------------------------------------------------------------------
+    # BULK ACTION BAR
+    # -------------------------------------------------------------------------
+    selected_ids = [
+        rid for rid in st.session_state.triage_selected_ids
+        if any(item.get("review_id") == rid for item in items)
+    ]
+    if selected_ids:
+        st.markdown("---")
+        bcols = st.columns([2, 2, 1])
+        with bcols[0]:
+            bulk_action = st.selectbox(
+                "Bulk Action",
+                ["Approve", "Reject", "Defer"],
+                key="bulk_action_select",
+            )
+        with bcols[1]:
+            bulk_reason = st.text_input(
+                "Reason",
+                key="bulk_reason_input",
+                placeholder="Reason for bulk action...",
+            )
+        with bcols[2]:
+            st.markdown("")  # spacer for alignment
+            if st.button(
+                f"Apply to {len(selected_ids)} items",
+                key="bulk_apply",
+                type="primary",
+            ):
+                if bulk_reason:
+                    bulk_items = [
+                        {"review_id": rid, "reason": bulk_reason}
+                        for rid in selected_ids
+                    ]
+                    idempotency_key = str(uuid.uuid4())
+                    result = client.bulk_triage(
+                        action=bulk_action.lower(),
+                        items=bulk_items,
+                        idempotency_key=idempotency_key,
+                    )
+                    if is_error(result):
+                        status_code = result.get("status_code") if result else None
+                        if status_code == 423:
+                            st.info(
+                                "Bulk actions are not yet enabled. "
+                                "An admin can activate this with BULK_TRIAGE_ENABLED."
+                            )
+                        else:
+                            st.error(f"Bulk action failed: {error_msg(result)}")
+                    else:
+                        st.success(f"{bulk_action}d {len(selected_ids)} items!")
+                        st.session_state.triage_selected_ids = set()
+                        st.session_state.triage_cache_buster += 1
+                        st.rerun()
+                else:
+                    st.warning("Please enter a reason for the bulk action.")
 
     # -------------------------------------------------------------------------
     # PAGINATION

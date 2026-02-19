@@ -1,0 +1,20 @@
+{
+  "name": "Starwatcher",
+  "version": "9.1.6",
+  "revised": "2026-02-18",
+  "canonical_files": {
+    "contract": "starwatcher-contract.ts",
+    "status_map": "starwatcher-status-map.ts",
+    "tokens": "starwatcher-tokens.json",
+    "component_spec": "starwatcher-component-spec.md",
+    "backend_reference": "starwatcher-backend-streamlit.py"
+  },
+  "versioned_release_artifacts": {
+    "contract": "starwatcher-contract-v9.1.6.ts",
+    "status_map": "starwatcher-status-map-v9.1.6.ts",
+    "tokens": "starwatcher-tokens-v9.1.6.json",
+    "component_spec": "starwatcher-component-spec-v9.1.6.md",
+    "backend_reference": "starwatcher-backend-streamlit-v9.1.6.py"
+  },
+  "convention": "Unsuffixed files are canonical import targets. Version-suffixed files are archived release artifacts."
+}

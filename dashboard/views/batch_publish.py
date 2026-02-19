@@ -14,7 +14,7 @@ import uuid
 
 import streamlit as st
 
-from dashboard.api_client import APIClient
+from dashboard.api_client import APIClient, is_error, error_msg
 
 
 def render_batch_publish_page():
@@ -62,15 +62,15 @@ def _render_create_form(client):
     if st.button("Create Batch"):
         with st.spinner("Creating batch..."):
             result = client.create_batch(limit=limit)
-            if result and not result.get("error"):
+            if is_error(result):
+                st.error(f"Failed: {error_msg(result)}")
+            else:
                 data = result.get("data", result)
                 batch_id = data.get("batch_id")
                 st.session_state.batch_draft_id = batch_id
                 st.session_state.batch_items_hash = data.get("items_hash")
                 st.success(f"Batch {batch_id} created with {data.get('item_count', 0)} items")
                 st.rerun()
-            else:
-                st.error(f"Failed: {result.get('message', result.get('detail', 'Unknown')) if result else 'No response'}")
 
 
 def _render_draft_preview(client, batch_id):
@@ -79,8 +79,8 @@ def _render_draft_preview(client, batch_id):
 
     # Fetch preview
     preview = client.get_batch_preview(batch_id)
-    if not preview or preview.get("error"):
-        st.error(f"Could not load batch: {preview.get('message', 'Unknown') if preview else 'No response'}")
+    if is_error(preview):
+        st.error(f"Could not load batch: {error_msg(preview)}")
         if st.button("Clear Draft"):
             _clear_draft()
             st.rerun()
@@ -103,6 +103,12 @@ def _render_draft_preview(client, batch_id):
 
     # Items table
     if items:
+        hcols = st.columns([3, 1, 1, 1])
+        hcols[0].markdown("**Company**")
+        hcols[1].markdown("**Conf.**")
+        hcols[2].markdown("**Key**")
+        hcols[3].markdown("**Status**")
+
         for item in items:
             cols = st.columns([3, 1, 1, 1])
             with cols[0]:
@@ -133,7 +139,7 @@ def _render_draft_preview(client, batch_id):
                     batch_id, items_hash, dry_run=dry_run,
                     idempotency_key=batch_action_key,
                 )
-                if result and not result.get("error"):
+                if not is_error(result):
                     st.success("Batch committed!")
                     _clear_draft()
                     st.rerun()
@@ -142,7 +148,7 @@ def _render_draft_preview(client, batch_id):
                     _clear_draft()
                     st.rerun()
                 else:
-                    st.error(f"Commit failed: {result.get('message', 'Unknown') if result else 'No response'}")
+                    st.error(f"Commit failed: {error_msg(result)}")
                     st.session_state.batch_action_key = None
 
     with col_abort:
@@ -151,12 +157,12 @@ def _render_draft_preview(client, batch_id):
             abort_key = str(uuid.uuid4())
             with st.spinner("Aborting..."):
                 result = client.abort_batch(batch_id, reason=reason, idempotency_key=abort_key)
-                if result and not result.get("error"):
+                if is_error(result):
+                    st.error(f"Abort failed: {error_msg(result)}")
+                else:
                     st.success("Batch aborted. Reviews reverted to approved.")
                     _clear_draft()
                     st.rerun()
-                else:
-                    st.error(f"Abort failed: {result.get('message', 'Unknown') if result else 'No response'}")
 
     with col_clear:
         if st.button("Discard"):
@@ -171,7 +177,7 @@ def _render_draft_preview(client, batch_id):
 def _render_active_tab(client):
     """List active and recent batches."""
     result = client.list_batches(limit=20)
-    if not result or result.get("error"):
+    if is_error(result):
         st.info("No batches found or API unavailable.")
         return
 
@@ -179,6 +185,13 @@ def _render_active_tab(client):
     if not batches:
         st.info("No batches found.")
         return
+
+    hcols = st.columns([2, 1, 1, 1, 2])
+    hcols[0].markdown("**Batch ID**")
+    hcols[1].markdown("**Status**")
+    hcols[2].markdown("**Items**")
+    hcols[3].markdown("**Pushed**")
+    hcols[4].markdown("**Created**")
 
     for batch in batches:
         batch_id = batch.get("batch_id", "")
