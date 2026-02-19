@@ -137,6 +137,16 @@ class APIClient:
             st.rerun()
             return None
 
+        if response.status_code == 429:
+            # Rate limited — retry once after Retry-After delay
+            retry_after = int(response.headers.get("Retry-After", "2"))
+            wait = min(retry_after, 5)  # Cap at 5s to avoid blocking UI
+            import time
+            time.sleep(wait)
+            retry_resp = response.request  # stale; caller will retry via wrapper
+            return {"error": True, "status_code": 429, "retry": True,
+                    "message": "Server is busy, please try again in a moment"}
+
         if response.status_code >= 400:
             return {"error": True, "status_code": response.status_code, "detail": response.text}
 
@@ -147,22 +157,35 @@ class APIClient:
     # -------------------------------------------------------------------------
 
     def get(self, path: str, params: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
-        """Generic GET request."""
+        """Generic GET request with automatic 429 retry."""
         try:
             with httpx.Client(base_url=self.base_url, timeout=self.timeout) as client:
                 response = client.get(path, params=params, headers=self._get_headers())
-                return self._handle_response(response)
+                result = self._handle_response(response)
+                # Transparent retry on rate limit
+                if isinstance(result, dict) and result.get("retry"):
+                    response = client.get(path, params=params, headers=self._get_headers())
+                    result = self._handle_response(response)
+                    if isinstance(result, dict):
+                        result.pop("retry", None)
+                return result
         except httpx.ConnectError:
             return {"error": True, "message": "Cannot connect to API server"}
         except Exception as e:
             return {"error": True, "message": str(e)}
 
     def post(self, path: str, json: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
-        """Generic POST request."""
+        """Generic POST request with automatic 429 retry."""
         try:
             with httpx.Client(base_url=self.base_url, timeout=self.timeout) as client:
                 response = client.post(path, json=json, headers=self._get_headers())
-                return self._handle_response(response)
+                result = self._handle_response(response)
+                if isinstance(result, dict) and result.get("retry"):
+                    response = client.post(path, json=json, headers=self._get_headers())
+                    result = self._handle_response(response)
+                    if isinstance(result, dict):
+                        result.pop("retry", None)
+                return result
         except httpx.ConnectError:
             return {"error": True, "message": "Cannot connect to API server"}
         except Exception as e:
