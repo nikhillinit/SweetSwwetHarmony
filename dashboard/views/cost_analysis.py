@@ -100,7 +100,7 @@ def render_cost_analysis_page():
     metrics = client.get("/health/ops/metrics", params={"history_days": period_days})
 
     if not metrics or (isinstance(metrics, dict) and metrics.get("error")):
-        st.warning("Could not fetch cost metrics. Ensure the API server is running and ops tables are initialized.")
+        st.warning("Cost data is not available yet. Run the pipeline at least once to start tracking costs.")
         return
 
     daily_history = metrics.get("daily_history", [])

@@ -277,7 +277,8 @@ st.markdown("""
     }
 
     [data-testid="stSidebar"] .stRadio > label {
-        color: var(--text-secondary) !important;
+        color: var(--text-primary) !important;
+        font-weight: 500 !important;
     }
 
     /* Sidebar button - explicit Press On dark styling */
@@ -1486,10 +1487,16 @@ def render_welcome_banner(view: str):
             "body": "See high-level insights into your discovery pipeline. "
                    "Track which thesis categories are performing best, which sources deliver quality signals, "
                    "and how your deal flow changes over time."
+        },
+        "Website Monitoring": {
+            "title": "Website Change Tracking",
+            "body": "Monitor company websites for meaningful changes — new products, hiring pages, "
+                   "fundraising announcements, and more. Set up watches on any URL and get "
+                   "<strong>alerts</strong> when significant changes are detected."
         }
     }
 
-    msg = messages.get(view, messages["Pipeline"])
+    msg = messages.get(view, messages.get("Pipeline", {"title": "Welcome", "body": ""}))
 
     col1, col2 = st.columns([20, 1])
     with col1:
@@ -2347,8 +2354,16 @@ def main():
             </div>
             """, unsafe_allow_html=True)
 
-        signals = load_signals(store, days_back=days)
-        health = load_health_report(store)
+        try:
+            signals = load_signals(store, days_back=days)
+        except Exception as _sig_err:
+            st.warning("Could not load signals. The database may be temporarily unavailable.")
+            signals = []
+
+        try:
+            health = load_health_report(store)
+        except Exception:
+            health = None
 
         # Top metrics with user-friendly labels
         col1, col2, col3, col4 = st.columns(4)
