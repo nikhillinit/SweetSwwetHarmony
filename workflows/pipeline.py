@@ -2109,25 +2109,33 @@ class DiscoveryPipeline:
                         logger.warning(f"Slack notification failed (non-fatal): {e}")
             else:
                 # Dry run or no Notion connector
-                logger.info(
-                    f"Would push {canonical_key} to Notion with status: "
-                    f"{verification.suggested_status}"
-                )
-
-                # Mark as pushed with dummy page ID
-                for sig in signals:
-                    await self._store.mark_pushed(
-                        sig.id,
-                        notion_page_id="dry-run-placeholder",
-                        metadata={
-                            "decision": verification.decision.value,
-                            "confidence": verification.confidence_score,
-                            "status": verification.suggested_status,
-                            "dry_run": True,
-                        },
+                if dry_run:
+                    # Dry run — log only, NO state mutation
+                    # Signals stay pending (dry_run is one-off, not repeated)
+                    logger.info(
+                        f"[DRY RUN] Would push {canonical_key} to Notion "
+                        f"with status: {verification.suggested_status}"
                     )
-
-                notion_status = "dry_run"
+                    notion_status = "dry_run"
+                else:
+                    # No Notion connector — mark held to prevent infinite
+                    # reprocessing while preserving recoverability
+                    logger.warning(
+                        f"No Notion connector — holding {canonical_key}. "
+                        f"Will be reprocessed when connector is configured."
+                    )
+                    for sig in signals:
+                        await self._store.mark_held(
+                            sig.id,
+                            reason="no_connector: Notion connector not configured",
+                            metadata={
+                                "decision": verification.decision.value,
+                                "confidence": verification.confidence_score,
+                                "status": verification.suggested_status,
+                                "no_connector": True,
+                            },
+                        )
+                    notion_status = "no_connector"
 
         elif verification.decision == PushDecision.HOLD:
             # Keep as pending - don't mark as pushed or rejected
