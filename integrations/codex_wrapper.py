@@ -213,15 +213,32 @@ class CodexCLI:
                 "How should I improve the thesis matcher's false positive rate?"
             )
         """
+        # Embed context files into the prompt since Codex CLI exec
+        # doesn't support --file flags (v0.98.0+)
+        if context_files:
+            file_sections = []
+            for fp in context_files:
+                if os.path.exists(fp):
+                    try:
+                        content = Path(fp).read_text(encoding="utf-8", errors="replace")
+                        # Truncate very large files to avoid prompt overflow
+                        if len(content) > 50_000:
+                            content = content[:50_000] + "\n... (truncated)"
+                        file_sections.append(f"### File: {fp}\n```\n{content}\n```")
+                    except Exception as e:
+                        logger.warning(f"Could not read context file {fp}: {e}")
+            if file_sections:
+                prompt = (
+                    "## Context Files\n\n"
+                    + "\n\n".join(file_sections)
+                    + "\n\n---\n\n"
+                    + prompt
+                )
+
         args = ["exec", prompt]
 
         sandbox_mode = sandbox or self.sandbox_mode
         args.extend(["--sandbox", sandbox_mode.value])
-
-        if context_files:
-            for file_path in context_files:
-                if os.path.exists(file_path):
-                    args.extend(["--file", file_path])
 
         return await self._run_command(args)
 
@@ -627,21 +644,55 @@ Verify the implementation meets all requirements. Identify any remaining issues.
             self.codex_path,
             "--model", self.model,
         ] + args
-        command_str = " ".join(full_command)
+
+        # For long prompts, pass via stdin instead of command-line args
+        # (Windows has ~32K char limit; large context files easily exceed this).
+        # Codex exec accepts "-" as prompt placeholder to read from stdin.
+        stdin_data: Optional[bytes] = None
+        if args and args[0] == "exec" and len(args) >= 2:
+            prompt_text = args[1]
+            if len(prompt_text) > 8000:
+                # Replace the inline prompt with "-" and pipe via stdin
+                full_command = [
+                    self.codex_path,
+                    "--model", self.model,
+                    "exec", "-",
+                ] + args[2:]  # keep remaining flags (--sandbox etc.)
+                stdin_data = prompt_text.encode("utf-8")
+
+        command_str = " ".join(
+            f'"{a}"' if " " in a and not a.startswith('"') else a
+            for a in full_command[:6]  # truncate for logging
+        ) + ("..." if len(full_command) > 6 else "")
 
         start_time = datetime.now()
 
         try:
-            process = await asyncio.create_subprocess_exec(
-                *full_command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env={**os.environ, "CODEX_APPROVAL": self.approval_mode.value},
-            )
+            # On Windows, .cmd files can't be launched via create_subprocess_exec
+            # (raises FileNotFoundError). Use subprocess.list2cmdline for proper
+            # quoting, then run through create_subprocess_shell.
+            import sys
+            if sys.platform == "win32":
+                shell_cmd = subprocess.list2cmdline(full_command)
+                process = await asyncio.create_subprocess_shell(
+                    shell_cmd,
+                    stdin=asyncio.subprocess.PIPE if stdin_data else None,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    env={**os.environ, "CODEX_APPROVAL": self.approval_mode.value},
+                )
+            else:
+                process = await asyncio.create_subprocess_exec(
+                    *full_command,
+                    stdin=asyncio.subprocess.PIPE if stdin_data else None,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    env={**os.environ, "CODEX_APPROVAL": self.approval_mode.value},
+                )
 
             try:
                 stdout, stderr = await asyncio.wait_for(
-                    process.communicate(),
+                    process.communicate(input=stdin_data),
                     timeout=self.timeout_seconds,
                 )
             except asyncio.TimeoutError:
