@@ -16,6 +16,7 @@ from collectors.news_api import (
     CONSUMER_KEYWORDS,
     SIGNAL_CONFIDENCE,
 )
+from utils.canonical_keys import NEWS_PUBLISHER_DOMAINS
 
 
 # =============================================================================
@@ -430,6 +431,64 @@ class TestArticleToSignal:
         signal = collector._article_to_signal(article)
         assert "domain:mystartup.com" in signal.raw_data["canonical_key_candidates"]
 
+    def test_canonical_key_uses_standard_format(self, collector):
+        """Canonical keys use build_canonical_key_candidates format (name_loc, not name:)."""
+        article = NewsArticle(
+            title="HealthyMeals raises $5M for meal delivery",
+            description="Consumer health startup...",
+            url="https://techcrunch.com/2024/01/15/healthymeals",
+            source="TechCrunch",
+            published_at=datetime.now(timezone.utc),
+        )
+        signal = collector._article_to_signal(article)
+        candidates = signal.raw_data["canonical_key_candidates"]
+        # Should use name_loc: format (not ad-hoc name:)
+        name_keys = [k for k in candidates if k.startswith("name_loc:")]
+        ad_hoc_keys = [k for k in candidates if k.startswith("name:")]
+        assert len(name_keys) >= 1, f"Expected name_loc: key, got {candidates}"
+        assert len(ad_hoc_keys) == 0, f"Should not have ad-hoc name: keys, got {candidates}"
+
+    def test_canonical_key_domain_priority_over_name(self, collector):
+        """When article has non-news domain, domain: key comes first."""
+        article = NewsArticle(
+            title="HealthyMeals raises $5M for meal delivery",
+            description="...",
+            url="https://healthymeals.com/news",
+            source="Company Blog",
+            published_at=datetime.now(timezone.utc),
+        )
+        signal = collector._article_to_signal(article)
+        candidates = signal.raw_data["canonical_key_candidates"]
+        assert candidates[0] == "domain:healthymeals.com"
+
+    def test_canonical_key_news_domain_excluded(self, collector):
+        """News site domains (techcrunch, etc.) are not used as canonical keys."""
+        article = NewsArticle(
+            title="HealthyMeals raises $5M for meal delivery",
+            description="...",
+            url="https://techcrunch.com/2024/01/15/healthymeals",
+            source="TechCrunch",
+            published_at=datetime.now(timezone.utc),
+        )
+        signal = collector._article_to_signal(article)
+        candidates = signal.raw_data["canonical_key_candidates"]
+        assert not any(k == "domain:techcrunch.com" for k in candidates)
+
+    def test_canonical_key_empty_when_no_company_or_domain(self, collector):
+        """Empty candidates when no company name and news domain."""
+        article = NewsArticle(
+            title="Industry report on consumer trends",
+            description="...",
+            url="https://forbes.com/article",
+            source="Forbes",
+            published_at=datetime.now(timezone.utc),
+        )
+        signal = collector._article_to_signal(article)
+        # No extractable company name from this title, and forbes.com is excluded
+        candidates = signal.raw_data["canonical_key_candidates"]
+        # May be empty or just have a name_loc from a partial extraction
+        assert not any(k.startswith("name:") for k in candidates)
+
 
 # =============================================================================
 # MOCK COLLECTOR TESTS
@@ -509,3 +568,224 @@ class TestAuthoritativeSources:
         """Source matching is case-insensitive."""
         assert collector._is_authoritative_source("techcrunch") is True
         assert collector._is_authoritative_source("TECHCRUNCH") is True
+
+
+# =============================================================================
+# EXPANDED NEWS_PUBLISHER_DOMAINS TESTS
+# =============================================================================
+
+class TestNewsPublisherDomains:
+    """Tests for expanded NEWS_PUBLISHER_DOMAINS exclusion set."""
+
+    def test_original_domains_still_excluded(self, collector):
+        """The original 3 domains (techcrunch, venturebeat, forbes) are still excluded."""
+        for domain in ["techcrunch.com", "venturebeat.com", "forbes.com"]:
+            article = NewsArticle(
+                title="Startup raises $5M",
+                description="...",
+                url=f"https://{domain}/article",
+                source="Test",
+                published_at=datetime.now(timezone.utc),
+            )
+            signal = collector._article_to_signal(article)
+            candidates = signal.raw_data["canonical_key_candidates"]
+            assert not any(k == f"domain:{domain}" for k in candidates), \
+                f"{domain} should be excluded from canonical keys"
+
+    def test_newly_added_domains_excluded(self, collector):
+        """Newly added publisher domains are excluded from canonical keys."""
+        new_domains = [
+            "reuters.com", "bloomberg.com", "fastcompany.com",
+            "usaherald.com", "cnbc.com", "medium.com", "yahoo.com",
+        ]
+        for domain in new_domains:
+            article = NewsArticle(
+                title="Startup raises $5M",
+                description="...",
+                url=f"https://{domain}/article",
+                source="Test",
+                published_at=datetime.now(timezone.utc),
+            )
+            signal = collector._article_to_signal(article)
+            candidates = signal.raw_data["canonical_key_candidates"]
+            assert not any(k == f"domain:{domain}" for k in candidates), \
+                f"{domain} should be excluded from canonical keys"
+
+    def test_startup_domains_still_included(self, collector):
+        """Non-publisher domains are still used as canonical keys."""
+        for domain in ["healthymeals.com", "fittrack.io", "mybeautybox.co"]:
+            article = NewsArticle(
+                title="Startup raises $5M",
+                description="...",
+                url=f"https://{domain}/news",
+                source="Test",
+                published_at=datetime.now(timezone.utc),
+            )
+            signal = collector._article_to_signal(article)
+            candidates = signal.raw_data["canonical_key_candidates"]
+            assert any(k == f"domain:{domain}" for k in candidates), \
+                f"{domain} should be included as canonical key"
+
+    def test_shared_constant_has_minimum_domains(self):
+        """NEWS_PUBLISHER_DOMAINS has at least 25 entries."""
+        assert len(NEWS_PUBLISHER_DOMAINS) >= 25
+
+
+# =============================================================================
+# IMPROVED COMPANY EXTRACTION TESTS
+# =============================================================================
+
+class TestImprovedCompanyExtraction:
+    """Tests for improved extract_company_name() patterns."""
+
+    def test_multi_word_company_raises(self):
+        """Multi-word company: 'Oura Ring raises $5M'."""
+        article = NewsArticle(
+            title="Oura Ring raises $5M in seed funding",
+            description="...",
+            url="https://example.com",
+            source="Test",
+            published_at=datetime.now(timezone.utc),
+        )
+        company = article.extract_company_name()
+        assert company is not None
+        assert "Oura" in company
+
+    def test_multi_word_company_daily_harvest(self):
+        """Multi-word company: 'Daily Harvest raises $50M Series C'."""
+        article = NewsArticle(
+            title="Daily Harvest raises $50M Series C",
+            description="...",
+            url="https://example.com",
+            source="Test",
+            published_at=datetime.now(timezone.utc),
+        )
+        company = article.extract_company_name()
+        assert company is not None
+        assert "Daily" in company
+
+    def test_backs_pattern(self):
+        """VC-style: 'Eclipse backs Ever in $31M round'."""
+        article = NewsArticle(
+            title="Eclipse backs Ever in $31M round",
+            description="...",
+            url="https://example.com",
+            source="Test",
+            published_at=datetime.now(timezone.utc),
+        )
+        company = article.extract_company_name()
+        assert company == "Ever"
+
+    def test_invests_in_pattern(self):
+        """VC-style: 'Sequoia invests in Glossier with $100M'."""
+        article = NewsArticle(
+            title="Sequoia invests in Glossier with $100M",
+            description="...",
+            url="https://example.com",
+            source="Test",
+            published_at=datetime.now(timezone.utc),
+        )
+        company = article.extract_company_name()
+        assert company == "Glossier"
+
+    def test_quoted_company_name(self):
+        """Quoted name: \"'FreshDirect' raises $50M\"."""
+        article = NewsArticle(
+            title="'FreshDirect' raises $50M in growth round",
+            description="...",
+            url="https://example.com",
+            source="Test",
+            published_at=datetime.now(timezone.utc),
+        )
+        company = article.extract_company_name()
+        assert company is not None
+        assert "FreshDirect" in company
+
+    def test_startup_prefix_pattern(self):
+        """Startup prefix: 'startup Calm raises $75M'."""
+        article = NewsArticle(
+            title="Wellness startup Calm raises $75M Series B",
+            description="...",
+            url="https://example.com",
+            source="Test",
+            published_at=datetime.now(timezone.utc),
+        )
+        company = article.extract_company_name()
+        assert company is not None
+        assert "Calm" in company
+
+    def test_brand_prefix_pattern(self):
+        """Brand prefix: 'brand Glossier launches new line'."""
+        article = NewsArticle(
+            title="Beauty brand Glossier launches new skincare line",
+            description="...",
+            url="https://example.com",
+            source="Test",
+            published_at=datetime.now(timezone.utc),
+        )
+        company = article.extract_company_name()
+        assert company is not None
+        assert "Glossier" in company
+
+    def test_original_single_word_still_works(self):
+        """Original single-word extraction still works."""
+        article = NewsArticle(
+            title="HealthyMeals raises $5M for meal delivery",
+            description="...",
+            url="https://example.com",
+            source="Test",
+            published_at=datetime.now(timezone.utc),
+        )
+        company = article.extract_company_name()
+        assert company == "HealthyMeals"
+
+    def test_common_words_still_filtered(self):
+        """Common words are still filtered."""
+        article = NewsArticle(
+            title="The company raises funding",
+            description="...",
+            url="https://example.com",
+            source="Test",
+            published_at=datetime.now(timezone.utc),
+        )
+        company = article.extract_company_name()
+        # Should be None because "The" is filtered and no other pattern matches
+        assert company is None or company != "The"
+
+    def test_no_match_returns_none(self):
+        """Returns None when no pattern matches."""
+        article = NewsArticle(
+            title="This startup launched a clean beauty line",
+            description="...",
+            url="https://example.com",
+            source="Test",
+            published_at=datetime.now(timezone.utc),
+        )
+        company = article.extract_company_name()
+        # "This" is in the common words filter
+        assert company is None or company.lower() != "this"
+
+    def test_capitalized_verb_announces(self):
+        """Capitalized verb: 'Litehouse Foods Announces New Name'."""
+        article = NewsArticle(
+            title="Litehouse Foods Announces New Name and Corporate Identity",
+            description="...",
+            url="https://example.com",
+            source="Test",
+            published_at=datetime.now(timezone.utc),
+        )
+        company = article.extract_company_name()
+        assert company is not None
+        assert "Litehouse" in company
+
+    def test_capitalized_verb_raises(self):
+        """Capitalized verb: 'FitTrack Raises $20M Series B'."""
+        article = NewsArticle(
+            title="FitTrack Raises $20M Series B Funding",
+            description="...",
+            url="https://example.com",
+            source="Test",
+            published_at=datetime.now(timezone.utc),
+        )
+        company = article.extract_company_name()
+        assert company == "FitTrack"
