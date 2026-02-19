@@ -171,7 +171,8 @@ async def get_detailed_health(
     if SIGNAL_HEALTH_AVAILABLE:
         try:
             monitor = SignalHealthMonitor(store)
-            health_report = await monitor.check_health()
+            report = await monitor.generate_report()
+            health_report = report.to_dict()
 
             signal_status = "healthy"
             signal_message = "All signals within normal parameters"
@@ -183,7 +184,7 @@ async def get_detailed_health(
                     alerts.append({
                         "type": "signal_anomaly",
                         "severity": anomaly.get("severity", "medium"),
-                        "message": anomaly.get("message", "Unknown anomaly"),
+                        "message": anomaly.get("description", "Unknown anomaly"),
                     })
 
             components.append(ComponentHealth(

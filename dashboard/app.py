@@ -59,6 +59,7 @@ from dashboard.views.ops_health import render_ops_health_page
 from dashboard.views.scheduler import render_scheduler_page
 from dashboard.views.cost_analysis import render_cost_analysis_page
 from dashboard.views.drift_monitoring import render_drift_monitoring_page
+from dashboard.views.starwatcher import render_starwatcher_page
 
 # =============================================================================
 # CONFIG
@@ -67,6 +68,7 @@ from dashboard.views.drift_monitoring import render_drift_monitoring_page
 DB_PATH = os.environ.get("DISCOVERY_DB_PATH", "signals.db")
 NOTION_API_KEY = os.environ.get("NOTION_API_KEY", "")
 NOTION_DATABASE_ID = os.environ.get("NOTION_DATABASE_ID", "")
+STARWATCHER_ENABLED = os.environ.get("STARWATCHER_ENABLED", "").lower() in ("true", "1", "yes")
 
 # Notion statuses in pipeline order
 NOTION_STATUSES = [
@@ -2126,6 +2128,7 @@ def main():
             "Cost Analysis": "Cost tracking & forecasting",
             "Ops Monitoring": "Ops health & metrics",
             "Hunter": "Pattern-driven deal sourcing sandbox",
+            "Constellation": "Interactive star map of your deal pipeline",
         }
 
         # Add Health view at the start, then existing views
@@ -2135,6 +2138,10 @@ def main():
             view_options = ["Health", "Triage", "Batch Publish", "Inbox", "Pipeline", "Hunter", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring", "Schedules", "Cost Analysis", "Ops Monitoring", "Drift Monitoring"]
         else:
             view_options = ["Health", "Triage", "Batch Publish", "Inbox", "Signals", "Hunter", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring", "Schedules", "Cost Analysis", "Ops Monitoring", "Drift Monitoring"]
+
+        # Add Constellation view behind feature flag
+        if STARWATCHER_ENABLED:
+            view_options.insert(1, "Constellation")
 
         view = st.radio(
             "View",
@@ -2439,6 +2446,12 @@ def main():
     # ==========================================================================
     elif view == "Drift Monitoring":
         render_drift_monitoring_page()
+
+    # ==========================================================================
+    # CONSTELLATION VIEW (Starwatcher)
+    # ==========================================================================
+    elif view == "Constellation":
+        render_starwatcher_page()
 
     # Footer
     st.markdown("""
