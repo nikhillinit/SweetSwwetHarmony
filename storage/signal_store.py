@@ -2877,6 +2877,40 @@ class SignalStore:
 
         logger.info(f"Marked signal {signal_id} as rejected: {reason}")
 
+    async def mark_held(
+        self,
+        signal_id: int,
+        reason: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Mark a signal as held (blocked by configuration, not a content rejection)."""
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        now = datetime.now(timezone.utc).isoformat()
+
+        async with self.transaction() as conn:
+            await conn.execute(
+                """
+                UPDATE signal_processing
+                SET status = 'held',
+                    processed_at = ?,
+                    error_message = ?,
+                    metadata = ?,
+                    updated_at = ?
+                WHERE signal_id = ?
+                """,
+                (
+                    now,
+                    reason,
+                    json.dumps(metadata) if metadata else None,
+                    now,
+                    signal_id,
+                )
+            )
+
+        logger.info(f"Marked signal {signal_id} as held: {reason}")
+
     async def mark_queued(
         self,
         signal_id: int,
