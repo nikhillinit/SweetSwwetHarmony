@@ -28,6 +28,34 @@ from typing import Dict, List, Optional
 from urllib.parse import urlparse
 
 
+# =============================================================================
+# NEWS PUBLISHER DOMAINS (shared across news_api + rss_feeds collectors)
+# =============================================================================
+# Domains of news publishers, wire services, aggregators, and code hosting.
+# Articles from these domains should NOT produce domain: canonical keys because
+# the domain belongs to the publisher, not the startup being discussed.
+
+NEWS_PUBLISHER_DOMAINS: set[str] = {
+    # Major news outlets
+    "techcrunch.com", "venturebeat.com", "forbes.com", "reuters.com",
+    "bloomberg.com", "cnbc.com", "wsj.com", "nytimes.com", "bbc.com",
+    "bbc.co.uk", "theguardian.com", "cnn.com", "washingtonpost.com",
+    # Tech/business media
+    "businessinsider.com", "inc.com", "fastcompany.com", "wired.com",
+    "theverge.com", "arstechnica.com", "axios.com", "fortune.com",
+    "entrepreneur.com", "foxbusiness.com", "usaherald.com",
+    "interestingengineering.com", "bostonglobe.com", "theinformation.com",
+    # Wire services / PR
+    "prnewswire.com", "globenewswire.com", "businesswire.com",
+    "producthunt.com",
+    # Social/aggregators
+    "medium.com", "substack.com", "reddit.com", "twitter.com", "x.com",
+    "youtube.com", "news.ycombinator.com", "yahoo.com",
+    # Code hosting (not company domains)
+    "github.com", "github.io",
+}
+
+
 # Priority order for canonical key selection
 _CANONICAL_PREFIX_ORDER = (
     "domain",
