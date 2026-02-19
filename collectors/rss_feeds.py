@@ -47,6 +47,7 @@ from collectors.base import BaseCollector
 from collectors.retry_strategy import RetryConfig
 from discovery_engine.mcp_server import CollectorResult, CollectorStatus
 from storage.signal_store import SignalStore
+from utils.canonical_keys import build_canonical_key_candidates, NEWS_PUBLISHER_DOMAINS
 from verification.verification_gate_v2 import Signal, VerificationStatus
 
 logger = logging.getLogger(__name__)
@@ -190,26 +191,57 @@ class RSSArticle:
         """
         Extract company name from article title.
 
-        Patterns:
-        - "CompanyName raises $X..."
-        - "CompanyName announces..."
-        - "CompanyName launches..."
+        Patterns (in priority order):
+        - "CompanyName raises/announces/launches/unveils/secures/closes..."
+        - Multi-word: "Oura Ring raises..." or "Daily Harvest raises..."
+        - "... backs CompanyName in ..." / "invests in CompanyName"
+        - Quoted: "'CompanyName' raises..." / '"CompanyName" launches...'
+        - "startup CompanyName raises..."
         """
-        patterns = [
-            r"^([A-Z][a-zA-Z0-9]+)\s+raises",
-            r"^([A-Z][a-zA-Z0-9]+)\s+announces",
-            r"^([A-Z][a-zA-Z0-9]+)\s+launches",
-            r"^([A-Z][a-zA-Z0-9]+)\s+unveils",
-            r"^([A-Z][a-zA-Z0-9]+)\s+secures",
-            r"^([A-Z][a-zA-Z0-9]+)\s+closes",
+        _COMMON_WORDS = {"the", "a", "an", "this", "new", "how", "why", "what", "when"}
+
+        # Verb alternation (case-insensitive via inline flag)
+        _VERBS = r"(?i:raises|raised|announces|announced|launches|launched|unveils|secures|secured|closes|closed)"
+
+        # Group 1: Single-word company at start of title
+        single_word_patterns = [
+            rf"^([A-Z][a-zA-Z0-9]+)\s+{_VERBS}",
         ]
 
-        for pattern in patterns:
-            match = re.match(pattern, self.title)
-            if match:
-                company = match.group(1)
-                if company.lower() not in ["the", "a", "an", "this", "new"]:
-                    return company
+        # Group 2: Multi-word company at start (up to 4 words before verb)
+        multi_word_patterns = [
+            rf"^([A-Z][a-zA-Z0-9]+(?:\s+[A-Z][a-zA-Z0-9]*){{0,3}}?)\s+{_VERBS}",
+        ]
+
+        # Group 3: "backs X" / "invests in X" patterns (company in middle)
+        mid_sentence_patterns = [
+            r"(?i:backs|invests\s+in)\s+([A-Z][a-zA-Z0-9]+(?:\s+[A-Z][a-zA-Z0-9]*){0,2}?)(?:\s+in\b|\s+with\b|\s*,|\s*$)",
+        ]
+
+        # Group 4: Quoted company names
+        quoted_patterns = [
+            rf"""['\u2018\u201C"]([A-Z][a-zA-Z0-9\s]{{1,25}}?)['\u2019\u201D"]\s+{_VERBS}""",
+        ]
+
+        # Group 5: "startup X raises..."
+        startup_prefix_patterns = [
+            rf"(?i:startup|company|brand|firm)\s+([A-Z][a-zA-Z0-9]+(?:\s+[A-Z][a-zA-Z0-9]*){{0,2}}?)\s+{_VERBS}",
+        ]
+
+        # Try each group in priority order
+        for patterns in [
+            single_word_patterns,
+            multi_word_patterns,
+            mid_sentence_patterns,
+            quoted_patterns,
+            startup_prefix_patterns,
+        ]:
+            for pattern in patterns:
+                match = re.search(pattern, self.title)
+                if match:
+                    company = match.group(1).strip()
+                    if company.lower() not in _COMMON_WORDS and len(company) >= 2:
+                        return company
 
         return None
 
@@ -551,18 +583,12 @@ class RSSFeedCollector(BaseCollector):
         confidence = self._calculate_confidence(article)
         company_name = article.extract_company_name()
 
-        # Build canonical key candidates
-        canonical_keys = []
-        if company_name:
-            canonical_keys.append(f"name:{company_name.lower()}")
-
-        # Only use domain if it's not a news site
-        news_domains = [
-            "techcrunch.com", "venturebeat.com", "forbes.com",
-            "prnewswire.com", "globenewswire.com", "producthunt.com",
-        ]
-        if article.domain and article.domain not in news_domains:
-            canonical_keys.append(f"domain:{article.domain}")
+        # Build canonical key candidates using standard format
+        domain_for_key = article.domain if article.domain and article.domain not in NEWS_PUBLISHER_DOMAINS else ""
+        canonical_keys = build_canonical_key_candidates(
+            domain_or_website=domain_for_key,
+            fallback_company_name=company_name or "",
+        )
 
         # Create unique signal ID
         import hashlib
