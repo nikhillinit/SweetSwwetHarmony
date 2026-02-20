@@ -10,14 +10,15 @@ These constraints are always-on. Treat them as hard requirements.
 - Source, Initial Meeting / Call, Dilligence, Tracking, Committed, Funded, Passed, Lost
 
 **Stages:**
-- Pre-Seed, Seed, Seed +, Series A, Series B, Series C, Series D
+- Pre-Seed, Seed, Seed +, Series A
 
-**New properties needed:**
+**Properties (verified in Notion):**
 - Discovery ID (Text)
 - Canonical Key (Text) - e.g., "domain:acme.ai"
 - Confidence Score (Number)
 - Signal Types (Multi-select)
 - Why Now (Text)
+- Sector (Text) - free-text, not select
 
 ## Architecture invariants
 
