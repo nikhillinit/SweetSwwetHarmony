@@ -114,6 +114,9 @@ def templates_from_seeds(seeds: List[ManualSeed]) -> List[QueryTemplate]:
         cat = seed.category or "general"
         by_category.setdefault(cat, []).append(seed)
 
+    # Bootstrap collectors: consumer thesis benefits from news/social, not just GitHub
+    BOOTSTRAP_COLLECTORS = ["news_api", "hacker_news", "github"]
+
     templates = []
     for category, cat_seeds in by_category.items():
         # Extract keywords from company names and reasons
@@ -126,13 +129,14 @@ def templates_from_seeds(seeds: List[ManualSeed]) -> List[QueryTemplate]:
         if not keywords:
             keywords = THESIS_CATEGORIES.get(category, ["consumer"])
 
-        templates.append(QueryTemplate(
-            collector="github",
-            keywords=keywords,
-            categories=[category],
-            priority=2,
-            template_version=1,
-        ))
+        for collector in BOOTSTRAP_COLLECTORS:
+            templates.append(QueryTemplate(
+                collector=collector,
+                keywords=keywords,
+                categories=[category],
+                priority=2,
+                template_version=1,
+            ))
 
     return templates
 

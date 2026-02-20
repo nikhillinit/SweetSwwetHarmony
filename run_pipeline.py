@@ -6206,6 +6206,110 @@ async def cmd_hunter_generate(args):
         await store.close()
 
 
+async def _hunter_collector_dispatch(collector: str, query_text: str):
+    """Dispatch a hunter query to the appropriate collector's search.
+
+    Args:
+        collector: Collector name (github, hacker_news, news_api)
+        query_text: Formatted query string
+
+    Returns:
+        List of dicts with company_name, source_api, and optionally
+        canonical_key, confidence, raw_data.
+    """
+    import httpx
+
+    if collector == "github":
+        token = os.environ.get("GITHUB_TOKEN", "")
+        headers = {"Accept": "application/vnd.github.v3+json"}
+        if token:
+            headers["Authorization"] = f"token {token}"
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                "https://api.github.com/search/repositories",
+                params={"q": query_text, "sort": "stars", "per_page": 10},
+                headers=headers,
+                timeout=30,
+            )
+            resp.raise_for_status()
+            items = resp.json().get("items", [])
+        results = []
+        for item in items:
+            homepage = item.get("homepage", "") or ""
+            results.append({
+                "company_name": item.get("full_name", ""),
+                "source_api": "github",
+                "canonical_key": f"github_repo:{item.get('full_name', '')}",
+                "confidence": 0.5,
+                "raw_data": {
+                    "stars": item.get("stargazers_count", 0),
+                    "description": item.get("description", ""),
+                    "homepage": homepage,
+                    "language": item.get("language", ""),
+                },
+            })
+        return results
+
+    elif collector == "hacker_news":
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                "https://hn.algolia.com/api/v1/search",
+                params={"query": query_text, "tags": "story", "hitsPerPage": 10},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            hits = resp.json().get("hits", [])
+        results = []
+        for hit in hits:
+            title = hit.get("title", "")
+            url = hit.get("url", "")
+            results.append({
+                "company_name": title,
+                "source_api": "hacker_news",
+                "canonical_key": f"hacker_news:{hit.get('objectID', '')}",
+                "confidence": 0.5,
+                "raw_data": {
+                    "title": title,
+                    "url": url,
+                    "points": hit.get("points", 0),
+                    "num_comments": hit.get("num_comments", 0),
+                },
+            })
+        return results
+
+    elif collector == "news_api":
+        gnews_key = os.environ.get("GNEWS_API_KEY", "")
+        if not gnews_key:
+            return []
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                "https://gnews.io/api/v4/search",
+                params={"q": query_text, "lang": "en", "max": 10, "apikey": gnews_key},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            articles = resp.json().get("articles", [])
+        results = []
+        for article in articles:
+            title = article.get("title", "")
+            source_name = article.get("source", {}).get("name", "")
+            results.append({
+                "company_name": title,
+                "source_api": "news_api",
+                "confidence": 0.5,
+                "raw_data": {
+                    "title": title,
+                    "description": article.get("description", ""),
+                    "url": article.get("url", ""),
+                    "source": source_name,
+                },
+            })
+        return results
+
+    else:
+        return []
+
+
 async def cmd_hunter_run(args):
     """Execute a hunter run."""
     from storage.signal_store import SignalStore
@@ -6227,7 +6331,9 @@ async def cmd_hunter_run(args):
             return
 
         dry_run = getattr(args, "dry_run", False)
-        result = await execute_hunter_run(store, queries, dry_run=dry_run)
+        result = await execute_hunter_run(
+            store, queries, collector_fn=_hunter_collector_dispatch, dry_run=dry_run,
+        )
 
         print(f"Hunter run: {result.get('run_id', 'N/A')}")
         print(f"  Executed: {result.get('executed', 0)}")
