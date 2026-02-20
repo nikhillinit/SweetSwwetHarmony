@@ -3748,6 +3748,12 @@ Examples:
         default=None,
         help="Path to SQLite database (overrides env var)",
     )
+    push_parser.add_argument(
+        "--override-hold",
+        action="store_true",
+        default=False,
+        help="Override low-confidence HOLD to NEEDS_REVIEW (push as Tracking)",
+    )
 
     # --- triage command group ---
     triage_parser = subparsers.add_parser(
@@ -5872,7 +5878,8 @@ async def cmd_push(args):
                 print(f"  Pushing: {company_name} ({canonical_key}) ...")
                 try:
                     result = await pusher.process_single_prospect(
-                        canonical_key, intent=DeliveryIntent.MANUAL_PUSH
+                        canonical_key, intent=DeliveryIntent.MANUAL_PUSH,
+                        override_hold=getattr(args, "override_hold", False),
                     )
                     if result.error:
                         print(f"    [ERROR] {result.error}")

@@ -1,9 +1,10 @@
 """Test confidence-based routing logic for Notion status assignment"""
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 from datetime import datetime, timezone
 from workflows.notion_pusher import NotionPusher, AggregatedProspect, PushResult
+from workflows.delivery_policy import DeliveryIntent
 from verification.verification_gate_v2 import (
     VerificationGate,
     Signal,
@@ -396,3 +397,311 @@ class TestConfidenceBasedRouting:
         assert result.signals_processed == 3
         assert result.sources_count == 3
         assert result.decision == PushDecision.AUTO_PUSH
+
+    # =====================================================================
+    # Override-hold tests
+    # =====================================================================
+
+    def _make_hold_prospect_and_pusher(self):
+        """Helper: create a low-confidence HOLD scenario for override tests."""
+        now = datetime.now(timezone.utc)
+        signals = [
+            StoredSignal(
+                id=100,
+                canonical_key="domain:lowconf.io",
+                company_name="LowConf Inc",
+                signal_type="hacker_news",
+                source_api="hacker_news",
+                confidence=0.03,
+                detected_at=now,
+                created_at=now,
+                raw_data={"title": "Show HN: LowConf"}
+            ),
+        ]
+
+        gate = MagicMock()
+        gate.MEDIUM_CONFIDENCE_THRESHOLD = 0.4
+        gate.needs_review_status = "Tracking"
+        gate.evaluate.return_value = VerificationResult(
+            decision=PushDecision.HOLD,
+            verification_status=VerificationStatus.SINGLE_SOURCE,
+            confidence_score=0.03,
+            confidence_breakdown={},
+            reason="Low confidence - waiting for more signals",
+            suggested_status="",
+            signals_used=["100"],
+            sources_checked=1,
+            verification_details=[],
+        )
+
+        store = MagicMock()
+        connector = MagicMock()
+        pusher = NotionPusher(store, connector, gate, dry_run=True)
+
+        prospect = AggregatedProspect(
+            canonical_key="domain:lowconf.io",
+            company_name="LowConf Inc",
+            signals=signals,
+        )
+        return pusher, prospect, gate
+
+    async def test_override_hold_to_needs_review(self):
+        """HOLD + override_hold=True -> NEEDS_REVIEW; reason contains marker; PushResult consistent."""
+        pusher, prospect, gate = self._make_hold_prospect_and_pusher()
+
+        result = await pusher._process_prospect(prospect, override_hold=True)
+
+        assert result.decision == PushDecision.NEEDS_REVIEW
+        assert pusher.OVERRIDE_MARKER in result.push_reason
+
+    async def test_override_hold_does_not_override_reject(self):
+        """REJECT + override_hold=True -> still REJECT."""
+        now = datetime.now(timezone.utc)
+        signals = [
+            StoredSignal(
+                id=101, canonical_key="domain:dead.io", company_name="Dead Inc",
+                signal_type="company_dissolved", source_api="sec_edgar",
+                confidence=0.9, detected_at=now, created_at=now,
+                raw_data={"status": "dissolved"},
+            ),
+        ]
+        gate = MagicMock()
+        gate.MEDIUM_CONFIDENCE_THRESHOLD = 0.4
+        gate.needs_review_status = "Tracking"
+        gate.evaluate.return_value = VerificationResult(
+            decision=PushDecision.REJECT,
+            verification_status=VerificationStatus.SINGLE_SOURCE,
+            confidence_score=0.0,
+            confidence_breakdown={},
+            reason="Hard kill: company dissolved",
+            suggested_status="",
+            signals_used=["101"],
+            sources_checked=1,
+            verification_details=[],
+        )
+        store = MagicMock()
+        connector = MagicMock()
+        pusher = NotionPusher(store, connector, gate)
+        prospect = AggregatedProspect(
+            canonical_key="domain:dead.io", company_name="Dead Inc", signals=signals
+        )
+
+        result = await pusher._process_prospect(prospect, override_hold=True)
+
+        assert result.decision == PushDecision.REJECT
+
+    async def test_override_hold_preserves_confidence(self):
+        """Confidence stays 0.03 (truthful), routing changes to NEEDS_REVIEW."""
+        pusher, prospect, gate = self._make_hold_prospect_and_pusher()
+
+        result = await pusher._process_prospect(prospect, override_hold=True)
+
+        assert result.confidence == 0.03
+        assert result.decision == PushDecision.NEEDS_REVIEW
+
+    async def test_override_hold_does_not_mutate_auto_push(self):
+        """AUTO_PUSH + override_hold=True -> still AUTO_PUSH (no change)."""
+        now = datetime.now(timezone.utc)
+        signals = [
+            StoredSignal(
+                id=102, canonical_key="domain:highconf.io", company_name="HighConf Inc",
+                signal_type="github_spike", source_api="github",
+                confidence=0.8, detected_at=now, created_at=now,
+                raw_data={"repo": "highconf/io"},
+            ),
+        ]
+        gate = MagicMock()
+        gate.MEDIUM_CONFIDENCE_THRESHOLD = 0.4
+        gate.needs_review_status = "Tracking"
+        gate.evaluate.return_value = VerificationResult(
+            decision=PushDecision.AUTO_PUSH,
+            verification_status=VerificationStatus.MULTI_SOURCE,
+            confidence_score=0.8,
+            confidence_breakdown={},
+            reason="High confidence",
+            suggested_status="Source",
+            signals_used=["102"],
+            sources_checked=2,
+            verification_details=[],
+        )
+        store = MagicMock()
+        connector = MagicMock()
+        pusher = NotionPusher(store, connector, gate, dry_run=True)
+        prospect = AggregatedProspect(
+            canonical_key="domain:highconf.io", company_name="HighConf Inc", signals=signals
+        )
+
+        result = await pusher._process_prospect(prospect, override_hold=True)
+
+        assert result.decision == PushDecision.AUTO_PUSH
+
+    async def test_override_hold_reason_when_none(self):
+        """reason=None + override -> reason set to marker (not 'None ...')."""
+        pusher, prospect, gate = self._make_hold_prospect_and_pusher()
+        # Patch the evaluate return to have reason=None
+        gate.evaluate.return_value = VerificationResult(
+            decision=PushDecision.HOLD,
+            verification_status=VerificationStatus.SINGLE_SOURCE,
+            confidence_score=0.03,
+            confidence_breakdown={},
+            reason=None,
+            suggested_status="",
+            signals_used=["100"],
+            sources_checked=1,
+            verification_details=[],
+        )
+
+        result = await pusher._process_prospect(prospect, override_hold=True)
+
+        assert result.decision == PushDecision.NEEDS_REVIEW
+        assert result.push_reason == pusher.OVERRIDE_MARKER
+        assert "None" not in result.push_reason
+
+    async def test_override_hold_idempotent(self):
+        """Call override twice on same prospect -> reason contains marker exactly once."""
+        pusher, prospect, gate = self._make_hold_prospect_and_pusher()
+
+        # First call
+        result1 = await pusher._process_prospect(prospect, override_hold=True)
+
+        # Re-create the gate return with the already-modified reason from result1
+        gate.evaluate.return_value = VerificationResult(
+            decision=PushDecision.HOLD,
+            verification_status=VerificationStatus.SINGLE_SOURCE,
+            confidence_score=0.03,
+            confidence_breakdown={},
+            reason=result1.push_reason,  # Already has marker
+            suggested_status="",
+            signals_used=["100"],
+            sources_checked=1,
+            verification_details=[],
+        )
+
+        # Second call (simulates retry)
+        result2 = await pusher._process_prospect(prospect, override_hold=True)
+
+        assert result2.push_reason.count(pusher.OVERRIDE_MARKER) == 1
+
+    async def test_override_hold_boundary_at_threshold(self):
+        """Guard test: HOLD at threshold boundary (0.4) -> override NOT applied;
+        HOLD at zero -> override NOT applied."""
+        now = datetime.now(timezone.utc)
+        signals = [
+            StoredSignal(
+                id=103, canonical_key="domain:boundary.io", company_name="Boundary Inc",
+                signal_type="heuristic_match", source_api="internal",
+                confidence=0.4, detected_at=now, created_at=now,
+                raw_data={"name": "boundary"},
+            ),
+        ]
+
+        # score == 0.4 (at threshold) -> override should NOT apply
+        gate = MagicMock()
+        gate.MEDIUM_CONFIDENCE_THRESHOLD = 0.4
+        gate.needs_review_status = "Tracking"
+        gate.evaluate.return_value = VerificationResult(
+            decision=PushDecision.HOLD,
+            verification_status=VerificationStatus.SINGLE_SOURCE,
+            confidence_score=0.4,
+            confidence_breakdown={},
+            reason="Synthetic: HOLD at threshold",
+            suggested_status="",
+            signals_used=["103"],
+            sources_checked=1,
+            verification_details=[],
+        )
+        store = MagicMock()
+        connector = MagicMock()
+        pusher = NotionPusher(store, connector, gate)
+        prospect = AggregatedProspect(
+            canonical_key="domain:boundary.io", company_name="Boundary Inc", signals=signals
+        )
+
+        result = await pusher._process_prospect(prospect, override_hold=True)
+        assert result.decision == PushDecision.HOLD, "Override should NOT apply at threshold"
+
+        # score == 0 -> override should NOT apply (0 < score is false)
+        gate.evaluate.return_value = VerificationResult(
+            decision=PushDecision.HOLD,
+            verification_status=VerificationStatus.SINGLE_SOURCE,
+            confidence_score=0.0,
+            confidence_breakdown={},
+            reason="Synthetic: HOLD at zero",
+            suggested_status="",
+            signals_used=["103"],
+            sources_checked=1,
+            verification_details=[],
+        )
+
+        result = await pusher._process_prospect(prospect, override_hold=True)
+        assert result.decision == PushDecision.HOLD, "Override should NOT apply at score=0"
+
+
+@pytest.mark.asyncio
+async def test_batch_commit_passes_override_hold():
+    """commit_batch() passes override_hold=True to process_single_prospect."""
+    from workflows.batch_publisher import commit_batch
+
+    # Build a minimal mock store with the right DB shape
+    mock_db = AsyncMock()
+
+    # publish_batches lookup -> draft status
+    batch_row = AsyncMock()
+    batch_row.fetchone = AsyncMock(return_value=("draft", 1))
+
+    # pending items -> one item
+    items_cursor = AsyncMock()
+    items_cursor.fetchall = AsyncMock(return_value=[
+        (1, 10, "comp_1", "domain:test.io"),
+    ])
+
+    # claim item -> rowcount 1
+    claim_cursor = MagicMock()
+    claim_cursor.rowcount = 1
+
+    call_count = [0]
+
+    async def mock_execute(sql, params=None):
+        call_count[0] += 1
+        sql_lower = sql.strip().lower()
+        if sql_lower.startswith("select status") or sql_lower.startswith("select status, item_count"):
+            return batch_row
+        if sql_lower.startswith("select id, review_id"):
+            return items_cursor
+        if sql_lower.startswith("update batch_items set status = 'in_progress'"):
+            return claim_cursor
+        # Default: return a dummy cursor
+        dummy = AsyncMock()
+        dummy.fetchone = AsyncMock(return_value=None)
+        return dummy
+
+    mock_db.execute = mock_execute
+    mock_db.commit = AsyncMock()
+
+    mock_store = MagicMock()
+    mock_store._db = mock_db
+
+    # Mock pusher: capture kwargs passed to process_single_prospect
+    mock_pusher = AsyncMock()
+    mock_push_result = PushResult(
+        canonical_key="domain:test.io",
+        company_name="Test Inc",
+        decision=PushDecision.NEEDS_REVIEW,
+        confidence=0.03,
+        pushed=True,
+        notion_page_id="page-123",
+        push_reason="overridden",
+    )
+    mock_pusher.process_single_prospect = AsyncMock(return_value=mock_push_result)
+
+    # Patch delivery policy to allow writes
+    with patch("workflows.batch_publisher.assert_notion_write_allowed"):
+        with patch("workflows.batch_publisher.update_review_status", new_callable=AsyncMock):
+            await commit_batch(mock_store, "batch-test-001", pusher=mock_pusher)
+
+    # Assert process_single_prospect was called with override_hold=True
+    mock_pusher.process_single_prospect.assert_called_once_with(
+        "domain:test.io",
+        intent=DeliveryIntent.BATCH_PUSH,
+        override_hold=True,
+    )
