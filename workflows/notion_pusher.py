@@ -287,6 +287,7 @@ class NotionPusher:
         self,
         canonical_key: str,
         intent: DeliveryIntent = DeliveryIntent.AUTO_PUSH,
+        override_hold: bool = False,
     ) -> PushResult:
         """
         Process all signals for a single prospect by canonical key.
@@ -297,6 +298,8 @@ class NotionPusher:
             canonical_key: The canonical key to look up signals for.
             intent: Delivery intent for the push (default AUTO_PUSH).
                     Use DeliveryIntent.MANUAL_PUSH for operator-initiated pushes.
+            override_hold: If True, override low-confidence HOLD decisions to
+                    NEEDS_REVIEW. Used by batch publisher for operator-approved items.
         """
         # Get all signals for this prospect
         signals = await self.store.get_signals_for_company(canonical_key)
@@ -317,7 +320,7 @@ class NotionPusher:
             signals=signals
         )
 
-        return await self._process_prospect(prospect, intent=intent)
+        return await self._process_prospect(prospect, intent=intent, override_hold=override_hold)
 
     # =========================================================================
     # SIGNAL AGGREGATION
@@ -355,10 +358,14 @@ class NotionPusher:
     # PROSPECT PROCESSING
     # =========================================================================
 
+    # Audit marker for operator-overridden HOLD -> NEEDS_REVIEW routing
+    OVERRIDE_MARKER = "(operator override: HOLD -> NEEDS_REVIEW)"
+
     async def _process_prospect(
         self,
         prospect: AggregatedProspect,
         intent: DeliveryIntent = DeliveryIntent.AUTO_PUSH,
+        override_hold: bool = False,
     ) -> PushResult:
         """
         Process a single aggregated prospect.
@@ -366,9 +373,10 @@ class NotionPusher:
         Steps:
         1. Convert to VerificationGate signals
         2. Run through verification gate
-        3. Make push decision based on confidence
-        4. Push to Notion if qualifying
-        5. Update signal processing status
+        3. Apply operator override if applicable
+        4. Make push decision based on confidence
+        5. Push to Notion if qualifying
+        6. Update signal processing status
         """
         logger.info(f"Processing: {prospect.company_name} ({prospect.canonical_key})")
         logger.info(f"  Signals: {prospect.signal_count} from {len(prospect.sources)} sources")
@@ -381,6 +389,30 @@ class NotionPusher:
 
         logger.info(f"  Verification: {verification_result.decision.value} "
                    f"(confidence: {verification_result.confidence_score:.2f})")
+
+        # ASSUMPTION: HOLD currently means only low-confidence routing.
+        # The confidence range check narrows this override to that specific cause.
+        # If HOLD expands beyond low-confidence, add structured hold_reason tag.
+        if (
+            override_hold
+            and verification_result.decision == PushDecision.HOLD
+            and 0 < verification_result.confidence_score < self.gate.MEDIUM_CONFIDENCE_THRESHOLD
+        ):
+            original_decision = verification_result.decision
+            verification_result.decision = PushDecision.NEEDS_REVIEW
+            verification_result.suggested_status = self.gate.needs_review_status
+            # Idempotency: only append marker once (handles retries/re-runs)
+            if self.OVERRIDE_MARKER not in (verification_result.reason or ""):
+                if verification_result.reason:
+                    verification_result.reason += f" {self.OVERRIDE_MARKER}"
+                else:
+                    verification_result.reason = self.OVERRIDE_MARKER
+            logger.info(
+                "Operator override applied: decision_before=%s decision_after=needs_review "
+                "suggested_status=%s canonical_key=%s confidence=%.3f intent=%s override_hold=true",
+                original_decision.value, verification_result.suggested_status,
+                prospect.canonical_key, verification_result.confidence_score, intent.value,
+            )
 
         # Make push decision
         push_result = PushResult(
