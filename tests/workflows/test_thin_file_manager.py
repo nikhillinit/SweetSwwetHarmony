@@ -156,6 +156,11 @@ class TestPromotionCriteria:
     def test_crunchbase_trusted(self):
         assert _meets_promotion_criteria(["crunchbase"]) is True
 
+    def test_hacker_news_trusted(self):
+        """Hacker News is a trusted source (Show HN is curated startup signal)."""
+        assert _meets_promotion_criteria(["hacker_news"]) is True
+        assert "hacker_news" in TRUSTED_SOURCES
+
     def test_manual_override(self):
         """Manual promotion should override all other rules."""
         assert _meets_promotion_criteria(

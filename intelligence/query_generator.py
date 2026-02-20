@@ -194,10 +194,17 @@ def generate_queries(
             continue
         seen_hashes.add(inputs_hash)
 
+        # query_type must be one of: 'pattern', 'bootstrap', 'manual'
+        # Bootstrap templates (priority=2) get 'bootstrap'; mined templates get 'pattern'
+        if template.priority == 2:
+            query_type = "bootstrap"
+        else:
+            query_type = "pattern"
+
         queries.append(HunterQuery(
             collector=collector,
             query_text=query_text,
-            query_type=template.categories[0] if template.categories else "pattern",
+            query_type=query_type,
             source_pattern=",".join(template.keywords[:3]),
             inputs_hash=inputs_hash,
             negative_keywords=sorted(neg_kws),

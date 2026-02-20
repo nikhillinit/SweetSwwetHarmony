@@ -22,6 +22,9 @@ import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
+from dotenv import load_dotenv
+load_dotenv(override=False)  # Load .env without overwriting real env vars
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
