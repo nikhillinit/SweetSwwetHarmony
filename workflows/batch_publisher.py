@@ -408,7 +408,8 @@ async def commit_batch(
         # Push to Notion
         try:
             push_result = await pusher.process_single_prospect(
-                canonical_key, intent=DeliveryIntent.BATCH_PUSH
+                canonical_key, intent=DeliveryIntent.BATCH_PUSH,
+                override_hold=True,
             )
 
             if push_result.pushed and push_result.notion_page_id:
