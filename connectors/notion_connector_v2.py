@@ -324,7 +324,7 @@ class NotionConnector:
         "Committed", "Funded", "Passed", "Lost"
     }
     EXPECTED_STAGES: Set[str] = {
-        "Pre-Seed", "Seed", "Seed +", "Series A", "Series B", "Series C", "Series D"
+        "Pre-Seed", "Seed", "Seed +", "Series A"
     }
     
     def __init__(
@@ -593,7 +593,7 @@ class NotionConnector:
                 "page_id": page["id"],
                 "company_name": self._extract_title(props.get(self.PROP_COMPANY_NAME, {})),
                 "website": props.get(self.PROP_WEBSITE, {}).get("url", ""),
-                "sector": self._extract_select(props.get(self.PROP_SECTOR, {}))
+                "sector": self._extract_text(props.get(self.PROP_SECTOR, {}))
             })
 
         return portfolio
@@ -640,7 +640,7 @@ class NotionConnector:
             self.PROP_WEBSITE: "url",
             self.PROP_SIGNAL_TYPES: "multi_select",
             self.PROP_WHY_NOW: "rich_text",
-            self.PROP_SECTOR: "select",
+            self.PROP_SECTOR: "rich_text",
             self.PROP_PROPOSED_SECTOR: "rich_text",
             self.PROP_TAXONOMY_STATUS: "select",
             self.PROP_WATCHLISTS_MATCHED: "multi_select",
@@ -1334,31 +1334,25 @@ class NotionConnector:
         if not sector_value and not proposed_value:
             return props
 
-        sector_options = self._get_select_options(self.PROP_SECTOR)
         has_sector_prop = self._property_exists(self.PROP_SECTOR)
         has_proposed_prop = self._property_exists(self.PROP_PROPOSED_SECTOR)
         has_taxonomy_prop = self._property_exists(self.PROP_TAXONOMY_STATUS)
 
         candidate = sector_value or proposed_value
         if candidate:
-            if sector_options and candidate in sector_options:
-                if has_sector_prop:
-                    props[self.PROP_SECTOR] = {"select": {"name": candidate}}
-                if has_taxonomy_prop:
-                    props[self.PROP_TAXONOMY_STATUS] = {
-                        "select": {"name": taxonomy_status or "Classified"}
-                    }
-            else:
-                if has_sector_prop and sector_options and "Unclassified" in sector_options:
-                    props[self.PROP_SECTOR] = {"select": {"name": "Unclassified"}}
-                if has_proposed_prop:
-                    props[self.PROP_PROPOSED_SECTOR] = {
-                        "rich_text": [{"text": {"content": candidate}}]
-                    }
-                if has_taxonomy_prop:
-                    props[self.PROP_TAXONOMY_STATUS] = {
-                        "select": {"name": taxonomy_status or "Unclassified"}
-                    }
+            # Sector is rich_text in Notion — write as plain text
+            if has_sector_prop:
+                props[self.PROP_SECTOR] = {
+                    "rich_text": [{"text": {"content": candidate}}]
+                }
+            if has_proposed_prop and proposed_value:
+                props[self.PROP_PROPOSED_SECTOR] = {
+                    "rich_text": [{"text": {"content": proposed_value}}]
+                }
+            if has_taxonomy_prop:
+                props[self.PROP_TAXONOMY_STATUS] = {
+                    "select": {"name": taxonomy_status or "Classified"}
+                }
 
         return props
     
