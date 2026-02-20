@@ -2714,6 +2714,7 @@ Environment variables:
     hunter_run_parser.add_argument("--dry-run", action="store_true", help="Create queries but don't execute")
     hunter_run_parser.add_argument("--db-path", type=str, help="Database path")
     hunter_run_parser.add_argument("--collector", type=str, default="github", help="Collector to use")
+    hunter_run_parser.add_argument("--bootstrap", type=str, help="Path to seeds JSON file for bootstrap mode")
 
     hunter_status_parser = hunter_sub.add_parser("status", help="Show hunter run status")
     hunter_status_parser.add_argument("--run-id", type=str, help="Specific run ID")
@@ -6251,10 +6252,16 @@ async def _hunter_collector_dispatch(collector: str, query_text: str):
         return results
 
     elif collector == "hacker_news":
+        # Strip "search?query=" prefix from formatted query text
+        clean_query = query_text
+        if clean_query.startswith("search?query="):
+            clean_query = clean_query[len("search?query="):]
+        # Strip "&tags=show_hn" suffix (passed as separate param)
+        clean_query = clean_query.replace("&tags=show_hn", "").strip()
         async with httpx.AsyncClient() as client:
             resp = await client.get(
                 "https://hn.algolia.com/api/v1/search",
-                params={"query": query_text, "tags": "story", "hitsPerPage": 10},
+                params={"query": clean_query, "tags": "story", "hitsPerPage": 10},
                 timeout=30,
             )
             resp.raise_for_status()
@@ -6281,10 +6288,16 @@ async def _hunter_collector_dispatch(collector: str, query_text: str):
         gnews_key = os.environ.get("GNEWS_API_KEY", "")
         if not gnews_key:
             return []
+        # Strip "search?q=" prefix from formatted query text
+        clean_query = query_text
+        if clean_query.startswith("search?q="):
+            clean_query = clean_query[len("search?q="):]
+        if clean_query.startswith("search?query="):
+            clean_query = clean_query[len("search?query="):]
         async with httpx.AsyncClient() as client:
             resp = await client.get(
                 "https://gnews.io/api/v4/search",
-                params={"q": query_text, "lang": "en", "max": 10, "apikey": gnews_key},
+                params={"q": clean_query, "lang": "en", "max": 10, "apikey": gnews_key},
                 timeout=30,
             )
             resp.raise_for_status()
@@ -6322,12 +6335,20 @@ async def cmd_hunter_run(args):
     store = SignalStore(db_path)
     await store.initialize()
     try:
-        templates = await mine_patterns(store)
+        seeds = None
+        if getattr(args, "bootstrap", None):
+            import json as _json
+            from intelligence.pattern_miner import ManualSeed
+            with open(args.bootstrap, "r") as f:
+                raw_seeds = _json.load(f)
+            seeds = [ManualSeed(**s) for s in raw_seeds]
+
+        templates = await mine_patterns(store, manual_seeds=seeds)
         neg_kws = await get_active_negative_keywords(store)
         queries = generate_queries(templates, neg_kws)
 
         if not queries:
-            print("No queries generated. Use 'hunter generate --bootstrap seeds.json' first.")
+            print("No queries generated. Use 'hunter run --bootstrap seeds.json' to bootstrap.")
             return
 
         dry_run = getattr(args, "dry_run", False)
