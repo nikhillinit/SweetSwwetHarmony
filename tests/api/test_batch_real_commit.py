@@ -410,7 +410,7 @@ class TestRealCommitMockPusher:
 
         call_count = 0
 
-        async def _mock_push(canonical_key, intent=None):
+        async def _mock_push(canonical_key, intent=None, **kwargs):
             nonlocal call_count
             call_count += 1
             return _make_push_result(
@@ -459,7 +459,7 @@ class TestPartialFailure:
 
         call_count = 0
 
-        async def _mock_push(canonical_key, intent=None):
+        async def _mock_push(canonical_key, intent=None, **kwargs):
             nonlocal call_count
             call_count += 1
             if call_count == 1:

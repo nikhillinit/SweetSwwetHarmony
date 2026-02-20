@@ -146,7 +146,7 @@ class TestBatchCommitPartialFailure:
         call_count = 0
         pusher = AsyncMock()
 
-        async def mock_push(canonical_key, intent=None):
+        async def mock_push(canonical_key, intent=None, **kwargs):
             nonlocal call_count
             call_count += 1
             if call_count == 1:
