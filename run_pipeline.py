@@ -2714,6 +2714,7 @@ Environment variables:
     hunter_run_parser.add_argument("--dry-run", action="store_true", help="Create queries but don't execute")
     hunter_run_parser.add_argument("--db-path", type=str, help="Database path")
     hunter_run_parser.add_argument("--collector", type=str, default="github", help="Collector to use")
+    hunter_run_parser.add_argument("--bootstrap", type=str, help="Path to seeds JSON file for bootstrap mode")
 
     hunter_status_parser = hunter_sub.add_parser("status", help="Show hunter run status")
     hunter_status_parser.add_argument("--run-id", type=str, help="Specific run ID")
@@ -6206,6 +6207,122 @@ async def cmd_hunter_generate(args):
         await store.close()
 
 
+async def _hunter_collector_dispatch(collector: str, query_text: str):
+    """Dispatch a hunter query to the appropriate collector's search.
+
+    Args:
+        collector: Collector name (github, hacker_news, news_api)
+        query_text: Formatted query string
+
+    Returns:
+        List of dicts with company_name, source_api, and optionally
+        canonical_key, confidence, raw_data.
+    """
+    import httpx
+
+    if collector == "github":
+        token = os.environ.get("GITHUB_TOKEN", "")
+        headers = {"Accept": "application/vnd.github.v3+json"}
+        if token:
+            headers["Authorization"] = f"token {token}"
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                "https://api.github.com/search/repositories",
+                params={"q": query_text, "sort": "stars", "per_page": 10},
+                headers=headers,
+                timeout=30,
+            )
+            resp.raise_for_status()
+            items = resp.json().get("items", [])
+        results = []
+        for item in items:
+            homepage = item.get("homepage", "") or ""
+            results.append({
+                "company_name": item.get("full_name", ""),
+                "source_api": "github",
+                "canonical_key": f"github_repo:{item.get('full_name', '')}",
+                "confidence": 0.5,
+                "raw_data": {
+                    "stars": item.get("stargazers_count", 0),
+                    "description": item.get("description", ""),
+                    "homepage": homepage,
+                    "language": item.get("language", ""),
+                },
+            })
+        return results
+
+    elif collector == "hacker_news":
+        # Strip "search?query=" prefix from formatted query text
+        clean_query = query_text
+        if clean_query.startswith("search?query="):
+            clean_query = clean_query[len("search?query="):]
+        # Strip "&tags=show_hn" suffix (passed as separate param)
+        clean_query = clean_query.replace("&tags=show_hn", "").strip()
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                "https://hn.algolia.com/api/v1/search",
+                params={"query": clean_query, "tags": "story", "hitsPerPage": 10},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            hits = resp.json().get("hits", [])
+        results = []
+        for hit in hits:
+            title = hit.get("title", "")
+            url = hit.get("url", "")
+            results.append({
+                "company_name": title,
+                "source_api": "hacker_news",
+                "canonical_key": f"hacker_news:{hit.get('objectID', '')}",
+                "confidence": 0.5,
+                "raw_data": {
+                    "title": title,
+                    "url": url,
+                    "points": hit.get("points", 0),
+                    "num_comments": hit.get("num_comments", 0),
+                },
+            })
+        return results
+
+    elif collector == "news_api":
+        gnews_key = os.environ.get("GNEWS_API_KEY", "")
+        if not gnews_key:
+            return []
+        # Strip "search?q=" prefix from formatted query text
+        clean_query = query_text
+        if clean_query.startswith("search?q="):
+            clean_query = clean_query[len("search?q="):]
+        if clean_query.startswith("search?query="):
+            clean_query = clean_query[len("search?query="):]
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                "https://gnews.io/api/v4/search",
+                params={"q": clean_query, "lang": "en", "max": 10, "apikey": gnews_key},
+                timeout=30,
+            )
+            resp.raise_for_status()
+            articles = resp.json().get("articles", [])
+        results = []
+        for article in articles:
+            title = article.get("title", "")
+            source_name = article.get("source", {}).get("name", "")
+            results.append({
+                "company_name": title,
+                "source_api": "news_api",
+                "confidence": 0.5,
+                "raw_data": {
+                    "title": title,
+                    "description": article.get("description", ""),
+                    "url": article.get("url", ""),
+                    "source": source_name,
+                },
+            })
+        return results
+
+    else:
+        return []
+
+
 async def cmd_hunter_run(args):
     """Execute a hunter run."""
     from storage.signal_store import SignalStore
@@ -6218,16 +6335,26 @@ async def cmd_hunter_run(args):
     store = SignalStore(db_path)
     await store.initialize()
     try:
-        templates = await mine_patterns(store)
+        seeds = None
+        if getattr(args, "bootstrap", None):
+            import json as _json
+            from intelligence.pattern_miner import ManualSeed
+            with open(args.bootstrap, "r") as f:
+                raw_seeds = _json.load(f)
+            seeds = [ManualSeed(**s) for s in raw_seeds]
+
+        templates = await mine_patterns(store, manual_seeds=seeds)
         neg_kws = await get_active_negative_keywords(store)
         queries = generate_queries(templates, neg_kws)
 
         if not queries:
-            print("No queries generated. Use 'hunter generate --bootstrap seeds.json' first.")
+            print("No queries generated. Use 'hunter run --bootstrap seeds.json' to bootstrap.")
             return
 
         dry_run = getattr(args, "dry_run", False)
-        result = await execute_hunter_run(store, queries, dry_run=dry_run)
+        result = await execute_hunter_run(
+            store, queries, collector_fn=_hunter_collector_dispatch, dry_run=dry_run,
+        )
 
         print(f"Hunter run: {result.get('run_id', 'N/A')}")
         print(f"  Executed: {result.get('executed', 0)}")

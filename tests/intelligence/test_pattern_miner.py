@@ -69,10 +69,12 @@ class TestTemplatesFromSeeds:
     def test_single_seed(self):
         seeds = [ManualSeed(company_name="HealthySnacks Co", category="cpg")]
         templates = templates_from_seeds(seeds)
-        assert len(templates) == 1
-        assert templates[0].collector == "github"
-        assert templates[0].categories == ["cpg"]
-        assert templates[0].template_version == 1
+        # 3 templates per category (news_api, hacker_news, github)
+        assert len(templates) == 3
+        collectors = {t.collector for t in templates}
+        assert collectors == {"news_api", "hacker_news", "github"}
+        assert all(t.categories == ["cpg"] for t in templates)
+        assert all(t.template_version == 1 for t in templates)
 
     def test_multiple_categories(self):
         seeds = [
@@ -80,7 +82,8 @@ class TestTemplatesFromSeeds:
             ManualSeed(company_name="FitApp", category="health_tech"),
         ]
         templates = templates_from_seeds(seeds)
-        assert len(templates) == 2
+        # 3 collectors x 2 categories = 6 templates
+        assert len(templates) == 6
         categories = {t.categories[0] for t in templates}
         assert "cpg" in categories
         assert "health_tech" in categories
@@ -119,8 +122,9 @@ class TestMinePatterns:
 
         seeds = [ManualSeed(company_name="Health Food Co", category="cpg")]
         templates = await mine_patterns(store, manual_seeds=seeds)
-        assert len(templates) == 1
-        assert templates[0].categories == ["cpg"]
+        # 3 templates: one per bootstrap collector (news_api, hacker_news, github)
+        assert len(templates) == 3
+        assert all(t.categories == ["cpg"] for t in templates)
 
     @pytest.mark.asyncio
     async def test_sufficient_tp_mines_from_db(self, store):

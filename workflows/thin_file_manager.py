@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Sources considered "trusted" for single-source promotion
-TRUSTED_SOURCES = {"sec_edgar", "companies_house", "crunchbase"}
+TRUSTED_SOURCES = {"sec_edgar", "companies_house", "crunchbase", "hacker_news"}
 
 # Exemplar similarity threshold for promotion (Phase 3)
 EXEMPLAR_PROMOTION_THRESHOLD = float(os.environ.get("EXEMPLAR_PROMOTION_THRESHOLD", "0.75"))

@@ -143,6 +143,36 @@ class TestGenerateQueries:
     def test_empty_templates(self):
         assert generate_queries([], []) == []
 
+    def test_query_type_valid_for_check_constraint(self):
+        """query_type must be 'pattern', 'bootstrap', or 'manual' (DB CHECK)."""
+        valid_types = {"pattern", "bootstrap", "manual"}
+        # Bootstrap template (priority=2)
+        bootstrap = [QueryTemplate(
+            collector="github", keywords=["health"], categories=["cpg"], priority=2,
+        )]
+        queries = generate_queries(bootstrap, [])
+        assert len(queries) == 1
+        assert queries[0].query_type in valid_types
+        assert queries[0].query_type == "bootstrap"
+
+    def test_mined_template_gets_pattern_type(self):
+        """Mined templates (priority=1) should get query_type='pattern'."""
+        mined = [QueryTemplate(
+            collector="github", keywords=["food"], categories=["cpg"], priority=1,
+        )]
+        queries = generate_queries(mined, [])
+        assert queries[0].query_type == "pattern"
+
+    def test_query_type_never_uses_category_name(self):
+        """query_type must not be a category name like 'cpg' or 'health_tech'."""
+        templates = [
+            QueryTemplate(collector="github", keywords=["health"], categories=["health_tech"], priority=2),
+            QueryTemplate(collector="news_api", keywords=["food"], categories=["cpg"], priority=2),
+        ]
+        queries = generate_queries(templates, [])
+        for q in queries:
+            assert q.query_type not in {"cpg", "health_tech", "travel", "marketplace", "general"}
+
 
 class TestInputsHash:
     def test_deterministic(self):
