@@ -6103,6 +6103,9 @@ async def cmd_publish_commit(args):
                 return
 
         # Real commit needs NotionPusher
+        from verification.verification_gate_v2 import VerificationGate
+        from workflows.notion_pusher import NotionPusher
+
         notion_connector = NotionConnector(
             api_key=os.environ["NOTION_API_KEY"],
             database_id=os.environ["NOTION_DATABASE_ID"],
