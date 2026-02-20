@@ -62,9 +62,6 @@ class MockNotionTransport:
                             {"name": "Seed"},
                             {"name": "Seed +"},
                             {"name": "Series A"},
-                            {"name": "Series B"},
-                            {"name": "Series C"},
-                            {"name": "Series D"},
                         ]
                     },
                 },
@@ -75,7 +72,7 @@ class MockNotionTransport:
                 "Signal Types": {"type": "multi_select", "multi_select": {"options": []}},
                 "Why Now": {"type": "rich_text"},
                 "Short Description": {"type": "rich_text"},
-                "Sector": {"type": "select", "select": {"options": []}},
+                "Sector": {"type": "rich_text"},
                 "Proposed Sector": {"type": "rich_text"},
                 "Taxonomy Status": {"type": "select", "select": {"options": []}},
                 "Founder": {"type": "rich_text"},

@@ -378,7 +378,7 @@ class TestGetPortfolioCompanies:
                 "Company Name": {"title": [{"text": {"content": "Full Portfolio Co"}}]},
                 "Status": {"select": {"name": "Funded"}},
                 "Website": {"url": "https://fullportfolio.com"},
-                "Sector": {"select": {"name": "AI / ML"}},
+                "Sector": {"type": "rich_text", "rich_text": [{"text": {"content": "AI / ML"}}]},
             },
         }
         mock_transport.add_query_response([page])
