@@ -250,3 +250,108 @@ class TestDispatchInvariants:
                     f"Non-empty company_name '{r['company_name']}' "
                     f"must have non-empty canonical_key"
                 )
+
+
+class TestLaunchHNDispatch:
+    """Test Launch HN prefix handling in dispatch."""
+
+    @pytest.mark.asyncio
+    async def test_launch_hn_no_url_name_fallback(self, mock_httpx_response):
+        """Launch HN with no URL produces name_loc key from HN body parse."""
+        from run_pipeline import _hunter_collector_dispatch
+
+        hn_response = {
+            "hits": [
+                {
+                    "title": "Launch HN: Queenly (YC W21) \u2014 Marketplace and search engine for formalwear",
+                    "url": "",
+                    "objectID": "33333",
+                    "points": 80,
+                    "num_comments": 20,
+                },
+            ]
+        }
+
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client_cls.return_value.__aenter__ = AsyncMock(
+                return_value=mock_client
+            )
+            mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+            mock_client.get = AsyncMock(
+                return_value=mock_httpx_response(hn_response)
+            )
+
+            results = await _hunter_collector_dispatch("hacker_news", "queenly")
+
+        assert len(results) == 1
+        r = results[0]
+        assert r["company_name"] == "Queenly"
+        assert r["canonical_key"] == "name_loc:queenly"
+
+    @pytest.mark.asyncio
+    async def test_launch_hn_with_domain_prefers_domain_key(self, mock_httpx_response):
+        """Launch HN with promoted domain in title produces domain:* key."""
+        from run_pipeline import _hunter_collector_dispatch
+
+        hn_response = {
+            "hits": [
+                {
+                    "title": "Launch HN: Acme (acme.ai) \u2014 a great tool",
+                    "url": "https://acme.ai",
+                    "objectID": "44444",
+                    "points": 100,
+                    "num_comments": 30,
+                },
+            ]
+        }
+
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client_cls.return_value.__aenter__ = AsyncMock(
+                return_value=mock_client
+            )
+            mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+            mock_client.get = AsyncMock(
+                return_value=mock_httpx_response(hn_response)
+            )
+
+            results = await _hunter_collector_dispatch("hacker_news", "acme")
+
+        assert len(results) == 1
+        r = results[0]
+        assert r["canonical_key"].startswith("domain:")
+
+    @pytest.mark.asyncio
+    async def test_launch_hn_blocked_domain_falls_to_name(self, mock_httpx_response):
+        """Launch HN with blocked domain (github.com) uses name_loc key."""
+        from run_pipeline import _hunter_collector_dispatch
+
+        hn_response = {
+            "hits": [
+                {
+                    "title": "Launch HN: Foo \u2014 a great tool",
+                    "url": "https://github.com/foo/bar",
+                    "objectID": "55555",
+                    "points": 60,
+                    "num_comments": 15,
+                },
+            ]
+        }
+
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client_cls.return_value.__aenter__ = AsyncMock(
+                return_value=mock_client
+            )
+            mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+            mock_client.get = AsyncMock(
+                return_value=mock_httpx_response(hn_response)
+            )
+
+            results = await _hunter_collector_dispatch("hacker_news", "foo")
+
+        assert len(results) == 1
+        r = results[0]
+        assert r["company_name"] == "Foo"
+        assert r["canonical_key"] == "name_loc:foo"

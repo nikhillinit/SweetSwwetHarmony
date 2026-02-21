@@ -50,6 +50,7 @@ from collectors.source_types import SOURCE_TYPE
 from discovery_engine.mcp_server import CollectorResult, CollectorStatus
 from storage.signal_store import SignalStore
 from utils.company_name_extractor import normalize_company_name
+from utils.hn_title import strip_hn_prefix, extract_name_from_hn_body, HN_SEP_RE
 from utils.rate_limiter import get_rate_limiter
 from verification.verification_gate_v2 import Signal, VerificationStatus
 
@@ -58,8 +59,7 @@ logger = logging.getLogger(__name__)
 # Algolia-powered Hacker News Search API
 HN_ALGOLIA_API = "https://hn.algolia.com/api/v1/search"
 
-# Regex: split on first structural delimiter (dash variants, pipe, paren, comma)
-_SHOW_HN_SEP_RE = re.compile(r"\s*[-\u2013\u2014|]\s*|\s*\(|\s*,\s*")
+# _SHOW_HN_SEP_RE moved to utils.hn_title as HN_SEP_RE
 
 # Common subdomains that are NOT company names
 _SUBDOMAIN_PREFIXES = frozenset({
@@ -247,35 +247,29 @@ class HackerNewsPost:
 
     def _extract_company_name(self) -> str:
         """Try to extract company name from title or domain."""
-        if self.is_show_hn and ":" in self.title:
-            parts = self.title.split(":", 1)
-            if len(parts) > 1:
-                raw = parts[1].strip()
-                # Try regex separator split
-                match = _SHOW_HN_SEP_RE.search(raw)
-                if match:
-                    name_part = raw[:match.start()].strip()
-                else:
-                    # No separator — fall through to domain
-                    name_part = None
+        cleaned, prefix_type = strip_hn_prefix(self.title)
 
-                if name_part:
-                    normalized = normalize_company_name(name_part[:50])
-                    if normalized:
-                        return normalized.title()
-
-        # Fall back to domain (subdomain-aware)
-        if self.domain:
-            return _domain_to_company(self.domain)
-
-        # Last resort: for no-URL Show HN posts, try the title text
-        if self.is_show_hn and ":" in self.title:
-            raw = self.title.split(":", 1)[1].strip()
-            if _looks_like_name(raw):
-                normalized = normalize_company_name(raw[:50])
+        if prefix_type in ("show", "launch", "demo"):
+            # Tier 1: separator-based extraction from cleaned body
+            name = extract_name_from_hn_body(cleaned)
+            if name:
+                normalized = normalize_company_name(name[:50])
                 if normalized:
                     return normalized.title()
 
+            # Tier 2: domain fallback (subdomain-aware)
+            if self.domain:
+                return _domain_to_company(self.domain)
+
+            # Tier 3: last-resort heuristic for no-URL posts
+            if _looks_like_name(cleaned):
+                normalized = normalize_company_name(cleaned[:50])
+                if normalized:
+                    return normalized.title()
+
+        # Non-HN-prefix → domain only
+        if self.domain:
+            return _domain_to_company(self.domain)
         return ""
 
 
