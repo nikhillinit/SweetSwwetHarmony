@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Discovery Engine</title>
+  <link rel="preload" href="assets/fonts/InstrumentSerif-Regular.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="assets/fonts/DMSans-Regular.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="assets/css/starwatcher.css?v=20260220">
+</head>
+<body>
+  <a href="#app" class="skip-link">Skip to main content</a>
+  <canvas id="ambient-bg" aria-hidden="true"></canvas>
+
+  <div class="app-layout" id="app-layout" style="display:none;">
+    <button class="hamburger" id="hamburger" aria-label="Toggle navigation">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2">
+        <line x1="3" y1="5" x2="17" y2="5"/>
+        <line x1="3" y1="10" x2="17" y2="10"/>
+        <line x1="3" y1="15" x2="17" y2="15"/>
+      </svg>
+    </button>
+
+    <aside class="sidebar" id="sidebar" role="navigation" aria-label="Main navigation">
+      <div class="sidebar-header">
+        <div class="sidebar-logo">Discovery Engine</div>
+      </div>
+      <nav class="sidebar-nav" id="sidebar-nav">
+        <div class="nav-indicator" id="nav-indicator"></div>
+        <a href="#/" class="nav-link" data-view="dashboard">
+          <svg viewBox="0 0 20 20" fill="currentColor"><path d="M3 4a1 1 0 011-1h12a1 1 0 011 1v2a1 1 0 01-1 1H4a1 1 0 01-1-1V4zm0 6a1 1 0 011-1h6a1 1 0 011 1v6a1 1 0 01-1 1H4a1 1 0 01-1-1v-6zm10 0a1 1 0 011-1h2a1 1 0 011 1v6a1 1 0 01-1 1h-2a1 1 0 01-1-1v-6z"/></svg>
+          Dashboard
+        </a>
+        <a href="#/constellation" class="nav-link" data-view="constellation">
+          <svg viewBox="0 0 20 20" fill="currentColor"><path d="M10 2a1 1 0 011 1v1.323l3.954 1.582 1.599-.8a1 1 0 01.894 1.79l-1.233.616 1.738 4.346a1 1 0 01-.553 1.298l-3.5 1.4a1 1 0 01-1.298-.553L10.863 9.66l-.863.431-.863-.431-1.738 4.346a1 1 0 01-1.298.553l-3.5-1.4a1 1 0 01-.553-1.298l1.738-4.346-1.233-.617a1 1 0 01.894-1.789l1.599.8L9 4.323V3a1 1 0 011-1z"/></svg>
+          Constellation
+        </a>
+        <a href="#/companies" class="nav-link" data-view="companies">
+          <svg viewBox="0 0 20 20" fill="currentColor"><path d="M4 4a2 2 0 012-2h8a2 2 0 012 2v12a1 1 0 110 2h-3a1 1 0 01-1-1v-2a1 1 0 00-1-1H9a1 1 0 00-1 1v2a1 1 0 01-1 1H4a1 1 0 110-2V4zm3 1h2v2H7V5zm2 4H7v2h2V9zm2-4h2v2h-2V5zm2 4h-2v2h2V9z"/></svg>
+          Companies
+        </a>
+        <a href="#/inbox" class="nav-link" data-view="inbox">
+          <svg viewBox="0 0 20 20" fill="currentColor"><path d="M2.003 5.884L10 9.882l7.997-3.998A2 2 0 0016 4H4a2 2 0 00-1.997 1.884zM18 8.118l-8 4-8-4V14a2 2 0 002 2h12a2 2 0 002-2V8.118z"/></svg>
+          Inbox
+          <span class="nav-badge" id="inbox-badge" style="display:none;">0</span>
+        </a>
+        <a href="#/health" class="nav-link" data-view="health">
+          <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3.172 5.172a4 4 0 015.656 0L10 6.343l1.172-1.171a4 4 0 115.656 5.656L10 17.657l-6.828-6.829a4 4 0 010-5.656z" clip-rule="evenodd"/></svg>
+          Health
+        </a>
+      </nav>
+      <div class="sidebar-footer" id="sidebar-footer">
+        <div class="sidebar-user">
+          <div class="sidebar-user-avatar" id="user-avatar"></div>
+          <span id="user-name"></span>
+        </div>
+        <button class="btn-logout" id="btn-logout">Sign out</button>
+      </div>
+    </aside>
+
+    <main class="main-content" id="app" role="main">
+      <!-- Views render here -->
+    </main>
+  </div>
+
+  <div role="status" aria-live="polite" id="toast-region" class="toast-region"></div>
+
+  <script type="module" src="assets/js/app.js?v=20260220"></script>
+</body>
+</html>
