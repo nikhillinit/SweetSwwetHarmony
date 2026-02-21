@@ -25,8 +25,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from email.utils import parsedate_to_datetime
 from typing import Any, Callable, Optional, Tuple, Type, TypeVar
 
 import httpx
@@ -34,6 +36,40 @@ import httpx
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
+
+
+class RateLimitError(Exception):
+    """
+    Raised when an API returns a rate-limit response.
+
+    Attributes:
+        wait_seconds: Server-requested wait time (None only when is_secondary=True).
+        status_code: HTTP status code (e.g. 429, 403).
+        endpoint: The API endpoint that was rate-limited.
+        is_secondary: True for secondary/abuse-detection rate limits.
+        response_summary: Short summary of the response for logging.
+    """
+
+    def __init__(
+        self,
+        message: str = "Rate limit exceeded",
+        *,
+        wait_seconds: Optional[float] = None,
+        status_code: int = 429,
+        endpoint: str = "",
+        is_secondary: bool = False,
+        response_summary: str = "",
+    ):
+        if wait_seconds is None and not is_secondary:
+            raise ValueError(
+                "wait_seconds is required for non-secondary RateLimitError"
+            )
+        super().__init__(message)
+        self.wait_seconds = wait_seconds
+        self.status_code = status_code
+        self.endpoint = endpoint
+        self.is_secondary = is_secondary
+        self.response_summary = response_summary
 
 
 @dataclass
@@ -90,6 +126,10 @@ def is_retryable_error(error: Exception) -> bool:
     Returns:
         True if the error should be retried
     """
+    # Rate limit errors are always retryable
+    if isinstance(error, RateLimitError):
+        return True
+
     # Network errors (Python built-ins)
     if isinstance(error, (ConnectionError, TimeoutError, asyncio.TimeoutError)):
         return True
@@ -123,14 +163,22 @@ def is_retryable_error(error: Exception) -> bool:
 
 def get_retry_after_seconds(error: Exception) -> Optional[float]:
     """
-    Extract Retry-After header value from an HTTP error.
+    Extract Retry-After value from an error.
+
+    Supports:
+    - RateLimitError.wait_seconds (direct)
+    - httpx.HTTPStatusError Retry-After header (numeric or HTTP-date)
 
     Args:
-        error: The exception (typically httpx.HTTPStatusError)
+        error: The exception
 
     Returns:
-        Wait time in seconds, or None if header not present
+        Wait time in seconds, or None if not available
     """
+    # RateLimitError carries wait_seconds directly
+    if isinstance(error, RateLimitError):
+        return error.wait_seconds
+
     if not isinstance(error, httpx.HTTPStatusError):
         return None
 
@@ -138,10 +186,20 @@ def get_retry_after_seconds(error: Exception) -> Optional[float]:
     if retry_after is None:
         return None
 
+    # Try numeric first
     try:
         return float(retry_after)
     except ValueError:
-        # Could be a date format, but we'll ignore that for now
+        pass
+
+    # Try HTTP-date format (e.g. "Fri, 21 Feb 2026 12:00:00 GMT")
+    try:
+        from datetime import datetime, timezone
+
+        target = parsedate_to_datetime(retry_after)
+        delta = (target - datetime.now(timezone.utc)).total_seconds()
+        return max(0.0, delta)
+    except (ValueError, TypeError):
         return None
 
 
@@ -154,7 +212,13 @@ async def with_retry(
     Execute an async function with retry logic.
 
     Uses exponential backoff with optional jitter. Respects Retry-After
-    headers on 429 responses.
+    headers on 429 responses and RateLimitError wait times.
+
+    Rate-limit retry policy (RATE_LIMIT_RETRY_POLICY env var):
+    - "conservative" (default): wait = max(retry_after, backoff)
+    - "exact": wait = retry_after (trust server timing)
+
+    Secondary rate limits always enforce a 60s floor regardless of policy.
 
     Args:
         func: Async function to execute (no arguments)
@@ -167,6 +231,9 @@ async def with_retry(
     Raises:
         The last exception if all retries exhausted
     """
+    # Read policy once per call (not per attempt)
+    policy = os.environ.get("RATE_LIMIT_RETRY_POLICY", "conservative").lower()
+
     last_error: Optional[Exception] = None
 
     for attempt in range(config.max_retries + 1):  # +1 for initial attempt
@@ -194,12 +261,24 @@ async def with_retry(
                 raise
 
             # Calculate wait time
-            wait_time = config.get_wait_seconds(attempt)
-
-            # Check for Retry-After header (overrides calculated wait)
+            backoff = config.get_wait_seconds(attempt)
             retry_after = get_retry_after_seconds(e)
-            if retry_after is not None:
+
+            if isinstance(e, RateLimitError) and e.is_secondary:
+                # Secondary rate limits: always 60s floor
+                wait_time = max(60.0, backoff)
+            elif isinstance(e, RateLimitError) and retry_after is not None:
+                # Primary RateLimitError with known wait
+                if policy == "exact":
+                    wait_time = retry_after
+                else:
+                    # conservative: take the longer of the two
+                    wait_time = max(retry_after, backoff)
+            elif retry_after is not None:
+                # Normal HTTPStatusError with Retry-After header
                 wait_time = retry_after
+            else:
+                wait_time = backoff
 
             logger.warning(
                 f"Attempt {attempt + 1}/{config.max_retries + 1} failed: {e}. "

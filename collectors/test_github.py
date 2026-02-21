@@ -5,10 +5,13 @@ Basic coverage for BaseCollector integration and dataclasses.
 """
 
 import pytest
-from unittest.mock import MagicMock, AsyncMock
+from unittest.mock import MagicMock, AsyncMock, Mock
 from datetime import datetime, timezone
 import os
 import httpx
+
+from collectors.retry_strategy import RateLimitError
+from collectors.base import CollectorSkipError
 
 
 class TestGitHubCollectorBaseIntegration:
@@ -752,3 +755,157 @@ class TestGitHubRetryLogic:
         assert isinstance(collector.retry_config, RetryConfig)
         # GitHub API should use reasonable retry settings
         assert collector.retry_config.max_retries >= 3
+
+
+class TestGitHub403RateLimitDetection:
+    """Tests for GitHub 403 rate-limit detection and fail-fast."""
+
+    @pytest.mark.asyncio
+    async def test_primary_403_headers_raises_rate_limit_error(self):
+        """Primary 403 with rate-limit headers -> RateLimitError with computed wait."""
+        from collectors.github import GitHubCollector
+        from collectors.retry_strategy import RetryConfig
+
+        # max_retries=0 so the first error propagates immediately
+        collector = GitHubCollector(github_token="fake_token")
+        collector.retry_config = RetryConfig(max_retries=0)
+        now_ts = int(datetime.now(timezone.utc).timestamp())
+        reset_ts = now_ts + 120  # 120 seconds in the future
+
+        async with collector:
+            async def mock_request(*args, **kwargs):
+                response = Mock()
+                response.status_code = 403
+                response.text = "API rate limit exceeded"
+                response.headers = {
+                    "x-ratelimit-remaining": "0",
+                    "x-ratelimit-reset": str(reset_ts),
+                }
+                return response
+
+            collector.client.request = AsyncMock(side_effect=mock_request)
+
+            with pytest.raises(RateLimitError) as exc_info:
+                await collector._github_request("GET", "/test")
+
+            err = exc_info.value
+            assert err.is_secondary is False
+            assert err.status_code == 403
+            # wait_seconds should be approximately 120 + 2 (clock skew)
+            assert 115 < err.wait_seconds < 130
+
+    @pytest.mark.asyncio
+    async def test_secondary_body_raises_secondary_rate_limit_error(self):
+        """Secondary rate limit in body -> secondary RateLimitError."""
+        from collectors.github import GitHubCollector
+        from collectors.retry_strategy import RetryConfig
+
+        collector = GitHubCollector(github_token="fake_token")
+        collector.retry_config = RetryConfig(max_retries=0)
+
+        async with collector:
+            async def mock_request(*args, **kwargs):
+                response = Mock()
+                response.status_code = 403
+                response.text = "You have exceeded a secondary rate limit"
+                response.headers = {}
+                return response
+
+            collector.client.request = AsyncMock(side_effect=mock_request)
+
+            with pytest.raises(RateLimitError) as exc_info:
+                await collector._github_request("GET", "/test")
+
+            err = exc_info.value
+            assert err.is_secondary is True
+            assert err.wait_seconds is None
+
+    @pytest.mark.asyncio
+    async def test_non_rate_limit_403_raises_http_error(self):
+        """Non-rate-limit 403 -> HTTPStatusError (not retryable)."""
+        from collectors.github import GitHubCollector
+        from collectors.retry_strategy import RetryConfig
+
+        collector = GitHubCollector(github_token="fake_token")
+        collector.retry_config = RetryConfig(max_retries=0)
+
+        async with collector:
+            async def mock_request(*args, **kwargs):
+                response = httpx.Response(
+                    status_code=403,
+                    text="Resource not accessible by integration",
+                    request=httpx.Request("GET", "https://api.github.com/test"),
+                    headers={},
+                )
+                return response
+
+            collector.client.request = AsyncMock(side_effect=mock_request)
+
+            with pytest.raises(httpx.HTTPStatusError):
+                await collector._github_request("GET", "/test")
+
+    @pytest.mark.asyncio
+    async def test_429_retry_after_preserved(self):
+        """429 with Retry-After header -> normal HTTPStatusError (retry path)."""
+        from collectors.github import GitHubCollector
+
+        collector = GitHubCollector(github_token="fake_token")
+
+        async with collector:
+            call_count = 0
+
+            async def mock_request(*args, **kwargs):
+                nonlocal call_count
+                call_count += 1
+                if call_count == 1:
+                    response = httpx.Response(
+                        status_code=429,
+                        headers={"Retry-After": "1"},
+                        text="Too Many Requests",
+                        request=httpx.Request("GET", "https://api.github.com/test"),
+                    )
+                    raise httpx.HTTPStatusError(
+                        "429", request=response.request, response=response
+                    )
+                mock_resp = Mock()
+                mock_resp.status_code = 200
+                mock_resp.headers = {"X-RateLimit-Remaining": "100"}
+                mock_resp.text = '{"ok": true}'
+                mock_resp.json = lambda: {"ok": True}
+                mock_resp.raise_for_status = lambda: None
+                return mock_resp
+
+            collector.client.request = AsyncMock(side_effect=mock_request)
+            result = await collector._github_request("GET", "/test")
+            assert result == {"ok": True}
+            assert call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_failfast_on_long_wait(self, monkeypatch):
+        """If computed wait > failfast threshold -> CollectorSkipError."""
+        from collectors.github import GitHubCollector
+        from collectors.retry_strategy import RetryConfig
+        import collectors.github as gh_module
+
+        monkeypatch.setattr(gh_module, "GITHUB_RATE_LIMIT_FAILFAST_SECONDS", 60)
+
+        collector = GitHubCollector(github_token="fake_token")
+        collector.retry_config = RetryConfig(max_retries=0)
+        now_ts = int(datetime.now(timezone.utc).timestamp())
+        reset_ts = now_ts + 600  # 600 seconds — well over the 60s threshold
+
+        async with collector:
+            async def mock_request(*args, **kwargs):
+                response = Mock()
+                response.status_code = 403
+                response.text = "API rate limit exceeded"
+                response.headers = {
+                    "x-ratelimit-remaining": "0",
+                    "x-ratelimit-reset": str(reset_ts),
+                }
+                return response
+
+            collector.client.request = AsyncMock(side_effect=mock_request)
+
+            with pytest.raises(CollectorSkipError, match="fail-fast"):
+                await collector._github_request("GET", "/test")

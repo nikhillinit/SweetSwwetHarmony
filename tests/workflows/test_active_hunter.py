@@ -216,3 +216,84 @@ class TestMetrics:
         snapshot = metrics.snapshot()
         assert snapshot["counters"].get("hunter.run.started", 0) >= 1
         assert snapshot["counters"].get("hunter.run.completed", 0) >= 1
+
+
+class TestIdentityGuard:
+    """Tests for hunter pre-insert identity guard (skip on empty canonical_key)."""
+
+    @pytest.mark.asyncio
+    async def test_skip_on_empty_canonical_key(self, store):
+        """Results with no canonical_key should be skipped (not inserted)."""
+
+        async def _no_key_collector(collector, query_text):
+            return [
+                {
+                    "company_name": "Some Article Title",
+                    "source_api": "news_api",
+                    "canonical_key": "",  # Empty — should skip
+                    "confidence": 0.5,
+                    "raw_data": {"title": "Some Article Title"},
+                },
+            ]
+
+        queries = _make_queries(1)
+        result = await execute_hunter_run(
+            store, queries, collector_fn=_no_key_collector, min_query_interval=0,
+        )
+
+        # Result should have 0 new results (skipped due to no identity)
+        assert result["new_results"] == 0
+
+        # Verify skip metric was incremented
+        snapshot = metrics.snapshot()
+        assert snapshot["counters"].get("hunter.result.skip_no_identity", 0) >= 1
+
+    @pytest.mark.asyncio
+    async def test_unknown_company_name_normalized(self, store):
+        """'Unknown' company_name should be normalized to empty string."""
+
+        async def _unknown_collector(collector, query_text):
+            return [
+                {
+                    "company_name": "Unknown",
+                    "source_api": "hacker_news",
+                    "canonical_key": "domain:example.com",
+                    "confidence": 0.5,
+                    "raw_data": {"title": "Test"},
+                },
+            ]
+
+        queries = _make_queries(1)
+        result = await execute_hunter_run(
+            store, queries, collector_fn=_unknown_collector, min_query_interval=0,
+        )
+
+        # Should insert (has canonical_key) but with empty company name
+        assert result["new_results"] == 1
+
+        # Verify the stored result has empty company_name
+        results = await get_results_for_run(store, result["run_id"])
+        assert results[0]["company_name"] == ""
+
+    @pytest.mark.asyncio
+    async def test_valid_key_empty_name_still_inserts(self, store):
+        """Valid canonical_key with empty company_name should still insert."""
+
+        async def _key_only_collector(collector, query_text):
+            return [
+                {
+                    "company_name": "",
+                    "source_api": "hacker_news",
+                    "canonical_key": "domain:acme.com",
+                    "confidence": 0.5,
+                    "raw_data": {"title": "Acme discussion thread"},
+                },
+            ]
+
+        queries = _make_queries(1)
+        result = await execute_hunter_run(
+            store, queries, collector_fn=_key_only_collector, min_query_interval=0,
+        )
+
+        # Should insert — canonical_key is the identity anchor
+        assert result["new_results"] == 1

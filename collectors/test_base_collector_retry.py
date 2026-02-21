@@ -393,3 +393,43 @@ class TestRetryStatisticsTracking:
         # Check retry count is accessible
         assert hasattr(collector, '_retry_count')
         assert collector._retry_count == 2  # 2 retries before success
+
+
+class TestCollectorSkipError:
+    """Tests for CollectorSkipError mapping to SKIPPED status."""
+
+    @pytest.mark.asyncio
+    async def test_collector_skip_error_maps_to_skipped(self):
+        """CollectorSkipError should map to CollectorStatus.SKIPPED."""
+        from collectors.base import BaseCollector, CollectorSkipError
+        from discovery_engine.mcp_server import CollectorStatus
+
+        class SkippingCollector(BaseCollector):
+            async def _collect_signals(self):
+                raise CollectorSkipError("Rate limit exhausted, skipping")
+
+        collector = SkippingCollector(collector_name="skip_test")
+        result = await collector.run(dry_run=True)
+
+        assert result.status == CollectorStatus.SKIPPED
+        assert "Rate limit exhausted" in result.error_message
+
+    @pytest.mark.asyncio
+    async def test_collector_skip_preserves_partial_results(self):
+        """CollectorSkipError should preserve any signals already collected."""
+        from collectors.base import BaseCollector, CollectorSkipError
+
+        class PartialCollector(BaseCollector):
+            async def _collect_signals(self):
+                # Simulate collecting some signals then hitting rate limit
+                self._signals_found = 5
+                self._signals_new = 3
+                self._signals_suppressed = 2
+                raise CollectorSkipError("Hit fail-fast threshold")
+
+        collector = PartialCollector(collector_name="partial_skip")
+        result = await collector.run(dry_run=True)
+
+        assert result.signals_found == 5
+        assert result.signals_new == 3
+        assert result.signals_suppressed == 2
