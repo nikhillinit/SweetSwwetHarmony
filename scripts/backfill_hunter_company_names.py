@@ -34,6 +34,7 @@ from utils.company_name_extractor import (
     _is_blocked_domain,
 )
 from utils.canonical_keys import normalize_domain
+from utils.hn_title import strip_hn_prefix, extract_name_from_hn_body
 
 logging.basicConfig(
     level=logging.INFO,
@@ -92,11 +93,19 @@ async def backfill(db_path: str, apply: bool = False) -> int:
             if source_api == "github":
                 continue
 
+            # Parse HN prefix for HN-sourced results
+            cleaned_title, hn_prefix = strip_hn_prefix(title)
+            effective_title = cleaned_title if hn_prefix else title
+
+            hn_name = None
+            if hn_prefix in ("show", "launch", "demo"):
+                hn_name = extract_name_from_hn_body(cleaned_title)
+
             # Recompute extraction
             info = extract_company_info(
-                title, description=description, url=url, mode="url_promote"
+                effective_title, description=description, url=url, mode="url_promote"
             )
-            new_name = info.company_name or ""
+            new_name = info.company_name or hn_name or ""
 
             # Compute canonical key
             new_key = ""
