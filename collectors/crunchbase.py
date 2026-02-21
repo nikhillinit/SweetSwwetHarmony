@@ -269,6 +269,8 @@ class CrunchbaseCollector(BaseCollector):
         categories: Optional[List[str]] = None,
         locations: Optional[List[str]] = None,
         max_results: int = 100,
+        http: Optional[Any] = None,
+        asset_store: Optional[Any] = None,
     ):
         """
         Initialize Crunchbase collector.
@@ -282,12 +284,16 @@ class CrunchbaseCollector(BaseCollector):
             categories: Filter by categories (e.g., ["consumer goods"])
             locations: Filter by locations (e.g., ["United States", "United Kingdom"])
             max_results: Maximum results to fetch (default: 100)
+            http: Optional shared CollectorHttpClient (Phase C migration)
+            asset_store: Optional SourceAssetStore for change detection
         """
         super().__init__(
             store=store,
             collector_name="crunchbase",
             retry_config=retry_config,
             api_name="crunchbase",
+            http=http,
+            asset_store=asset_store,
         )
 
         self.api_key = api_key or os.getenv("CRUNCHBASE_API_KEY")
@@ -300,15 +306,22 @@ class CrunchbaseCollector(BaseCollector):
         # Rate limit: Crunchbase basic tier allows 200 req/min
         self._rate_limiter = AsyncRateLimiter(rate=3, period=1)
         self._client: Optional[httpx.AsyncClient] = None
+        self._owns_client = True
 
     async def __aenter__(self):
         """Set up HTTP client."""
-        self._client = httpx.AsyncClient(timeout=30.0)
+        if self.http:
+            # Use shared client from CollectorHttpClient (Phase C)
+            self._client = self.http._client
+            self._owns_client = False
+        else:
+            self._client = httpx.AsyncClient(timeout=30.0)
+            self._owns_client = True
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Clean up HTTP client."""
-        if self._client:
+        if self._owns_client and self._client:
             await self._client.aclose()
             self._client = None
 

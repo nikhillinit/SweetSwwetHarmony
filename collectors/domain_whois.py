@@ -289,6 +289,8 @@ class DomainWhoisCollector(BaseCollector):
         lookback_days: int = 90,
         max_domains: int = 100,
         tech_tlds_only: bool = False,
+        http: Optional[Any] = None,
+        asset_store: Optional[Any] = None,
     ):
         """
         Args:
@@ -296,31 +298,45 @@ class DomainWhoisCollector(BaseCollector):
             lookback_days: Only flag domains registered within this window
             max_domains: Maximum number of domains to check
             tech_tlds_only: Only return signals for tech TLDs
+            http: Optional shared CollectorHttpClient (Phase C migration)
+            asset_store: Optional SourceAssetStore for change detection
         """
-        super().__init__(store=store, collector_name="domain_whois")
+        super().__init__(store=store, collector_name="domain_whois", http=http, asset_store=asset_store)
 
         self.lookback_days = lookback_days
         self.max_domains = max_domains
         self.tech_tlds_only = tech_tlds_only
 
         self._client: Optional[httpx.AsyncClient] = None
+        self._owns_client = True
         self._processed_domains: Set[str] = set()
         self._domains_to_check: Optional[List[str]] = None
 
+    @property
+    def _request_headers(self) -> Dict[str, str]:
+        """Per-request headers (Accept for RDAP API)."""
+        return {
+            "Accept": "application/rdap+json,application/json",
+        }
+
     async def __aenter__(self):
         """Async context manager entry"""
-        self._client = httpx.AsyncClient(
-            timeout=RDAP_TIMEOUT,
-            follow_redirects=True,
-            headers={
-                "Accept": "application/rdap+json,application/json",
-            }
-        )
+        if self.http:
+            # Use shared client from CollectorHttpClient (Phase C)
+            self._client = self.http._client
+            self._owns_client = False
+        else:
+            self._client = httpx.AsyncClient(
+                timeout=RDAP_TIMEOUT,
+                follow_redirects=True,
+                headers=self._request_headers,
+            )
+            self._owns_client = True
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit"""
-        if self._client:
+        if self._owns_client and self._client:
             await self._client.aclose()
 
     async def run(
@@ -481,7 +497,7 @@ class DomainWhoisCollector(BaseCollector):
 
             # Wrap HTTP request with retry logic
             async def fetch_rdap():
-                response = await self._client.get(rdap_url)
+                response = await self._client.get(rdap_url, headers=self._request_headers)
 
                 # 404 is expected for non-registered domains - don't retry
                 if response.status_code == 404:

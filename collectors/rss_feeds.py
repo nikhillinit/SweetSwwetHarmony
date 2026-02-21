@@ -222,6 +222,8 @@ class RSSFeedCollector(BaseCollector):
         categories: Optional[List[str]] = None,
         max_articles_per_feed: int = 20,
         lookback_days: int = 7,
+        http: Optional[Any] = None,
+        asset_store: Optional[Any] = None,
     ):
         """
         Initialize the RSS feed collector.
@@ -232,12 +234,16 @@ class RSSFeedCollector(BaseCollector):
             categories: Feed categories to include (startup, health_tech, cpg, etc.)
             max_articles_per_feed: Maximum articles per feed (default: 20)
             lookback_days: How far back to include articles (default: 7 days)
+            http: Optional shared CollectorHttpClient for connection pooling
+            asset_store: Optional SourceAssetStore for change detection
         """
         super().__init__(
             store=store,
             collector_name="rss_feeds",
             retry_config=RetryConfig(max_retries=2, backoff_base=1.0),
             api_name="rss",
+            http=http,
+            asset_store=asset_store,
         )
 
         # Determine feeds to use
@@ -313,6 +319,10 @@ class RSSFeedCollector(BaseCollector):
             Feed XML content
         """
         async def fetch():
+            if self.http:
+                response = await self.http._client.get(url, follow_redirects=True)
+                response.raise_for_status()
+                return response.text
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.get(url, follow_redirects=True)
                 response.raise_for_status()

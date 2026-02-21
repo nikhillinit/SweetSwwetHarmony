@@ -70,7 +70,8 @@ class CapterraCollector:
     def __init__(
         self,
         categories: Optional[List[str]] = None,
-        api_key: Optional[str] = None
+        api_key: Optional[str] = None,
+        http: Optional[Any] = None,
     ):
         """
         Initialize Capterra collector.
@@ -78,9 +79,11 @@ class CapterraCollector:
         Args:
             categories: List of category keys to collect. Defaults to all.
             api_key: Optional API key for authenticated access.
+            http: Optional shared CollectorHttpClient for connection pooling.
         """
         self.categories = categories or list(CAPTERRA_CATEGORIES.keys())
         self.api_key = api_key
+        self.http = http
         self._last_request_time = 0.0
         logger.debug(f"CapterraCollector initialized with {len(self.categories)} categories")
 
@@ -108,26 +111,29 @@ class CapterraCollector:
 
         logger.debug(f"Fetching Capterra category: {category} from {url}")
 
-        async with httpx.AsyncClient() as client:
-            try:
-                headers = {"User-Agent": "HarmonicBot/1.0"}
-                if self.api_key:
-                    headers["Authorization"] = f"Bearer {self.api_key}"
+        client = self.http._client if self.http else httpx.AsyncClient()
+        try:
+            headers = {"User-Agent": "HarmonicBot/1.0"}
+            if self.api_key:
+                headers["Authorization"] = f"Bearer {self.api_key}"
 
-                response = await client.get(
-                    url,
-                    headers=headers,
-                    timeout=30.0
-                )
-                response.raise_for_status()
+            response = await client.get(
+                url,
+                headers=headers,
+                timeout=30.0
+            )
+            response.raise_for_status()
 
-                products = self._parse_products(response.text, category)
-                logger.debug(f"Fetched {len(products)} products from {category}")
-                return products
+            products = self._parse_products(response.text, category)
+            logger.debug(f"Fetched {len(products)} products from {category}")
+            return products
 
-            except httpx.HTTPError as e:
-                logger.error(f"HTTP error fetching {category}: {e}")
-                return []
+        except httpx.HTTPError as e:
+            logger.error(f"HTTP error fetching {category}: {e}")
+            return []
+        finally:
+            if not self.http:
+                await client.aclose()
 
     def _parse_products(self, html: str, category: str) -> List[CapterraProduct]:
         """
@@ -195,16 +201,19 @@ class CapterraCollector:
         url = f"{self.BASE_URL}/search"
         logger.debug(f"Searching Capterra for: {query}")
 
-        async with httpx.AsyncClient() as client:
-            try:
-                response = await client.get(
-                    url,
-                    params={"query": query},
-                    headers={"User-Agent": "HarmonicBot/1.0"},
-                    timeout=30.0
-                )
-                response.raise_for_status()
-                return self._parse_products(response.text, "search")
-            except httpx.HTTPError as e:
-                logger.error(f"HTTP error searching for {query}: {e}")
-                return []
+        client = self.http._client if self.http else httpx.AsyncClient()
+        try:
+            response = await client.get(
+                url,
+                params={"query": query},
+                headers={"User-Agent": "HarmonicBot/1.0"},
+                timeout=30.0
+            )
+            response.raise_for_status()
+            return self._parse_products(response.text, "search")
+        except httpx.HTTPError as e:
+            logger.error(f"HTTP error searching for {query}: {e}")
+            return []
+        finally:
+            if not self.http:
+                await client.aclose()
