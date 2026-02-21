@@ -552,6 +552,7 @@ class RSSFeedCollector(BaseCollector):
             title=article.title,
             description=article.description or "",
             url=article.url,
+            allow_lone_domain=True,
         )
         company_name = extraction.company_name
 
