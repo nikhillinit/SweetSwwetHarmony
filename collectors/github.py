@@ -231,6 +231,8 @@ class GitHubCollector(BaseCollector):
         max_repos: int = 100,
         topic_mode: TopicMode = TopicMode.TECH,
         star_change_threshold: float = 0.10,
+        http: Optional[Any] = None,
+        asset_store: Optional[Any] = None,
     ):
         """
         Args:
@@ -240,8 +242,10 @@ class GitHubCollector(BaseCollector):
             max_repos: Maximum repos to analyze per run
             topic_mode: TopicMode.TECH (default) or TopicMode.CONSUMER
             star_change_threshold: Minimum percentage change in stars to detect (default 10%)
+            http: Optional shared CollectorHttpClient (Phase C migration)
+            asset_store: Optional SourceAssetStore for change detection
         """
-        super().__init__(store=store, collector_name="github")
+        super().__init__(store=store, collector_name="github", http=http, asset_store=asset_store)
 
         self.github_token = github_token or os.getenv("GITHUB_TOKEN")
         if not self.github_token:
@@ -266,14 +270,23 @@ class GitHubCollector(BaseCollector):
         # Cache for org lookups
         self._org_cache: Dict[str, Dict[str, Any]] = {}
 
+        # Client ownership (False when using shared Phase C client)
+        self._owns_client = True
+
     async def __aenter__(self):
         """Async context manager entry"""
-        self.client = httpx.AsyncClient(timeout=30.0)
+        if self.http:
+            # Use shared client from CollectorHttpClient (Phase C)
+            self.client = self.http._client
+            self._owns_client = False
+        else:
+            self.client = httpx.AsyncClient(timeout=30.0)
+            self._owns_client = True
         return await super().__aenter__()
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit"""
-        if self.client:
+        if self._owns_client and self.client:
             await self.client.aclose()
         return await super().__aexit__(exc_type, exc_val, exc_tb)
 

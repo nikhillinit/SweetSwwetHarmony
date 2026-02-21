@@ -332,6 +332,8 @@ class SECEdgarCollector(BaseCollector):
         lookback_days: int = 30,
         max_filings: int = 100,
         target_sectors_only: bool = True,
+        http: Optional[Any] = None,
+        asset_store: Optional[Any] = None,
     ):
         """
         Args:
@@ -340,8 +342,10 @@ class SECEdgarCollector(BaseCollector):
             lookback_days: How many days back to search
             max_filings: Maximum number of filings to process
             target_sectors_only: Only return filings in target sectors
+            http: Optional shared CollectorHttpClient (Phase C migration)
+            asset_store: Optional SourceAssetStore for change detection
         """
-        super().__init__(store=store, collector_name="sec_edgar")
+        super().__init__(store=store, collector_name="sec_edgar", http=http, asset_store=asset_store)
 
         self.user_agent = user_agent or self.DEFAULT_USER_AGENT
         self.lookback_days = lookback_days
@@ -350,20 +354,32 @@ class SECEdgarCollector(BaseCollector):
 
         self._client: Optional[httpx.AsyncClient] = None
         self._processed_accession_numbers: Set[str] = set()
+        self._owns_client = True
 
     async def __aenter__(self):
         """Async context manager entry"""
-        self._client = httpx.AsyncClient(
-            headers={"User-Agent": self.user_agent},
-            timeout=30.0,
-            follow_redirects=True,
-        )
+        if self.http:
+            # Use shared client from CollectorHttpClient (Phase C)
+            self._client = self.http._client
+            self._owns_client = False
+        else:
+            self._client = httpx.AsyncClient(
+                headers={"User-Agent": self.user_agent},
+                timeout=30.0,
+                follow_redirects=True,
+            )
+            self._owns_client = True
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit"""
-        if self._client:
+        if self._owns_client and self._client:
             await self._client.aclose()
+
+    @property
+    def _request_headers(self) -> Dict[str, str]:
+        """Per-request headers (User-Agent required by SEC fair use policy)."""
+        return {"User-Agent": self.user_agent}
 
     async def _collect_signals(self) -> List[Signal]:
         """
@@ -431,7 +447,7 @@ class SECEdgarCollector(BaseCollector):
 
             # Wrap HTTP request with retry logic
             async def fetch_atom_feed():
-                response = await self._client.get(url)
+                response = await self._client.get(url, headers=self._request_headers)
                 response.raise_for_status()
                 return response.text
 
@@ -594,7 +610,7 @@ class SECEdgarCollector(BaseCollector):
 
             # Wrap HTTP request with retry logic
             async def fetch_form_d_xml():
-                response = await self._client.get(doc_url)
+                response = await self._client.get(doc_url, headers=self._request_headers)
 
                 # If primary_doc.xml doesn't exist, return None (don't retry 404s)
                 if response.status_code == 404:

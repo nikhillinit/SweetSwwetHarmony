@@ -353,6 +353,7 @@ class JobPostingsCollector(BaseCollector):
         asset_store: Optional["SourceAssetStore"] = None,
         retry_config: Optional[RetryConfig] = None,
         timeout: float = 30.0,
+        http: Optional[Any] = None,
     ):
         """
         Args:
@@ -361,6 +362,7 @@ class JobPostingsCollector(BaseCollector):
             asset_store: Optional SourceAssetStore for change detection
             retry_config: Retry configuration (default: 3 retries with backoff)
             timeout: HTTP request timeout in seconds
+            http: Optional shared CollectorHttpClient for connection pooling
         """
         super().__init__(
             store=store,
@@ -368,6 +370,7 @@ class JobPostingsCollector(BaseCollector):
             retry_config=retry_config or RetryConfig(max_retries=3, backoff_base=2.0),
             api_name="job_postings",
             asset_store=asset_store,
+            http=http,
         )
         self.domains = domains
         self.timeout = timeout
@@ -673,6 +676,12 @@ class JobPostingsCollector(BaseCollector):
         try:
             # Use a raw HTTP request since this returns HTML, not JSON
             async def fetch_workable():
+                if self.http:
+                    response = await self.http._client.get(url, follow_redirects=True, timeout=self.timeout)
+                    if response.status_code == 404:
+                        return None
+                    response.raise_for_status()
+                    return response.text
                 async with httpx.AsyncClient(timeout=self.timeout) as client:
                     response = await client.get(url, follow_redirects=True)
                     if response.status_code == 404:

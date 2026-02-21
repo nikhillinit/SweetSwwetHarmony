@@ -19,11 +19,13 @@ Required Notion properties to add:
 
 import hashlib
 from datetime import datetime, timedelta
-from typing import Optional, List, Dict, Any, Set
+from typing import Literal, Optional, List, Dict, Any, Set
 from dataclasses import dataclass, field
 from enum import Enum
 import asyncio
 import logging
+
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # Import canonical key helpers from shared module
 from utils.canonical_keys import (
@@ -81,29 +83,50 @@ class Sector(str, Enum):
 # DATA CLASSES
 # =============================================================================
 
-@dataclass
-class ProspectPayload:
-    """Payload for pushing a prospect to Notion"""
+class WarmIntroIndicator(BaseModel):
+    """Bounded warm intro indicator for ProspectPayload.
+
+    Privacy boundary: no free-text attribution crosses into Notion payload.
+    Only structured, bounded fields are included.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    investor_domain: str
+    score_bucket: Literal["high", "medium", "low"]
+    badge: str = ""
+    source_kind: Literal["gmail", "notion_lp"]
+
+
+class ProspectPayload(BaseModel):
+    """Payload for pushing a prospect to Notion.
+
+    Pydantic v2 model with extra="ignore" — unknown fields are silently
+    dropped (keys logged at DEBUG level, never values).
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
     # Required fields
     discovery_id: str
     company_name: str
-    canonical_key: str  # e.g., "domain:acme.ai" or "companies_house:12345678"
+    canonical_key: str = ""  # e.g., "domain:acme.ai" or "companies_house:12345678"
     stage: InvestmentStage
-    
+
     # Optional: status override (defaults to "Source")
     status: Optional[str] = None
-    
+
     # Optional identity (stealth prospects may not have website yet)
     website: str = ""
-    
+
     # All canonical key candidates for multi-key lookup
-    canonical_key_candidates: List[str] = field(default_factory=list)
-    
+    canonical_key_candidates: List[str] = Field(default_factory=list)
+
     # Discovery-generated fields
     confidence_score: float = 0.0
-    signal_types: List[str] = field(default_factory=list)
+    signal_types: List[str] = Field(default_factory=list)
     why_now: str = ""
-    
+
     # Optional enrichment
     short_description: str = ""
     sector: Optional[str] = None
@@ -115,32 +138,66 @@ class ProspectPayload:
     target_raise: str = ""
 
     # Watchlists
-    watchlists_matched: List[str] = field(default_factory=list)
-    
+    watchlists_matched: List[str] = Field(default_factory=list)
+
     # External refs for canonical key generation
-    external_refs: Dict[str, str] = field(default_factory=dict)
+    external_refs: Dict[str, str] = Field(default_factory=dict)
 
     # Enrichment fields (from ConsolidatedSignal)
     founding_date: Optional[datetime] = None
     social_proof_score: int = 0
 
     # Investor matching (Sprint 5)
-    investor_matches: List[Dict[str, Any]] = field(default_factory=list)
+    investor_matches: List[Dict[str, Any]] = Field(default_factory=list)
 
-    def __post_init__(self):
-        """Generate canonical key candidates if not provided"""
+    # Warm intro indicators (Phase A — bounded privacy sub-model)
+    warm_intro_indicators: List[WarmIntroIndicator] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_and_log(cls, data: Any) -> Any:
+        """Normalize None collections and log dropped extra keys (never values)."""
+        if not isinstance(data, dict):
+            return data
+
+        # Log extra keys (keys only, never values) for diagnostics
+        known = set(cls.model_fields.keys())
+        extra = set(data.keys()) - known
+        if extra:
+            logger.debug("ProspectPayload: dropping extra keys: %s", sorted(extra))
+
+        # Normalize None → empty for collection fields (backward compat with legacy data)
+        _LIST_FIELDS = {
+            "canonical_key_candidates", "signal_types",
+            "watchlists_matched", "investor_matches",
+            "warm_intro_indicators",
+        }
+        _DICT_FIELDS = {"external_refs"}
+        for f in _LIST_FIELDS:
+            if data.get(f) is None:
+                data[f] = []
+        for f in _DICT_FIELDS:
+            if data.get(f) is None:
+                data[f] = {}
+
+        return data
+
+    @model_validator(mode="after")
+    def _generate_candidates(self) -> "ProspectPayload":
+        """Generate canonical key candidates if not provided."""
         if not self.canonical_key_candidates and self.external_refs:
             result = canonical_key_from_external_refs(
                 self.external_refs,
                 fallback_company_name=self.company_name,
-                fallback_region=self.location
+                fallback_region=self.location,
             )
             self.canonical_key_candidates = result.candidates
             if not self.canonical_key:
                 self.canonical_key = result.canonical_key
-    
+        return self
+
     def idempotency_key(self) -> str:
-        """Generate stable key for deduplication"""
+        """Generate stable key for deduplication."""
         # Prefer canonical_key; fallback to website; fallback to name
         base = (self.canonical_key or "").strip().lower()
         if not base and self.website:

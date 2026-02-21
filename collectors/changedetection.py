@@ -259,6 +259,8 @@ class ChangeDetectionCollector(BaseCollector):
         api_key: Optional[str] = None,
         lookback_days: int = 7,
         min_significance: bool = True,
+        http: Optional[Any] = None,
+        asset_store: Optional[Any] = None,
     ):
         """
         Initialize the changedetection.io collector.
@@ -269,12 +271,16 @@ class ChangeDetectionCollector(BaseCollector):
             api_key: API key for authentication
             lookback_days: How far back to look for changes (default: 7)
             min_significance: Whether to filter insignificant changes (default: True)
+            http: Optional shared CollectorHttpClient for connection pooling
+            asset_store: Optional SourceAssetStore for change detection
         """
         super().__init__(
             store=store,
             collector_name="changedetection",
             retry_config=RetryConfig(max_retries=2, backoff_base=1.0),
             api_name="changedetection",
+            http=http,
+            asset_store=asset_store,
         )
 
         # Get configuration from params or environment
@@ -357,6 +363,10 @@ class ChangeDetectionCollector(BaseCollector):
         url = f"{self.base_url}/api/v1/watch"
 
         async def fetch():
+            if self.http:
+                response = await self.http._client.get(url, headers=headers)
+                response.raise_for_status()
+                return response.json()
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.get(url, headers=headers)
                 response.raise_for_status()
@@ -389,6 +399,10 @@ class ChangeDetectionCollector(BaseCollector):
         url = f"{self.base_url}/api/v1/watch/{watch.uuid}/history"
 
         async def fetch():
+            if self.http:
+                response = await self.http._client.get(url, headers=headers)
+                response.raise_for_status()
+                return response.json()
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.get(url, headers=headers)
                 response.raise_for_status()
