@@ -189,6 +189,7 @@ export function initAmbient() {
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   let stars = [];
   let mouseX = 0, mouseY = 0;
+  let faintDots = null; // lazy-loaded company positions
 
   function resize() {
     const dpr = window.devicePixelRatio || 1;
@@ -198,6 +199,15 @@ export function initAmbient() {
     ambientCanvas.style.height = window.innerHeight + 'px';
     ctx.scale(dpr, dpr);
     stars = generateStars(200, window.innerWidth, window.innerHeight);
+    // Recompute faint dot positions on resize
+    if (faintDots) {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      faintDots = faintDots.map(d => {
+        const pos = computePolarPosition(d.statusId, d.score, d.key, w, h);
+        return { ...d, x: pos.x, y: pos.y };
+      });
+    }
   }
 
   resize();
@@ -206,6 +216,19 @@ export function initAmbient() {
     mouseX = e.clientX;
     mouseY = e.clientY;
   });
+
+  // Fetch company positions asynchronously (non-blocking)
+  api.get('/api/v1/companies/inbox?page=1&page_size=200').then(res => {
+    if (!res.ok) return;
+    const companies = res.data?.items || res.data || [];
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    faintDots = companies.map(c => {
+      const statusId = INBOX_TO_STATUS[c.status] || 'source';
+      const pos = computePolarPosition(statusId, c.confidence_score || 0, c.canonical_key || c.company_name || '', w, h);
+      return { x: pos.x, y: pos.y, statusId, score: c.confidence_score || 0, key: c.canonical_key || '' };
+    });
+  }).catch(() => { /* non-critical */ });
 
   function frame(time) {
     const w = window.innerWidth;
@@ -231,6 +254,19 @@ export function initAmbient() {
     ctx.save();
     ctx.translate(parallaxX, parallaxY);
     drawStarField(ctx, stars, time / 1000, reducedMotion);
+
+    // Faint company dots (ambient presence)
+    if (faintDots && faintDots.length > 0) {
+      ctx.globalAlpha = 0.08;
+      ctx.fillStyle = '#B9A3FB';
+      for (const dot of faintDots) {
+        ctx.beginPath();
+        ctx.arc(dot.x, dot.y, 2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+    }
+
     ctx.restore();
 
     if (!reducedMotion) {
@@ -278,6 +314,9 @@ export class ConstellationRenderer {
     this._slowFrameCount = 0;
     this._fastFrameCount = 0;
 
+    // Legend filter state
+    this.hiddenStatuses = new Set();
+
     // Pinch zoom state
     this.pointers = new Map();
 
@@ -317,6 +356,10 @@ export class ConstellationRenderer {
     this.canvas.removeEventListener('pointerup', this._onPointerUp);
     this.canvas.removeEventListener('pointercancel', this._onPointerUp);
     document.removeEventListener('visibilitychange', this._onVisibility);
+  }
+
+  setHiddenStatuses(set) {
+    this.hiddenStatuses = set;
   }
 
   async _fetchData() {
@@ -448,8 +491,16 @@ export class ConstellationRenderer {
       this.hoveredNode = found;
       if (found && this.tooltip) {
         this.tooltip.style.display = 'block';
-        this.tooltip.style.left = (e.clientX - this.canvas.getBoundingClientRect().left + 16) + 'px';
-        this.tooltip.style.top = (e.clientY - this.canvas.getBoundingClientRect().top - 10) + 'px';
+        const rect = this.canvas.getBoundingClientRect();
+        let left = e.clientX - rect.left + 16;
+        let top = e.clientY - rect.top - 10;
+        const tw = 200;
+        const th = 80;
+        if (left + tw > rect.width) left = left - tw - 32;
+        if (top + th > rect.height) top = rect.height - th - 8;
+        if (top < 8) top = 8;
+        this.tooltip.style.left = left + 'px';
+        this.tooltip.style.top = top + 'px';
         this.tooltip.innerHTML = '';
         const nameEl = document.createElement('div');
         nameEl.className = 'constellation-tooltip-name';
@@ -531,6 +582,7 @@ export class ConstellationRenderer {
 
     // Layer 5: Node glows (for high-thesis nodes)
     for (const node of this.nodes) {
+      if (this.hiddenStatuses.has(node.status)) continue;
       if (node.score >= 0.5) {
         const glowAlpha = node.score >= 0.75 ? 0.35 : 0.08;
         ctx.fillStyle = `rgba(45, 178, 153, ${glowAlpha})`;
@@ -542,6 +594,7 @@ export class ConstellationRenderer {
 
     // Layer 6: Nodes
     for (const node of this.nodes) {
+      if (this.hiddenStatuses.has(node.status)) continue;
       const color = STATUS_COLORS[node.status] || '#9BA2AA';
       const shape = STATUS_SHAPES[node.status] || 'circle';
 
@@ -564,6 +617,7 @@ export class ConstellationRenderer {
     ctx.font = '500 11px "DM Sans", sans-serif';
     ctx.textAlign = 'center';
     for (const node of labelNodes) {
+      if (this.hiddenStatuses.has(node.status)) continue;
       ctx.fillStyle = 'rgba(241, 243, 245, 0.8)';
       ctx.fillText(
         node.name.length > 16 ? node.name.slice(0, 14) + '...' : node.name,
