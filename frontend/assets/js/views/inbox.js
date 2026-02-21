@@ -223,13 +223,31 @@ export async function mount(container) {
     actions.appendChild(rejectBtn);
     card.appendChild(actions);
 
-    // Keyboard shortcuts
+    // Keyboard shortcuts — context-aware based on current reason mode
     card.addEventListener('keydown', (e) => {
       if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      const mode = card.dataset.reasonMode; // 'approve', 'reject', or undefined
       if (e.key >= '1' && e.key <= '4') {
         e.preventDefault();
-        const reason = APPROVE_REASONS[parseInt(e.key) - 1];
-        doApprove(card, item, reason);
+        const idx = parseInt(e.key) - 1;
+        if (mode === 'reject') {
+          doReject(card, item, REJECT_REASONS[idx]);
+        } else {
+          // Default or approve mode → approve
+          doApprove(card, item, APPROVE_REASONS[idx]);
+        }
+      } else if (e.key === 'c' || e.key === 'C') {
+        e.preventDefault();
+        if (mode === 'reject') {
+          const reason = prompt('Enter rejection reason:');
+          if (reason) doReject(card, item, reason);
+        } else if (mode === 'approve') {
+          const reason = prompt('Enter reason:');
+          if (reason) doApprove(card, item, reason);
+        } else {
+          // Default state: show approve reasons
+          handleApprove(card, item, actions);
+        }
       }
     });
 
@@ -239,9 +257,12 @@ export async function mount(container) {
   function handleApprove(card, item, actionsEl) {
     // Show quick-reason buttons
     actionsEl.innerHTML = '';
+    card.dataset.reasonMode = 'approve';
+    const lastUsed = sessionStorage.getItem('inbox_last_approve_reason');
     APPROVE_REASONS.forEach((reason, i) => {
       const btn = document.createElement('button');
       btn.className = 'btn btn-primary btn-sm';
+      if (reason === lastUsed) btn.classList.add('last-used');
       btn.textContent = `[${i + 1}] ${reason}`;
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -282,6 +303,7 @@ export async function mount(container) {
 
       cursorDirty = true;
       emit('triage:changed');
+      sessionStorage.setItem('inbox_last_approve_reason', reason);
       api.showToast(`Approved: ${item.company_name || item.canonical_key || id}`, 'success');
     } catch (err) {
       card.classList.remove('removing');
@@ -348,9 +370,12 @@ export async function mount(container) {
 
   function showRejectReasons(card, item, actionsEl) {
     actionsEl.innerHTML = '';
+    card.dataset.reasonMode = 'reject';
+    const lastUsed = sessionStorage.getItem('inbox_last_reject_reason');
     REJECT_REASONS.forEach((reason, i) => {
       const btn = document.createElement('button');
       btn.className = 'btn btn-danger btn-sm';
+      if (reason === lastUsed) btn.classList.add('last-used');
       btn.textContent = `[${i + 1}] ${reason}`;
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -390,6 +415,7 @@ export async function mount(container) {
 
       cursorDirty = true;
       emit('triage:changed');
+      sessionStorage.setItem('inbox_last_reject_reason', reason);
       api.showToast(`Rejected: ${item.company_name || item.canonical_key || id}`, 'info');
     } catch (err) {
       api.showToast('Rejection failed. Please try again.', 'error');

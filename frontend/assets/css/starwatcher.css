@@ -1007,6 +1007,10 @@ a:hover { text-decoration: underline; }
   animation: fadeSlideUp var(--duration-fast) var(--ease-spring);
 }
 
+.inbox-actions .last-used {
+  box-shadow: 0 0 0 2px var(--color-accent);
+}
+
 /* --- Health View --- */
 .health-grid {
   display: grid;
@@ -1059,6 +1063,12 @@ a:hover { text-decoration: underline; }
   cursor: grab;
 }
 .constellation-canvas:active { cursor: grabbing; }
+
+.constellation-container.perf-reduced .card,
+.constellation-container.perf-reduced .metric-card {
+  backdrop-filter: none;
+  background: var(--color-surface);
+}
 
 .constellation-legend {
   position: absolute;

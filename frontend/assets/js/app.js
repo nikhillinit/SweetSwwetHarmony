@@ -39,6 +39,11 @@ function mountConstellation(container) {
   title.className = 'view-title';
   title.textContent = 'Constellation';
   header.appendChild(title);
+  const refreshBtn = document.createElement('button');
+  refreshBtn.className = 'btn btn-ghost btn-sm';
+  refreshBtn.textContent = 'Refresh';
+  refreshBtn.addEventListener('click', () => renderer._fetchData());
+  header.appendChild(refreshBtn);
   container.appendChild(header);
 
   const wrapper = document.createElement('div');
