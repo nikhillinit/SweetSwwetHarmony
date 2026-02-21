@@ -1136,12 +1136,42 @@ async def cmd_sync_lps(args):
             print(f"  ... and {len(relationships) - 20} more firms")
         return
 
-    # TODO: Store relationships when RelationshipStore.upsert_lp_relationship is added (Phase 4)
+    # Resolve user identity
+    user_email = getattr(args, "user_email", None) or os.environ.get("USER_EMAIL", "")
+    if not user_email:
+        print("ERROR: --user-email required or set USER_EMAIL environment variable")
+        sys.exit(1)
+
+    db_path = getattr(args, "db_path", None) or "private_graph.db"
+
+    # Store relationships via RelationshipStore
+    from storage.relationship_store import RelationshipStore
+
+    rel_store = RelationshipStore(db_path)
+    await rel_store.initialize()
+
+    stored = 0
+    try:
+        for rel in relationships:
+            # Field mapping: domain -> target_domain, status.value -> lp_status,
+            # attribution -> lp_name (LP contact or firm name), score -> notion_score
+            await rel_store.upsert_lp_relationship(
+                me_email=user_email,
+                target_domain=rel.domain,
+                lp_status=rel.status.value,
+                lp_name=rel.attribution,  # Attribution carries the LP/firm name
+                notion_score=rel.score,
+            )
+            stored += 1
+    finally:
+        await rel_store.close()
+
     print("=" * 70)
     print("SYNC COMPLETE")
     print("=" * 70)
     print()
-    print(f"Firm relationships synced: {len(relationships)}")
+    print(f"Firm relationships synced: {stored}")
+    print(f"Database: {db_path}")
     print()
     print("Top 10 relationships by score:")
     print("-" * 70)
@@ -3537,6 +3567,17 @@ Examples:
         "--dry-run",
         action="store_true",
         help="Preview what would be synced without storing",
+    )
+    sync_lps_parser.add_argument(
+        "--user-email",
+        type=str,
+        help="User email for relationship graph (overrides USER_EMAIL env var)",
+    )
+    sync_lps_parser.add_argument(
+        "--db-path",
+        type=str,
+        default="private_graph.db",
+        help="Path to relationship database (default: private_graph.db)",
     )
 
     # --- relationship-health command ---
@@ -6219,15 +6260,23 @@ async def cmd_hunter_generate(args):
 async def _hunter_collector_dispatch(collector: str, query_text: str):
     """Dispatch a hunter query to the appropriate collector's search.
 
+    Uses shared company name extractor for HN/news results instead
+    of raw titles. Produces canonical keys for all results.
+
     Args:
         collector: Collector name (github, hacker_news, news_api)
         query_text: Formatted query string
 
     Returns:
-        List of dicts with company_name, source_api, and optionally
-        canonical_key, confidence, raw_data.
+        List of dicts with company_name, source_api, canonical_key,
+        confidence, raw_data.
     """
     import httpx
+    from utils.company_name_extractor import (
+        extract_company_info,
+        _is_blocked_domain,
+    )
+    from utils.canonical_keys import normalize_domain as _norm_domain
 
     if collector == "github":
         token = os.environ.get("GITHUB_TOKEN", "")
@@ -6279,10 +6328,26 @@ async def _hunter_collector_dispatch(collector: str, query_text: str):
         for hit in hits:
             title = hit.get("title", "")
             url = hit.get("url", "")
+
+            # Extract company name via shared extractor
+            info = extract_company_info(title, url=url, mode="url_promote")
+            company_name = info.company_name or ""
+
+            # Canonical key: prefer domain, fall back to name_loc
+            canonical_key = ""
+            if info.promoted_domain and not _is_blocked_domain(info.promoted_domain):
+                canonical_key = f"domain:{_norm_domain(info.promoted_domain)}"
+            elif company_name:
+                canonical_key = f"name_loc:{company_name.lower()}"
+
+            # Invariant: non-empty company_name requires non-empty canonical_key
+            if company_name and not canonical_key:
+                company_name = ""
+
             results.append({
-                "company_name": title,
+                "company_name": company_name,
                 "source_api": "hacker_news",
-                "canonical_key": f"hacker_news:{hit.get('objectID', '')}",
+                "canonical_key": canonical_key,
                 "confidence": 0.5,
                 "raw_data": {
                     "title": title,
@@ -6314,15 +6379,34 @@ async def _hunter_collector_dispatch(collector: str, query_text: str):
         results = []
         for article in articles:
             title = article.get("title", "")
+            description = article.get("description", "")
+            article_url = article.get("url", "")
             source_name = article.get("source", {}).get("name", "")
+
+            # Extract company name via shared extractor
+            info = extract_company_info(title, description=description, url=article_url, mode="url_promote")
+            company_name = info.company_name or ""
+
+            # Canonical key: non-publisher domain or name_loc fallback
+            canonical_key = ""
+            if info.promoted_domain and not _is_blocked_domain(info.promoted_domain):
+                canonical_key = f"domain:{_norm_domain(info.promoted_domain)}"
+            elif company_name:
+                canonical_key = f"name_loc:{company_name.lower()}"
+
+            # Invariant: non-empty company_name requires non-empty canonical_key
+            if company_name and not canonical_key:
+                company_name = ""
+
             results.append({
-                "company_name": title,
+                "company_name": company_name,
                 "source_api": "news_api",
+                "canonical_key": canonical_key,
                 "confidence": 0.5,
                 "raw_data": {
                     "title": title,
-                    "description": article.get("description", ""),
-                    "url": article.get("url", ""),
+                    "description": description,
+                    "url": article_url,
                     "source": source_name,
                 },
             })
