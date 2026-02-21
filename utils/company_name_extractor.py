@@ -118,7 +118,7 @@ LEGAL_SUFFIXES: frozenset[str] = frozenset({
 _COMMON_WORDS = frozenset({"the", "a", "an", "this", "new", "how", "why", "what", "when"})
 
 # Verb alternation (case-insensitive via inline flag)
-_VERBS = r"(?i:raises|raised|announces|announced|launches|launched|unveils|secures|secured|closes|closed)"
+_VERBS = r"(?i:raises|raised|announces|announced|launches|launched|unveils|secures|secured|closes|closed|wins|won|makes|debuts|expands|expanded|partners|partnered)"
 
 
 def extract_via_regex(title: str) -> Optional[str]:

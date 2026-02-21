@@ -757,3 +757,52 @@ class TestDomainLabel:
     def test_skips_m_subdomain(self):
         from utils.company_name_extractor import _domain_label
         assert _domain_label("m.example.com") == "example"
+
+
+class TestExpandedVerbs:
+    """Test newly added verb patterns for regex extraction."""
+
+    def test_wins_verb(self):
+        assert extract_via_regex("Acme wins FDA approval for wellness device") == "Acme"
+
+    def test_won_verb(self):
+        result = extract_via_regex("HealthPlus won $2M innovation award")
+        assert result is not None
+        assert "HealthPlus" in result
+
+    def test_makes_verb(self):
+        result = extract_via_regex("FreshBrew makes its debut in the US market")
+        assert result is not None
+        assert "FreshBrew" in result
+
+    def test_debuts_verb(self):
+        result = extract_via_regex("GlowSkin debuts new skincare line at CES")
+        assert result is not None
+        assert "GlowSkin" in result
+
+    def test_expands_verb(self):
+        result = extract_via_regex("TravelBuddy expands to European markets")
+        assert result is not None
+        assert "TravelBuddy" in result
+
+    def test_expanded_verb(self):
+        result = extract_via_regex("MealBox expanded operations to 10 new cities")
+        assert result is not None
+        assert "MealBox" in result
+
+    def test_partners_verb(self):
+        result = extract_via_regex("FitGear partners with Nike for distribution deal")
+        assert result is not None
+        assert "FitGear" in result
+
+    def test_partnered_verb(self):
+        result = extract_via_regex("WellnessApp partnered with hospitals nationwide")
+        assert result is not None
+        assert "WellnessApp" in result
+
+    def test_existing_verbs_still_work(self):
+        """Ensure existing verbs are not broken by expansion."""
+        assert extract_via_regex("FitTrack raises $20M Series B") == "FitTrack"
+        assert extract_via_regex("FreshDirect announces new delivery service") == "FreshDirect"
+        assert extract_via_regex("BeautyBox secures seed funding") is not None
+        assert extract_via_regex("Headspace closes $100M round") is not None

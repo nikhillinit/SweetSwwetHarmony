@@ -26,7 +26,7 @@ from typing import Any, AsyncIterator, Callable, Dict, List, Optional, TypeVar, 
 
 import httpx
 
-from collectors.retry_strategy import RetryConfig, with_retry
+from collectors.retry_strategy import RetryConfig, RateLimitError, with_retry
 from collectors.timeout_config import TimeoutConfig, OperationType, TimeoutEvent
 from discovery_engine.mcp_server import CollectorResult, CollectorStatus
 from storage.signal_store import SignalStore
@@ -39,6 +39,18 @@ logger = logging.getLogger(__name__)
 MAX_TIMEOUT_EVENTS = 100
 
 T = TypeVar("T")
+
+
+class CollectorSkipError(Exception):
+    """
+    Raised when a collector should be skipped for this run.
+
+    Maps to CollectorStatus.SKIPPED in BaseCollector.run().
+    Use for conditions like rate-limit fail-fast where continuing
+    is pointless but the error is not a true failure.
+    """
+
+    pass
 
 
 class BaseCollector(ABC):
@@ -243,6 +255,18 @@ class BaseCollector(ABC):
                     dry_run=dry_run,
                     error_message="; ".join(self._errors[:5]) if self._errors else None,
                 )
+
+        except CollectorSkipError as e:
+            logger.warning(f"{self.collector_name} collector skipped: {e}")
+            return CollectorResult(
+                collector=self.collector_name,
+                status=CollectorStatus.SKIPPED,
+                signals_found=self._signals_found,
+                signals_new=self._signals_new,
+                signals_suppressed=self._signals_suppressed,
+                dry_run=dry_run,
+                error_message=str(e),
+            )
 
         except Exception as e:
             logger.exception(f"{self.collector_name} collector failed")

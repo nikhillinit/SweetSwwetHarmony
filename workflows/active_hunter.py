@@ -164,10 +164,23 @@ async def execute_hunter_run(
                 # 3d. Process results
                 results_count = 0
                 for raw in (raw_results or []):
-                    company_name = raw.get("company_name", "Unknown")
-                    canonical_key = raw.get("canonical_key")
+                    company_name = raw.get("company_name", "")
+                    canonical_key = raw.get("canonical_key") or ""
                     source_api = raw.get("source_api", hq.collector)
                     raw_data = raw.get("raw_data", raw)
+
+                    # Normalize blank/Unknown company names
+                    if not company_name or company_name.strip().lower() == "unknown":
+                        company_name = ""
+
+                    # Skip results without identity
+                    if not canonical_key:
+                        logger.debug(
+                            "Skipping result with no canonical_key: %s",
+                            (raw_data or {}).get("title", "(no title)"),
+                        )
+                        metrics.increment("hunter.result.skip_no_identity")
+                        continue
 
                     # Cross-run history check (90-day TTL)
                     if canonical_key:
