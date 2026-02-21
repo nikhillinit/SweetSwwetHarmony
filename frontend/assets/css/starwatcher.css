@@ -508,9 +508,8 @@ a:hover { text-decoration: underline; }
 }
 
 .chip-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: var(--radius-full);
+  width: 8px;
+  height: 8px;
   flex-shrink: 0;
 }
 
@@ -521,13 +520,19 @@ a:hover { text-decoration: underline; }
   color: var(--color-text-primary);
 }
 .chip[data-status="source"] .chip-dot,
-.chip[data-status="inbox"] .chip-dot { background: var(--status-source); }
+.chip[data-status="inbox"] .chip-dot {
+  background-color: var(--status-source);
+  border-radius: var(--radius-full);
+}
 
 .chip[data-status="initial_meeting"] {
   background: var(--status-initial-meeting-bg);
   color: var(--color-text-primary);
 }
-.chip[data-status="initial_meeting"] .chip-dot { background: var(--status-initial-meeting); }
+.chip[data-status="initial_meeting"] .chip-dot {
+  background-color: var(--status-initial-meeting);
+  border-radius: var(--radius-full);
+}
 
 .chip[data-status="diligence"],
 .chip[data-status="pipeline_requested"] {
@@ -535,37 +540,75 @@ a:hover { text-decoration: underline; }
   color: var(--color-text-primary);
 }
 .chip[data-status="diligence"] .chip-dot,
-.chip[data-status="pipeline_requested"] .chip-dot { background: var(--status-diligence); }
+.chip[data-status="pipeline_requested"] .chip-dot {
+  background-color: var(--status-diligence);
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'%3E%3Cpolygon points='4,0 8,8 0,8'/%3E%3C/svg%3E");
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'%3E%3Cpolygon points='4,0 8,8 0,8'/%3E%3C/svg%3E");
+  mask-size: contain;
+  -webkit-mask-size: contain;
+  mask-repeat: no-repeat;
+  -webkit-mask-repeat: no-repeat;
+}
 
 .chip[data-status="tracking"] {
   background: var(--status-tracking-bg);
   color: var(--color-text-primary);
 }
-.chip[data-status="tracking"] .chip-dot { background: var(--status-tracking); }
+.chip[data-status="tracking"] .chip-dot {
+  background-color: var(--status-tracking);
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpolygon points='5,0 6.18,3.82 10,3.82 6.91,6.18 8.09,10 5,7.64 1.91,10 3.09,6.18 0,3.82 3.82,3.82'/%3E%3C/svg%3E");
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpolygon points='5,0 6.18,3.82 10,3.82 6.91,6.18 8.09,10 5,7.64 1.91,10 3.09,6.18 0,3.82 3.82,3.82'/%3E%3C/svg%3E");
+  mask-size: contain;
+  -webkit-mask-size: contain;
+  mask-repeat: no-repeat;
+  -webkit-mask-repeat: no-repeat;
+}
 
 .chip[data-status="committed"] {
   background: var(--status-committed-bg);
   color: var(--color-text-primary);
 }
-.chip[data-status="committed"] .chip-dot { background: var(--status-committed); }
+.chip[data-status="committed"] .chip-dot {
+  background-color: var(--status-committed);
+  border-radius: var(--radius-full);
+}
 
 .chip[data-status="funded"] {
   background: var(--status-funded-bg);
   color: var(--color-text-primary);
 }
-.chip[data-status="funded"] .chip-dot { background: var(--status-funded); }
+.chip[data-status="funded"] .chip-dot {
+  background-color: var(--status-funded);
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpolygon points='5,0 9.05,3.45 8.09,8.09 1.91,8.09 0.95,3.45'/%3E%3C/svg%3E");
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpolygon points='5,0 9.05,3.45 8.09,8.09 1.91,8.09 0.95,3.45'/%3E%3C/svg%3E");
+  mask-size: contain;
+  -webkit-mask-size: contain;
+  mask-repeat: no-repeat;
+  -webkit-mask-repeat: no-repeat;
+}
 
 .chip[data-status="passed"] {
   background: var(--status-passed-bg);
   color: var(--color-text-primary);
 }
-.chip[data-status="passed"] .chip-dot { background: var(--status-passed); }
+.chip[data-status="passed"] .chip-dot {
+  background-color: var(--status-passed);
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpolygon points='5,0 9.33,2.5 9.33,7.5 5,10 0.67,7.5 0.67,2.5'/%3E%3C/svg%3E");
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 10'%3E%3Cpolygon points='5,0 9.33,2.5 9.33,7.5 5,10 0.67,7.5 0.67,2.5'/%3E%3C/svg%3E");
+  mask-size: contain;
+  -webkit-mask-size: contain;
+  mask-repeat: no-repeat;
+  -webkit-mask-repeat: no-repeat;
+}
 
 .chip[data-status="lost"] {
   background: var(--status-lost-bg);
   color: var(--color-text-primary);
 }
-.chip[data-status="lost"] .chip-dot { background: var(--status-lost); }
+.chip[data-status="lost"] .chip-dot {
+  background-color: var(--status-lost);
+  border-radius: var(--radius-full);
+}
 
 /* --- Buttons --- */
 .btn {
@@ -679,6 +722,17 @@ a:hover { text-decoration: underline; }
 .table-row[data-status="committed"]::before { background: var(--status-committed); }
 
 .table-row.clickable { cursor: pointer; }
+
+.table-row.highlighted {
+  border-left: 3px solid var(--color-primary);
+  background: rgba(45, 178, 153, 0.08);
+  animation: highlightPulse 2s ease-out;
+}
+
+@keyframes highlightPulse {
+  0% { background: rgba(45, 178, 153, 0.2); }
+  100% { background: rgba(45, 178, 153, 0.08); }
+}
 
 /* --- Forms / Inputs --- */
 .input {
@@ -1096,6 +1150,11 @@ a:hover { text-decoration: underline; }
   transition: background var(--duration-fast) var(--ease-default);
 }
 .legend-item:hover { background: rgba(73, 80, 87, 0.3); }
+
+.legend-item-hidden {
+  opacity: 0.3;
+  transition: opacity var(--duration-fast) var(--ease-default);
+}
 
 .legend-shape {
   width: 10px;

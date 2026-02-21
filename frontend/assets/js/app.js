@@ -79,6 +79,7 @@ function mountConstellation(container) {
     { id: 'funded', label: 'Funded', color: '#34D399' },
     { id: 'passed', label: 'Passed', color: '#F87171' },
   ];
+  const hiddenStatuses = new Set();
   statuses.forEach(s => {
     const item = document.createElement('div');
     item.className = 'legend-item';
@@ -89,6 +90,16 @@ function mountConstellation(container) {
     const label = document.createElement('span');
     label.textContent = s.label;
     item.appendChild(label);
+    item.addEventListener('click', () => {
+      if (hiddenStatuses.has(s.id)) {
+        hiddenStatuses.delete(s.id);
+        item.classList.remove('legend-item-hidden');
+      } else {
+        hiddenStatuses.add(s.id);
+        item.classList.add('legend-item-hidden');
+      }
+      renderer.setHiddenStatuses(hiddenStatuses);
+    });
     legend.appendChild(item);
   });
   wrapper.appendChild(legend);
