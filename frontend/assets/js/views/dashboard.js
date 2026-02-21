@@ -112,7 +112,7 @@ export async function mount(container) {
       for (const [id, count] of Object.entries(statusCounts)) {
         const meta = statusMap[id] || { label: id, color: 'var(--color-text-muted)', bg: 'var(--color-surface)' };
         const card = document.createElement('div');
-        card.className = 'status-card';
+        card.className = 'status-card card-hoverable';
         card.style.background = meta.bg;
         card.style.cursor = 'pointer';
         card.addEventListener('click', () => navigate(`#/companies?status=${id}`));
@@ -162,6 +162,7 @@ export async function mount(container) {
             <th>Status</th>
             <th>Confidence</th>
             <th>Source</th>
+            <th>Detected</th>
           </tr>
         </thead>
       `;
@@ -190,10 +191,15 @@ export async function mount(container) {
         tdSource.style.color = 'var(--color-text-muted)';
         tdSource.textContent = c.source_api || c.signal_types?.[0] || '—';
 
+        const tdDate = document.createElement('td');
+        tdDate.style.cssText = 'color:var(--color-text-muted);font-size:var(--text-sm);';
+        tdDate.textContent = formatDate(c.detected_at || c.created_at);
+
         tr.appendChild(tdName);
         tr.appendChild(tdStatus);
         tr.appendChild(tdConf);
         tr.appendChild(tdSource);
+        tr.appendChild(tdDate);
         tbody.appendChild(tr);
       });
 
@@ -241,6 +247,14 @@ function createChip(status) {
   label.textContent = statusLabels[status] || status;
   chip.appendChild(label);
   return chip;
+}
+
+function formatDate(dateStr) {
+  if (!dateStr) return '—';
+  try {
+    const d = new Date(dateStr);
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  } catch { return '—'; }
 }
 
 function animateCount(el, target) {
