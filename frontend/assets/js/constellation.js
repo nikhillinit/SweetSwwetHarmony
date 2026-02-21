@@ -7,6 +7,7 @@
  *   - Full: interactive shapes, hover, pan/zoom (constellation view)
  */
 import * as api from './api.js';
+import { navigate } from './router.js';
 
 // --- Status → visual mapping ---
 const STATUS_COLORS = {
@@ -269,6 +270,14 @@ export class ConstellationRenderer {
     this.dragStartY = 0;
     this.hoveredNode = null;
 
+    // Click detection
+    this._pointerDownPos = null;
+
+    // Perf degradation tracking
+    this._lastFrameTime = 0;
+    this._slowFrameCount = 0;
+    this._fastFrameCount = 0;
+
     // Pinch zoom state
     this.pointers = new Map();
 
@@ -356,6 +365,7 @@ export class ConstellationRenderer {
 
   _onPointerDown(e) {
     this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    this._pointerDownPos = { x: e.clientX, y: e.clientY };
     if (this.pointers.size === 1) {
       this.dragging = true;
       this.dragStartX = e.clientX - this.offsetX;
@@ -389,6 +399,23 @@ export class ConstellationRenderer {
   }
 
   _onPointerUp(e) {
+    // Click detection: if pointer barely moved, treat as click
+    if (this._pointerDownPos && this.pointers.size <= 1) {
+      const dx = e.clientX - this._pointerDownPos.x;
+      const dy = e.clientY - this._pointerDownPos.y;
+      if (Math.hypot(dx, dy) < 5) {
+        const rect = this.canvas.getBoundingClientRect();
+        const mx = (e.clientX - rect.left - this.offsetX) / this.zoom;
+        const my = (e.clientY - rect.top - this.offsetY) / this.zoom;
+        for (const node of this.nodes) {
+          if (Math.hypot(mx - node.x, my - node.y) < Math.max(node.size, 22)) {
+            navigate('#/companies?highlight=' + encodeURIComponent(node.canonicalKey));
+            break;
+          }
+        }
+      }
+    }
+    this._pointerDownPos = null;
     this.pointers.delete(e.pointerId);
     if (this.pointers.size < 2) this._lastPinchDist = null;
     if (this.pointers.size === 0) this.dragging = false;
@@ -444,6 +471,24 @@ export class ConstellationRenderer {
 
   _loop(time) {
     if (!this.running || document.hidden) return;
+
+    // Perf degradation tracking
+    if (this._lastFrameTime > 0) {
+      const delta = time - this._lastFrameTime;
+      if (delta > 20) {
+        this._slowFrameCount++;
+        this._fastFrameCount = 0;
+      } else {
+        this._fastFrameCount++;
+        this._slowFrameCount = 0;
+      }
+      const parent = this.canvas.parentElement;
+      if (parent) {
+        if (this._slowFrameCount >= 3) parent.classList.add('perf-reduced');
+        else if (this._fastFrameCount >= 3) parent.classList.remove('perf-reduced');
+      }
+    }
+    this._lastFrameTime = time;
 
     const w = this.canvas.width / (window.devicePixelRatio || 1);
     const h = this.canvas.height / (window.devicePixelRatio || 1);
