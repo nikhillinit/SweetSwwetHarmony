@@ -37,6 +37,9 @@ extruct>=0.17.0
 scispacy>=0.5.0
 spacy>=3.5.0
 
+# NER model for company name extraction (pinned to match spacy>=3.5.0)
+https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.7.1/en_core_web_sm-3.7.1.tar.gz
+
 # Testing
 pytest>=7.4.0
 pytest-asyncio>=0.21.0
