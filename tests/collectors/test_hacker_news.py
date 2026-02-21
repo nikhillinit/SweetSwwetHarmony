@@ -14,8 +14,8 @@ from collectors.hacker_news import (
     HackerNewsPost,
     _domain_to_company,
     _looks_like_name,
-    _SHOW_HN_SEP_RE,
 )
+from utils.hn_title import HN_SEP_RE
 
 
 # =============================================================================
@@ -90,7 +90,7 @@ class TestLooksLikeName:
 
 
 # =============================================================================
-# _SHOW_HN_SEP_RE TESTS
+# HN_SEP_RE TESTS
 # =============================================================================
 
 
@@ -98,33 +98,33 @@ class TestShowHnSepRegex:
     """Test the separator regex matches expected patterns."""
 
     def test_spaced_dash(self):
-        m = _SHOW_HN_SEP_RE.search("Zed - a fast editor")
+        m = HN_SEP_RE.search("Zed - a fast editor")
         assert m is not None
         assert "Zed - a fast editor"[:m.start()].strip() == "Zed"
 
     def test_unspaced_dash(self):
-        m = _SHOW_HN_SEP_RE.search("Zed-The fast editor")
+        m = HN_SEP_RE.search("Zed-The fast editor")
         assert m is not None
 
     def test_pipe(self):
-        m = _SHOW_HN_SEP_RE.search("Acme| The ultimate tool")
+        m = HN_SEP_RE.search("Acme| The ultimate tool")
         assert m is not None
         assert "Acme| The ultimate tool"[:m.start()].strip() == "Acme"
 
     def test_comma(self):
-        m = _SHOW_HN_SEP_RE.search("Acme, the AI tool")
+        m = HN_SEP_RE.search("Acme, the AI tool")
         assert m is not None
 
     def test_paren(self):
-        m = _SHOW_HN_SEP_RE.search("MyApp (now in beta)")
+        m = HN_SEP_RE.search("MyApp (now in beta)")
         assert m is not None
 
     def test_em_dash(self):
-        m = _SHOW_HN_SEP_RE.search("Acme \u2014 fast tool")
+        m = HN_SEP_RE.search("Acme \u2014 fast tool")
         assert m is not None
 
     def test_no_separator(self):
-        m = _SHOW_HN_SEP_RE.search("17Mb Model Beats Human Experts at Medical Diagnosis")
+        m = HN_SEP_RE.search("17Mb Model Beats Human Experts at Medical Diagnosis")
         # Should match on "Beats" if there's a dash/pipe... but there isn't one
         # Actually this should NOT match since there's no separator character
         # Wait — let me check: there's no dash, pipe, paren, or comma before "Beats"
@@ -281,3 +281,73 @@ class TestHNExtractCompanyName:
             tags=["show_hn"],
         )
         assert post._extract_company_name() == "Fresh Bowls"
+
+
+# =============================================================================
+# Launch HN / Demo HN TESTS
+# =============================================================================
+
+
+class TestLaunchDemoHNExtraction:
+    """Test _extract_company_name for Launch HN and Demo HN posts."""
+
+    def test_launch_hn_separator_extraction(self):
+        post = _make_post(
+            "Launch HN: Queenly (YC W21) \u2014 Marketplace and search engine for formalwear",
+            url="",
+            tags=[],
+        )
+        assert post._extract_company_name() == "Queenly"
+
+    def test_launch_hn_dash_separator(self):
+        post = _make_post(
+            "Launch HN: Fresh Bowls - meal delivery",
+            url="",
+            tags=[],
+        )
+        assert post._extract_company_name() == "Fresh Bowls"
+
+    def test_demo_hn_extraction(self):
+        post = _make_post(
+            "Demo HN: Acme \u2014 fast tool",
+            url="https://acme.ai",
+            tags=[],
+        )
+        assert post._extract_company_name() == "Acme"
+
+    def test_launch_hn_is_not_show_hn(self):
+        """Launch HN should NOT get is_show_hn bonus."""
+        post = _make_post(
+            "Launch HN: Queenly (YC W21) \u2014 Marketplace",
+            url="",
+            tags=[],
+        )
+        assert post.is_show_hn is False
+
+    def test_demo_hn_is_not_show_hn(self):
+        """Demo HN should NOT get is_show_hn bonus."""
+        post = _make_post(
+            "Demo HN: Acme \u2014 fast tool",
+            url="https://acme.ai",
+            tags=[],
+        )
+        assert post.is_show_hn is False
+
+    def test_show_hn_still_works(self):
+        """Existing Show HN extraction unchanged."""
+        post = _make_post(
+            "Show HN: Zed - editor",
+            url="https://zed.dev",
+            tags=["show_hn"],
+        )
+        assert post._extract_company_name() == "Zed"
+        assert post.is_show_hn is True
+
+    def test_launch_hn_falls_to_domain(self):
+        """Launch HN with no separator falls to domain."""
+        post = _make_post(
+            "Launch HN: Check out our new thing that is amazing",
+            url="https://app.startup.com/demo",
+            tags=[],
+        )
+        assert post._extract_company_name() == "Startup"

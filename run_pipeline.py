@@ -6310,6 +6310,8 @@ async def _hunter_collector_dispatch(collector: str, query_text: str):
         return results
 
     elif collector == "hacker_news":
+        from utils.hn_title import strip_hn_prefix, extract_name_from_hn_body
+
         # Strip "search?query=" prefix from formatted query text
         clean_query = query_text
         if clean_query.startswith("search?query="):
@@ -6329,9 +6331,20 @@ async def _hunter_collector_dispatch(collector: str, query_text: str):
             title = hit.get("title", "")
             url = hit.get("url", "")
 
-            # Extract company name via shared extractor
-            info = extract_company_info(title, url=url, mode="url_promote")
-            company_name = info.company_name or ""
+            # Parse HN prefix
+            cleaned_title, hn_prefix = strip_hn_prefix(title)
+            effective_title = cleaned_title if hn_prefix else title
+
+            # Try HN separator extraction for prefixed titles
+            hn_name = None
+            if hn_prefix in ("show", "launch", "demo"):
+                hn_name = extract_name_from_hn_body(cleaned_title)
+
+            # Always run shared extractor for domain candidates
+            info = extract_company_info(effective_title, url=url, mode="url_promote")
+
+            # Best company name: shared extractor result OR HN-parsed name
+            company_name = info.company_name or hn_name or ""
 
             # Canonical key: prefer domain, fall back to name_loc
             canonical_key = ""
