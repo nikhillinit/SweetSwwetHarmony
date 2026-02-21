@@ -22,11 +22,14 @@ from abc import ABC, abstractmethod
 from collections import deque
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Any, AsyncIterator, Callable, Dict, List, Optional, TypeVar, Union
+from typing import Any, AsyncIterator, Callable, Dict, List, Optional, TYPE_CHECKING, TypeVar, Union
 
 import httpx
 
 from collectors.retry_strategy import RetryConfig, RateLimitError, with_retry
+
+if TYPE_CHECKING:
+    from collectors.http_client import CollectorHttpClient
 from collectors.timeout_config import TimeoutConfig, OperationType, TimeoutEvent
 from discovery_engine.mcp_server import CollectorResult, CollectorStatus
 from storage.signal_store import SignalStore
@@ -82,6 +85,7 @@ class BaseCollector(ABC):
         api_name: Optional[str] = None,
         asset_store: Optional["SourceAssetStore"] = None,
         timeout_config: Optional[TimeoutConfig] = None,
+        http: Optional["CollectorHttpClient"] = None,
     ):
         """
         Args:
@@ -91,6 +95,7 @@ class BaseCollector(ABC):
             api_name: API name for rate limiting (e.g., "github", "sec_edgar")
             asset_store: Optional SourceAssetStore for change detection
             timeout_config: Configuration for operation-specific timeouts
+            http: Optional shared CollectorHttpClient (Phase C migration)
         """
         self.store = store
         self.collector_name = collector_name
@@ -98,6 +103,7 @@ class BaseCollector(ABC):
         self.api_name = api_name
         self.asset_store = asset_store
         self.timeout_config = timeout_config
+        self.http = http
 
         # Set up rate limiter based on api_name
         if api_name:
@@ -591,6 +597,15 @@ class BaseCollector(ABC):
         )
 
         async def do_request() -> Any:
+            if self.http:
+                response = await self.http._client.get(
+                    url,
+                    headers=headers,
+                    params=params,
+                    timeout=request_timeout,
+                )
+                response.raise_for_status()
+                return response.json()
             async with httpx.AsyncClient() as client:
                 response = await client.get(
                     url,

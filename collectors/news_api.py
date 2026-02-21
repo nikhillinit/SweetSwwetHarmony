@@ -228,6 +228,8 @@ class NewsAPICollector(BaseCollector):
         lookback_days: int = 30,
         language: str = "en",
         country: str = "us",
+        http: Optional[Any] = None,
+        asset_store: Optional[Any] = None,
     ):
         """
         Initialize the News API collector.
@@ -240,12 +242,16 @@ class NewsAPICollector(BaseCollector):
             lookback_days: How far back to search (default: 30 days)
             language: Article language (default: en)
             country: Article country (default: us)
+            http: Optional shared CollectorHttpClient for connection pooling
+            asset_store: Optional SourceAssetStore for change detection
         """
         super().__init__(
             store=store,
             collector_name="news_api",
             retry_config=RetryConfig(max_retries=3, backoff_base=2.0),
             api_name="gnews",
+            http=http,
+            asset_store=asset_store,
         )
 
         # API key from param or environment
@@ -337,6 +343,10 @@ class NewsAPICollector(BaseCollector):
         }
 
         async def fetch():
+            if self.http:
+                response = await self.http._client.get(GNEWS_API_URL, params=params)
+                response.raise_for_status()
+                return response.json()
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.get(GNEWS_API_URL, params=params)
                 response.raise_for_status()

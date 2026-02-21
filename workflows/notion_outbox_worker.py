@@ -38,6 +38,7 @@ class NotionOutboxWorker:
         claim_store: Optional["ClaimStore"] = None,
         backoff_base_seconds: float = 5.0,
         backoff_max_seconds: float = 300.0,
+        warm_intro_notion_mode: str = "off",
     ) -> None:
         self.store = signal_store
         self.notion = notion_connector
@@ -45,6 +46,7 @@ class NotionOutboxWorker:
         self._claim_store = claim_store
         self.backoff_base_seconds = backoff_base_seconds
         self.backoff_max_seconds = backoff_max_seconds
+        self.warm_intro_notion_mode = warm_intro_notion_mode
 
     async def drain(self, limit: int = 50) -> Dict[str, int]:
         """
@@ -89,6 +91,10 @@ class NotionOutboxWorker:
                         raise RuntimeError("NotionConnector not configured")
 
                     prospect_payload = self._build_prospect_payload(payload.get("prospect", {}))
+
+                    # Phase A: warm intro mode branching
+                    await self._apply_warm_intro_mode(prospect_payload, outbox_id)
+
                     result = await self.notion.upsert_prospect(prospect_payload)
 
                     await self.store.mark_outbox_sent(outbox_id)
@@ -157,36 +163,62 @@ class NotionOutboxWorker:
             logger.error(f"Profile update failed for {event.canonical_key}: {e}")
             raise
 
-    def _build_prospect_payload(self, data: Dict[str, Any]) -> ProspectPayload:
-        stage_value = data.get("stage")
-        try:
-            stage = InvestmentStage(stage_value) if stage_value else InvestmentStage.PRE_SEED
-        except ValueError:
-            stage = InvestmentStage.PRE_SEED
+    async def _apply_warm_intro_mode(
+        self, payload: ProspectPayload, outbox_id: int
+    ) -> None:
+        """Apply warm_intro_notion_mode to indicators before Notion push.
 
-        return ProspectPayload(
-            discovery_id=data.get("discovery_id", ""),
-            company_name=data.get("company_name", ""),
-            canonical_key=data.get("canonical_key", ""),
-            stage=stage,
-            status=data.get("status"),
-            website=data.get("website", ""),
-            canonical_key_candidates=data.get("canonical_key_candidates") or [],
-            confidence_score=float(data.get("confidence_score", 0.0)),
-            signal_types=data.get("signal_types") or [],
-            why_now=data.get("why_now", ""),
-            short_description=data.get("short_description", ""),
-            sector=data.get("sector"),
-            proposed_sector=data.get("proposed_sector"),
-            taxonomy_status=data.get("taxonomy_status"),
-            founder_name=data.get("founder_name", ""),
-            founder_linkedin=data.get("founder_linkedin", ""),
-            location=data.get("location", ""),
-            target_raise=data.get("target_raise", ""),
-            external_refs=data.get("external_refs") or {},
-            watchlists_matched=data.get("watchlists_matched") or [],
-            investor_matches=data.get("investor_matches") or [],
-        )
+        Modes:
+        - "off": strip indicators (default)
+        - "shadow": log to shadow_log, then strip
+        - "live": retain indicators in payload
+        """
+        if not payload.warm_intro_indicators:
+            return
+
+        mode = self.warm_intro_notion_mode
+
+        if mode == "live":
+            logger.info(
+                "warm_intro.live outbox_id=%d indicators=%d",
+                outbox_id, len(payload.warm_intro_indicators),
+            )
+            return  # Keep indicators in payload
+
+        if mode == "shadow":
+            # Log to shadow_log for later analysis
+            try:
+                computed_value = [
+                    ind.model_dump(mode="json")
+                    for ind in payload.warm_intro_indicators
+                ]
+                await self.store.log_shadow_computation(
+                    feature_name="warm_intro_indicators",
+                    canonical_key=payload.canonical_key,
+                    computed_value=computed_value,
+                )
+                logger.info(
+                    "warm_intro.shadow outbox_id=%d indicators=%d logged",
+                    outbox_id, len(payload.warm_intro_indicators),
+                )
+            except Exception as e:
+                logger.warning(
+                    "warm_intro.shadow logging failed for outbox_id=%d: %s",
+                    outbox_id, e,
+                )
+
+        # Both "off" and "shadow" strip indicators before push
+        payload.warm_intro_indicators = []
+
+    def _build_prospect_payload(self, data: Dict[str, Any]) -> ProspectPayload:
+        # Ensure required fields have defaults for backward compat with legacy outbox rows
+        defaults: Dict[str, Any] = {
+            "discovery_id": "",
+            "company_name": "",
+            "stage": InvestmentStage.PRE_SEED.value,
+        }
+        validated_data = {**defaults, **data}
+        return ProspectPayload.model_validate(validated_data)
 
     def _compute_backoff(self, attempts: int) -> float:
         attempt = max(1, attempts + 1)

@@ -208,6 +208,8 @@ class ArxivCollector(BaseCollector):
         lookback_days: int = 30,
         max_results: int = 100,
         keywords: Optional[List[str]] = None,
+        http: Optional[Any] = None,
+        asset_store: Optional[Any] = None,
     ):
         """
         Args:
@@ -216,8 +218,10 @@ class ArxivCollector(BaseCollector):
             lookback_days: How far back to search
             max_results: Maximum papers to fetch
             keywords: Additional keywords to filter by
+            http: Optional shared CollectorHttpClient for connection pooling
+            asset_store: Optional SourceAssetStore for change detection
         """
-        super().__init__(store=store, collector_name="arxiv")
+        super().__init__(store=store, collector_name="arxiv", http=http, asset_store=asset_store)
         self.categories = categories or list(THESIS_CATEGORIES.keys())
         self.lookback_days = lookback_days
         self.max_results = max_results
@@ -276,6 +280,10 @@ class ArxivCollector(BaseCollector):
         try:
             # Use _fetch_with_retry for automatic retry and rate limiting
             async def fetch_arxiv():
+                if self.http:
+                    response = await self.http._client.get(ARXIV_API, params=params, timeout=60.0)
+                    response.raise_for_status()
+                    return response.content
                 async with httpx.AsyncClient(timeout=60.0) as client:
                     response = await client.get(ARXIV_API, params=params)
                     response.raise_for_status()

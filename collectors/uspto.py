@@ -199,6 +199,8 @@ class USPTOCollector(BaseCollector):
         store: Optional[SignalStore] = None,
         lookback_days: int = 90,
         max_results: int = 100,
+        http: Optional[Any] = None,
+        asset_store: Optional[Any] = None,
     ):
         """
         Args:
@@ -207,8 +209,10 @@ class USPTOCollector(BaseCollector):
             store: SignalStore for persistence
             lookback_days: How far back to search
             max_results: Maximum patents to fetch
+            http: Optional shared CollectorHttpClient for connection pooling
+            asset_store: Optional SourceAssetStore for change detection
         """
-        super().__init__(store=store, collector_name="uspto", api_name="uspto")
+        super().__init__(store=store, collector_name="uspto", api_name="uspto", http=http, asset_store=asset_store)
         self.keywords = keywords or [
             "artificial intelligence",
             "machine learning",
@@ -311,6 +315,19 @@ class USPTOCollector(BaseCollector):
         try:
             # Use _fetch_with_retry for automatic retry and rate limiting
             async def fetch_patents():
+                if self.http:
+                    response = await self.http._client.post(
+                        PATENTSVIEW_API,
+                        json={
+                            "q": query,
+                            "f": fields,
+                            "o": options,
+                        },
+                        headers={"Content-Type": "application/json"},
+                        timeout=60.0,
+                    )
+                    response.raise_for_status()
+                    return response.json()
                 async with httpx.AsyncClient(timeout=60.0) as client:
                     response = await client.post(
                         PATENTSVIEW_API,
