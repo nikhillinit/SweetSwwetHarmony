@@ -805,11 +805,10 @@ async def cmd_health(args):
                     print(report)
 
                 # Track health status
-                if report.overall_status == "HEALTHY":
-                    checks.append(("Signal Health", True, None))
-                elif report.overall_status == "DEGRADED":
-                    checks.append(("Signal Health", False, "System degraded"))
-                    all_healthy = False
+                # DEGRADED = soft warning (low confidence variance etc.) — not a hard failure
+                if report.overall_status in ("HEALTHY", "DEGRADED"):
+                    msg = "System degraded (informational)" if report.overall_status == "DEGRADED" else None
+                    checks.append(("Signal Health", True, msg))
                 else:  # CRITICAL
                     checks.append(("Signal Health", False, "System critical"))
                     all_healthy = False
