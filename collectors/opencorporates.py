@@ -237,6 +237,8 @@ class OpenCorporatesCollector(BaseCollector):
         store=None,
         dry_run: bool = False,
         jurisdictions: Optional[List[str]] = None,
+        http: Optional[Any] = None,
+        asset_store: Optional[Any] = None,
     ):
         """
         Initialize collector.
@@ -246,10 +248,14 @@ class OpenCorporatesCollector(BaseCollector):
             store: SignalStore instance for persistence
             dry_run: If True, don't persist signals
             jurisdictions: List of jurisdiction codes to search (default: US + UK)
+            http: Optional shared CollectorHttpClient (Phase C migration)
+            asset_store: Optional SourceAssetStore for change detection
         """
         super().__init__(
             collector_name="opencorporates",
             store=store,
+            http=http,
+            asset_store=asset_store,
         )
         self._dry_run = dry_run
 
@@ -259,15 +265,38 @@ class OpenCorporatesCollector(BaseCollector):
 
         self._jurisdictions = jurisdictions or list(SUPPORTED_JURISDICTIONS.keys())
         self._client: Optional[httpx.AsyncClient] = None
+        self._owns_client = True
         self._last_request_time: float = 0
 
-    async def _get_client(self) -> httpx.AsyncClient:
-        """Get or create HTTP client."""
-        if self._client is None:
+    @property
+    def _request_headers(self) -> Dict[str, str]:
+        """Per-request headers (User-Agent for OpenCorporates API)."""
+        return {"User-Agent": "DiscoveryEngine/1.0"}
+
+    async def __aenter__(self):
+        """Async context manager entry"""
+        if self.http:
+            # Use shared client from CollectorHttpClient (Phase C)
+            self._client = self.http._client
+            self._owns_client = False
+        else:
             self._client = httpx.AsyncClient(
                 timeout=DEFAULT_TIMEOUT,
-                headers={"User-Agent": "DiscoveryEngine/1.0"},
+                headers=self._request_headers,
             )
+            self._owns_client = True
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        """Async context manager exit"""
+        if self._owns_client and self._client:
+            await self._client.aclose()
+            self._client = None
+
+    async def _get_client(self) -> httpx.AsyncClient:
+        """Get HTTP client (must be used within async context manager)."""
+        if self._client is None:
+            raise RuntimeError("OpenCorporatesCollector must be used as async context manager")
         return self._client
 
     async def _rate_limit(self):
@@ -298,7 +327,7 @@ class OpenCorporatesCollector(BaseCollector):
             params["api_token"] = self._api_key
 
         try:
-            response = await client.get(url, params=params)
+            response = await client.get(url, params=params, headers=self._request_headers)
             response.raise_for_status()
             return response.json()
         except httpx.HTTPStatusError as e:
@@ -523,6 +552,6 @@ class OpenCorporatesCollector(BaseCollector):
 
     async def close(self):
         """Close HTTP client."""
-        if self._client:
+        if self._owns_client and self._client:
             await self._client.aclose()
             self._client = None

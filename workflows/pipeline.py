@@ -34,11 +34,14 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
+
+import httpx
 
 # Storage
 from storage.signal_store import SignalStore, StoredSignal
@@ -70,6 +73,7 @@ from verification.verification_gate_v2 import (
 from connectors.notion_connector_v2 import (
     NotionConnector,
     ProspectPayload,
+    WarmIntroIndicator,
     InvestmentStage,
     DealStatus,
 )
@@ -102,6 +106,10 @@ from utils.boilerplate_detector import BoilerplateDetector
 # Phase 1a: Identity gate + thin file promotion
 from storage.identity_gate import check_identity_integrity, IdentityMigrationRequired
 from workflows.thin_file_manager import run_promotion_sweep
+
+# Phase C: HTTP primitive + run tracking
+from collectors.http_client import CollectorHttpClient, RunContext
+from workflows.run_manager import create_run, start_run, complete_run, fail_run
 
 logger = logging.getLogger(__name__)
 
@@ -195,8 +203,15 @@ class PipelineConfig:
 
     # Network Scout / Warm Intro Enrichment (Phase A)
     use_warm_intro_enrichment: bool = False   # Enable warm intro enrichment
+    warm_intro_notion_mode: str = "off"       # off | shadow | live
     user_email: Optional[str] = None          # Required when use_warm_intro_enrichment=True
     private_graph_db_path: str = "private_graph.db"  # Privacy boundary for relationship data
+
+    # Per-collector concurrency / backpressure (Phase C)
+    github_concurrency: int = 5
+    github_burst: Optional[int] = None
+    sec_concurrency: int = 3
+    sec_burst: Optional[int] = None
 
     def __post_init__(self):
         """Validate configuration after initialization."""
@@ -205,6 +220,22 @@ class PipelineConfig:
                 "USER_EMAIL environment variable is required when "
                 "ENABLE_WARM_INTRO_ENRICHMENT is true"
             )
+
+        # Warm intro truth-table validation
+        if self.warm_intro_notion_mode not in ("off", "shadow", "live"):
+            raise ValueError(
+                f"warm_intro_notion_mode must be off|shadow|live, "
+                f"got '{self.warm_intro_notion_mode}'"
+            )
+        if not self.use_warm_intro_enrichment and self.warm_intro_notion_mode == "live":
+            raise ValueError(
+                "warm_intro_notion_mode=live requires use_warm_intro_enrichment=True"
+            )
+        if not self.use_warm_intro_enrichment and self.warm_intro_notion_mode == "shadow":
+            logger.warning(
+                "config_override: warm_intro_notion_mode shadow->off (enrichment disabled)"
+            )
+            self.warm_intro_notion_mode = "off"
 
     @classmethod
     def from_env(cls) -> PipelineConfig:
@@ -242,8 +273,14 @@ class PipelineConfig:
             collector_download_timeout=float(os.getenv("COLLECTOR_DOWNLOAD_TIMEOUT", "90.0")),
             # Warm intro enrichment
             use_warm_intro_enrichment=os.getenv("ENABLE_WARM_INTRO_ENRICHMENT", "false").lower() == "true",
+            warm_intro_notion_mode=os.getenv("WARM_INTRO_NOTION_MODE", "off").lower(),
             user_email=os.getenv("USER_EMAIL"),
             private_graph_db_path=os.getenv("PRIVATE_GRAPH_DB_PATH", "private_graph.db"),
+            # Per-collector concurrency
+            github_concurrency=int(os.getenv("GITHUB_CONCURRENCY", "5")),
+            github_burst=int(os.getenv("GITHUB_BURST", "0")) or None,
+            sec_concurrency=int(os.getenv("SEC_CONCURRENCY", "3")),
+            sec_burst=int(os.getenv("SEC_BURST", "0")) or None,
         )
 
 
@@ -476,6 +513,14 @@ class DiscoveryPipeline:
         # Phase C: Boilerplate detection in SHADOW mode
         self._boilerplate_detector = BoilerplateDetector()
 
+        # Phase C: Shared HTTP client for collectors
+        self._shared_httpx_client: Optional[httpx.AsyncClient] = None
+        self._collector_http_client: Optional[CollectorHttpClient] = None
+
+        # Run tracking (per-run, not per-initialize)
+        self._execution_id: str = ""
+        self._run_tracking_available: bool = False
+
         # State
         self._initialized = False
 
@@ -620,6 +665,13 @@ class DiscoveryPipeline:
             logger.warning(f"SlackNotifier initialization failed (non-fatal): {e}")
             self._notifier = None
 
+        # Phase C: Create shared HTTP client for collectors
+        self._shared_httpx_client = httpx.AsyncClient(
+            timeout=30.0,
+            follow_redirects=True,
+        )
+        logger.info("Shared HTTP client initialized (Phase C)")
+
         # Warmup suppression cache (non-fatal if it fails)
         if self.config.warmup_suppression_cache:
             try:
@@ -652,8 +704,65 @@ class DiscoveryPipeline:
         if self._notifier:
             await self._notifier.close()
             self._notifier = None
+        # Phase C: Close shared HTTP client
+        if self._shared_httpx_client:
+            await self._shared_httpx_client.aclose()
+            self._shared_httpx_client = None
+        self._collector_http_client = None
         self._velocity_tracker = None
         self._initialized = False
+
+    # =========================================================================
+    # RUN TRACKING (per-run, not per-initialize)
+    # =========================================================================
+
+    async def _begin_run_tracking(
+        self, run_type: str = "pipeline", inputs_summary: Optional[dict] = None
+    ) -> str:
+        """Create run + start it. Returns execution_id. Never raises."""
+        try:
+            record = await create_run(
+                self._store, run_type=run_type, inputs_summary=inputs_summary
+            )
+            self._execution_id = record.id
+            self._run_tracking_available = True
+            try:
+                await start_run(self._store, self._execution_id)
+            except Exception:
+                logger.warning("start_run failed for %s; continuing", self._execution_id)
+        except Exception:
+            self._execution_id = uuid.uuid4().hex[:16]
+            self._run_tracking_available = False
+            logger.warning(
+                "run_history unavailable, using local execution_id=%s",
+                self._execution_id,
+            )
+        # Create CollectorHttpClient for this run
+        if self._shared_httpx_client:
+            self._collector_http_client = CollectorHttpClient(
+                self._shared_httpx_client,
+                run_context=RunContext(execution_id=self._execution_id),
+                collector_name="pipeline",
+            )
+        return self._execution_id
+
+    async def _end_run_tracking(
+        self, *, success: bool, stats: Optional[dict] = None, error: Optional[str] = None
+    ) -> None:
+        """Complete or fail the run. Never raises."""
+        if not self._run_tracking_available:
+            return
+        try:
+            if success:
+                await complete_run(self._store, self._execution_id, result=stats)
+            else:
+                await fail_run(
+                    self._store, self._execution_id, error_message=error or "unknown"
+                )
+        except Exception:
+            logger.warning(
+                "run_history write failed for %s; continuing", self._execution_id
+            )
 
     async def _run_promotion_sweep(self, stats: PipelineStats) -> None:
         """Run paginated promotion sweep on updated CompanyFiles.
@@ -835,10 +944,17 @@ class DiscoveryPipeline:
         """
         await self.initialize()
 
+        # Per-run tracking
+        await self._begin_run_tracking(
+            "pipeline",
+            {"collectors": collectors or [], "dry_run": dry_run, "mode": "full"},
+        )
+
         stats = PipelineStats()
 
         # Reset collector metrics for this run
         self._collector_metrics = []
+        run_error: Optional[str] = None
 
         try:
             logger.info(
@@ -912,6 +1028,7 @@ class DiscoveryPipeline:
         except Exception as e:
             logger.exception("Pipeline failed")
             stats.errors.append(f"Pipeline error: {str(e)}")
+            run_error = str(e)
 
         finally:
             stats.complete()
@@ -919,6 +1036,13 @@ class DiscoveryPipeline:
             # Save metrics to database (non-fatal)
             if self._store and not dry_run:
                 await self._save_pipeline_metrics(stats)
+
+            # End run tracking
+            await self._end_run_tracking(
+                success=run_error is None,
+                stats={"signals_collected": stats.signals_collected} if run_error is None else None,
+                error=run_error,
+            )
 
         return stats
 
@@ -939,9 +1063,25 @@ class DiscoveryPipeline:
         """
         await self.initialize()
 
+        await self._begin_run_tracking(
+            "pipeline",
+            {"mode": "collect_only", "collectors": collector_names, "dry_run": dry_run},
+        )
+
         logger.info(f"Running collectors: {collector_names} (dry_run={dry_run})")
 
-        return await self._run_collectors_stage(collector_names, dry_run)
+        run_error: Optional[str] = None
+        try:
+            results = await self._run_collectors_stage(collector_names, dry_run)
+        except Exception as e:
+            run_error = str(e)
+            raise
+        finally:
+            await self._end_run_tracking(
+                success=run_error is None, error=run_error,
+            )
+
+        return results
 
     async def process_pending(self, dry_run: bool = False) -> Dict[str, int]:
         """
@@ -961,16 +1101,29 @@ class DiscoveryPipeline:
         """
         await self.initialize()
 
+        await self._begin_run_tracking(
+            "pipeline", {"mode": "process_only", "dry_run": dry_run},
+        )
+
         logger.info(f"Processing pending signals (dry_run={dry_run})")
 
-        process_stats = await self._process_signals_stage(dry_run)
+        run_error: Optional[str] = None
+        try:
+            process_stats = await self._process_signals_stage(dry_run)
 
-        if not dry_run:
-            outbox_stats = await self._drain_notion_outbox(limit=self.config.batch_size)
-            if outbox_stats["processed"] > 0:
-                process_stats["prospects_created"] = outbox_stats["created"]
-                process_stats["prospects_updated"] = outbox_stats["updated"]
-                process_stats["prospects_skipped"] = outbox_stats["skipped"]
+            if not dry_run:
+                outbox_stats = await self._drain_notion_outbox(limit=self.config.batch_size)
+                if outbox_stats["processed"] > 0:
+                    process_stats["prospects_created"] = outbox_stats["created"]
+                    process_stats["prospects_updated"] = outbox_stats["updated"]
+                    process_stats["prospects_skipped"] = outbox_stats["skipped"]
+        except Exception as e:
+            run_error = str(e)
+            raise
+        finally:
+            await self._end_run_tracking(
+                success=run_error is None, error=run_error,
+            )
 
         return process_stats
 
@@ -1119,9 +1272,12 @@ class DiscoveryPipeline:
             logger.info(f"Running collector: {collector_name}")
 
             # Common parameters for all collectors
-            common_args = {
+            common_args: Dict[str, Any] = {
                 "store": self._store,
             }
+            # Phase C: Pass shared HTTP client to migrated collectors
+            if self._collector_http_client:
+                common_args["http"] = self._collector_http_client
             # Only include asset_store if enabled (collectors may not accept it)
             if self.config.use_asset_store and self._asset_store:
                 common_args["asset_store"] = self._asset_store
@@ -2059,6 +2215,50 @@ class DiscoveryPipeline:
             except Exception as e:
                 logger.warning(f"Investor matching failed for {canonical_key} (non-fatal): {e}")
 
+        # Phase A: Warm intro enrichment (if enabled + investor matches exist)
+        warm_intro_indicators: List[WarmIntroIndicator] = []
+        if (
+            self.config.use_warm_intro_enrichment
+            and investor_match_result
+            and investor_match_result.matches
+        ):
+            try:
+                from utils.warm_intro_enricher import WarmIntroEnricher
+                from utils.warm_intro_boost import WarmIntroBoost, RelationshipSource
+                from storage.relationship_store import RelationshipStore
+
+                enricher = WarmIntroEnricher(
+                    relationship_store=RelationshipStore(
+                        db_path=self.config.db_path.replace("signals.db", "private_graph.db")
+                    ),
+                    warm_intro_boost=WarmIntroBoost(),
+                )
+
+                for match in investor_match_result.matches[:5]:
+                    investor_domain = match.investor_name  # Best available domain proxy
+                    candidate = await enricher.enrich_investor(
+                        investor_domain=investor_domain,
+                        user_email=self.config.user_email or "",
+                    )
+                    if candidate:
+                        warm_intro_indicators.append(WarmIntroIndicator(
+                            investor_domain=candidate.investor_domain,
+                            score_bucket=candidate.confidence,  # high|medium|low
+                            badge=candidate.badge,
+                            source_kind=candidate.source.value,  # gmail|notion_lp
+                        ))
+
+                if warm_intro_indicators:
+                    logger.info(
+                        "Warm intro enrichment for %s: %d indicators",
+                        canonical_key, len(warm_intro_indicators),
+                    )
+            except Exception as e:
+                logger.warning(
+                    "Warm intro enrichment failed for %s (non-fatal): %s",
+                    canonical_key, e,
+                )
+
         # Decide on Notion push
         notion_status = None
 
@@ -2068,6 +2268,7 @@ class DiscoveryPipeline:
                 notion_result = await self._push_to_notion(
                     signals, verification, consolidated=consolidated,
                     investor_match_result=investor_match_result,
+                    warm_intro_indicators=warm_intro_indicators,
                 )
                 notion_status = notion_result["status"]
 
@@ -2173,6 +2374,7 @@ class DiscoveryPipeline:
         verification: VerificationResult,
         consolidated: Optional[ConsolidatedSignal] = None,
         investor_match_result: Optional[InvestorMatchResult] = None,
+        warm_intro_indicators: Optional[List[WarmIntroIndicator]] = None,
     ) -> Dict[str, Any]:
         """
         Queue a company for Notion push via the outbox.
@@ -2182,6 +2384,7 @@ class DiscoveryPipeline:
             verification: VerificationResult from the gate
             consolidated: Optional consolidated signal with merged field values
             investor_match_result: Optional investor matching results
+            warm_intro_indicators: Optional warm intro indicators (Phase A)
 
         Returns dict with status and outbox metadata.
         """
@@ -2245,6 +2448,8 @@ class DiscoveryPipeline:
             social_proof_score=sum(consolidated.social_proof.values()) if consolidated and consolidated.social_proof else 0,
             # Investor matching (Sprint 5)
             investor_matches=investor_matches_summary,
+            # Warm intro indicators (Phase A)
+            warm_intro_indicators=warm_intro_indicators or [],
         )
 
         outbox_payload = {
@@ -2277,29 +2482,7 @@ class DiscoveryPipeline:
 
     def _serialize_prospect_payload(self, payload: ProspectPayload) -> Dict[str, Any]:
         """Serialize ProspectPayload for storage in the outbox."""
-        return {
-            "discovery_id": payload.discovery_id,
-            "company_name": payload.company_name,
-            "canonical_key": payload.canonical_key,
-            "stage": payload.stage.value,
-            "status": payload.status,
-            "website": payload.website,
-            "canonical_key_candidates": payload.canonical_key_candidates,
-            "confidence_score": payload.confidence_score,
-            "signal_types": payload.signal_types,
-            "why_now": payload.why_now,
-            "short_description": payload.short_description,
-            "sector": payload.sector,
-            "proposed_sector": payload.proposed_sector,
-            "taxonomy_status": payload.taxonomy_status,
-            "founder_name": payload.founder_name,
-            "founder_linkedin": payload.founder_linkedin,
-            "location": payload.location,
-            "target_raise": payload.target_raise,
-            "external_refs": payload.external_refs,
-            "watchlists_matched": payload.watchlists_matched,
-            "investor_matches": payload.investor_matches,
-        }
+        return payload.model_dump(mode="json")
 
     # =========================================================================
     # HELPERS

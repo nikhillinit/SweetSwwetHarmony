@@ -1,0 +1,33 @@
+{
+  "metadata": {
+    "total_files": 19,
+    "total_occurrences": 22,
+    "generated_at": "2026-02-21",
+    "regex": "httpx\\.\\s*AsyncClient\\s*\\(",
+    "description": "Governance baseline for direct httpx.AsyncClient usage in collectors/. Monotonic decrease policy: counts may only shrink or stay equal across PRs."
+  },
+  "exempt": [
+    "http_client.py"
+  ],
+  "files": {
+    "base.py": 1,
+    "arxiv.py": 1,
+    "capterra.py": 2,
+    "changedetection.py": 2,
+    "companies_house.py": 1,
+    "crunchbase.py": 1,
+    "domain_whois.py": 1,
+    "g2crowd.py": 2,
+    "github.py": 1,
+    "hacker_news.py": 1,
+    "job_postings.py": 1,
+    "linkedin.py": 1,
+    "news_api.py": 1,
+    "opencorporates.py": 1,
+    "product_hunt.py": 1,
+    "retry_strategy.py": 1,
+    "rss_feeds.py": 1,
+    "sec_edgar.py": 1,
+    "uspto.py": 1
+  }
+}

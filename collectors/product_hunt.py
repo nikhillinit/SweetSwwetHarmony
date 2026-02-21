@@ -190,6 +190,8 @@ class ProductHuntCollector(BaseCollector):
         store: Optional[SignalStore] = None,
         lookback_days: int = 7,
         min_votes: int = 10,
+        http: Optional[Any] = None,
+        asset_store: Optional[Any] = None,
     ):
         """
         Args:
@@ -197,19 +199,28 @@ class ProductHuntCollector(BaseCollector):
             store: SignalStore for persistence
             lookback_days: How far back to search for launches
             min_votes: Minimum votes to include a launch
+            http: Optional shared CollectorHttpClient (Phase C migration)
+            asset_store: Optional SourceAssetStore for change detection
         """
-        super().__init__(store=store, collector_name="product_hunt")
+        super().__init__(store=store, collector_name="product_hunt", http=http, asset_store=asset_store)
         self.api_key = api_key or os.environ.get("PH_API_KEY", "")
         self.lookback_days = lookback_days
         self.min_votes = min_votes
         self.client: Optional[httpx.AsyncClient] = None
+        self._owns_client = True
 
     async def __aenter__(self):
-        self.client = httpx.AsyncClient(timeout=30.0)
+        if self.http:
+            # Use shared client from CollectorHttpClient (Phase C)
+            self.client = self.http._client
+            self._owns_client = False
+        else:
+            self.client = httpx.AsyncClient(timeout=30.0)
+            self._owns_client = True
         return self
 
     async def __aexit__(self, *args):
-        if self.client:
+        if self._owns_client and self.client:
             await self.client.aclose()
 
     async def _collect_signals(self) -> List[Signal]:

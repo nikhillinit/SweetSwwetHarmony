@@ -46,11 +46,12 @@ class AsyncRateLimiter:
         period: Time period in seconds
     """
 
-    def __init__(self, rate: Optional[int] = None, period: int = 1):
+    def __init__(self, rate: Optional[int] = None, period: int = 1, burst_capacity: Optional[int] = None):
         self.rate = rate
         self.period = period
+        self._cap = burst_capacity if burst_capacity is not None else rate
         self._lock = asyncio.Lock()
-        self._tokens: float = float(rate) if rate else float("inf")
+        self._tokens: float = float(self._cap) if self._cap else float("inf")
         self._last_refill: Optional[float] = None
 
     async def acquire(self) -> None:
@@ -69,12 +70,12 @@ class AsyncRateLimiter:
             # Initialize on first call
             if self._last_refill is None:
                 self._last_refill = now
-                self._tokens = float(self.rate)
+                self._tokens = float(self._cap)
 
-            # Refill tokens based on elapsed time
+            # Refill tokens based on elapsed time (capped at burst capacity)
             elapsed = now - self._last_refill
             refill_amount = elapsed * (self.rate / self.period)
-            self._tokens = min(self.rate, self._tokens + refill_amount)
+            self._tokens = min(self._cap, self._tokens + refill_amount)
             self._last_refill = now
 
             # Wait if we don't have tokens

@@ -418,6 +418,8 @@ class LinkedInCollector(BaseCollector):
         company_urls: Optional[List[str]] = None,
         company_domains: Optional[List[str]] = None,
         founder_urls: Optional[List[str]] = None,
+        http: Optional[Any] = None,
+        asset_store: Optional[Any] = None,
     ):
         """
         Initialize LinkedIn collector.
@@ -429,12 +431,16 @@ class LinkedInCollector(BaseCollector):
             company_urls: List of LinkedIn company URLs to look up
             company_domains: List of company domains to find on LinkedIn
             founder_urls: List of founder LinkedIn profile URLs to enrich
+            http: Optional shared CollectorHttpClient (Phase C migration)
+            asset_store: Optional SourceAssetStore for change detection
         """
         super().__init__(
             store=store,
             collector_name="linkedin",
             retry_config=retry_config,
             api_name="linkedin",
+            http=http,
+            asset_store=asset_store,
         )
 
         self.api_key = api_key or os.getenv("PROXYCURL_API_KEY")
@@ -445,15 +451,22 @@ class LinkedInCollector(BaseCollector):
         # Rate limit: Proxycurl allows ~10 req/sec on paid plans
         self._rate_limiter = AsyncRateLimiter(rate=5, period=1)
         self._client: Optional[httpx.AsyncClient] = None
+        self._owns_client = True
 
     async def __aenter__(self):
         """Set up HTTP client."""
-        self._client = httpx.AsyncClient(timeout=30.0)
+        if self.http:
+            # Use shared client from CollectorHttpClient (Phase C)
+            self._client = self.http._client
+            self._owns_client = False
+        else:
+            self._client = httpx.AsyncClient(timeout=30.0)
+            self._owns_client = True
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Clean up HTTP client."""
-        if self._client:
+        if self._owns_client and self._client:
             await self._client.aclose()
             self._client = None
 

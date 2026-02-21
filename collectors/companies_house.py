@@ -363,6 +363,8 @@ class CompaniesHouseCollector(BaseCollector):
         lookback_days: int = DEFAULT_LOOKBACK_DAYS,
         max_companies: int = DEFAULT_MAX_COMPANIES,
         target_sectors_only: bool = True,
+        http: Optional[Any] = None,
+        asset_store: Optional[Any] = None,
     ):
         """
         Args:
@@ -371,8 +373,10 @@ class CompaniesHouseCollector(BaseCollector):
             lookback_days: How many days back to search for incorporations
             max_companies: Maximum number of companies to process
             target_sectors_only: Only return companies in target sectors
+            http: Optional shared CollectorHttpClient (Phase C migration)
+            asset_store: Optional SourceAssetStore for change detection
         """
-        super().__init__(store=store, collector_name="companies_house")
+        super().__init__(store=store, collector_name="companies_house", http=http, asset_store=asset_store)
 
         self.api_key = api_key or os.environ.get("COMPANIES_HOUSE_API_KEY")
         if not self.api_key:
@@ -386,28 +390,38 @@ class CompaniesHouseCollector(BaseCollector):
         self.target_sectors_only = target_sectors_only
 
         self._client: Optional[httpx.AsyncClient] = None
+        self._owns_client = True
         self._processed_company_numbers: Set[str] = set()
 
-    async def __aenter__(self):
-        """Async context manager entry"""
-        # Companies House uses Basic Auth: API key as username, empty password
+    @property
+    def _request_headers(self) -> Dict[str, str]:
+        """Per-request headers (Authorization + Accept for Companies House API)."""
         auth_string = f"{self.api_key}:"
         auth_bytes = auth_string.encode("utf-8")
         auth_b64 = base64.b64encode(auth_bytes).decode("utf-8")
+        return {
+            "Authorization": f"Basic {auth_b64}",
+            "Accept": "application/json",
+        }
 
-        self._client = httpx.AsyncClient(
-            headers={
-                "Authorization": f"Basic {auth_b64}",
-                "Accept": "application/json",
-            },
-            timeout=30.0,
-            follow_redirects=True,
-        )
+    async def __aenter__(self):
+        """Async context manager entry"""
+        if self.http:
+            # Use shared client from CollectorHttpClient (Phase C)
+            self._client = self.http._client
+            self._owns_client = False
+        else:
+            self._client = httpx.AsyncClient(
+                headers=self._request_headers,
+                timeout=30.0,
+                follow_redirects=True,
+            )
+            self._owns_client = True
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit"""
-        if self._client:
+        if self._owns_client and self._client:
             await self._client.aclose()
 
     async def _collect_signals(self) -> List[Signal]:
@@ -738,6 +752,7 @@ class CompaniesHouseCollector(BaseCollector):
                 method=method,
                 url=url,
                 params=params,
+                headers=self._request_headers,
             )
             response.raise_for_status()
             return response
