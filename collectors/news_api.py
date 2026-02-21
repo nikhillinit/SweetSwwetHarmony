@@ -47,6 +47,12 @@ from collectors.retry_strategy import RetryConfig
 from discovery_engine.mcp_server import CollectorResult, CollectorStatus
 from storage.signal_store import SignalStore
 from utils.canonical_keys import build_canonical_key_candidates, NEWS_PUBLISHER_DOMAINS
+from utils.company_name_extractor import (
+    extract_company_info,
+    extract_via_regex,
+    warmup_ner,
+    ExtractionResult,
+)
 from verification.verification_gate_v2 import Signal, VerificationStatus
 
 logger = logging.getLogger(__name__)
@@ -195,59 +201,10 @@ class NewsArticle:
         """
         Extract company name from article title.
 
-        Patterns (in priority order):
-        - "CompanyName raises/announces/launches/unveils/secures/closes..."
-        - Multi-word: "Oura Ring raises..." or "Daily Harvest raises..."
-        - "... backs CompanyName in ..." / "invests in CompanyName"
-        - Quoted: "'CompanyName' raises..." / '"CompanyName" launches...'
-        - "startup CompanyName raises..."
+        Delegates to shared extract_via_regex() for identical behavior.
+        Kept as compatibility wrapper so existing tests pass unchanged.
         """
-        _COMMON_WORDS = {"the", "a", "an", "this", "new", "how", "why", "what", "when"}
-
-        # Verb alternation (case-insensitive via inline flag)
-        _VERBS = r"(?i:raises|raised|announces|announced|launches|launched|unveils|secures|secured|closes|closed)"
-
-        # Group 1: Single-word company at start of title
-        single_word_patterns = [
-            rf"^([A-Z][a-zA-Z0-9]+)\s+{_VERBS}",
-        ]
-
-        # Group 2: Multi-word company at start (up to 4 words before verb)
-        multi_word_patterns = [
-            rf"^([A-Z][a-zA-Z0-9]+(?:\s+[A-Z][a-zA-Z0-9]*){{0,3}}?)\s+{_VERBS}",
-        ]
-
-        # Group 3: "backs X" / "invests in X" patterns (company in middle)
-        mid_sentence_patterns = [
-            r"(?i:backs|invests\s+in)\s+([A-Z][a-zA-Z0-9]+(?:\s+[A-Z][a-zA-Z0-9]*){0,2}?)(?:\s+in\b|\s+with\b|\s*,|\s*$)",
-        ]
-
-        # Group 4: Quoted company names
-        quoted_patterns = [
-            rf"""['\u2018\u201C"]([A-Z][a-zA-Z0-9\s]{{1,25}}?)['\u2019\u201D"]\s+{_VERBS}""",
-        ]
-
-        # Group 5: "startup X raises..."
-        startup_prefix_patterns = [
-            rf"(?i:startup|company|brand|firm)\s+([A-Z][a-zA-Z0-9]+(?:\s+[A-Z][a-zA-Z0-9]*){{0,2}}?)\s+{_VERBS}",
-        ]
-
-        # Try each group in priority order
-        for patterns in [
-            single_word_patterns,
-            multi_word_patterns,
-            mid_sentence_patterns,
-            quoted_patterns,
-            startup_prefix_patterns,
-        ]:
-            for pattern in patterns:
-                match = re.search(pattern, self.title)
-                if match:
-                    company = match.group(1).strip()
-                    if company.lower() not in _COMMON_WORDS and len(company) >= 2:
-                        return company
-
-        return None
+        return extract_via_regex(self.title)
 
 
 # =============================================================================
@@ -321,6 +278,11 @@ class NewsAPICollector(BaseCollector):
         if not self._api_key_available:
             logger.info("No API key available, returning empty results")
             return []
+
+        # Pre-load NER model if mode requires it
+        from utils.company_name_extractor import _get_extraction_mode
+        if _get_extraction_mode() == "ner_active":
+            warmup_ner()
 
         signals = []
         articles_found = 0
@@ -522,6 +484,9 @@ class NewsAPICollector(BaseCollector):
         """
         Convert NewsArticle to Signal object.
 
+        Uses shared extract_company_info() for enhanced extraction.
+        In baseline mode, behavior is identical to pre-refactor.
+
         Args:
             article: NewsArticle to convert
 
@@ -530,10 +495,22 @@ class NewsAPICollector(BaseCollector):
         """
         signal_type = self._classify_signal_type(article)
         confidence = self._calculate_confidence(article)
-        company_name = self._extract_company_name(article)
 
-        # Build canonical key candidates using standard format
-        domain_for_key = article.domain if article.domain and article.domain not in NEWS_PUBLISHER_DOMAINS else ""
+        # Full extraction pipeline (mode-gated)
+        extraction = extract_company_info(
+            title=article.title,
+            description=article.description or "",
+            url=article.url,
+        )
+        company_name = extraction.company_name
+
+        # Build canonical key: prefer promoted_domain, then article domain, then name
+        domain_for_key = ""
+        if extraction.promoted_domain:
+            domain_for_key = extraction.promoted_domain
+        elif article.domain and article.domain not in NEWS_PUBLISHER_DOMAINS:
+            domain_for_key = article.domain
+
         canonical_keys = build_canonical_key_candidates(
             domain_or_website=domain_for_key,
             fallback_company_name=company_name or "",
@@ -558,6 +535,9 @@ class NewsAPICollector(BaseCollector):
                 "source": article.source,
                 "published_at": article.published_at.isoformat(),
                 "company_name": company_name,
+                "company_name_method": extraction.company_name_method,
+                "candidate_domains": extraction.candidate_domains,
+                "promoted_domain": extraction.promoted_domain,
                 "is_funding_news": article.is_funding_news,
                 "is_product_launch": article.is_product_launch,
                 "canonical_key_candidates": canonical_keys,

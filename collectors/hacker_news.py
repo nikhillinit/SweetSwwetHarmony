@@ -48,6 +48,7 @@ from collectors.retry_strategy import with_retry, RetryConfig
 from collectors.source_types import SOURCE_TYPE
 from discovery_engine.mcp_server import CollectorResult, CollectorStatus
 from storage.signal_store import SignalStore
+from utils.company_name_extractor import normalize_company_name
 from utils.rate_limiter import get_rate_limiter
 from verification.verification_gate_v2 import Signal, VerificationStatus
 
@@ -212,7 +213,9 @@ class HackerNewsPost:
                     if sep in name_part:
                         name_part = name_part.split(sep)[0].strip()
                         break
-                return name_part[:50]
+                # Normalize for consistency with other collectors
+                normalized = normalize_company_name(name_part[:50])
+                return normalized.title() if normalized else name_part[:50]
 
         # Fall back to domain
         if self.domain:
