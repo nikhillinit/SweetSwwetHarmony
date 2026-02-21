@@ -41,8 +41,8 @@ import httpx
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from collectors.base import BaseCollector
-from collectors.retry_strategy import with_retry, RetryConfig
+from collectors.base import BaseCollector, CollectorSkipError
+from collectors.retry_strategy import RateLimitError, with_retry, RetryConfig
 from collectors.provenance import create_provenance, hash_response
 from collectors.source_types import SOURCE_TYPE
 from discovery_engine.mcp_server import CollectorResult, CollectorStatus
@@ -122,6 +122,13 @@ MIN_GROWTH_RATE = 0.1  # 10% growth in lookback period
 # GitHub API rate limits
 GITHUB_RATE_LIMIT_DELAY = 1.0  # seconds between requests
 GITHUB_MAX_RETRIES = 3
+GITHUB_RATE_LIMIT_FAILFAST_SECONDS = int(
+    os.getenv("GITHUB_RATE_LIMIT_FAILFAST_SECONDS", "300")
+)
+GITHUB_CLOCK_SKEW_BUFFER = 2  # seconds added to computed wait for clock skew
+
+# Patterns indicating GitHub secondary/abuse rate limits
+_SECONDARY_RATE_LIMIT_PATTERNS = ("secondary rate limit", "abuse detection")
 
 
 # =============================================================================
@@ -342,7 +349,8 @@ class GitHubCollector(BaseCollector):
         Handles:
         - Rate limiting (both proactive via rate_limiter and reactive)
         - Retries on 5xx errors and 429 rate limit errors
-        - Response validation
+        - GitHub 403 rate-limit detection (primary + secondary)
+        - Fail-fast when wait exceeds GITHUB_RATE_LIMIT_FAILFAST_SECONDS
         """
         # Use rate limiter from BaseCollector
         await self.rate_limiter.acquire()
@@ -364,13 +372,93 @@ class GitHubCollector(BaseCollector):
             if remaining and int(remaining) < 10:
                 logger.warning(f"GitHub rate limit low: {remaining} remaining")
 
-            # Handle rate limit exceeded
-            if response.status_code == 403 and "rate limit" in response.text.lower():
-                reset_time = response.headers.get("X-RateLimit-Reset")
-                if reset_time:
-                    wait_seconds = int(reset_time) - int(datetime.now(timezone.utc).timestamp())
-                    logger.warning(f"Rate limit exceeded. Waiting {wait_seconds}s")
-                    await asyncio.sleep(min(wait_seconds, 60))
+            # Detect rate-limit 403s
+            if response.status_code == 403:
+                body_lower = response.text.lower()
+                remaining_hdr = response.headers.get("x-ratelimit-remaining")
+                retry_after_hdr = response.headers.get("retry-after")
+                reset_hdr = response.headers.get("x-ratelimit-reset")
+
+                is_rate_limit = (
+                    (remaining_hdr is not None and int(remaining_hdr) == 0)
+                    or retry_after_hdr is not None
+                    or "rate limit" in body_lower
+                    or any(p in body_lower for p in _SECONDARY_RATE_LIMIT_PATTERNS)
+                )
+
+                if is_rate_limit:
+                    is_secondary = any(
+                        p in body_lower for p in _SECONDARY_RATE_LIMIT_PATTERNS
+                    )
+
+                    if is_secondary:
+                        logger.warning(
+                            "github.rate_limit.secondary endpoint=%s", endpoint
+                        )
+                        raise RateLimitError(
+                            f"GitHub secondary rate limit on {endpoint}",
+                            wait_seconds=None,
+                            status_code=403,
+                            endpoint=endpoint,
+                            is_secondary=True,
+                            response_summary=body_lower[:200],
+                        )
+
+                    # Primary rate limit — compute wait
+                    wait = None
+                    if retry_after_hdr:
+                        try:
+                            wait = float(retry_after_hdr) + GITHUB_CLOCK_SKEW_BUFFER
+                        except ValueError:
+                            pass
+                    if wait is None and reset_hdr:
+                        try:
+                            reset_ts = int(reset_hdr)
+                            now_ts = int(datetime.now(timezone.utc).timestamp())
+                            wait = max(0, reset_ts - now_ts) + GITHUB_CLOCK_SKEW_BUFFER
+                        except ValueError:
+                            pass
+                    if wait is None:
+                        # Fallback: treat as secondary (unknown delay)
+                        logger.warning(
+                            "github.rate_limit.secondary (no headers) endpoint=%s",
+                            endpoint,
+                        )
+                        raise RateLimitError(
+                            f"GitHub rate limit (no timing) on {endpoint}",
+                            wait_seconds=None,
+                            status_code=403,
+                            endpoint=endpoint,
+                            is_secondary=True,
+                            response_summary=body_lower[:200],
+                        )
+
+                    # Fail-fast if wait exceeds threshold
+                    if wait > GITHUB_RATE_LIMIT_FAILFAST_SECONDS:
+                        logger.warning(
+                            "github.rate_limit.fail_fast endpoint=%s wait=%.0f threshold=%d",
+                            endpoint, wait, GITHUB_RATE_LIMIT_FAILFAST_SECONDS,
+                        )
+                        raise CollectorSkipError(
+                            f"GitHub rate limit wait {wait:.0f}s exceeds "
+                            f"fail-fast threshold {GITHUB_RATE_LIMIT_FAILFAST_SECONDS}s"
+                        )
+
+                    logger.warning(
+                        "github.rate_limit.primary endpoint=%s wait=%.0f",
+                        endpoint, wait,
+                    )
+                    raise RateLimitError(
+                        f"GitHub primary rate limit on {endpoint}",
+                        wait_seconds=wait,
+                        status_code=403,
+                        endpoint=endpoint,
+                        is_secondary=False,
+                        response_summary=body_lower[:200],
+                    )
+
+                # Non-rate-limit 403 — let raise_for_status handle it
+                pass
 
             response.raise_for_status()
 
