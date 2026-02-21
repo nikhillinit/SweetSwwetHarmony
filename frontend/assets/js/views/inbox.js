@@ -10,6 +10,7 @@
  */
 import * as api from '../api.js';
 import { emit } from '../state.js';
+import { navigate } from '../router.js';
 
 const APPROVE_REASONS = ['Consumer CPG', 'Health tech', 'Travel & hospitality', 'Marketplace'];
 const REJECT_REASONS = ['B2B/Enterprise', 'Dev tools', 'Crypto', 'Series B+'];
@@ -60,9 +61,16 @@ export async function mount(container) {
   container.appendChild(loadMoreBtn);
 
   // Visibility handler for stale sessions
-  function onVisibilityChange() {
+  async function onVisibilityChange() {
     if (document.hidden) {
       lastVisibleTime = Date.now();
+    } else if (Date.now() - lastVisibleTime > 30 * 60 * 1000) {
+      const authRes = await api.get('/api/v1/auth/check', { noCache: true });
+      if (!authRes.ok) {
+        navigate('#/login');
+        return;
+      }
+      fullRefresh();
     } else if (Date.now() - lastVisibleTime > 5 * 60 * 1000) {
       fullRefresh();
     }
@@ -139,7 +147,7 @@ export async function mount(container) {
   function createCard(item) {
     const id = item.id || item.review_id;
     const card = document.createElement('div');
-    card.className = 'inbox-card';
+    card.className = 'inbox-card card-hoverable';
     card.setAttribute('data-review-id', id);
     card.setAttribute('data-updated-at', item.updated_at || '');
     card.setAttribute('tabindex', '0');
@@ -422,7 +430,7 @@ export async function mount(container) {
     }
   }
 
-  function handle409(res, item) {
+  async function handle409(res, item) {
     if (!res.error) return;
 
     if (res.error.code === 'INVALID_TRANSITION') {
@@ -434,8 +442,26 @@ export async function mount(container) {
         'info'
       );
     } else if (res.error.code === 'VERSION_MISMATCH') {
-      api.showToast('Item was modified. Refreshing...', 'info');
-      fullRefresh();
+      const itemId = item.id || item.review_id;
+      try {
+        const freshRes = await api.get(`/api/v1/triage/${itemId}`, { noCache: true });
+        if (freshRes.ok && freshRes.data) {
+          const idx = items.findIndex(i => (i.id || i.review_id) === itemId);
+          if (idx !== -1) {
+            items[idx] = freshRes.data;
+            renderList();
+          }
+          api.showToast('Item was modified. Updated data loaded — please retry.', 'info');
+        } else if (freshRes.status === 404) {
+          removeItem(itemId);
+          renderList();
+          api.showToast('Item is no longer pending.', 'info');
+        } else {
+          fullRefresh();
+        }
+      } catch {
+        fullRefresh();
+      }
     } else {
       api.showToast(res.error.message || 'Action failed.', 'error');
     }
