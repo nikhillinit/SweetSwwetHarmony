@@ -93,6 +93,17 @@ ALLOWLIST = {
     # --- Phase 3 corpus build scripts (standalone CLI tools) ---
     "scripts/build_case_law_corpus.py",
     "scripts/build_exemplar_library.py",
+
+    # --- Monitoring (standalone entrypoints) ---
+    "monitoring/canary_checker.py",
+
+    # --- Standalone utility / backfill scripts ---
+    "scripts/backfill_company_files.py",
+    "scripts/backfill_functional_schemas.py",
+    "scripts/e2e_batch_verify.py",
+    "scripts/preflight_check.py",
+    "scripts/run_backfill.py",
+    "scripts/shadow_mode_report.py",
 }
 
 
