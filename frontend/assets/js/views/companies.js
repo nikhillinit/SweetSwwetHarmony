@@ -265,6 +265,96 @@ export async function mount(container, params) {
           panel.appendChild(whyValue);
         }
 
+        // Signals list (G1)
+        const signalTypes = c.signal_types || [];
+        const signalLabel = document.createElement('div');
+        signalLabel.className = 'detail-label';
+        signalLabel.style.marginTop = 'var(--space-4)';
+        signalLabel.textContent = 'Signals';
+        panel.appendChild(signalLabel);
+
+        if (signalTypes.length > 0) {
+          const signalList = document.createElement('ul');
+          signalList.style.cssText = 'list-style:none;padding:0;margin:var(--space-2) 0 0 0;display:flex;flex-direction:column;gap:var(--space-1);';
+          signalTypes.forEach(st => {
+            const li = document.createElement('li');
+            li.style.cssText = 'font-size:var(--text-sm);color:var(--color-text-secondary);display:flex;align-items:center;gap:var(--space-2);';
+            const dot = document.createElement('span');
+            dot.style.cssText = 'width:4px;height:4px;border-radius:50%;background:var(--color-primary);flex-shrink:0;';
+            li.appendChild(dot);
+            const text = document.createElement('span');
+            text.textContent = st;
+            li.appendChild(text);
+            signalList.appendChild(li);
+          });
+          panel.appendChild(signalList);
+        } else {
+          const noSignals = document.createElement('div');
+          noSignals.className = 'detail-value';
+          noSignals.style.color = 'var(--color-text-muted)';
+          noSignals.textContent = c.source_api || 'No signal data';
+          panel.appendChild(noSignals);
+        }
+
+        // Notion link (G2)
+        const notionSection = document.createElement('div');
+        notionSection.style.marginTop = 'var(--space-4)';
+        const notionLabel = document.createElement('div');
+        notionLabel.className = 'detail-label';
+        notionLabel.textContent = 'Notion';
+        notionSection.appendChild(notionLabel);
+
+        if (c.notion_page_id || c.notion_url) {
+          const notionLink = document.createElement('a');
+          const url = c.notion_url || ('https://notion.so/' + c.notion_page_id);
+          notionLink.href = url;
+          notionLink.target = '_blank';
+          notionLink.rel = 'noopener';
+          notionLink.textContent = 'View in Notion';
+          notionLink.style.cssText = 'font-size:var(--text-sm);';
+          notionSection.appendChild(notionLink);
+        } else {
+          const noNotion = document.createElement('div');
+          noNotion.className = 'detail-value';
+          noNotion.style.color = 'var(--color-text-muted)';
+          noNotion.textContent = 'Not yet pushed to Notion';
+          notionSection.appendChild(noNotion);
+        }
+        panel.appendChild(notionSection);
+
+        // Action buttons (G3)
+        const actionsDiv = document.createElement('div');
+        actionsDiv.style.cssText = 'margin-top:var(--space-4);display:flex;gap:var(--space-2);';
+
+        const status = c.status || 'inbox';
+        if (status === 'inbox' || status === 'tracking') {
+          const inboxBtn = document.createElement('button');
+          inboxBtn.className = 'btn btn-ghost btn-sm';
+          inboxBtn.textContent = 'View in Inbox';
+          inboxBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            navigate('#/inbox');
+          });
+          actionsDiv.appendChild(inboxBtn);
+        }
+        if (status === 'inbox') {
+          const pushBtn = document.createElement('button');
+          pushBtn.className = 'btn btn-primary btn-sm';
+          pushBtn.textContent = 'Push to Notion';
+          pushBtn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const res = await api.post(`/api/v1/companies/${encodeURIComponent(c.canonical_key || '')}/push`);
+            if (res.ok) {
+              api.showToast(`Pushed ${c.company_name || c.canonical_key} to Notion`, 'success');
+              fetchCompanies();
+            } else {
+              api.showToast(res.error?.message || 'Push failed', 'error');
+            }
+          });
+          actionsDiv.appendChild(pushBtn);
+        }
+        panel.appendChild(actionsDiv);
+
         detailCell.appendChild(panel);
         detailRow.appendChild(detailCell);
         tbody.appendChild(detailRow);
@@ -310,6 +400,48 @@ export async function mount(container, params) {
   }
 
   await fetchCompanies();
+
+  // Handle ?highlight= param (G4)
+  const highlightKey = params?.highlight;
+  if (highlightKey) {
+    const rows = tableCard.querySelectorAll('.table-row');
+    for (const row of rows) {
+      // Find the matching company by checking the row's text or data
+      const company = allCompanies.find(c =>
+        (c.canonical_key || c.company_name || '') === highlightKey
+      );
+      if (company) {
+        const key = company.canonical_key || company.company_name || '';
+        // Find the row that matches
+        const matchIdx = getFiltered().findIndex(c =>
+          (c.canonical_key || c.company_name || '') === highlightKey
+        );
+        if (matchIdx >= 0) {
+          const targetRow = rows[matchIdx];
+          if (targetRow) {
+            targetRow.classList.add('highlighted');
+            targetRow.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            // Auto-expand
+            expandedKey = key;
+            renderTable();
+            // Re-highlight after render
+            requestAnimationFrame(() => {
+              const newRows = tableCard.querySelectorAll('.table-row');
+              const newFiltered = getFiltered();
+              const newIdx = newFiltered.findIndex(c =>
+                (c.canonical_key || c.company_name || '') === highlightKey
+              );
+              if (newIdx >= 0 && newRows[newIdx]) {
+                newRows[newIdx].classList.add('highlighted');
+                newRows[newIdx].scrollIntoView({ behavior: 'smooth', block: 'center' });
+              }
+            });
+          }
+        }
+        break;
+      }
+    }
+  }
 
   return () => ac.abort();
 }
