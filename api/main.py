@@ -21,12 +21,15 @@ import logging
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 
 from dotenv import load_dotenv
 load_dotenv(override=False)  # Load .env without overwriting real env vars
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from api.middleware import ExceptionHandlerMiddleware, RateLimitMiddleware, RequestIdMiddleware
 from utils.logging_config import configure_logging, startup_check
@@ -202,15 +205,58 @@ async def health_check():
         }
 
 
-@app.get("/", tags=["root"])
-async def root():
-    """Root endpoint with API info."""
-    return {
-        "name": "Discovery Engine API",
-        "version": "1.0.0",
-        "docs": "/api/docs",
-        "health": "/health",
-    }
+# =============================================================================
+# FRONTEND STATIC SERVING
+# =============================================================================
+
+FRONTEND_DIR = Path(__file__).resolve().parent.parent / "frontend"
+
+if FRONTEND_DIR.is_dir():
+    app.mount("/assets", StaticFiles(directory=FRONTEND_DIR / "assets"), name="frontend-assets")
+
+    @app.get("/", tags=["frontend"])
+    async def root():
+        """Serve the SPA shell."""
+        return FileResponse(FRONTEND_DIR / "index.html", media_type="text/html")
+else:
+    logger.warning("Frontend directory not found at %s — serving JSON root", FRONTEND_DIR)
+
+    @app.get("/", tags=["root"])
+    async def root():
+        """Root endpoint with API info (frontend not built)."""
+        return {
+            "name": "Discovery Engine API",
+            "version": "1.0.0",
+            "docs": "/api/docs",
+            "health": "/health",
+        }
+
+
+# =============================================================================
+# CSP + CACHE MIDDLEWARE (frontend routes only)
+# =============================================================================
+
+@app.middleware("http")
+async def frontend_headers(request: Request, call_next):
+    """Add CSP and cache headers for frontend routes only.
+
+    Scoped to / and /assets/* so Swagger/ReDoc are not affected.
+    """
+    response = await call_next(request)
+    path = request.url.path
+
+    if path == "/":
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "style-src 'self' 'unsafe-inline'; "
+            "img-src 'self' data:; "
+            "font-src 'self'"
+        )
+        response.headers["Cache-Control"] = "no-cache"
+    elif path.startswith("/assets/"):
+        response.headers["Cache-Control"] = "public, max-age=86400"
+
+    return response
 
 
 # =============================================================================
