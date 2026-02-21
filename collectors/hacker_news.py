@@ -31,6 +31,7 @@ import asyncio
 import hashlib
 import logging
 import os
+import re
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
@@ -56,6 +57,50 @@ logger = logging.getLogger(__name__)
 
 # Algolia-powered Hacker News Search API
 HN_ALGOLIA_API = "https://hn.algolia.com/api/v1/search"
+
+# Regex: split on first structural delimiter (dash variants, pipe, paren, comma)
+_SHOW_HN_SEP_RE = re.compile(r"\s*[-\u2013\u2014|]\s*|\s*\(|\s*,\s*")
+
+# Common subdomains that are NOT company names
+_SUBDOMAIN_PREFIXES = frozenset({
+    "app", "blog", "docs", "api", "m", "my", "dev", "staging",
+    "beta", "web", "portal", "dashboard", "help", "support",
+})
+
+_MAX_NAME_WORDS = 4
+_SENTENCE_MARKERS = frozenset({
+    "beats", "helps", "makes", "shows", "gets", "lets", "turns",
+    "finds", "gives", "runs", "uses", "brings", "takes", "builds",
+    "creates", "launches", "announces", "introduces", "simplifies",
+    "is", "are", "was", "that", "which", "into",
+    "from", "with", "your", "their", "every", "about",
+})
+
+
+def _looks_like_name(text: str) -> bool:
+    """Last-resort heuristic for posts with no domain."""
+    if not text or not text.strip():
+        return False
+    words = text.strip().split()
+    if len(words) > _MAX_NAME_WORDS:
+        return False
+    if {w.lower() for w in words} & _SENTENCE_MARKERS:
+        return False
+    return True
+
+
+def _domain_to_company(domain: str) -> str:
+    """Convert domain to company name, handling subdomains."""
+    if not domain:
+        return ""
+    parts = domain.split(".")
+    # Skip common subdomain prefixes to find the real label
+    # e.g., app.startup.com → "startup", blog.acme.ai → "acme"
+    for i, part in enumerate(parts[:-1]):  # skip TLD
+        if part.lower() not in _SUBDOMAIN_PREFIXES:
+            return part.title()
+    # All parts are subdomains or TLDs — use first part
+    return parts[0].title()
 
 
 # =============================================================================
@@ -202,26 +247,34 @@ class HackerNewsPost:
 
     def _extract_company_name(self) -> str:
         """Try to extract company name from title or domain."""
-        # For Show HN posts, try to extract name after "Show HN:"
         if self.is_show_hn and ":" in self.title:
             parts = self.title.split(":", 1)
             if len(parts) > 1:
-                # Get first few words after "Show HN:"
-                name_part = parts[1].strip()
-                # Take up to first dash or hyphen or parenthesis
-                for sep in [" - ", " – ", " (", ","]:
-                    if sep in name_part:
-                        name_part = name_part.split(sep)[0].strip()
-                        break
-                # Normalize for consistency with other collectors
-                normalized = normalize_company_name(name_part[:50])
-                return normalized.title() if normalized else name_part[:50]
+                raw = parts[1].strip()
+                # Try regex separator split
+                match = _SHOW_HN_SEP_RE.search(raw)
+                if match:
+                    name_part = raw[:match.start()].strip()
+                else:
+                    # No separator — fall through to domain
+                    name_part = None
 
-        # Fall back to domain
+                if name_part:
+                    normalized = normalize_company_name(name_part[:50])
+                    if normalized:
+                        return normalized.title()
+
+        # Fall back to domain (subdomain-aware)
         if self.domain:
-            # Remove TLD and format
-            domain_name = self.domain.split(".")[0]
-            return domain_name.title()
+            return _domain_to_company(self.domain)
+
+        # Last resort: for no-URL Show HN posts, try the title text
+        if self.is_show_hn and ":" in self.title:
+            raw = self.title.split(":", 1)[1].strip()
+            if _looks_like_name(raw):
+                normalized = normalize_company_name(raw[:50])
+                if normalized:
+                    return normalized.title()
 
         return ""
 

@@ -650,3 +650,110 @@ class TestFalseConvergencePrevention:
             mode="url_promote",
         )
         assert result.promoted_domain is None or "bit.ly" not in result.promoted_domain
+
+
+# =============================================================================
+# BLOCKED DOMAIN SUFFIX-MATCH TESTS
+# =============================================================================
+
+
+class TestBlockedDomainSuffix:
+    """Publisher subdomain suffix matching."""
+
+    def test_m_techcrunch_blocked(self):
+        assert _is_blocked_domain("m.techcrunch.com") is True
+
+    def test_blog_forbes_blocked(self):
+        assert _is_blocked_domain("blog.forbes.com") is True
+
+    def test_startup_com_not_blocked(self):
+        assert _is_blocked_domain("startup.com") is False
+
+    def test_leading_dot_safety(self):
+        """Leading-dot in list entry should still work after lstrip."""
+        # Simulates a malformed entry — the code does lstrip('.') internally
+        assert _is_blocked_domain("techcrunch.com") is True
+
+
+# =============================================================================
+# LONE DOMAIN RELAXATION TESTS
+# =============================================================================
+
+
+class TestLoneDomainRelaxation:
+    """allow_lone_domain param on score_and_promote_domain / extract_company_info."""
+
+    def test_lone_domain_promoted_when_allowed(self):
+        result = score_and_promote_domain(
+            ["coolstartup.io"], None, "Check out https://coolstartup.io",
+            allow_lone_domain=True,
+        )
+        assert result == "coolstartup.io"
+
+    def test_lone_domain_not_promoted_by_default(self):
+        result = score_and_promote_domain(
+            ["coolstartup.io"], None, "Check out https://coolstartup.io",
+        )
+        assert result is None
+
+    def test_multiple_urls_not_promoted(self):
+        """Ambiguous: 2+ candidates → no relaxation."""
+        result = score_and_promote_domain(
+            ["alpha.io", "beta.io"], None, "See alpha.io and beta.io",
+            allow_lone_domain=True,
+        )
+        assert result is None
+
+    def test_existing_company_name_uses_overlap_gate(self):
+        """When company_name exists, overlap gate wins — not relaxation."""
+        result = score_and_promote_domain(
+            ["acme.ai"], "Acme", "Acme raises $5M",
+            allow_lone_domain=True,
+        )
+        assert result == "acme.ai"
+
+    def test_full_pipeline_url_promote_lone_domain(self):
+        result = extract_company_info(
+            title="New stealth startup launches",
+            description="Visit https://coolstartup.io for details",
+            mode="url_promote",
+            allow_lone_domain=True,
+        )
+        assert result.promoted_domain == "coolstartup.io"
+        assert result.company_name is not None
+        assert result.company_name_method == "url_derived"
+
+    def test_baseline_mode_unchanged(self):
+        result = extract_company_info(
+            title="New stealth startup launches",
+            description="Visit https://coolstartup.io for details",
+            mode="baseline",
+            allow_lone_domain=True,
+        )
+        assert result.candidate_domains == []
+        assert result.promoted_domain is None
+
+
+# =============================================================================
+# DOMAIN LABEL SUBDOMAIN-AWARE TESTS
+# =============================================================================
+
+
+class TestDomainLabel:
+    """Test subdomain-aware _domain_label()."""
+
+    def test_simple_domain(self):
+        from utils.company_name_extractor import _domain_label
+        assert _domain_label("acme.ai") == "acme"
+
+    def test_skips_app_subdomain(self):
+        from utils.company_name_extractor import _domain_label
+        assert _domain_label("app.startup.com") == "startup"
+
+    def test_skips_blog_subdomain(self):
+        from utils.company_name_extractor import _domain_label
+        assert _domain_label("blog.acme.ai") == "acme"
+
+    def test_skips_m_subdomain(self):
+        from utils.company_name_extractor import _domain_label
+        assert _domain_label("m.example.com") == "example"

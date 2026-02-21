@@ -198,11 +198,14 @@ def _is_blocked_domain(domain: str) -> bool:
     if not domain:
         return True
     dl = domain.lower()
-    # Check NEWS_PUBLISHER_DOMAINS (exact match)
-    if dl in NEWS_PUBLISHER_DOMAINS:
-        return True
+    # Check NEWS_PUBLISHER_DOMAINS (suffix match for subdomains like m.techcrunch.com)
+    for pub in NEWS_PUBLISHER_DOMAINS:
+        pub = pub.lstrip(".")  # safety strip
+        if dl == pub or dl.endswith("." + pub):
+            return True
     # Check suffix blocklist
     for suffix in _BLOCKED_DOMAIN_SUFFIXES:
+        suffix = suffix.lstrip(".")  # safety strip
         if dl == suffix or dl.endswith("." + suffix):
             return True
     return False
@@ -264,8 +267,13 @@ _DASH_DOMAIN_RE = re.compile(
 
 
 def _domain_label(domain: str) -> str:
-    """Get the label part of a domain: 'acme.ai' -> 'acme'."""
-    return domain.split(".")[0].lower()
+    """Get the label part of a domain, skipping common subdomains."""
+    _SKIP = {"app", "blog", "docs", "api", "m", "my", "dev", "web"}
+    parts = domain.lower().split(".")
+    for part in parts[:-1]:  # skip TLD
+        if part not in _SKIP:
+            return part
+    return parts[0]  # fallback
 
 
 def _name_tokens(name: str) -> set[str]:
@@ -277,6 +285,8 @@ def score_and_promote_domain(
     candidate_domains: List[str],
     company_name: Optional[str],
     text: str,
+    *,
+    allow_lone_domain: bool = False,
 ) -> Optional[str]:
     """
     Apply strict gating to decide if a candidate domain should be promoted.
@@ -285,6 +295,8 @@ def score_and_promote_domain(
     - If company_name exists AND domain label overlaps with name tokens → promote
     - If no company_name: only promote if domain has strong context pattern
       (parenthetical or dash-separated) — bare URL mention is NOT enough
+    - If allow_lone_domain=True AND exactly 1 non-blocked candidate AND no
+      company_name: promote that domain (relaxation for RSS collector)
     - Returns None if no domain passes gating
     """
     if not candidate_domains:
@@ -312,7 +324,11 @@ def score_and_promote_domain(
         if domain in context_domains:
             return domain
 
-    # No domain passes gating
+    # Lone-domain relaxation: exactly 1 non-blocked candidate, no company_name
+    if allow_lone_domain and not company_name and len(candidate_domains) == 1:
+        if not _is_blocked_domain(candidate_domains[0]):
+            return candidate_domains[0]
+
     return None
 
 
@@ -430,6 +446,8 @@ def extract_company_info(
     description: str = "",
     url: str = "",
     mode: Optional[ExtractionMode] = None,
+    *,
+    allow_lone_domain: bool = False,
 ) -> ExtractionResult:
     """
     Main extraction pipeline. Mode controls which stages run.
@@ -446,6 +464,8 @@ def extract_company_info(
         description: Article description/summary
         url: Article URL (not currently used in extraction, reserved)
         mode: Override extraction mode (default: from env var)
+        allow_lone_domain: If True, promote a single non-blocked domain even
+            without context patterns (used by RSS collector)
 
     Returns:
         ExtractionResult with company_name, method, candidates, promoted_domain
@@ -478,7 +498,8 @@ def extract_company_info(
     if mode_level >= 1 and result.candidate_domains:
         combined_text = f"{title} {description}".strip()
         promoted = score_and_promote_domain(
-            result.candidate_domains, result.company_name, combined_text
+            result.candidate_domains, result.company_name, combined_text,
+            allow_lone_domain=allow_lone_domain,
         )
         if promoted:
             result.promoted_domain = promoted
