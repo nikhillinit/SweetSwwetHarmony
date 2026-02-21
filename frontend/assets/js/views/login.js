@@ -28,9 +28,9 @@ export async function mount(target) {
         </div>
         <button type="submit" class="btn btn-primary" style="width:100%;" id="login-btn">Sign in</button>
       </form>
-      <div class="login-hint">
-        Dev: gp@example.com / password
-      </div>
+      ${(window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+        ? '<div class="login-hint">Dev: gp@example.com / password</div>'
+        : ''}
     </div>
   `;
   target.appendChild(view);
