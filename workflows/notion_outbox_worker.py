@@ -185,6 +185,7 @@ class NotionOutboxWorker:
             target_raise=data.get("target_raise", ""),
             external_refs=data.get("external_refs") or {},
             watchlists_matched=data.get("watchlists_matched") or [],
+            investor_matches=data.get("investor_matches") or [],
         )
 
     def _compute_backoff(self, attempts: int) -> float:
