@@ -29,17 +29,19 @@ def e2e_db(tmp_path):
     asyncio.get_event_loop().run_until_complete(store.close())
 
 
-def test_no_signals_table_conflict(e2e_db):
-    """CRITICAL: Ops layer must not corrupt signals table."""
-    conn = sqlite3.connect(e2e_db["path"])
-    cursor = conn.execute("PRAGMA table_info(signals)")
-    columns = {row[1] for row in cursor.fetchall()}
-    conn.close()
+def test_signals_schema_ownership_e2e(e2e_db):
+    """Verify signals table has expected columns after full init."""
+    with sqlite3.connect(e2e_db["path"]) as conn:
+        cursor = conn.execute("PRAGMA table_info(signals)")
+        columns = {row[1] for row in cursor.fetchall()}
 
-    assert "canonical_key" in columns
-    assert "signal_type" in columns
-    assert "title" not in columns
-    assert "company_id" not in columns
+    # Required columns present (company_id is v28, NOT ops contamination)
+    for col in ("canonical_key", "signal_type", "source_api", "raw_data", "company_id"):
+        assert col in columns, f"signals missing required column: {col}"
+
+    # Prohibited ops columns absent
+    for col in ("title", "description"):
+        assert col not in columns, f"ops column leaked into signals: {col}"
 
 
 def test_fts5_insert_and_search(e2e_db):

@@ -62,24 +62,6 @@ def test_search_facts_empty(clean_db):
     assert results == []
 
 
-def test_no_signals_table_conflict(clean_db):
-    """CRITICAL: Verify ops didn't create a conflicting signals table."""
-    with clean_db.pool.get_connection() as conn:
-        cursor = conn.execute("PRAGMA table_info(signals)")
-        columns = [row[1] for row in cursor.fetchall()]
-
-        # Must have signal_store columns
-        assert "canonical_key" in columns, "signals table should have canonical_key"
-        assert "signal_type" in columns, "signals table should have signal_type"
-        assert "source_api" in columns, "signals table should have source_api"
-        assert "raw_data" in columns, "signals table should have raw_data"
-
-        # Must NOT have ops columns
-        assert "title" not in columns, "signals table should NOT have ops 'title' column"
-        assert "company_id" not in columns, "signals table should NOT have ops 'company_id' column"
-        assert "description" not in columns, "signals table should NOT have ops 'description' column"
-
-
 def test_ops_tables_exist(clean_db):
     """Verify all 8 ops tables were created."""
     expected_tables = [
