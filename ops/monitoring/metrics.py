@@ -223,7 +223,7 @@ class OpsMetricsCollector:
     def _get_open_incidents(conn) -> int:
         try:
             row = conn.execute(
-                "SELECT COUNT(*) FROM audit_log WHERE operation = 'incident_open'"
+                "SELECT COUNT(*) FROM audit_log WHERE action_type = 'incident_open'"
             ).fetchone()
             return row[0]
         except Exception:
@@ -233,7 +233,7 @@ class OpsMetricsCollector:
     def _get_recent_incidents_24h(conn) -> int:
         try:
             row = conn.execute(
-                "SELECT COUNT(*) FROM audit_log WHERE operation LIKE 'incident%' AND timestamp >= datetime('now', '-24 hours')"
+                "SELECT COUNT(*) FROM audit_log WHERE action_type LIKE 'incident%' AND created_at >= datetime('now', '-24 hours')"
             ).fetchone()
             return row[0]
         except Exception:
@@ -242,7 +242,7 @@ class OpsMetricsCollector:
     @staticmethod
     def _get_audit_entries_24h(conn) -> int:
         row = conn.execute(
-            "SELECT COUNT(*) FROM audit_log WHERE timestamp >= datetime('now', '-24 hours')"
+            "SELECT COUNT(*) FROM audit_log WHERE created_at >= datetime('now', '-24 hours')"
         ).fetchone()
         return row[0]
 

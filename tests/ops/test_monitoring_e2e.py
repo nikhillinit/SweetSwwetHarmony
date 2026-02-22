@@ -97,7 +97,7 @@ class TestNotifierDedup:
         # Should have sent a resolved notification (check audit log)
         with ops_db.pool.get_connection() as conn:
             row = conn.execute(
-                "SELECT COUNT(*) FROM audit_log WHERE operation = 'ALERT_RESOLVED'"
+                "SELECT COUNT(*) FROM audit_log WHERE action_type = 'ALERT_RESOLVED'"
             ).fetchone()
             assert row[0] >= 1
 
@@ -113,7 +113,7 @@ class TestNotifierDedup:
         # Verify audit was recorded
         with ops_db.pool.get_connection() as conn:
             row = conn.execute(
-                "SELECT COUNT(*) FROM audit_log WHERE operation = 'ALERT_SENT'"
+                "SELECT COUNT(*) FROM audit_log WHERE action_type = 'ALERT_SENT'"
             ).fetchone()
             assert row[0] == 1
 
@@ -137,7 +137,7 @@ class TestNotifierDedup:
         # Verify ALERT_NOTIFY_FAILED was recorded
         with ops_db.pool.get_connection() as conn:
             row = conn.execute(
-                "SELECT COUNT(*) FROM audit_log WHERE operation = 'ALERT_NOTIFY_FAILED'"
+                "SELECT COUNT(*) FROM audit_log WHERE action_type = 'ALERT_NOTIFY_FAILED'"
             ).fetchone()
             assert row[0] == 1
 
