@@ -38,35 +38,6 @@ def get_storage(args) -> OpsStorage:
     return OpsStorage(args.db)
 
 
-def log_audit(
-    conn,
-    operation: str,
-    target_type: str,
-    target_id: Optional[int],
-    before_state: Optional[dict],
-    after_state: Optional[dict],
-    reason: str = "",
-):
-    user = getpass.getuser()
-
-    conn.execute(
-        """
-        INSERT INTO audit_log
-        (operation, target_type, target_id, user, before_state, after_state, reason)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            operation,
-            target_type,
-            target_id,
-            user,
-            json.dumps(before_state) if before_state else None,
-            json.dumps(after_state) if after_state else None,
-            reason,
-        ),
-    )
-
-
 def _parse_timestamp(value: Optional[str]) -> Optional[datetime]:
     """Parse a timestamp string into a timezone-aware UTC datetime.
 
@@ -197,14 +168,15 @@ def approve_fact(args):
         row = cursor.fetchone()
         after_state = dict(zip([col[0] for col in cursor.description], row))
 
-        log_audit(
-            conn,
+        storage.log_audit(
             operation="approve_fact",
             target_type="memory_fact",
             target_id=args.id,
+            user=getpass.getuser(),
             before_state=before_state,
             after_state=after_state,
             reason=args.reason or "CLI approval",
+            conn=conn,
         )
 
     print(f"✅ Fact {args.id} approved and set to active")
@@ -244,14 +216,15 @@ def retire_fact(args):
         row = cursor.fetchone()
         after_state = dict(zip([col[0] for col in cursor.description], row))
 
-        log_audit(
-            conn,
+        storage.log_audit(
             operation="retire_fact",
             target_type="memory_fact",
             target_id=args.id,
+            user=getpass.getuser(),
             before_state=before_state,
             after_state=after_state,
             reason=args.reason or "CLI retirement",
+            conn=conn,
         )
 
     print(f"✅ Fact {args.id} retired")
@@ -344,14 +317,15 @@ def reset_action(args):
         row = cursor.fetchone()
         after_state = dict(zip([col[0] for col in cursor.description], row))
 
-        log_audit(
-            conn,
+        storage.log_audit(
             operation="reset_action",
             target_type="action_state",
             target_id=args.action_id,
+            user=getpass.getuser(),
             before_state=before_state,
             after_state=after_state,
             reason=args.reason or "CLI reset",
+            conn=conn,
         )
 
     print(f"✅ Action {args.action_id} reset for retry")
@@ -632,14 +606,15 @@ def cleanup(args):
         )
         health_deleted = cursor.rowcount
 
-        log_audit(
-            conn,
+        storage.log_audit(
             operation="cleanup",
             target_type="system",
             target_id=None,
+            user=getpass.getuser(),
             before_state={"retired_facts_eligible": before_count},
             after_state={"retired_facts_eligible": max(0, before_count - deleted)},
             reason=f"Cleanup older than {args.days} days (archive={not args.no_archive}, vacuum={args.vacuum})",
+            conn=conn,
         )
 
     # VACUUM cannot run inside a transaction in SQLite - must be outside

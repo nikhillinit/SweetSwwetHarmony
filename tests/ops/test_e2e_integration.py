@@ -125,12 +125,12 @@ def test_audit_trail(e2e_db):
         conn.execute(
             """
             INSERT INTO audit_log
-            (operation, target_type, target_id, user, before_state, after_state, reason)
-            VALUES ('approve_fact', 'memory_fact', 1, 'test_user', '{"status":"pending"}', '{"status":"active"}', 'Valid constraint')
+            (action_type, entity_type, entity_id, actor, details, created_at)
+            VALUES ('approve_fact', 'memory_fact', '1', 'test_user', '{"before_state":{"status":"pending"},"after_state":{"status":"active"},"reason":"Valid constraint"}', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
             """
         )
 
-        cursor = conn.execute("SELECT COUNT(*) FROM audit_log WHERE operation = 'approve_fact'")
+        cursor = conn.execute("SELECT COUNT(*) FROM audit_log WHERE action_type = 'approve_fact'")
         assert cursor.fetchone()[0] == 1
 
 

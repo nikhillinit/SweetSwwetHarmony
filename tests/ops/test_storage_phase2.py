@@ -106,14 +106,17 @@ class TestLogAudit:
         with ops_db.pool.get_connection() as conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute(
-                "SELECT * FROM audit_log WHERE operation = 'TEST_OP'"
+                "SELECT * FROM audit_log WHERE action_type = 'TEST_OP'"
             ).fetchone()
 
         assert row is not None
-        assert row["target_type"] == "test"
-        assert row["target_id"] == 42
-        assert row["user"] == "tester"
-        assert row["reason"] == "testing log_audit"
+        assert row["entity_type"] == "test"
+        assert row["entity_id"] == "42"
+        assert row["actor"] == "tester"
+        details = json.loads(row["details"])
+        assert details["reason"] == "testing log_audit"
+        assert details["before_state"] == {"old": True}
+        assert details["after_state"] == {"new": True}
 
     def test_log_audit_with_conn(self, ops_db):
         """log_audit(conn=conn) should use the provided connection."""
@@ -128,7 +131,7 @@ class TestLogAudit:
 
         with ops_db.pool.get_connection() as conn:
             count = conn.execute(
-                "SELECT COUNT(*) FROM audit_log WHERE operation = 'CONN_TEST'"
+                "SELECT COUNT(*) FROM audit_log WHERE action_type = 'CONN_TEST'"
             ).fetchone()[0]
             assert count == 1
 
@@ -142,12 +145,11 @@ class TestLogAudit:
         with ops_db.pool.get_connection() as conn:
             conn.row_factory = sqlite3.Row
             row = conn.execute(
-                "SELECT * FROM audit_log WHERE operation = 'MINIMAL'"
+                "SELECT * FROM audit_log WHERE action_type = 'MINIMAL'"
             ).fetchone()
 
         assert row is not None
-        assert row["user"] == "system"
-        assert row["target_id"] is None
-        assert row["before_state"] is None
-        assert row["after_state"] is None
-        assert row["reason"] is None
+        assert row["actor"] == "system"
+        assert row["entity_id"] == ""
+        assert row["details"] is None
+        assert row["created_at"] is not None

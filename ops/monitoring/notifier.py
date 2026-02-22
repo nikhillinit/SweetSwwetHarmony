@@ -72,23 +72,24 @@ class OpsAlertNotifier:
             current_fps = {a.fingerprint for a in alerts}
             for prev in previous_alerts:
                 if prev.fingerprint not in current_fps:
-                    if not self._is_in_cooldown(f"resolved:{prev.fingerprint}"):
+                    if not self._is_in_cooldown(f"resolved:{prev.fingerprint}", action_type="ALERT_RESOLVED"):
                         self._send_resolved(prev)
                         self._record_resolved(prev.fingerprint)
 
         return {"sent": sent, "suppressed": suppressed, "failed": failed}
 
-    def _is_in_cooldown(self, fingerprint: str) -> bool:
+    def _is_in_cooldown(self, fingerprint: str, action_type: str = "ALERT_SENT") -> bool:
         """Check if alert was sent within cooldown period."""
         with self.storage.read_transaction() as conn:
             row = conn.execute(
                 """
-                SELECT timestamp FROM audit_log
-                WHERE operation = 'ALERT_SENT'
-                AND reason LIKE ?
-                ORDER BY timestamp DESC LIMIT 1
+                SELECT created_at FROM audit_log
+                WHERE action_type = ?
+                AND entity_type = 'alert'
+                AND entity_id = ?
+                ORDER BY id DESC LIMIT 1
                 """,
-                (f"%{fingerprint}%",),
+                (action_type, fingerprint),
             ).fetchone()
 
         if row is None:
@@ -109,6 +110,7 @@ class OpsAlertNotifier:
         self.storage.log_audit(
             operation="ALERT_SENT",
             target_type="alert",
+            target_id=alert.fingerprint,
             user="system",
             after_state=json.dumps({
                 "rule_name": alert.rule_name,
@@ -123,6 +125,7 @@ class OpsAlertNotifier:
         self.storage.log_audit(
             operation="ALERT_NOTIFY_FAILED",
             target_type="alert",
+            target_id=alert.fingerprint,
             user="system",
             reason=alert.fingerprint,
         )
@@ -132,6 +135,7 @@ class OpsAlertNotifier:
         self.storage.log_audit(
             operation="ALERT_RESOLVED",
             target_type="alert",
+            target_id=f"resolved:{fingerprint}",
             user="system",
             reason=f"resolved:{fingerprint}",
         )

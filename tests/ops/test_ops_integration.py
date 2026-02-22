@@ -359,7 +359,7 @@ class TestNotifierIntegration:
         # Verify audit_log entries
         with ops_db.read_transaction() as conn:
             row = conn.execute(
-                "SELECT COUNT(*) FROM audit_log WHERE operation = 'ALERT_SENT'"
+                "SELECT COUNT(*) FROM audit_log WHERE action_type = 'ALERT_SENT'"
             ).fetchone()
             assert row[0] == len(alerts)
 
