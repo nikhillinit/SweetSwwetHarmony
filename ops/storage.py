@@ -14,7 +14,8 @@ import logging
 import re
 import threading
 from contextlib import contextmanager
-from typing import Optional, List
+from datetime import datetime, timezone
+from typing import Optional, List, Union
 
 logger = logging.getLogger(__name__)
 
@@ -164,15 +165,16 @@ class OpsStorage:
 
             CREATE TABLE IF NOT EXISTS audit_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                operation TEXT NOT NULL,
-                target_type TEXT NOT NULL,
-                target_id INTEGER,
-                user TEXT NOT NULL,
-                before_state TEXT,
-                after_state TEXT,
-                reason TEXT
+                action_type TEXT NOT NULL,
+                entity_type TEXT NOT NULL,
+                entity_id TEXT NOT NULL,
+                actor TEXT,
+                details TEXT,
+                created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
             );
+            CREATE INDEX IF NOT EXISTS idx_audit_log_created ON audit_log(created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_audit_log_entity ON audit_log(entity_type, entity_id);
+            CREATE INDEX IF NOT EXISTS idx_audit_log_action ON audit_log(action_type, created_at DESC);
 
             CREATE TABLE IF NOT EXISTS system_health (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -446,22 +448,56 @@ class OpsStorage:
             conn.row_factory = old_factory
 
     def log_audit(self, operation: str, target_type: str,
-                  target_id: Optional[int] = None, user: str = "system",
-                  before_state: Optional[str] = None,
-                  after_state: Optional[str] = None,
+                  target_id: Optional[Union[int, str]] = None,
+                  user: str = "system",
+                  before_state=None,
+                  after_state=None,
                   reason: Optional[str] = None, conn=None) -> None:
-        """Insert a row into the audit_log table.
+        """Insert a row into the audit_log table (v27 schema).
 
-        Args:
-            conn: Optional connection. If None, opens its own transaction.
+        Keeps the same external parameter names for backward compatibility,
+        but maps them to v27 columns internally:
+          operation  -> action_type
+          target_type -> entity_type
+          target_id  -> entity_id (str)
+          user       -> actor
+          before_state + after_state + reason -> details (JSON)
         """
+        action_type = operation
+        entity_type = target_type
+        entity_id = str(target_id) if target_id is not None else ""
+        actor = user
+
+        # Pack before_state, after_state, reason into details JSON
+        details_dict = {}
+        if before_state is not None:
+            if isinstance(before_state, dict):
+                details_dict["before_state"] = before_state
+            else:
+                try:
+                    details_dict["before_state"] = json.loads(before_state)
+                except (json.JSONDecodeError, TypeError):
+                    details_dict["before_state"] = before_state
+        if after_state is not None:
+            if isinstance(after_state, dict):
+                details_dict["after_state"] = after_state
+            else:
+                try:
+                    details_dict["after_state"] = json.loads(after_state)
+                except (json.JSONDecodeError, TypeError):
+                    details_dict["after_state"] = after_state
+        if reason is not None:
+            details_dict["reason"] = reason
+        details = json.dumps(details_dict, sort_keys=True) if details_dict else None
+
+        created_at = datetime.now(timezone.utc).isoformat()
+
         sql = """
             INSERT INTO audit_log
-            (operation, target_type, target_id, user, before_state, after_state, reason)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            (action_type, entity_type, entity_id, actor, details, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
         """
-        params = (operation, target_type, target_id, user,
-                  before_state, after_state, reason)
+        params = (action_type, entity_type, entity_id, actor, details, created_at)
         if conn is not None:
             conn.execute(sql, params)
         else:

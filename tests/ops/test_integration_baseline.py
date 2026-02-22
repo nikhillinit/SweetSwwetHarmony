@@ -160,8 +160,8 @@ def test_audit_log(clean_db):
     with clean_db.transaction() as conn:
         conn.execute(
             """
-            INSERT INTO audit_log (operation, target_type, target_id, user, reason)
-            VALUES ('test_op', 'memory_fact', 1, 'test_user', 'testing')
+            INSERT INTO audit_log (action_type, entity_type, entity_id, actor, details, created_at)
+            VALUES ('test_op', 'memory_fact', '1', 'test_user', '{"reason":"testing"}', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
             """
         )
         cursor = conn.execute("SELECT COUNT(*) FROM audit_log")
