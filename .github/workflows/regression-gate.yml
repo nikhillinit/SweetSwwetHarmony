@@ -39,6 +39,13 @@ jobs:
             tests/workflows/test_batch_publisher.py \
             --tb=short -q
 
+      - name: Schema invariants
+        env:
+          DELIVERY_MODE: staging_only
+        run: |
+          python -m pytest tests/ops/test_schema_invariants.py \
+            --tb=short -q
+
   docker-build:
     name: Docker Build & Smoke
     runs-on: ubuntu-latest
