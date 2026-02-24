@@ -543,10 +543,13 @@ async def test_report_ghost_run_detection(real_schema_db, rw_conn):
         runs = await _gather_pipeline_runs(ro)
         assert runs["totals"]["runs"] == 2
         assert runs["totals"]["productive_runs"] == 1
+        assert runs["totals"]["idle_runs"] == 0
 
-        ghost_flags = {r["run_id"]: r["is_ghost"] for r in runs["recent_runs"]}
-        assert ghost_flags["ghost-1"] is True
-        assert ghost_flags["prod-1"] is False
+        by_id = {r["run_id"]: r for r in runs["recent_runs"]}
+        assert by_id["ghost-1"]["is_ghost"] is True
+        assert by_id["ghost-1"]["is_idle"] is False
+        assert by_id["prod-1"]["is_ghost"] is False
+        assert by_id["prod-1"]["is_idle"] is False
     finally:
         await ro.close()
 
@@ -628,6 +631,127 @@ async def test_report_no_anomaly_when_all_deduped(real_schema_db, rw_conn):
     try:
         runs = await _gather_pipeline_runs(ro)
         assert runs["anomalies"] == []
+    finally:
+        await ro.close()
+
+
+# ---------------------------------------------------------------------------
+# THREE-TIER CLASSIFICATION (ghost / idle / productive)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_report_idle_run_classification(real_schema_db, rw_conn):
+    """Idle run (collectors ran, 0 signals) gets is_idle=True, not counted as productive."""
+    now = datetime.now(timezone.utc).isoformat()
+    # Idle run: collectors ran, 0 signals, slow (not ghost)
+    await rw_conn.execute(
+        """INSERT INTO pipeline_runs
+           (run_id, started_at, completed_at, duration_seconds,
+            collectors_run, collectors_succeeded, collectors_failed,
+            signals_collected, signals_stored, signals_deduplicated,
+            signals_processed, signals_held, errors, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        ("idle-1", now, now, 20.9, 4, 4, 0, 0, 0, 0, 0, 0, "[]", now),
+    )
+    # Productive run
+    await rw_conn.execute(
+        """INSERT INTO pipeline_runs
+           (run_id, started_at, completed_at, duration_seconds,
+            collectors_run, collectors_succeeded, collectors_failed,
+            signals_collected, signals_stored, signals_deduplicated,
+            signals_processed, signals_held, errors, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        ("prod-1", now, now, 12.5, 6, 6, 0, 78, 60, 18, 60, 0, "[]", now),
+    )
+    # Ghost run
+    await rw_conn.execute(
+        """INSERT INTO pipeline_runs
+           (run_id, started_at, completed_at, duration_seconds,
+            collectors_run, collectors_succeeded, collectors_failed,
+            signals_collected, signals_stored, signals_deduplicated,
+            signals_processed, signals_held, errors, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        ("ghost-1", now, now, 0.1, 0, 0, 0, 0, 0, 0, 0, 0, "[]", now),
+    )
+    await rw_conn.commit()
+
+    import aiosqlite
+    ro = await aiosqlite.connect(f"file:{real_schema_db}?mode=ro", uri=True)
+    ro.row_factory = aiosqlite.Row
+    try:
+        runs = await _gather_pipeline_runs(ro)
+        by_id = {r["run_id"]: r for r in runs["recent_runs"]}
+
+        # Idle: not ghost, not productive
+        assert by_id["idle-1"]["is_idle"] is True
+        assert by_id["idle-1"]["is_ghost"] is False
+
+        # Productive: not ghost, not idle
+        assert by_id["prod-1"]["is_idle"] is False
+        assert by_id["prod-1"]["is_ghost"] is False
+
+        # Ghost: not idle
+        assert by_id["ghost-1"]["is_ghost"] is True
+        assert by_id["ghost-1"]["is_idle"] is False
+
+        # Counts: 3 total, 1 productive, 1 idle
+        assert runs["totals"]["runs"] == 3
+        assert runs["totals"]["productive_runs"] == 1
+        assert runs["totals"]["idle_runs"] == 1
+    finally:
+        await ro.close()
+
+
+@pytest.mark.asyncio
+async def test_report_idle_runs_dont_consume_anomaly_slots(real_schema_db, rw_conn):
+    """Idle runs must NOT consume anomaly-check slots — regression test for 4b007675 bug.
+
+    Scenario: 3 idle runs (most recent) + 1 productive run with anomaly.
+    Before fix: idle runs consumed all 3 anomaly-check slots, anomaly missed.
+    After fix: idle runs excluded, productive anomaly run is checked and flagged.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Insert 3 idle runs (newest, consume slots in the old code)
+    for i in range(3):
+        await rw_conn.execute(
+            """INSERT INTO pipeline_runs
+               (run_id, started_at, completed_at, duration_seconds,
+                collectors_run, collectors_succeeded, collectors_failed,
+                signals_collected, signals_stored, signals_deduplicated,
+                signals_processed, signals_held, errors, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (f"idle-{i}", f"2026-02-24T10:0{i + 3}:00Z", now, 15.0,
+             4, 4, 0, 0, 0, 0, 0, 0, "[]", f"2026-02-24T10:0{i + 3}:00Z"),
+        )
+
+    # Insert 1 productive run with anomaly (older, pushed out of window in old code)
+    await rw_conn.execute(
+        """INSERT INTO pipeline_runs
+           (run_id, started_at, completed_at, duration_seconds,
+            collectors_run, collectors_succeeded, collectors_failed,
+            signals_collected, signals_stored, signals_deduplicated,
+            signals_processed, signals_held, errors, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        ("anomaly-run", "2026-02-24T10:00:00Z", now, 25.0,
+         6, 6, 0, 90, 0, 0, 0, 0, "[]", "2026-02-24T10:00:00Z"),
+    )
+    await rw_conn.commit()
+
+    import aiosqlite
+    ro = await aiosqlite.connect(f"file:{real_schema_db}?mode=ro", uri=True)
+    ro.row_factory = aiosqlite.Row
+    try:
+        runs = await _gather_pipeline_runs(ro)
+
+        # The anomaly run MUST be detected despite idle runs being newer
+        assert len(runs["anomalies"]) == 1
+        assert "anomaly-run" in runs["anomalies"][0]
+        assert "metrics wiring" in runs["anomalies"][0]
+
+        # Verify counts
+        assert runs["totals"]["productive_runs"] == 1
+        assert runs["totals"]["idle_runs"] == 3
     finally:
         await ro.close()
 

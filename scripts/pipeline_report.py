@@ -355,7 +355,7 @@ async def _gather_pipeline_runs(db, limit: int = 10) -> Dict[str, Any]:
             except (json.JSONDecodeError, TypeError):
                 pass
 
-        # Ghost-run detection: no collectors, no signals, very fast
+        # Three-tier classification: ghost < idle < productive
         collectors_run = r[4] or 0
         signals_collected = r[7] or 0
         duration = r[3]
@@ -365,6 +365,8 @@ async def _gather_pipeline_runs(db, limit: int = 10) -> Dict[str, Any]:
             and duration is not None
             and duration < 1.0
         )
+        # Idle: ran collectors but collected nothing (rate-limited, empty, etc.)
+        is_idle = not is_ghost and signals_collected == 0
 
         run_entry = {
             "run_id": r[0], "started_at": r[1], "duration_seconds": r[3],
@@ -375,16 +377,17 @@ async def _gather_pipeline_runs(db, limit: int = 10) -> Dict[str, Any]:
             "errors": errors_list,
             "collectors": collector_map.get(r[0], []),
             "is_ghost": is_ghost,
+            "is_idle": is_idle,
         }
         recent_runs.append(run_entry)
         total_failed += r[6] or 0
         total_errors += len(errors_list)
-        if not is_ghost:
+        if not is_ghost and not is_idle:
             productive_count += 1
 
     # Anomaly detection: check 3 most recent productive runs for triple-zero
     anomalies: List[str] = []
-    productive_runs = [r for r in recent_runs if not r["is_ghost"]]
+    productive_runs = [r for r in recent_runs if not r["is_ghost"] and not r["is_idle"]]
     for run in productive_runs[:3]:
         collected = run["signals_collected"] or 0
         stored = run["signals_stored"] or 0
@@ -397,10 +400,16 @@ async def _gather_pipeline_runs(db, limit: int = 10) -> Dict[str, Any]:
 
     section["recent_runs"] = recent_runs
     section["anomalies"] = anomalies
+    idle_count = sum(1 for r in recent_runs if r["is_idle"])
     section["totals"] = {
         "runs": len(recent_runs),
         "productive_runs": productive_count,
-        "ghost_run_definition": "collectors_run=0, signals_collected=0, duration<1s",
+        "idle_runs": idle_count,
+        "run_classification": (
+            "productive: signals_collected>0; "
+            "idle: collectors ran but signals_collected=0; "
+            "ghost: collectors_run=0, signals_collected=0, duration<1s"
+        ),
         "failed_collectors": total_failed,
         "total_errors": total_errors,
     }
@@ -678,13 +687,14 @@ else{
     pr.anomalies.forEach(function(a){pc.appendChild(el('div',{cls:'anomaly-banner'},a))});
   }
   var totc=el('div',{cls:'card'});
-  totc.appendChild(kv('Runs',pr.totals.productive_runs+' productive / '+pr.totals.runs+' total'));
+  totc.appendChild(kv('Runs',pr.totals.productive_runs+' productive / '+(pr.totals.idle_runs||0)+' idle / '+pr.totals.runs+' total'));
   totc.appendChild(kv('Failed collectors (total)',pr.totals.failed_collectors));
   totc.appendChild(kv('Errors (total)',pr.totals.total_errors));
   pc.appendChild(totc);
   pr.recent_runs.forEach(function(run){
-    var rc2=el('div',{cls:'card'+(run.is_ghost?' ghost':'')});
-    rc2.appendChild(kv('Run ID',run.run_id+(run.is_ghost?' (ghost)':'')));
+    var tag=run.is_ghost?' (ghost)':run.is_idle?' (idle)':'';
+    var rc2=el('div',{cls:'card'+(run.is_ghost?' ghost':run.is_idle?' idle':'')});
+    rc2.appendChild(kv('Run ID',run.run_id+tag));
     rc2.appendChild(kv('Started',run.started_at));
     rc2.appendChild(kv('Duration (s)',run.duration_seconds!=null?run.duration_seconds.toFixed(1):'—'));
     rc2.appendChild(kv('Signals collected',run.signals_collected));
