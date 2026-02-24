@@ -16,8 +16,10 @@ from collectors.rss_feeds import (
     DEFAULT_FEEDS,
     FEED_CATEGORIES,
     _extract_press_release_prefix,
+    _normalize_title,
 )
 from utils.canonical_keys import NEWS_PUBLISHER_DOMAINS
+from utils.company_name_extractor import extract_via_regex
 
 
 # =============================================================================
@@ -827,3 +829,175 @@ class TestPressReleaseFallbackIntegration:
         signal = collector._article_to_signal(article)
         # is_press_release should be False for techcrunch
         assert signal.raw_data["is_press_release"] is False
+
+
+# =============================================================================
+# TITLE PRE-NORMALIZATION TESTS
+# =============================================================================
+
+
+class TestNormalizeTitle:
+    """Tests for _normalize_title() helper."""
+
+    def test_html_entity_amp(self):
+        assert _normalize_title("Chili's Grill &amp; Bar") == "Chili's Grill & Bar"
+
+    def test_html_entity_apostrophe(self):
+        assert _normalize_title("Chili&#39;s Grill") == "Chili's Grill"
+
+    def test_trademark_symbol_stripped(self):
+        assert _normalize_title("Chili's® Grill") == "Chili's Grill"
+
+    def test_copyright_symbol_stripped(self):
+        assert _normalize_title("Acme© Products") == "Acme Products"
+
+    def test_tm_symbol_stripped(self):
+        assert _normalize_title("Brand™ Launches") == "Brand Launches"
+
+    def test_service_mark_stripped(self):
+        assert _normalize_title("Service℠ Expands") == "Service Expands"
+
+    def test_whitespace_collapsed(self):
+        assert _normalize_title("  Too   much   space  ") == "Too much space"
+
+    def test_combined_normalization(self):
+        """Full chain: unescape + strip trademark + collapse whitespace."""
+        raw = "Chili&#39;s®  Grill  &amp;  Bar"
+        assert _normalize_title(raw) == "Chili's Grill & Bar"
+
+    def test_empty_string(self):
+        assert _normalize_title("") == ""
+
+    def test_no_changes_needed(self):
+        assert _normalize_title("Normal Title Here") == "Normal Title Here"
+
+
+# =============================================================================
+# SEGMENTED EXTRACTION TESTS
+# =============================================================================
+
+
+class TestSegmentedExtraction:
+    """Tests for segmented extraction fallback in _article_to_signal."""
+
+    def test_signal_324_cosrx_after_question_mark(self):
+        """Signal 324: 'Best Eye Patches...? COSRX Expands...' → 'COSRX'."""
+        collector = RSSFeedCollector(store=None)
+        article = RSSArticle(
+            title="Best Eye Patches for Dark Circles? COSRX Expands Its Skincare Line",
+            description="Beauty brand COSRX launches new eye patches",
+            url="https://prnewswire.com/news/cosrx",
+            source_feed="PR Newswire",
+            published_at=datetime.now(timezone.utc),
+        )
+        signal = collector._article_to_signal(article)
+        assert signal.raw_data["company_name"] == "COSRX"
+
+    def test_segmented_colon_delimiter(self):
+        """Segmented extraction on colon delimiter."""
+        collector = RSSFeedCollector(store=None)
+        article = RSSArticle(
+            title="Market Update: FreshBowl Launches New Product",
+            description="Consumer brand launches...",
+            url="https://example.com/news",
+            source_feed="Test Feed",
+            published_at=datetime.now(timezone.utc),
+        )
+        signal = collector._article_to_signal(article)
+        assert signal.raw_data["company_name"] == "FreshBowl"
+
+    def test_segmented_em_dash_delimiter(self):
+        """Segmented extraction on em-dash delimiter."""
+        collector = RSSFeedCollector(store=None)
+        article = RSSArticle(
+            title="Industry trends\u2014GlowSkin Announces Expansion",
+            description="Beauty company expands",
+            url="https://example.com/news",
+            source_feed="Test Feed",
+            published_at=datetime.now(timezone.utc),
+        )
+        signal = collector._article_to_signal(article)
+        assert signal.raw_data["company_name"] == "GlowSkin"
+
+    def test_segmented_does_not_override_primary(self):
+        """When primary extraction finds a company, segmentation is skipped."""
+        collector = RSSFeedCollector(store=None)
+        article = RSSArticle(
+            title="Acme Raises $5M? More Details Inside",
+            description="...",
+            url="https://example.com/news",
+            source_feed="Test Feed",
+            published_at=datetime.now(timezone.utc),
+        )
+        signal = collector._article_to_signal(article)
+        # Primary extraction should find "Acme" from "Acme Raises"
+        assert signal.raw_data["company_name"] == "Acme"
+
+
+# =============================================================================
+# SIGNAL REGRESSION TESTS (SIGNALS 318-325)
+# =============================================================================
+
+
+class TestSignalRegression:
+    """Regression tests for signals 318-325 from latest collection."""
+
+    def test_signal_318_polsia_single_word_no_verb(self):
+        """Signal 318: 'Polsia' — single word, no verb → None."""
+        assert extract_via_regex("Polsia") is None
+
+    def test_signal_320_market_report(self):
+        """Signal 320: Market report title → None (no company)."""
+        result = extract_via_regex(
+            "Probiotic Ingredients Market to Reach $9.2 Billion by 2030"
+        )
+        assert result is None
+
+    def test_signal_321_chilis_html_entities(self):
+        """Signal 321: HTML entities and trademark in title."""
+        raw = "Chili\u2019s\u00ae Grill &amp; Bar Announces New Menu"
+        normalized = _normalize_title(raw)
+        assert "\u00ae" not in normalized
+        assert "&amp;" not in normalized
+        assert "\u2019" not in normalized  # smart quote → ASCII apostrophe
+        assert "Chili's" in normalized
+        # After normalization, extraction should work on clean title
+        result = extract_via_regex(normalized)
+        # "Chili's" starts with uppercase and has verb "Announces"
+        assert result is not None
+        assert "Chili's" in result
+
+    def test_signal_322_particles_for_humanity(self):
+        """Signal 322: Connector-aware extraction."""
+        result = extract_via_regex("Particles for Humanity Announces New Initiative")
+        assert result == "Particles for Humanity"
+
+    def test_signal_323_firehook_allcaps(self):
+        """Signal 323: ALL-CAPS with connector + base verb 'UNVEIL'."""
+        result = extract_via_regex(
+            "FIREHOOK AND ITHACA HUMMUS UNVEIL New Snack Line"
+        )
+        assert result is not None
+        assert "FIREHOOK" in result
+        assert "ITHACA HUMMUS" in result
+
+    def test_signal_324_cosrx_segmented(self):
+        """Signal 324: Mid-sentence after '?' via segmented extraction."""
+        collector = RSSFeedCollector(store=None)
+        article = RSSArticle(
+            title="Best Eye Patches for Dark Circles? COSRX Expands Its Skincare Line",
+            description="...",
+            url="https://prnewswire.com/news/cosrx",
+            source_feed="PR Newswire",
+            published_at=datetime.now(timezone.utc),
+        )
+        signal = collector._article_to_signal(article)
+        assert signal.raw_data["company_name"] == "COSRX"
+
+    def test_signal_325_half_of_us_shoppers(self):
+        """Signal 325: Overcapture prevention — 'Half of U.S. Shoppers' → None."""
+        result = extract_via_regex(
+            "Half of U.S. Shoppers Choose to Buy New Products from Brands "
+            "with Values Aligned to Theirs, Acosta Group Finds"
+        )
+        assert result is None

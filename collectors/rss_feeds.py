@@ -32,6 +32,7 @@ Usage:
 
 from __future__ import annotations
 
+import html as html_lib
 import logging
 import re
 import xml.etree.ElementTree as ET
@@ -270,6 +271,20 @@ def _extract_press_release_prefix(title: str) -> Optional[str]:
 
 
 # =============================================================================
+# TITLE PRE-NORMALIZATION
+# =============================================================================
+
+
+def _normalize_title(raw: str) -> str:
+    """Unescape HTML entities, strip trademark symbols, normalize whitespace."""
+    t = html_lib.unescape(raw)          # &amp; → &, &#39; → '
+    t = re.sub(r'[®™©℠]', '', t)       # strip to empty string (not space)
+    t = t.replace('\u2018', "'").replace('\u2019', "'")  # smart quotes → ASCII
+    t = re.sub(r'\s+', ' ', t).strip()  # collapse whitespace
+    return t
+
+
+# =============================================================================
 # RSS FEED COLLECTOR
 # =============================================================================
 
@@ -453,7 +468,7 @@ class RSSFeedCollector(BaseCollector):
         if feed_type == "{http://www.w3.org/2005/Atom}feed":
             # Atom format
             ns = {"atom": "http://www.w3.org/2005/Atom"}
-            title = item.findtext("atom:title", "", ns)
+            title = _normalize_title(item.findtext("atom:title", "", ns))
             link_elem = item.find("atom:link", ns)
             url = link_elem.get("href", "") if link_elem is not None else ""
             description = item.findtext("atom:summary", "", ns) or item.findtext("atom:content", "", ns)
@@ -461,7 +476,7 @@ class RSSFeedCollector(BaseCollector):
             author = item.findtext("atom:author/atom:name", "", ns)
         else:
             # RSS format
-            title = item.findtext("title", "")
+            title = _normalize_title(item.findtext("title", ""))
             url = item.findtext("link", "")
             description = item.findtext("description", "")
             pub_date = item.findtext("pubDate", "")
@@ -647,6 +662,20 @@ class RSSFeedCollector(BaseCollector):
             domain_or_website=domain_for_key,
             fallback_company_name=company_name or "",
         )
+
+        # Segmented extraction: split on strong delimiters, re-run start-anchored extractor
+        if not company_name:
+            for segment in re.split(r'[?:—|•]\s*', article.title):
+                segment = segment.strip()
+                if segment and segment[0].isupper():
+                    seg_result = extract_via_regex(segment)
+                    if seg_result:
+                        company_name = seg_result
+                        canonical_keys = build_canonical_key_candidates(
+                            domain_or_website=domain_for_key,
+                            fallback_company_name=company_name,
+                        )
+                        break
 
         # Fallback: press-release title-segment heuristic
         if not canonical_keys and not company_name and article.is_press_release:
