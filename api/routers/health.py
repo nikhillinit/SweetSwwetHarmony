@@ -313,6 +313,22 @@ async def get_phase_g_readiness(
     return result.to_dict()
 
 
+@router.get("/step3b-readiness")
+async def get_step3b_readiness(
+    store: SignalStore = Depends(get_store),
+):
+    """
+    Check Step 3B activation readiness.
+
+    Three predicates: multi-source company files >= 5,
+    canary verdict pass/degraded, Phase G readiness == ready.
+    """
+    from monitoring.step3b_readiness import check_step3b_readiness
+
+    result = await check_step3b_readiness(store)
+    return result.to_dict()
+
+
 @router.get("/collectors", response_model=List[CollectorHealth])
 async def get_collector_health(
     store: SignalStore = Depends(get_store),

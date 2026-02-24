@@ -507,9 +507,13 @@ class NewsAPICollector(BaseCollector):
         confidence = self._calculate_confidence(article)
 
         # Full extraction pipeline (mode-gated)
+        # Combine description + content for richer domain extraction in url_promote mode
+        desc_text = " ".join(
+            t for t in [article.description or "", article.content or ""] if t
+        ).strip()
         extraction = extract_company_info(
             title=article.title,
-            description=article.description or "",
+            description=desc_text,
             url=article.url,
         )
         company_name = extraction.company_name
