@@ -974,6 +974,18 @@ class DiscoveryPipeline:
                 1 for r in collector_results if r.status == CollectorStatus.SKIPPED
             )
             stats.signals_collected = sum(r.signals_found for r in collector_results)
+            stats.signals_stored = sum(
+                getattr(r, "signals_new", 0) or 0 for r in collector_results
+            )
+            stats.signals_deduplicated = sum(
+                getattr(r, "signals_suppressed", 0) or 0
+                for r in collector_results
+            )
+            # Note: signals_suppressed includes in-run dedup, DB-level dedup,
+            # and Notion suppression cache hits. All represent "not stored
+            # because already known."
+            # getattr guards against collectors that bypass BaseCollector or
+            # return partial CollectorResult objects.
 
             # Stage 1.5: Run promotion sweep on updated CompanyFiles
             if self.config.use_thin_files:
