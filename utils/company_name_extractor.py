@@ -237,6 +237,11 @@ def _is_blocked_domain(domain: str) -> bool:
     return False
 
 
+def is_blocked_domain(domain: str) -> bool:
+    """Public API for domain blocklist check (suffix-aware)."""
+    return _is_blocked_domain(domain)
+
+
 def extract_urls_from_text(text: str) -> List[str]:
     """
     Extract and filter domains from article text.
