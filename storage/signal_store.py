@@ -2790,18 +2790,45 @@ class SignalStore:
         columns = ['signal_id', 'company_name', 'signal_type', 'source_api', 'confidence', 'created_at', 'raw_data', 'vertical']
         return [dict(zip(columns, row)) for row in rows]
 
-    async def is_duplicate(self, canonical_key: str) -> bool:
-        """
-        Check if we already have signals for this canonical key.
-        Returns True if any signals exist, False otherwise.
+    async def is_duplicate(
+        self,
+        canonical_key: str,
+        signal_type: Optional[str] = None,
+        source_api: Optional[str] = None,
+        detected_at: Optional[datetime] = None,
+    ) -> bool:
+        """Check for duplicate signals.
+
+        Contract:
+        - Multi-source convergence is allowed: same canonical_key across
+          different (signal_type, source_api) is NOT a duplicate.
+        - "Duplicate" means same evidence identity, not "same company."
+
+        When signal_type, source_api, and detected_at are all provided,
+        checks for an exact-tuple match — allowing different sources to
+        contribute signals for the same company.
+
+        When only canonical_key is provided (legacy), falls back to
+        blanket canonical-key check.
+
+        Returns True if matching signals exist, False otherwise.
         """
         if not self._db:
             raise RuntimeError("Database not initialized")
 
-        cursor = await self._db.execute(
-            "SELECT COUNT(*) FROM signals WHERE canonical_key = ?",
-            (canonical_key,)
-        )
+        if signal_type is not None and source_api is not None and detected_at is not None:
+            # Exact-tuple check: same source + type + time = true duplicate
+            detected_str = detected_at.isoformat() if isinstance(detected_at, datetime) else str(detected_at)
+            cursor = await self._db.execute(
+                "SELECT COUNT(*) FROM signals WHERE canonical_key = ? AND signal_type = ? AND source_api = ? AND detected_at = ?",
+                (canonical_key, signal_type, source_api, detected_str),
+            )
+        else:
+            # Legacy blanket check (used by suppression-cache callers, etc.)
+            cursor = await self._db.execute(
+                "SELECT COUNT(*) FROM signals WHERE canonical_key = ?",
+                (canonical_key,),
+            )
         row = await cursor.fetchone()
         return row[0] > 0 if row else False
 

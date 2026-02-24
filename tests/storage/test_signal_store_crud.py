@@ -339,6 +339,99 @@ class TestIsDuplicate:
         assert is_dup is False
 
 
+class TestIsDuplicateExactTuple:
+    """Tests for is_duplicate exact-tuple semantics (multi-source support)."""
+
+    @pytest.mark.asyncio
+    async def test_same_tuple_is_duplicate(self, store: SignalStore):
+        """Same (canonical_key, signal_type, source_api, detected_at) → duplicate."""
+        detected = datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+        await store.save_signal(
+            signal_type="funding",
+            source_api="sec_edgar",
+            canonical_key="ein:999999999",
+            confidence=0.8,
+            raw_data={"test": True},
+            detected_at=detected,
+        )
+        is_dup = await store.is_duplicate(
+            "ein:999999999",
+            signal_type="funding",
+            source_api="sec_edgar",
+            detected_at=detected,
+        )
+        assert is_dup is True
+
+    @pytest.mark.asyncio
+    async def test_different_source_api_not_duplicate(self, store: SignalStore):
+        """Same canonical_key + signal_type but different source_api → NOT duplicate."""
+        detected = datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+        await store.save_signal(
+            signal_type="mention",
+            source_api="hacker_news",
+            canonical_key="domain:example.com",
+            confidence=0.6,
+            raw_data={"test": True},
+            detected_at=detected,
+        )
+        is_dup = await store.is_duplicate(
+            "domain:example.com",
+            signal_type="mention",
+            source_api="rss_feeds",
+            detected_at=detected,
+        )
+        assert is_dup is False
+
+    @pytest.mark.asyncio
+    async def test_different_signal_type_not_duplicate(self, store: SignalStore):
+        """Same canonical_key + source_api but different signal_type → NOT duplicate."""
+        detected = datetime(2026, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
+        await store.save_signal(
+            signal_type="funding",
+            source_api="sec_edgar",
+            canonical_key="ein:888888888",
+            confidence=0.7,
+            raw_data={"test": True},
+            detected_at=detected,
+        )
+        is_dup = await store.is_duplicate(
+            "ein:888888888",
+            signal_type="incorporation",
+            source_api="sec_edgar",
+            detected_at=detected,
+        )
+        assert is_dup is False
+
+    @pytest.mark.asyncio
+    async def test_canonical_key_only_fallback(self, store: SignalStore):
+        """When only canonical_key is passed (no tuple args), use blanket check."""
+        await store.save_signal(
+            signal_type="funding",
+            source_api="sec_edgar",
+            canonical_key="ein:777777777",
+            confidence=0.7,
+            raw_data={"test": True},
+        )
+        # Legacy call with only canonical_key still works
+        is_dup = await store.is_duplicate("ein:777777777")
+        assert is_dup is True
+
+    @pytest.mark.asyncio
+    async def test_suppression_cache_still_canonical_key_only(self, store: SignalStore):
+        """Suppression cache check remains canonical-key-only (not tuple-scoped)."""
+        from storage.signal_store import SuppressionEntry
+
+        entry = SuppressionEntry(
+            canonical_key="domain:suppressed.com",
+            notion_page_id="page-123",
+            status="Source",
+        )
+        await store.update_suppression_cache([entry])
+        result = await store.check_suppression("domain:suppressed.com")
+        assert result is not None
+        assert result.notion_page_id == "page-123"
+
+
 # =============================================================================
 # PIPELINE RUN TESTS
 # =============================================================================

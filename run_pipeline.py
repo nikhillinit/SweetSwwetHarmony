@@ -876,6 +876,57 @@ async def cmd_health(args):
         await pipeline.close()
 
 
+async def cmd_step3b_readiness(args):
+    """Check Step 3B activation readiness."""
+    output_json = getattr(args, "output_json", False)
+    config = PipelineConfig.from_env()
+    if args.db_path:
+        config.db_path = args.db_path
+
+    pipeline = DiscoveryPipeline(config)
+    try:
+        await pipeline.initialize()
+        from monitoring.step3b_readiness import check_step3b_readiness
+
+        result = await check_step3b_readiness(pipeline._store)
+
+        if output_json:
+            print(json.dumps(result.to_dict(), indent=2, default=str))
+        else:
+            print()
+            print("=" * 50)
+            print("STEP 3B READINESS CHECK")
+            print("=" * 50)
+            print()
+            verdict_label = "READY" if result.can_proceed else "BLOCKED"
+            print(f"  Verdict: {verdict_label}")
+            print()
+            m = result.metrics
+            print(f"  Multi-source promoted files: {m.get('multi_source_promoted', '?')}"
+                  f" (threshold: {m.get('multi_source_threshold', '?')})")
+            print(f"  Canary verdict: {m.get('canary_verdict', 'none')}"
+                  f" (pass_rate: {m.get('canary_pass_rate', '?')})")
+            print(f"  Phase G verdict: {m.get('phase_g_verdict', '?')}")
+            print()
+            if result.blockers:
+                print("  Blockers:")
+                for b in result.blockers:
+                    print(f"    - {b}")
+            else:
+                print("  No blockers. Ready to proceed.")
+            print()
+
+        return 0 if result.can_proceed else 1
+    except Exception as e:
+        if output_json:
+            print(json.dumps({"error": str(e)}, indent=2))
+        else:
+            print(f"Step 3B readiness check failed: {e}")
+        return 1
+    finally:
+        await pipeline.close()
+
+
 async def cmd_metrics(args):
     """Show pipeline run metrics with per-collector breakdown."""
     print("=" * 70)
@@ -2162,7 +2213,7 @@ async def cmd_entity_merge_preview(args) -> int:
                 ms.similarity_score,
                 ms.created_at
             FROM merge_suggestions ms
-            WHERE ms.status = 'proposed'
+            WHERE ms.status = 'pending'
             ORDER BY ms.similarity_score DESC, ms.created_at DESC
             LIMIT ?
         """, (limit,)) as cursor:
@@ -2172,7 +2223,7 @@ async def cmd_entity_merge_preview(args) -> int:
             if json_output:
                 print(json.dumps({"previews": [], "count": 0}))
             else:
-                print("No proposed merge suggestions found.")
+                print("No pending merge suggestions found.")
             return 0
 
         previews = []
@@ -2579,6 +2630,23 @@ Environment variables:
         "--verbose",
         action="store_true",
         help="Show detailed signal health report",
+    )
+
+    # Step 3B readiness command
+    step3b_parser = subparsers.add_parser(
+        "step3b-readiness",
+        help="Check Step 3B activation readiness (multi-source, canary, Phase G)",
+    )
+    step3b_parser.add_argument(
+        "--db-path",
+        type=str,
+        help="Path to SQLite database",
+    )
+    step3b_parser.add_argument(
+        "--json",
+        action="store_true",
+        dest="output_json",
+        help="Output results as JSON",
     )
 
     # Metrics command
@@ -6873,6 +6941,8 @@ async def main():
             await cmd_stats(args)
         elif args.command == "health":
             exit_code = await cmd_health(args)
+        elif args.command == "step3b-readiness":
+            exit_code = await cmd_step3b_readiness(args)
         elif args.command == "metrics":
             await cmd_metrics(args)
         elif args.command == "embeddings":

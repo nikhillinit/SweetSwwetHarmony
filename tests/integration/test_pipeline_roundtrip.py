@@ -60,17 +60,19 @@ def _make_signal(
     source_api: str = "sec_edgar",
     confidence: float = 0.75,
     raw_data: dict = None,
+    detected_at: datetime = None,
 ) -> Signal:
     """Helper to build a Signal dataclass.
 
     Note: Signal.id is the identifier (often canonical_key in practice).
+    Pass detected_at to freeze the timestamp for deterministic dedupe tests.
     """
     return Signal(
         id=signal_id,
         signal_type=signal_type,
         source_api=source_api,
         confidence=confidence,
-        detected_at=datetime.now(timezone.utc),
+        detected_at=detected_at or datetime.now(timezone.utc),
         raw_data=raw_data or {"description": f"Test signal {signal_id}"},
     )
 
@@ -121,15 +123,18 @@ class TestPipelineRoundtrip:
         assert result.error_message is None
 
     @pytest.mark.asyncio
-    async def test_dedup_filters_duplicate_canonical_keys(self, store):
-        """Duplicate canonical keys should be suppressed on second collector run."""
-        sig = _make_signal("domain:dupe-co.com", "funding_event", "sec_edgar")
-        collector1 = FakeCollector(signals=[sig], store=store)
+    async def test_dedup_filters_exact_duplicate_signal(self, store):
+        """Exact duplicate (same key+type+source+detected_at) is suppressed."""
+        t = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        sig1 = _make_signal("domain:dupe-co.com", "funding_event", "sec_edgar", detected_at=t)
+        sig2 = _make_signal("domain:dupe-co.com", "funding_event", "sec_edgar", detected_at=t)
+
+        collector1 = FakeCollector(signals=[sig1], store=store)
         r1 = await collector1.run(dry_run=False)
         assert r1.signals_new >= 1
 
-        # Second run: same signal id/canonical key
-        collector2 = FakeCollector(signals=[sig], store=store)
+        # Second run: exact same identity → suppressed
+        collector2 = FakeCollector(signals=[sig2], store=store)
         r2 = await collector2.run(dry_run=False)
         assert r2.signals_suppressed >= 1
         assert r2.signals_new == 0
@@ -259,8 +264,8 @@ class TestRobustness:
             await store2.close()
 
     @pytest.mark.asyncio
-    async def test_two_collectors_same_domain_deduped(self, store):
-        """Two collectors emitting the same canonical key: second run deduped."""
+    async def test_two_collectors_same_domain_allows_multi_source(self, store):
+        """Same canonical key across different sources/types is allowed (multi-source convergence)."""
         key = "domain:shared-discovery.com"
         sig_a = _make_signal(key, "funding_event", "sec_edgar", 0.8)
         sig_b = _make_signal(key, "github_spike", "github", 0.6)
@@ -268,13 +273,40 @@ class TestRobustness:
         collector1 = FakeCollector(signals=[sig_a], store=store,
                                    collector_name="collector_a")
         r1 = await collector1.run(dry_run=False)
-        assert r1.signals_new >= 1
+        assert r1.signals_new == 1
 
         collector2 = FakeCollector(signals=[sig_b], store=store,
                                    collector_name="collector_b")
         r2 = await collector2.run(dry_run=False)
-        # Same canonical key → suppressed as duplicate
-        assert r2.signals_suppressed >= 1
+        assert r2.signals_new == 1
+        assert r2.signals_suppressed == 0
+
+        # Verify DB contains both signals for the same canonical key
+        saved = await store.get_signals_for_company(key)
+        assert len(saved) >= 2
+        saved_pairs = {(s.signal_type, s.source_api) for s in saved}
+        assert ("funding_event", "sec_edgar") in saved_pairs
+        assert ("github_spike", "github") in saved_pairs
+
+    @pytest.mark.asyncio
+    async def test_single_collector_allows_two_signals_same_key_one_run(self, store):
+        """One collector run emitting two signals for the same key must not suppress the second."""
+        key = "domain:same-run.com"
+        sig_a = _make_signal(key, "funding_event", "sec_edgar", 0.8)
+        sig_b = _make_signal(key, "github_spike", "github", 0.6)
+
+        collector = FakeCollector(signals=[sig_a, sig_b], store=store,
+                                  collector_name="collector_c")
+        r = await collector.run(dry_run=False)
+        assert r.signals_new == 2
+        assert r.signals_suppressed == 0
+
+        # Verify DB contains both signals
+        saved = await store.get_signals_for_company(key)
+        assert len(saved) >= 2
+        saved_pairs = {(s.signal_type, s.source_api) for s in saved}
+        assert ("funding_event", "sec_edgar") in saved_pairs
+        assert ("github_spike", "github") in saved_pairs
 
     @pytest.mark.asyncio
     async def test_dryrun_does_not_add_suppression(self, store):

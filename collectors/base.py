@@ -112,8 +112,10 @@ class BaseCollector(ABC):
             # Unlimited rate limiter for unknown APIs
             self._rate_limiter = AsyncRateLimiter(rate=None, period=1)
 
-        # Track what we've seen in this run
-        self._processed_canonical_keys: set[str] = set()
+        # Track what we've seen in this run.
+        # IMPORTANT: identity-based (key+type+source), not canonical-key-based,
+        # so multi-source convergence works within a single run.
+        self._processed_identities: set[tuple[str, str, str]] = set()
 
         # Statistics
         self._signals_found = 0
@@ -132,6 +134,14 @@ class BaseCollector(ABC):
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Async context manager exit - implement in subclass if needed"""
         pass
+
+    def _run_identity(self, canonical_key: str, signal: "Signal") -> tuple[str, str, str]:
+        """Build same-run dedup identity: (canonical_key, signal_type, source_api).
+
+        Does NOT include detected_at — that would re-codify timestamp
+        brittleness and fail to prevent obvious within-run duplicates.
+        """
+        return (canonical_key, signal.signal_type, signal.source_api)
 
     # =========================================================================
     # TIMEOUT CONFIGURATION & TELEMETRY
@@ -316,19 +326,25 @@ class BaseCollector(ABC):
                     )
                     canonical_key = signal.id
 
-                # Skip if we already processed this key in this run
-                if canonical_key in self._processed_canonical_keys:
-                    logger.debug(f"Already processed {canonical_key} in this run")
+                # Skip if we already processed this identity in this run
+                ident = self._run_identity(canonical_key, signal)
+                if ident in self._processed_identities:
+                    logger.debug(f"Already processed {ident} in this run")
                     self._signals_suppressed += 1
                     continue
 
-                # Check if already in database
-                is_duplicate = await self.store.is_duplicate(canonical_key)
+                # Check if already in database (exact-tuple: multi-source OK)
+                is_duplicate = await self.store.is_duplicate(
+                    canonical_key,
+                    signal_type=signal.signal_type,
+                    source_api=signal.source_api,
+                    detected_at=signal.detected_at,
+                )
 
                 if is_duplicate:
                     logger.debug(f"Duplicate signal: {canonical_key}")
                     self._signals_suppressed += 1
-                    self._processed_canonical_keys.add(canonical_key)
+                    self._processed_identities.add(ident)
                     continue
 
                 # Check suppression cache (already in Notion?)
@@ -339,7 +355,7 @@ class BaseCollector(ABC):
                         f"(already in Notion as {suppression.notion_page_id})"
                     )
                     self._signals_suppressed += 1
-                    self._processed_canonical_keys.add(canonical_key)
+                    self._processed_identities.add(ident)
                     continue
 
                 # New signal! Save it
@@ -359,7 +375,7 @@ class BaseCollector(ABC):
                 )
 
                 self._signals_new += 1
-                self._processed_canonical_keys.add(canonical_key)
+                self._processed_identities.add(ident)
 
             except Exception as e:
                 error_msg = f"Error saving signal {signal.id}: {str(e)}"
@@ -397,12 +413,18 @@ class BaseCollector(ABC):
                     canonical_key = signal.id
 
                 # Skip if already checked in this run
-                if canonical_key in self._processed_canonical_keys:
+                ident = self._run_identity(canonical_key, signal)
+                if ident in self._processed_identities:
                     self._signals_suppressed += 1
                     continue
 
-                # Check database
-                is_duplicate = await self.store.is_duplicate(canonical_key)
+                # Check database (exact-tuple: multi-source OK)
+                is_duplicate = await self.store.is_duplicate(
+                    canonical_key,
+                    signal_type=signal.signal_type,
+                    source_api=signal.source_api,
+                    detected_at=signal.detected_at,
+                )
 
                 if is_duplicate:
                     self._signals_suppressed += 1
@@ -414,7 +436,7 @@ class BaseCollector(ABC):
                     else:
                         self._signals_new += 1
 
-                self._processed_canonical_keys.add(canonical_key)
+                self._processed_identities.add(ident)
 
             except Exception as e:
                 logger.warning(f"Error checking signal {signal.id}: {e}")
