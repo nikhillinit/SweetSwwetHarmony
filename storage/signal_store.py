@@ -2797,12 +2797,16 @@ class SignalStore:
         source_api: Optional[str] = None,
         detected_at: Optional[datetime] = None,
     ) -> bool:
-        """
-        Check if we already have signals for this canonical key.
+        """Check for duplicate signals.
+
+        Contract:
+        - Multi-source convergence is allowed: same canonical_key across
+          different (signal_type, source_api) is NOT a duplicate.
+        - "Duplicate" means same evidence identity, not "same company."
 
         When signal_type, source_api, and detected_at are all provided,
         checks for an exact-tuple match — allowing different sources to
-        contribute signals for the same company (multi-source support).
+        contribute signals for the same company.
 
         When only canonical_key is provided (legacy), falls back to
         blanket canonical-key check.
