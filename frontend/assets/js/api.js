@@ -63,24 +63,34 @@ export function clearCache() {
 }
 
 // --- Token management ---
-function getToken() {
-  return sessionStorage.getItem('jwt_token');
+function _getStorage() {
+  const type = localStorage.getItem('jwt_storage_type');
+  return type === 'local' ? localStorage : sessionStorage;
 }
 
-function setToken(token, expiresAt) {
-  sessionStorage.setItem('jwt_token', token);
-  if (expiresAt) sessionStorage.setItem('jwt_expires_at', expiresAt);
+function getToken() {
+  return _getStorage().getItem('jwt_token');
+}
+
+function setToken(token, expiresAt, persistent) {
+  const storage = persistent ? localStorage : sessionStorage;
+  localStorage.setItem('jwt_storage_type', persistent ? 'local' : 'session');
+  storage.setItem('jwt_token', token);
+  if (expiresAt) storage.setItem('jwt_expires_at', expiresAt);
 }
 
 function clearToken() {
   sessionStorage.removeItem('jwt_token');
   sessionStorage.removeItem('jwt_expires_at');
+  localStorage.removeItem('jwt_token');
+  localStorage.removeItem('jwt_expires_at');
+  localStorage.removeItem('jwt_storage_type');
 }
 
 export function isAuthenticated() {
   const token = getToken();
   if (!token) return false;
-  const exp = sessionStorage.getItem('jwt_expires_at');
+  const exp = _getStorage().getItem('jwt_expires_at');
   if (exp && new Date(exp) < new Date()) {
     clearToken();
     return false;
@@ -218,13 +228,13 @@ export async function del(path, opts = {}) {
   return result;
 }
 
-export async function login(email, password) {
+export async function login(email, password, rememberMe = true) {
   const result = await doFetch('/api/v1/auth/login', {
     method: 'POST',
     body: { email, password },
   });
   if (result.ok && result.data?.access_token) {
-    setToken(result.data.access_token, result.data.expires_at);
+    setToken(result.data.access_token, result.data.expires_at, rememberMe);
   }
   return result;
 }

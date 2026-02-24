@@ -22,9 +22,15 @@ export async function mount(target) {
           <label class="input-label" for="login-email">Email</label>
           <input class="input" type="email" id="login-email" placeholder="you@example.com" autocomplete="email" required>
         </div>
-        <div class="input-group" style="margin-bottom:var(--space-6);">
+        <div class="input-group" style="margin-bottom:var(--space-4);">
           <label class="input-label" for="login-password">Password</label>
           <input class="input" type="password" id="login-password" placeholder="Password" autocomplete="current-password" required>
+        </div>
+        <div class="login-remember">
+          <label class="input-checkbox-label">
+            <input type="checkbox" id="login-remember" class="input-checkbox" checked>
+            <span>Remember me</span>
+          </label>
         </div>
         <button type="submit" class="btn btn-primary" style="width:100%;" id="login-btn">Sign in</button>
       </form>
@@ -55,7 +61,8 @@ export async function mount(target) {
     errorEl.style.display = 'none';
 
     try {
-      const result = await login(email, password);
+      const rememberMe = document.getElementById('login-remember')?.checked ?? true;
+      const result = await login(email, password, rememberMe);
       if (result.ok) {
         view.remove();
         navigate('#/');
