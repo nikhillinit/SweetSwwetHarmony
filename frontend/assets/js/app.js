@@ -149,13 +149,31 @@ on('triage:changed', () => {
 // Update user info when route changes
 window.addEventListener('hashchange', updateUserInfo);
 
-// --- Stale session refresh ---
+// --- Cross-tab sync ---
+window.addEventListener('storage', (e) => {
+  if (e.key === 'jwt_token' && !e.newValue) {
+    // Token removed in another tab — redirect to login
+    if (window.location.hash !== '#/login') {
+      navigate('#/login');
+    }
+  } else if (e.key === 'jwt_token' && e.newValue) {
+    // Token set in another tab — refresh user info
+    updateUserInfo();
+  }
+});
+
+// --- Stale session refresh + expiry check ---
 let hiddenAt = 0;
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     hiddenAt = Date.now();
-  } else if (hiddenAt && Date.now() - hiddenAt > 5 * 60 * 1000) {
-    clearCache();
+  } else {
+    if (hiddenAt && Date.now() - hiddenAt > 5 * 60 * 1000) {
+      clearCache();
+    }
+    if (!isAuthenticated() && window.location.hash !== '#/login') {
+      navigate('#/login');
+    }
   }
 });
 

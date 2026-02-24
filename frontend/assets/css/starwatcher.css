@@ -907,6 +907,28 @@ a:hover { text-decoration: underline; }
   margin-bottom: var(--space-4);
 }
 
+.login-remember {
+  margin-bottom: var(--space-6);
+}
+
+.input-checkbox-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.input-checkbox {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--color-primary);
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+}
+
 .login-hint {
   margin-top: var(--space-4);
   padding: var(--space-3);
