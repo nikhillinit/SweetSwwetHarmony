@@ -786,3 +786,39 @@ def test_report_env_runtime_metadata():
     assert "python_version" in runtime
     assert "platform" in runtime
     assert runtime["platform"] == sys.platform
+
+
+# ---------------------------------------------------------------------------
+# DRIFT DETAIL SCOPE ANNOTATION
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_report_drift_detail_scope(real_schema_db, rw_conn):
+    """Drift details include detail_scope key and all severity levels."""
+    now = datetime.now(timezone.utc).isoformat()
+    # Use valid alert_types from the CHECK constraint
+    alert_types = {"critical": "pass_rate_drop", "warning": "spc_violation", "info": "trend_alert"}
+    for sev in ("critical", "warning", "info"):
+        await rw_conn.execute(
+            """INSERT INTO canary_drift_alerts
+               (alert_type, severity, metric_name, message, expected_value, actual_value,
+                status, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (alert_types[sev], sev, "metric", f"{sev} alert", 1.0, 0.0, "open", now),
+        )
+    await rw_conn.commit()
+
+    import aiosqlite
+    ro = await aiosqlite.connect(f"file:{real_schema_db}?mode=ro", uri=True)
+    ro.row_factory = aiosqlite.Row
+    try:
+        readiness = await _gather_readiness(ro, real_schema_db)
+        drift = readiness["drift_alerts"]
+        assert drift.get("detail_scope") == "all_open_severities"
+        severities = [d["severity"] for d in drift["details"]]
+        assert "critical" in severities
+        assert "warning" in severities
+        assert "info" in severities
+    finally:
+        await ro.close()
