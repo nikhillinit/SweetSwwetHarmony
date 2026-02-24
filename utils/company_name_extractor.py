@@ -118,7 +118,31 @@ LEGAL_SUFFIXES: frozenset[str] = frozenset({
 _COMMON_WORDS = frozenset({"the", "a", "an", "this", "new", "how", "why", "what", "when"})
 
 # Verb alternation (case-insensitive via inline flag)
-_VERBS = r"(?i:raises|raised|announces|announced|launches|launched|unveils|secures|secured|closes|closed|wins|won|makes|debuts|expands|expanded|partners|partnered|reports|reported|acquires|acquired|introduces|introduced|enters|entered|appoints|appointed|files|filed|completes|completed|signs|signed)"
+_VERBS = r"(?i:raises|raised|announces|announced|launches|launched|unveils|unveil|secures|secured|closes|closed|wins|won|makes|debuts|expands|expanded|partners|partnered|reports|reported|acquires|acquired|introduces|introduced|enters|entered|appoints|appointed|files|filed|completes|completed|signs|signed|reveal|reveals|revealed)"
+
+# Strong token: starts uppercase, may contain apostrophe/ampersand
+_STRONG_TOKEN = r"[A-Z][a-zA-Z0-9'&]*"
+# Connector: case-insensitive, minimal closed set (NO "of" — deferred)
+_CONNECTOR = r"(?i:for|and|&)"
+
+# Non-entity prefixes for sanity gating
+_NON_ENTITY_PREFIXES = frozenset({
+    "half", "most", "new", "top", "market", "best",
+    "all", "many", "some", "few", "every",
+})
+
+
+def _is_valid_company_candidate(name: str) -> bool:
+    """Reject regex matches that are structurally unlikely to be company names."""
+    tokens = name.split()
+    if len(tokens) > 5:
+        return False
+    if tokens[0].lower() in _NON_ENTITY_PREFIXES:
+        return False
+    # Reject if ends with a connector
+    if tokens[-1].lower() in {"for", "of", "and", "&"}:
+        return False
+    return True
 
 
 def extract_via_regex(title: str) -> Optional[str]:
@@ -140,12 +164,12 @@ def extract_via_regex(title: str) -> Optional[str]:
 
     # Group 1: Single-word company at start of title
     single_word_patterns = [
-        rf"^([A-Z][a-zA-Z0-9]+)\s+{_VERBS}",
+        rf"^([A-Z][a-zA-Z0-9'&]+)\s+{_VERBS}",
     ]
 
-    # Group 2: Multi-word company at start (up to 4 words before verb)
+    # Group 2: Multi-word company at start with optional connectors (for, and, &)
     multi_word_patterns = [
-        rf"^([A-Z][a-zA-Z0-9]+(?:\s+[A-Z][a-zA-Z0-9]*){{0,3}}?)\s+{_VERBS}",
+        rf"^({_STRONG_TOKEN}(?:\s+(?:{_CONNECTOR}\s+)?{_STRONG_TOKEN}){{0,3}}?)\s+{_VERBS}",
     ]
 
     # Group 3: "backs X" / "invests in X" patterns (company in middle)
@@ -175,7 +199,9 @@ def extract_via_regex(title: str) -> Optional[str]:
             match = re.search(pattern, title)
             if match:
                 company = match.group(1).strip()
-                if company.lower() not in _COMMON_WORDS and len(company) >= 2:
+                if (company.lower() not in _COMMON_WORDS
+                        and len(company) >= 2
+                        and _is_valid_company_candidate(company)):
                     return company
 
     return None
