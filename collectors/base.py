@@ -322,8 +322,13 @@ class BaseCollector(ABC):
                     self._signals_suppressed += 1
                     continue
 
-                # Check if already in database
-                is_duplicate = await self.store.is_duplicate(canonical_key)
+                # Check if already in database (exact-tuple: multi-source OK)
+                is_duplicate = await self.store.is_duplicate(
+                    canonical_key,
+                    signal_type=signal.signal_type,
+                    source_api=signal.source_api,
+                    detected_at=signal.detected_at,
+                )
 
                 if is_duplicate:
                     logger.debug(f"Duplicate signal: {canonical_key}")
@@ -401,8 +406,13 @@ class BaseCollector(ABC):
                     self._signals_suppressed += 1
                     continue
 
-                # Check database
-                is_duplicate = await self.store.is_duplicate(canonical_key)
+                # Check database (exact-tuple: multi-source OK)
+                is_duplicate = await self.store.is_duplicate(
+                    canonical_key,
+                    signal_type=signal.signal_type,
+                    source_api=signal.source_api,
+                    detected_at=signal.detected_at,
+                )
 
                 if is_duplicate:
                     self._signals_suppressed += 1
