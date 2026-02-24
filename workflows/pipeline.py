@@ -1107,6 +1107,9 @@ class DiscoveryPipeline:
             {"mode": "collect_only", "collectors": collector_names, "dry_run": dry_run},
         )
 
+        # Reset collector metrics for this run
+        self._collector_metrics = []
+
         logger.info(f"Running collectors: {collector_names} (dry_run={dry_run})")
 
         run_error: Optional[str] = None
@@ -1116,9 +1119,40 @@ class DiscoveryPipeline:
             run_error = str(e)
             raise
         finally:
-            await self._end_run_tracking(
-                success=run_error is None, error=run_error,
-            )
+            # Save metrics (collect-only mode) — skip on dry_run to preserve read-only invariant
+            if self._store and not dry_run and self._collector_metrics:
+                try:
+                    stats = PipelineStats()
+                    stats.collectors_run = len(self._collector_metrics)
+                    stats.collectors_succeeded = sum(
+                        1 for m in self._collector_metrics if m.status == "success"
+                    )
+                    stats.collectors_failed = sum(
+                        1 for m in self._collector_metrics if m.status == "error"
+                    )
+                    stats.collectors_skipped = sum(
+                        1 for m in self._collector_metrics if m.status == "skipped"
+                    )
+                    stats.signals_collected = sum(
+                        m.signals_found for m in self._collector_metrics
+                    )
+                    if run_error:
+                        stats.errors.append(run_error)
+                    stats.complete()
+                    await self._save_pipeline_metrics(stats)
+                except Exception as save_err:
+                    logger.warning(
+                        f"Failed to save collect-mode metrics (non-fatal): {save_err}"
+                    )
+
+            try:
+                await self._end_run_tracking(
+                    success=run_error is None, error=run_error,
+                )
+            except Exception as track_err:
+                logger.warning(
+                    f"Failed to end run tracking (non-fatal): {track_err}"
+                )
 
         return results
 
@@ -1336,7 +1370,10 @@ class DiscoveryPipeline:
                 )
             elif collector_name == "sec_edgar":
                 from collectors.sec_edgar import SECEdgarCollector
-                collector = SECEdgarCollector(**common_args)
+                all_filings = os.getenv("SEC_EDGAR_ALL_FILINGS", "").lower() in ("true", "1", "yes")
+                if all_filings:
+                    logger.info("SEC Edgar SIC filter bypassed (SEC_EDGAR_ALL_FILINGS=true)")
+                collector = SECEdgarCollector(**common_args, target_sectors_only=not all_filings)
             elif collector_name == "companies_house":
                 from collectors.companies_house import CompaniesHouseCollector
                 collector = CompaniesHouseCollector(

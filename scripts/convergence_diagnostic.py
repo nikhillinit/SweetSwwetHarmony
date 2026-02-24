@@ -1,0 +1,407 @@
+#!/usr/bin/env python3
+"""
+Convergence diagnostic report.
+
+Reports 7 sections:
+1. Multi-source signal overlap
+2. Promoted entities with >=2 sources (raw + eligible KPI)
+3. news_api key distribution (run-scoped)
+4. Publisher leakage count
+5. api_calls per collector (explicit latest-run CTE)
+6. SEC Edgar sic_matched distribution
+7. Per-collector domain key counts (non-HN)
+
+Usage:
+    python scripts/convergence_diagnostic.py --db signals.db
+    python scripts/convergence_diagnostic.py --db signals.db --latest-run
+    python scripts/convergence_diagnostic.py --db signals.db --run-id abc123
+    python scripts/convergence_diagnostic.py --db signals.db --json --out report.json
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import sqlite3
+import sys
+from datetime import datetime, timezone, timedelta
+
+sys.path.insert(0, ".")
+
+from utils.company_name_extractor import is_blocked_domain
+from utils.canonical_keys import NEWS_PUBLISHER_DOMAINS
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+logger = logging.getLogger(__name__)
+
+
+def _get_latest_run_id(conn: sqlite3.Connection) -> str | None:
+    """Get the latest run_id from pipeline_runs."""
+    row = conn.execute(
+        "SELECT run_id FROM pipeline_runs ORDER BY started_at DESC LIMIT 1"
+    ).fetchone()
+    return row[0] if row else None
+
+
+def _section_1_multi_source_overlap(conn: sqlite3.Connection) -> list[dict]:
+    """Multi-source signal overlap (informational)."""
+    rows = conn.execute("""
+        SELECT canonical_key, GROUP_CONCAT(DISTINCT source_api) as sources,
+               COUNT(DISTINCT source_api) as n
+        FROM signals WHERE canonical_key LIKE 'domain:%'
+        GROUP BY canonical_key HAVING n >= 2
+        ORDER BY n DESC
+    """).fetchall()
+    return [
+        {"canonical_key": r[0], "sources": r[1], "source_count": r[2]}
+        for r in rows
+    ]
+
+
+def _section_2_promoted_multi_source(conn: sqlite3.Connection) -> dict:
+    """Promoted entities with >=2 sources (raw + eligible KPI)."""
+    # Check if tables exist
+    tables = {r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+    ).fetchall()}
+
+    if "company_files" not in tables:
+        return {"promoted_multi_source_raw": 0, "promoted_multi_source_eligible": 0, "details": []}
+
+    # RAW count
+    raw_rows = conn.execute("""
+        SELECT cf.canonical_key, COUNT(DISTINCT s.source_api) as src_count
+        FROM company_files cf
+        JOIN signals s ON cf.canonical_key = s.canonical_key
+        WHERE cf.status = 'promoted'
+        GROUP BY cf.canonical_key HAVING src_count >= 2
+    """).fetchall()
+
+    # ELIGIBLE count (exclude rejected signals)
+    has_signal_processing = "signal_processing" in tables
+    if has_signal_processing:
+        eligible_rows = conn.execute("""
+            SELECT cf.canonical_key, COUNT(DISTINCT s.source_api) as src_count
+            FROM company_files cf
+            JOIN signals s ON cf.canonical_key = s.canonical_key
+            LEFT JOIN signal_processing sp ON sp.signal_id = s.id
+            WHERE cf.status = 'promoted'
+              AND (sp.status IS NULL OR sp.status != 'rejected')
+            GROUP BY cf.canonical_key HAVING src_count >= 2
+        """).fetchall()
+    else:
+        eligible_rows = raw_rows  # No processing table, all are eligible
+
+    return {
+        "promoted_multi_source_raw": len(raw_rows),
+        "promoted_multi_source_eligible": len(eligible_rows),
+        "details": [{"canonical_key": r[0], "source_count": r[1]} for r in raw_rows],
+    }
+
+
+def _section_3_news_api_key_distribution(
+    conn: sqlite3.Connection, run_id: str | None, since_days: int | None
+) -> list[dict]:
+    """news_api key distribution (scoped)."""
+    conditions = ["source_api = 'news_api'"]
+    params: list = []
+
+    if run_id:
+        # Scope to signals from this run via pipeline_runs timing
+        conditions.append("""
+            rowid IN (
+                SELECT s.rowid FROM signals s
+                JOIN pipeline_runs pr ON pr.run_id = ?
+                WHERE s.source_api = 'news_api'
+                  AND s.created_at >= pr.started_at
+                  AND (pr.completed_at IS NULL OR s.created_at <= pr.completed_at)
+            )
+        """)
+        params.append(run_id)
+    elif since_days:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=since_days)).isoformat()
+        conditions.append("created_at >= ?")
+        params.append(cutoff)
+
+    where = " AND ".join(conditions)
+
+    rows = conn.execute(f"""
+        SELECT
+            CASE
+                WHEN canonical_key LIKE 'domain:%' THEN 'domain'
+                WHEN canonical_key LIKE 'name_loc:%' THEN 'name_loc'
+                WHEN canonical_key LIKE 'hash:%' THEN 'hash'
+                ELSE 'other'
+            END as key_type,
+            COUNT(*) as count
+        FROM signals
+        WHERE {where}
+        GROUP BY key_type
+        ORDER BY count DESC
+    """, params).fetchall()
+
+    return [{"key_type": r[0], "count": r[1]} for r in rows]
+
+
+def _section_4_publisher_leakage(
+    conn: sqlite3.Connection, run_id: str | None, since_days: int | None
+) -> dict:
+    """Publisher leakage count (first-class line item)."""
+    conditions = ["canonical_key LIKE 'domain:%'"]
+    params: list = []
+
+    if run_id:
+        conditions.append("""
+            rowid IN (
+                SELECT s.rowid FROM signals s
+                JOIN pipeline_runs pr ON pr.run_id = ?
+                WHERE s.canonical_key LIKE 'domain:%%'
+                  AND s.created_at >= pr.started_at
+                  AND (pr.completed_at IS NULL OR s.created_at <= pr.completed_at)
+            )
+        """)
+        params.append(run_id)
+    elif since_days:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=since_days)).isoformat()
+        conditions.append("created_at >= ?")
+        params.append(cutoff)
+
+    where = " AND ".join(conditions)
+
+    rows = conn.execute(
+        f"SELECT canonical_key FROM signals WHERE {where}",
+        params,
+    ).fetchall()
+
+    leaked = []
+    for (key,) in rows:
+        host = key[len("domain:"):]
+        if is_blocked_domain(host):
+            leaked.append(key)
+
+    return {
+        "publisher_domain_keys_total": len(leaked),
+        "top_leaked": list(set(leaked))[:10],
+    }
+
+
+def _section_5_api_calls(conn: sqlite3.Connection, run_id: str | None) -> list[dict]:
+    """api_calls per collector (explicit latest-run CTE)."""
+    tables = {r[0] for r in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table'"
+    ).fetchall()}
+
+    if "collector_metrics" not in tables or "pipeline_runs" not in tables:
+        return []
+
+    if run_id:
+        rows = conn.execute("""
+            SELECT collector_name, api_calls, rate_limit_hits, signals_found, status
+            FROM collector_metrics
+            WHERE run_id = ?
+            ORDER BY collector_name
+        """, (run_id,)).fetchall()
+    else:
+        rows = conn.execute("""
+            WITH latest AS (
+                SELECT run_id FROM pipeline_runs ORDER BY started_at DESC LIMIT 1
+            )
+            SELECT cm.collector_name, cm.api_calls, cm.rate_limit_hits,
+                   cm.signals_found, cm.status
+            FROM collector_metrics cm
+            JOIN latest ON cm.run_id = latest.run_id
+            ORDER BY cm.collector_name
+        """).fetchall()
+
+    return [
+        {
+            "collector_name": r[0],
+            "api_calls": r[1],
+            "rate_limit_hits": r[2],
+            "signals_found": r[3],
+            "status": r[4],
+        }
+        for r in rows
+    ]
+
+
+def _section_6_sic_matched(conn: sqlite3.Connection) -> list[dict]:
+    """SEC Edgar sic_matched distribution."""
+    rows = conn.execute("""
+        SELECT json_extract(raw_data, '$.sic_matched') as sic_matched, COUNT(*)
+        FROM signals WHERE source_api = 'sec_edgar'
+        GROUP BY sic_matched
+    """).fetchall()
+    return [{"sic_matched": r[0], "count": r[1]} for r in rows]
+
+
+def _section_7_domain_key_counts(conn: sqlite3.Connection) -> list[dict]:
+    """Per-collector domain key counts (non-HN)."""
+    rows = conn.execute("""
+        SELECT source_api,
+            SUM(CASE WHEN canonical_key LIKE 'domain:%' THEN 1 ELSE 0 END) as domain_keys,
+            COUNT(*) as total
+        FROM signals WHERE source_api != 'hacker_news'
+        GROUP BY source_api
+        ORDER BY domain_keys DESC
+    """).fetchall()
+    return [
+        {"source_api": r[0], "domain_keys": r[1], "total": r[2]}
+        for r in rows
+    ]
+
+
+def run_diagnostic(
+    db_path: str,
+    run_id: str | None = None,
+    latest_run: bool = False,
+    since_days: int | None = None,
+    json_output: bool = False,
+    output_path: str | None = None,
+) -> dict:
+    """Run convergence diagnostic and return report dict."""
+    conn = sqlite3.connect(db_path)
+
+    # Resolve run_id
+    if latest_run and not run_id:
+        run_id = _get_latest_run_id(conn)
+        if run_id:
+            print(f"Using latest run_id: {run_id}")
+        else:
+            print("No pipeline_runs found — running without run scope.")
+
+    report = {
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "db_path": db_path,
+        "scoped_run_id": run_id,
+        "sections": {},
+    }
+
+    # Section 1
+    s1 = _section_1_multi_source_overlap(conn)
+    report["sections"]["multi_source_overlap"] = s1
+
+    # Section 2
+    s2 = _section_2_promoted_multi_source(conn)
+    report["sections"]["promoted_multi_source"] = s2
+
+    # Section 3
+    s3 = _section_3_news_api_key_distribution(conn, run_id, since_days)
+    report["sections"]["news_api_key_distribution"] = s3
+
+    # Section 4
+    s4 = _section_4_publisher_leakage(conn, run_id, since_days)
+    report["sections"]["publisher_leakage"] = s4
+
+    # Section 5
+    s5 = _section_5_api_calls(conn, run_id)
+    report["sections"]["api_calls_per_collector"] = s5
+
+    # Section 6
+    s6 = _section_6_sic_matched(conn)
+    report["sections"]["sic_matched_distribution"] = s6
+
+    # Section 7
+    s7 = _section_7_domain_key_counts(conn)
+    report["sections"]["domain_key_counts"] = s7
+
+    conn.close()
+
+    # Print human-readable report
+    print("\n" + "=" * 60)
+    print("CONVERGENCE DIAGNOSTIC REPORT")
+    print("=" * 60)
+
+    print(f"\nDB: {db_path}")
+    if run_id:
+        print(f"Scoped to run: {run_id}")
+
+    print(f"\n--- 1. Multi-Source Signal Overlap ---")
+    if s1:
+        for item in s1:
+            print(f"  {item['canonical_key']}: {item['sources']} ({item['source_count']} sources)")
+    else:
+        print("  No multi-source overlap found.")
+
+    print(f"\n--- 2. Promoted Multi-Source KPI ---")
+    print(f"  Raw (all signals):      {s2['promoted_multi_source_raw']}")
+    print(f"  Eligible (non-rejected): {s2['promoted_multi_source_eligible']}")
+
+    print(f"\n--- 3. news_api Key Distribution ---")
+    if s3:
+        for item in s3:
+            print(f"  {item['key_type']}: {item['count']}")
+    else:
+        print("  No news_api signals found.")
+
+    print(f"\n--- 4. Publisher Leakage ---")
+    print(f"  Publisher domain keys total: {s4['publisher_domain_keys_total']}")
+    if s4["top_leaked"]:
+        for key in s4["top_leaked"][:5]:
+            print(f"    {key}")
+
+    print(f"\n--- 5. API Calls per Collector ---")
+    if s5:
+        for item in s5:
+            print(
+                f"  {item['collector_name']}: "
+                f"api_calls={item['api_calls']}, "
+                f"rate_limit_hits={item['rate_limit_hits']}, "
+                f"signals={item['signals_found']}, "
+                f"status={item['status']}"
+            )
+    else:
+        print("  No collector metrics found.")
+
+    print(f"\n--- 6. SEC Edgar SIC Distribution ---")
+    if s6:
+        for item in s6:
+            print(f"  sic_matched={item['sic_matched']}: {item['count']}")
+    else:
+        print("  No SEC Edgar signals found.")
+
+    print(f"\n--- 7. Domain Key Counts (non-HN) ---")
+    if s7:
+        for item in s7:
+            print(
+                f"  {item['source_api']}: "
+                f"domain_keys={item['domain_keys']}/{item['total']}"
+            )
+    else:
+        print("  No non-HN signals found.")
+
+    print("\n" + "=" * 60)
+
+    # JSON output
+    if json_output and output_path:
+        with open(output_path, "w") as f:
+            json.dump(report, f, indent=2)
+        print(f"\nJSON report saved to: {output_path}")
+
+    return report
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Convergence diagnostic report")
+    parser.add_argument("--db", required=True, help="Path to SQLite database")
+    parser.add_argument("--run-id", help="Scope sections 3-5 to specific run_id")
+    parser.add_argument("--latest-run", action="store_true",
+                        help="Auto-detect latest pipeline_runs.run_id")
+    parser.add_argument("--since", type=int, help="Scope to signals within N days")
+    parser.add_argument("--json", action="store_true", help="Output JSON report")
+    parser.add_argument("--out", help="Output file path for JSON report")
+    args = parser.parse_args()
+
+    run_diagnostic(
+        db_path=args.db,
+        run_id=args.run_id,
+        latest_run=args.latest_run,
+        since_days=args.since,
+        json_output=args.json,
+        output_path=args.out,
+    )
+
+
+if __name__ == "__main__":
+    main()

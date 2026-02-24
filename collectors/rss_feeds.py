@@ -52,6 +52,7 @@ from utils.canonical_keys import build_canonical_key_candidates, NEWS_PUBLISHER_
 from utils.company_name_extractor import (
     extract_company_info,
     extract_via_regex,
+    is_blocked_domain,
     warmup_ner,
     ExtractionResult,
 )
@@ -652,10 +653,11 @@ class RSSFeedCollector(BaseCollector):
         company_name = extraction.company_name
 
         # Build canonical key: prefer promoted_domain, then article domain, then name
+        # Use suffix-aware blocklist check (catches subdomains like m.reuters.com)
         domain_for_key = ""
-        if extraction.promoted_domain:
+        if extraction.promoted_domain and not is_blocked_domain(extraction.promoted_domain):
             domain_for_key = extraction.promoted_domain
-        elif article.domain and article.domain not in NEWS_PUBLISHER_DOMAINS:
+        elif article.domain and not is_blocked_domain(article.domain):
             domain_for_key = article.domain
 
         canonical_keys = build_canonical_key_candidates(
