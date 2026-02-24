@@ -54,6 +54,7 @@ from utils.company_name_extractor import (
     warmup_ner,
     ExtractionResult,
 )
+from utils.hn_title import HN_SEP_RE
 from verification.verification_gate_v2 import Signal, VerificationStatus
 
 logger = logging.getLogger(__name__)
@@ -201,6 +202,71 @@ class RSSArticle:
         Kept as compatibility wrapper so existing tests pass unchanged.
         """
         return extract_via_regex(self.title)
+
+
+# =============================================================================
+# PRESS-RELEASE TITLE-SEGMENT HEURISTIC
+# =============================================================================
+
+# Extend HN_SEP_RE with colon for press releases (separate regex to avoid HN regression)
+_RSS_TITLE_SEP_RE = re.compile(
+    HN_SEP_RE.pattern + r"|\s*:\s*"
+)
+
+_PR_BOILERPLATE = frozenset({
+    "breaking", "exclusive", "update", "alert", "report",
+    "press release", "funding update", "pr newswire",
+    "business wire", "globe newswire", "news release",
+})
+
+_FIRST_TOKEN_STOP = frozenset({
+    "the", "a", "an", "new", "how", "why", "what", "when",
+    "breaking", "exclusive", "update", "alert",
+})
+
+_QUARTER_TICKER_RE = re.compile(r"^(Q[1-4]\b|FY\d|[A-Z]{1,5}:\s)")
+
+
+def _extract_press_release_prefix(title: str) -> Optional[str]:
+    """Extract company name from press-release title prefix before delimiter."""
+    if not title or not title.strip():
+        return None
+
+    m = _RSS_TITLE_SEP_RE.search(title)
+    if not m:
+        return None
+
+    segment = title[:m.start()].strip().strip("\"'")
+
+    # Length guardrails
+    if len(segment) < 2 or len(segment) > 35:
+        return None
+
+    tokens = segment.split()
+    if not (1 <= len(tokens) <= 4):
+        return None
+
+    # Reject if first token is stopword
+    if tokens[0].lower() in _FIRST_TOKEN_STOP:
+        return None
+
+    # Reject PR boilerplate
+    if segment.lower() in _PR_BOILERPLATE:
+        return None
+
+    # Reject quarter/ticker patterns (pre-split: "Q4 2026", "FY2026", "AAPL:")
+    if _QUARTER_TICKER_RE.match(segment):
+        return None
+
+    # Reject likely stock tickers: single all-uppercase alphabetic token, 1-5 chars
+    if len(tokens) == 1 and segment.isalpha() and segment.isupper() and len(segment) <= 5:
+        return None
+
+    # Must contain at least one letter
+    if not any(c.isalpha() for c in segment):
+        return None
+
+    return segment
 
 
 # =============================================================================
@@ -581,6 +647,15 @@ class RSSFeedCollector(BaseCollector):
             domain_or_website=domain_for_key,
             fallback_company_name=company_name or "",
         )
+
+        # Fallback: press-release title-segment heuristic
+        if not canonical_keys and not company_name and article.is_press_release:
+            segment_name = _extract_press_release_prefix(article.title)
+            if segment_name:
+                company_name = segment_name
+                canonical_keys = build_canonical_key_candidates(
+                    fallback_company_name=segment_name,
+                )
 
         # Create unique signal ID
         import hashlib

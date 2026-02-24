@@ -82,6 +82,65 @@ class TestExtractViaRegex:
     def test_capitalized_verb_raises(self):
         assert extract_via_regex("FitTrack Raises $20M Series B Funding") == "FitTrack"
 
+    # --- New verb expansion tests ---
+
+    def test_reports_verb(self):
+        result = extract_via_regex("Acme Reports Record Revenue")
+        assert result is not None
+        assert "Acme" in result
+
+    def test_acquires_verb(self):
+        result = extract_via_regex("TechCorp Acquires StartupXYZ")
+        assert result is not None
+        assert "TechCorp" in result
+
+    def test_introduces_verb(self):
+        result = extract_via_regex("Daily Harvest Introduces New Line")
+        assert result is not None
+        assert "Daily" in result
+
+    def test_completes_verb(self):
+        result = extract_via_regex("Oura Ring Completes Series B")
+        assert result is not None
+        assert "Oura" in result
+
+    def test_appoints_verb(self):
+        result = extract_via_regex("FreshDirect Appoints New CEO")
+        assert result is not None
+        assert "FreshDirect" in result
+
+    def test_enters_verb(self):
+        result = extract_via_regex("Brand Enters New Market Segment")
+        assert result is not None
+        assert "Brand" in result
+
+    def test_files_verb(self):
+        result = extract_via_regex("Acme Files for IPO")
+        assert result is not None
+        assert "Acme" in result
+
+    def test_signed_verb(self):
+        result = extract_via_regex("Acme Signed Deal with Major Retailer")
+        assert result is not None
+        assert "Acme" in result
+
+    def test_negative_board_approves(self):
+        """'The Board Approves...' must not extract 'The'."""
+        result = extract_via_regex("The Board Approves New Policy")
+        assert result is None or result != "The"
+
+    def test_negative_researchers_reveal(self):
+        """'Researchers Reveal...' — no matching verb."""
+        assert extract_via_regex("Researchers Reveal Study Results") is None
+
+    def test_negative_government_reports(self):
+        """'Government Reports...' should extract Government (reports is a verb).
+        This is acceptable — the verb list is permissive; downstream filters catch non-companies."""
+        result = extract_via_regex("Government Reports Economic Data")
+        # We accept this extraction — the extractor finds verb matches,
+        # thesis filter catches non-company subjects downstream
+        assert result is None or "Government" in result
+
     def test_common_words_filtered(self):
         result = extract_via_regex("The company raises funding")
         assert result is None or result != "The"

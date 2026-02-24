@@ -169,6 +169,7 @@ async def _gather_readiness(db, db_path: str) -> Dict[str, Any]:
                 }
                 for dr in detail_rows
             ]
+            drift["detail_scope"] = "all_open_severities"
         except Exception:
             pass  # Missing columns in older DBs — details stays []
 
@@ -658,6 +659,10 @@ if(rd.drift_alerts){rc.appendChild(kv('Open critical alerts',rd.drift_alerts.ope
       dt.appendChild(el('tr',null,[el('td',null,d.alert_type||''),el('td',null,d.severity||''),el('td',null,d.metric_name||''),el('td',null,d.message||''),el('td',null,d.created_at||'')]));
     });
     rc.appendChild(dt);
+    if(rd.drift_alerts.detail_scope==='all_open_severities'){
+      var note=el('div',{cls:'ts'},'Details include all open alerts (critical, warning, info). Banner counts reflect critical/warning only.');
+      rc.appendChild(note);
+    }
   }
 }
 if(rd.multi_source){rc.appendChild(kv('Multi-source promoted',rd.multi_source.promoted+' / '+rd.multi_source.threshold+' threshold'));rc.appendChild(kv('Multi-source method',rd.multi_source.method))}

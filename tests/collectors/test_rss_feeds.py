@@ -15,6 +15,7 @@ from collectors.rss_feeds import (
     RSSArticle,
     DEFAULT_FEEDS,
     FEED_CATEGORIES,
+    _extract_press_release_prefix,
 )
 from utils.canonical_keys import NEWS_PUBLISHER_DOMAINS
 
@@ -697,3 +698,132 @@ class TestImprovedCompanyExtraction:
         company = article.extract_company_name()
         assert company is not None
         assert "Litehouse" in company
+
+
+# =============================================================================
+# PRESS-RELEASE TITLE-SEGMENT HEURISTIC TESTS
+# =============================================================================
+
+
+class TestExtractPressReleasePrefix:
+    """Tests for _extract_press_release_prefix() helper."""
+
+    def test_colon_delimiter(self):
+        assert _extract_press_release_prefix("Acme Corp: Announces New Product") == "Acme Corp"
+
+    def test_dash_delimiter(self):
+        result = _extract_press_release_prefix("Daily Harvest \u2014 Launches Subscription Box")
+        assert result == "Daily Harvest"
+
+    def test_pipe_delimiter(self):
+        assert _extract_press_release_prefix("Oura Ring | Raises $100M Series C") == "Oura Ring"
+
+    def test_en_dash_delimiter(self):
+        assert _extract_press_release_prefix("3M \u2013 Enters Consumer Health Market") == "3M"
+
+    def test_numeric_company_name(self):
+        """Company names starting with digits (like 3M) should be accepted."""
+        assert _extract_press_release_prefix("3M: New Product Launch") == "3M"
+
+    def test_reject_boilerplate_breaking(self):
+        assert _extract_press_release_prefix("Breaking: Major Tech Company...") is None
+
+    def test_reject_boilerplate_exclusive(self):
+        assert _extract_press_release_prefix("Exclusive: The Future of AI...") is None
+
+    def test_reject_quarter_pattern(self):
+        assert _extract_press_release_prefix("Q4 2026 \u2014 Earnings Season Begins") is None
+
+    def test_reject_stopword_the(self):
+        assert _extract_press_release_prefix("The Future: AI in Healthcare") is None
+
+    def test_reject_stopword_how(self):
+        assert _extract_press_release_prefix("How: Companies Are Adapting") is None
+
+    def test_reject_too_long(self):
+        assert _extract_press_release_prefix(
+            "A Very Long Press Release Title That Exceeds Our Length Limit: Details"
+        ) is None
+
+    def test_reject_pr_newswire_boilerplate(self):
+        assert _extract_press_release_prefix("PR Newswire: Statement on Market Trends") is None
+
+    def test_reject_globe_newswire_boilerplate(self):
+        assert _extract_press_release_prefix("Globe Newswire: Latest Filing Results") is None
+
+    def test_reject_purely_numeric(self):
+        assert _extract_press_release_prefix("12345: Some Headline") is None
+
+    def test_reject_no_delimiter(self):
+        assert _extract_press_release_prefix("No Delimiter In This Title") is None
+
+    def test_reject_empty_string(self):
+        assert _extract_press_release_prefix("") is None
+
+    def test_reject_none(self):
+        assert _extract_press_release_prefix(None) is None
+
+    def test_reject_too_many_tokens(self):
+        assert _extract_press_release_prefix(
+            "Way Too Many Tokens Here Company: Something"
+        ) is None
+
+    def test_strip_quotes(self):
+        result = _extract_press_release_prefix('"Acme Corp": Announces Deal')
+        assert result == "Acme Corp"
+
+    def test_ticker_pattern_rejected(self):
+        assert _extract_press_release_prefix("AAPL: Earnings Report Released") is None
+
+    def test_fy_pattern_rejected(self):
+        assert _extract_press_release_prefix("FY2026 \u2014 Annual Report") is None
+
+
+class TestPressReleaseFallbackIntegration:
+    """Integration: fallback fires in _article_to_signal when extraction fails."""
+
+    def test_fallback_fires_for_press_release(self):
+        """Press release with colon prefix should get name_loc key, not hash."""
+        collector = RSSFeedCollector(store=None)
+        article = RSSArticle(
+            title="Acme Corp: Launches New Consumer Product Line",
+            description="...",
+            url="https://prnewswire.com/news/acme-launch",
+            source_feed="PR Newswire",
+            published_at=datetime.now(timezone.utc),
+        )
+        signal = collector._article_to_signal(article)
+        candidates = signal.raw_data["canonical_key_candidates"]
+        assert len(candidates) > 0, "Should have extracted candidates"
+        assert any(k.startswith("name_loc:") for k in candidates), \
+            f"Expected name_loc key from fallback, got {candidates}"
+        assert signal.raw_data["company_name"] == "Acme Corp"
+
+    def test_fallback_does_not_override_existing_extraction(self):
+        """When extract_company_info already finds a company, fallback is skipped."""
+        collector = RSSFeedCollector(store=None)
+        article = RSSArticle(
+            title="HealthyMeals Raises $5M: Full Details Inside",
+            description="...",
+            url="https://techcrunch.com/2024/01/15/healthymeals",
+            source_feed="TechCrunch Startups",
+            published_at=datetime.now(timezone.utc),
+        )
+        signal = collector._article_to_signal(article)
+        # The regex extractor should find "HealthyMeals" via the "raises" verb
+        assert signal.raw_data["company_name"] == "HealthyMeals"
+
+    def test_fallback_skipped_for_non_press_release(self):
+        """Non-press-release articles don't trigger the fallback."""
+        collector = RSSFeedCollector(store=None)
+        # techcrunch.com is not a PR source, so is_press_release=False
+        article = RSSArticle(
+            title="Some Unknown Topic: General News Article",
+            description="...",
+            url="https://techcrunch.com/general",
+            source_feed="TechCrunch Startups",
+            published_at=datetime.now(timezone.utc),
+        )
+        signal = collector._article_to_signal(article)
+        # is_press_release should be False for techcrunch
+        assert signal.raw_data["is_press_release"] is False
