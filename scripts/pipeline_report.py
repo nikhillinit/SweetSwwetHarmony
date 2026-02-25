@@ -44,6 +44,10 @@ _API_KEYS = [
 
 _MAX_LIMIT = 25
 
+# Schema policy: "pipeline-report-v1" is additive-compatible.
+# New fields may appear in any section without a version bump.
+# Version bump (v2) required only for field removals, type changes, or restructuring.
+
 
 # ---------------------------------------------------------------------------
 # GIT DIRTY CHECK (D11)
@@ -124,7 +128,7 @@ async def _gather_readiness(db, db_path: str) -> Dict[str, Any]:
         section["canary"] = {"verdict": None, "pass_rate": None,
                              "run_age_hours": None, "run_id": None}
 
-    # --- Drift alerts (raw context) ---
+    # --- Drift alerts (raw context + details) ---
     try:
         cursor = await db.execute(
             """SELECT severity, COUNT(*)
@@ -133,15 +137,45 @@ async def _gather_readiness(db, db_path: str) -> Dict[str, Any]:
                GROUP BY severity"""
         )
         rows = await cursor.fetchall()
-        drift = {"open_critical": 0, "open_warning": 0}
+        drift: Dict[str, Any] = {"open_critical": 0, "open_warning": 0, "details": []}
         for r in rows:
             if r[0] == "critical":
                 drift["open_critical"] = r[1]
             elif r[0] == "warning":
                 drift["open_warning"] = r[1]
+
+        # Fetch detail rows (capped at 10, severity-ordered)
+        try:
+            cursor = await db.execute(
+                """SELECT alert_type, severity, metric_name, message, created_at
+                   FROM canary_drift_alerts
+                   WHERE status = 'open'
+                   ORDER BY CASE severity
+                       WHEN 'critical' THEN 0
+                       WHEN 'warning' THEN 1
+                       WHEN 'info' THEN 2
+                       ELSE 3
+                   END, created_at DESC
+                   LIMIT 10"""
+            )
+            detail_rows = await cursor.fetchall()
+            drift["details"] = [
+                {
+                    "alert_type": dr[0],
+                    "severity": dr[1],
+                    "metric_name": dr[2],
+                    "message": dr[3],
+                    "created_at": dr[4],
+                }
+                for dr in detail_rows
+            ]
+            drift["detail_scope"] = "all_open_severities"
+        except Exception:
+            pass  # Missing columns in older DBs — details stays []
+
         section["drift_alerts"] = drift
     except Exception:
-        section["drift_alerts"] = {"open_critical": 0, "open_warning": 0}
+        section["drift_alerts"] = {"open_critical": 0, "open_warning": 0, "details": []}
 
     # --- Multi-source count (D6 — json_array_length with fallback) ---
     try:
@@ -309,6 +343,7 @@ async def _gather_pipeline_runs(db, limit: int = 10) -> Dict[str, Any]:
     recent_runs = []
     total_failed = 0
     total_errors = 0
+    productive_count = 0
 
     for r in run_rows:
         errors_raw = r[12]
@@ -321,22 +356,61 @@ async def _gather_pipeline_runs(db, limit: int = 10) -> Dict[str, Any]:
             except (json.JSONDecodeError, TypeError):
                 pass
 
+        # Three-tier classification: ghost < idle < productive
+        collectors_run = r[4] or 0
+        signals_collected = r[7] or 0
+        duration = r[3]
+        is_ghost = (
+            collectors_run == 0
+            and signals_collected == 0
+            and duration is not None
+            and duration < 1.0
+        )
+        # Idle: ran collectors but collected nothing (rate-limited, empty, etc.)
+        is_idle = not is_ghost and signals_collected == 0
+
         run_entry = {
             "run_id": r[0], "started_at": r[1], "duration_seconds": r[3],
-            "collectors_run": r[4], "collectors_succeeded": r[5],
-            "collectors_failed": r[6], "signals_collected": r[7],
+            "collectors_run": collectors_run, "collectors_succeeded": r[5],
+            "collectors_failed": r[6], "signals_collected": signals_collected,
             "signals_stored": r[8], "signals_deduplicated": r[9],
             "signals_processed": r[10], "signals_held": r[11],
             "errors": errors_list,
             "collectors": collector_map.get(r[0], []),
+            "is_ghost": is_ghost,
+            "is_idle": is_idle,
         }
         recent_runs.append(run_entry)
         total_failed += r[6] or 0
         total_errors += len(errors_list)
+        if not is_ghost and not is_idle:
+            productive_count += 1
+
+    # Anomaly detection: check 3 most recent productive runs for triple-zero
+    anomalies: List[str] = []
+    productive_runs = [r for r in recent_runs if not r["is_ghost"] and not r["is_idle"]]
+    for run in productive_runs[:3]:
+        collected = run["signals_collected"] or 0
+        stored = run["signals_stored"] or 0
+        deduped = run["signals_deduplicated"] or 0
+        if collected > 0 and stored == 0 and deduped == 0:
+            anomalies.append(
+                f"Signals collected but none stored or deduplicated in run "
+                f"{run['run_id']} -- check write enablement or metrics wiring"
+            )
 
     section["recent_runs"] = recent_runs
+    section["anomalies"] = anomalies
+    idle_count = sum(1 for r in recent_runs if r["is_idle"])
     section["totals"] = {
         "runs": len(recent_runs),
+        "productive_runs": productive_count,
+        "idle_runs": idle_count,
+        "run_classification": (
+            "productive: signals_collected>0; "
+            "idle: collectors ran but signals_collected=0; "
+            "ghost: collectors_run=0, signals_collected=0, duration<1s"
+        ),
         "failed_collectors": total_failed,
         "total_errors": total_errors,
     }
@@ -411,18 +485,57 @@ async def _gather_warm_intro(db, db_path: str) -> Dict[str, Any]:
     return section
 
 
+_SECRET_SUBSTRINGS = {"KEY", "TOKEN", "SECRET", "WEBHOOK", "PASSWORD"}
+
+
+def _is_secret_key(name: str) -> bool:
+    """True if environment variable name likely holds a secret."""
+    upper = name.upper()
+    return any(s in upper for s in _SECRET_SUBSTRINGS)
+
+
 def _gather_env_summary() -> Dict[str, Any]:
-    """Feature flag snapshot + API key presence (D8 — no secrets)."""
+    """Feature flag snapshot + API key presence (D8 — no secrets).
+
+    Distinguishes 'not set' (absent) from 'empty' (set to '').
+    Redacts keys matching KEY/TOKEN/SECRET/WEBHOOK/PASSWORD.
+    """
     flags = {}
     for key in _FEATURE_FLAGS:
-        flags[key] = os.getenv(key, "(not set)")
+        raw = os.environ.get(key)
+        if raw is None:
+            flags[key] = "(not set)"
+        elif raw == "":
+            flags[key] = "(empty)"
+        else:
+            flags[key] = raw
 
     keys = {}
     for key in _API_KEYS:
-        val = os.getenv(key, "")
-        keys[key] = bool(val and val not in ("xxx", "placeholder", ""))
+        raw = os.environ.get(key)
+        if raw is None:
+            keys[key] = "(not set)"
+        elif raw == "":
+            keys[key] = "(empty)"
+        elif raw in ("xxx", "placeholder"):
+            keys[key] = "(not set)"
+        else:
+            # Redact actual secret values
+            keys[key] = "configured"
 
-    return {"feature_flags": flags, "api_keys": keys}
+    return {
+        "feature_flags": flags,
+        "api_keys": keys,
+        "note": (
+            "Reflects the environment of the report-generating process, "
+            "not the running pipeline service."
+        ),
+        "runtime": {
+            "cwd": os.getcwd(),
+            "python_version": sys.version.split()[0],
+            "platform": sys.platform,
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -495,6 +608,8 @@ table{width:100%;border-collapse:collapse;font-size:.88rem}
 th{text-align:left;padding:.4rem .6rem;color:#A0A6AE;border-bottom:1px solid #2A2F36}
 td{padding:.4rem .6rem;border-bottom:1px solid #1E2228}
 .empty{color:#6C757D;font-style:italic;padding:1rem}
+.ghost{opacity:0.5}
+.anomaly-banner{background:#3D2800;border:1px solid #D4A017;border-radius:6px;padding:.6rem 1rem;margin-bottom:.8rem;color:#F5C842;font-size:.9rem}
 </style>
 </head>
 <body>
@@ -536,7 +651,20 @@ var rd=data.readiness||{};
 if(rd.canary)rc.appendChild(kv('Canary verdict',rd.canary.verdict||'none'));
 if(rd.canary)rc.appendChild(kv('Canary pass rate',rd.canary.pass_rate!=null?rd.canary.pass_rate.toFixed(4):'—'));
 if(rd.canary)rc.appendChild(kv('Canary age (hours)',rd.canary.run_age_hours!=null?rd.canary.run_age_hours:'—'));
-if(rd.drift_alerts){rc.appendChild(kv('Open critical alerts',rd.drift_alerts.open_critical));rc.appendChild(kv('Open warning alerts',rd.drift_alerts.open_warning))}
+if(rd.drift_alerts){rc.appendChild(kv('Open critical alerts',rd.drift_alerts.open_critical));rc.appendChild(kv('Open warning alerts',rd.drift_alerts.open_warning));
+  if(rd.drift_alerts.details&&rd.drift_alerts.details.length>0){
+    var dt=el('table');
+    dt.appendChild(el('tr',null,[el('th',null,'Type'),el('th',null,'Severity'),el('th',null,'Metric'),el('th',null,'Message'),el('th',null,'Created')]));
+    rd.drift_alerts.details.forEach(function(d){
+      dt.appendChild(el('tr',null,[el('td',null,d.alert_type||''),el('td',null,d.severity||''),el('td',null,d.metric_name||''),el('td',null,d.message||''),el('td',null,d.created_at||'')]));
+    });
+    rc.appendChild(dt);
+    if(rd.drift_alerts.detail_scope==='all_open_severities'){
+      var note=el('div',{cls:'ts'},'Details include all open alerts (critical, warning, info). Banner counts reflect critical/warning only.');
+      rc.appendChild(note);
+    }
+  }
+}
 if(rd.multi_source){rc.appendChild(kv('Multi-source promoted',rd.multi_source.promoted+' / '+rd.multi_source.threshold+' threshold'));rc.appendChild(kv('Multi-source method',rd.multi_source.method))}
 app.appendChild(section('Readiness',rc));
 
@@ -559,14 +687,19 @@ var pr=data.pipeline_runs||{};
 var pc=el('div',null);
 if(!pr.available||!pr.recent_runs||pr.recent_runs.length===0){pc.appendChild(el('div',{cls:'card'},[el('div',{cls:'empty'},'No pipeline runs recorded')]))}
 else{
+  // Anomaly banner
+  if(pr.anomalies&&pr.anomalies.length>0){
+    pr.anomalies.forEach(function(a){pc.appendChild(el('div',{cls:'anomaly-banner'},a))});
+  }
   var totc=el('div',{cls:'card'});
-  totc.appendChild(kv('Total runs shown',pr.totals.runs));
+  totc.appendChild(kv('Runs',pr.totals.productive_runs+' productive / '+(pr.totals.idle_runs||0)+' idle / '+pr.totals.runs+' total'));
   totc.appendChild(kv('Failed collectors (total)',pr.totals.failed_collectors));
   totc.appendChild(kv('Errors (total)',pr.totals.total_errors));
   pc.appendChild(totc);
   pr.recent_runs.forEach(function(run){
-    var rc2=el('div',{cls:'card'});
-    rc2.appendChild(kv('Run ID',run.run_id));
+    var tag=run.is_ghost?' (ghost)':run.is_idle?' (idle)':'';
+    var rc2=el('div',{cls:'card'+(run.is_ghost?' ghost':run.is_idle?' idle':'')});
+    rc2.appendChild(kv('Run ID',run.run_id+tag));
     rc2.appendChild(kv('Started',run.started_at));
     rc2.appendChild(kv('Duration (s)',run.duration_seconds!=null?run.duration_seconds.toFixed(1):'—'));
     rc2.appendChild(kv('Signals collected',run.signals_collected));
@@ -614,11 +747,17 @@ app.appendChild(section('Warm Intro',wic));
 // Env summary
 var es=data.env_summary||{};
 var esc=el('div',{cls:'card'});
+if(es.note)esc.appendChild(kv('Note',es.note));
 var ff=es.feature_flags||{};
 for(var fk in ff)esc.appendChild(kv(fk,ff[fk]));
 var ak=es.api_keys||{};
-for(var akk in ak)esc.appendChild(kv(akk,ak[akk]?'configured':'missing'));
-app.appendChild(section('Environment',esc));
+for(var akk in ak)esc.appendChild(kv(akk,ak[akk]));
+if(es.runtime){
+  esc.appendChild(kv('Python',es.runtime.python_version||'—'));
+  esc.appendChild(kv('Platform',es.runtime.platform||'—'));
+  esc.appendChild(kv('CWD',es.runtime.cwd||'—'));
+}
+app.appendChild(section('Environment (Report Process)',esc));
 
 // Git
 var gm=data.meta&&data.meta.git||{};

@@ -31,7 +31,7 @@ import aiosqlite
 
 from utils.company_name_extractor import (
     extract_company_info,
-    _is_blocked_domain,
+    is_blocked_domain,
 )
 from utils.canonical_keys import normalize_domain
 from utils.hn_title import strip_hn_prefix, extract_name_from_hn_body
@@ -109,7 +109,7 @@ async def backfill(db_path: str, apply: bool = False) -> int:
 
             # Compute canonical key
             new_key = ""
-            if info.promoted_domain and not _is_blocked_domain(info.promoted_domain):
+            if info.promoted_domain and not is_blocked_domain(info.promoted_domain):
                 new_key = f"domain:{normalize_domain(info.promoted_domain)}"
             elif new_name:
                 new_key = f"name_loc:{new_name.lower()}"

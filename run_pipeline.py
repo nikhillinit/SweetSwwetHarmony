@@ -6342,7 +6342,7 @@ async def _hunter_collector_dispatch(collector: str, query_text: str):
     import httpx
     from utils.company_name_extractor import (
         extract_company_info,
-        _is_blocked_domain,
+        is_blocked_domain,
     )
     from utils.canonical_keys import normalize_domain as _norm_domain
 
@@ -6416,7 +6416,7 @@ async def _hunter_collector_dispatch(collector: str, query_text: str):
 
             # Canonical key: prefer domain, fall back to name_loc
             canonical_key = ""
-            if info.promoted_domain and not _is_blocked_domain(info.promoted_domain):
+            if info.promoted_domain and not is_blocked_domain(info.promoted_domain):
                 canonical_key = f"domain:{_norm_domain(info.promoted_domain)}"
             elif company_name:
                 canonical_key = f"name_loc:{company_name.lower()}"
@@ -6470,7 +6470,7 @@ async def _hunter_collector_dispatch(collector: str, query_text: str):
 
             # Canonical key: non-publisher domain or name_loc fallback
             canonical_key = ""
-            if info.promoted_domain and not _is_blocked_domain(info.promoted_domain):
+            if info.promoted_domain and not is_blocked_domain(info.promoted_domain):
                 canonical_key = f"domain:{_norm_domain(info.promoted_domain)}"
             elif company_name:
                 canonical_key = f"name_loc:{company_name.lower()}"

@@ -82,6 +82,67 @@ class TestExtractViaRegex:
     def test_capitalized_verb_raises(self):
         assert extract_via_regex("FitTrack Raises $20M Series B Funding") == "FitTrack"
 
+    # --- New verb expansion tests ---
+
+    def test_reports_verb(self):
+        result = extract_via_regex("Acme Reports Record Revenue")
+        assert result is not None
+        assert "Acme" in result
+
+    def test_acquires_verb(self):
+        result = extract_via_regex("TechCorp Acquires StartupXYZ")
+        assert result is not None
+        assert "TechCorp" in result
+
+    def test_introduces_verb(self):
+        result = extract_via_regex("Daily Harvest Introduces New Line")
+        assert result is not None
+        assert "Daily" in result
+
+    def test_completes_verb(self):
+        result = extract_via_regex("Oura Ring Completes Series B")
+        assert result is not None
+        assert "Oura" in result
+
+    def test_appoints_verb(self):
+        result = extract_via_regex("FreshDirect Appoints New CEO")
+        assert result is not None
+        assert "FreshDirect" in result
+
+    def test_enters_verb(self):
+        result = extract_via_regex("Brand Enters New Market Segment")
+        assert result is not None
+        assert "Brand" in result
+
+    def test_files_verb(self):
+        result = extract_via_regex("Acme Files for IPO")
+        assert result is not None
+        assert "Acme" in result
+
+    def test_signed_verb(self):
+        result = extract_via_regex("Acme Signed Deal with Major Retailer")
+        assert result is not None
+        assert "Acme" in result
+
+    def test_negative_board_approves(self):
+        """'The Board Approves...' must not extract 'The'."""
+        result = extract_via_regex("The Board Approves New Policy")
+        assert result is None or result != "The"
+
+    def test_researchers_reveal(self):
+        """'Researchers Reveal...' — 'reveal' is now a verb.
+        Extraction is acceptable; downstream thesis filter catches non-companies."""
+        result = extract_via_regex("Researchers Reveal Study Results")
+        assert result is None or "Researchers" in result
+
+    def test_negative_government_reports(self):
+        """'Government Reports...' should extract Government (reports is a verb).
+        This is acceptable — the verb list is permissive; downstream filters catch non-companies."""
+        result = extract_via_regex("Government Reports Economic Data")
+        # We accept this extraction — the extractor finds verb matches,
+        # thesis filter catches non-company subjects downstream
+        assert result is None or "Government" in result
+
     def test_common_words_filtered(self):
         result = extract_via_regex("The company raises funding")
         assert result is None or result != "The"
@@ -800,9 +861,155 @@ class TestExpandedVerbs:
         assert result is not None
         assert "WellnessApp" in result
 
+    def test_unveil_base_verb(self):
+        result = extract_via_regex("FreshBowl Unveil New Product Line")
+        assert result is not None
+        assert "FreshBowl" in result
+
+    def test_reveal_verb(self):
+        result = extract_via_regex("Acme Reveal Plans for Expansion")
+        assert result is not None
+        assert "Acme" in result
+
+    def test_reveals_verb(self):
+        result = extract_via_regex("HealthCo Reveals New Strategy")
+        assert result is not None
+        assert "HealthCo" in result
+
+    def test_revealed_verb(self):
+        result = extract_via_regex("TechBrand Revealed Partnership Details")
+        assert result is not None
+        assert "TechBrand" in result
+
     def test_existing_verbs_still_work(self):
         """Ensure existing verbs are not broken by expansion."""
         assert extract_via_regex("FitTrack raises $20M Series B") == "FitTrack"
         assert extract_via_regex("FreshDirect announces new delivery service") == "FreshDirect"
         assert extract_via_regex("BeautyBox secures seed funding") is not None
         assert extract_via_regex("Headspace closes $100M round") is not None
+
+
+# =============================================================================
+# CONNECTOR-AWARE MULTI-WORD PATTERN TESTS
+# =============================================================================
+
+
+class TestConnectorAwarePatterns:
+    """Test connector-aware multi-word company name extraction."""
+
+    def test_particles_for_humanity(self):
+        """Signal 322: 'Particles for Humanity Announces...'"""
+        result = extract_via_regex("Particles for Humanity Announces New Initiative")
+        assert result == "Particles for Humanity"
+
+    def test_firehook_and_ithaca_hummus_allcaps(self):
+        """Signal 323: ALL-CAPS with AND connector."""
+        result = extract_via_regex("FIREHOOK AND ITHACA HUMMUS UNVEIL New Product")
+        assert result is not None
+        assert "FIREHOOK" in result
+        assert "ITHACA" in result
+
+    def test_ampersand_connector(self):
+        """& connector works like 'and'."""
+        result = extract_via_regex("Ben & Jerry Launches New Flavor")
+        assert result is not None
+        assert "Ben" in result
+        assert "Jerry" in result
+
+    def test_connector_cannot_be_first(self):
+        """Connector at start of match should not produce a match."""
+        result = extract_via_regex("for Humanity Announces Plans")
+        assert result is None
+
+    def test_connector_cannot_be_last(self):
+        """Match ending with connector is rejected by sanity gate."""
+        # "Acme and" followed by a lowercase word won't match multi-word
+        # because the token after connector must be uppercase
+        result = extract_via_regex("Acme and raises money")
+        # "and" is lowercase so won't match _STRONG_TOKEN; "Acme" alone
+        # should match single-word pattern
+        assert result is None or result == "Acme"
+
+    def test_apostrophe_in_token(self):
+        """Apostrophe allowed in company name tokens (Chili's)."""
+        result = extract_via_regex("Chili's Announces New Menu")
+        assert result is not None
+        assert "Chili's" in result
+
+    def test_ampersand_in_single_token(self):
+        """AT&T style names with & inside token."""
+        result = extract_via_regex("AT&T Announces Expansion")
+        assert result is not None
+        assert "AT&T" in result
+
+    def test_max_five_tokens(self):
+        """Companies with more than 5 tokens are rejected by sanity gate."""
+        result = extract_via_regex("One Two Three Four Five Six Announces Deal")
+        assert result is None
+
+    def test_existing_multi_word_still_works(self):
+        """Existing multi-word patterns still work."""
+        result = extract_via_regex("Daily Harvest raises $50M Series C")
+        assert result is not None
+        assert "Daily" in result
+
+    def test_litehouse_foods_still_works(self):
+        """Multi-word without connector still works."""
+        result = extract_via_regex("Litehouse Foods Announces New Name")
+        assert result is not None
+        assert "Litehouse" in result
+
+
+# =============================================================================
+# SANITY GATE TESTS
+# =============================================================================
+
+
+class TestSanityGate:
+    """Test _is_valid_company_candidate sanity gate."""
+
+    def test_non_entity_prefix_half(self):
+        """Signal 325: 'Half of U.S. Shoppers' should not extract."""
+        from utils.company_name_extractor import _is_valid_company_candidate
+        assert _is_valid_company_candidate("Half") is False
+
+    def test_non_entity_prefix_most(self):
+        from utils.company_name_extractor import _is_valid_company_candidate
+        assert _is_valid_company_candidate("Most") is False
+
+    def test_non_entity_prefix_market(self):
+        from utils.company_name_extractor import _is_valid_company_candidate
+        assert _is_valid_company_candidate("Market") is False
+
+    def test_non_entity_prefix_best(self):
+        from utils.company_name_extractor import _is_valid_company_candidate
+        assert _is_valid_company_candidate("Best") is False
+
+    def test_non_entity_prefix_top(self):
+        from utils.company_name_extractor import _is_valid_company_candidate
+        assert _is_valid_company_candidate("Top") is False
+
+    def test_valid_company_name_passes(self):
+        from utils.company_name_extractor import _is_valid_company_candidate
+        assert _is_valid_company_candidate("Acme") is True
+        assert _is_valid_company_candidate("Particles for Humanity") is True
+        assert _is_valid_company_candidate("Daily Harvest") is True
+
+    def test_trailing_connector_rejected(self):
+        from utils.company_name_extractor import _is_valid_company_candidate
+        assert _is_valid_company_candidate("Acme for") is False
+        assert _is_valid_company_candidate("Acme and") is False
+
+    def test_too_many_tokens_rejected(self):
+        from utils.company_name_extractor import _is_valid_company_candidate
+        assert _is_valid_company_candidate("One Two Three Four Five Six") is False
+
+    def test_signal_325_full_extraction(self):
+        """Signal 325: 'Half of U.S. Shoppers...' should not extract a company."""
+        # Note: "finds" is not in _VERBS (deferred), so no verb match anyway.
+        # But even if a match were attempted, sanity gate blocks "Half".
+        result = extract_via_regex(
+            "Half of U.S. Shoppers Choose to Buy New Products from Brands "
+            "with Values Aligned to Theirs, Acosta Group Finds"
+        )
+        assert result is None

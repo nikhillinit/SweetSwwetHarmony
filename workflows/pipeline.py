@@ -35,6 +35,8 @@ import asyncio
 import logging
 import os
 import uuid
+from collections import defaultdict
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -112,6 +114,9 @@ from collectors.http_client import CollectorHttpClient, RunContext
 from workflows.run_manager import create_run, start_run, complete_run, fail_run
 
 logger = logging.getLogger(__name__)
+
+# ContextVar for per-collector HTTP request attribution in asyncio.gather()
+_current_collector: ContextVar[str] = ContextVar("current_collector", default="unknown")
 
 
 # =============================================================================
@@ -517,6 +522,9 @@ class DiscoveryPipeline:
         self._shared_httpx_client: Optional[httpx.AsyncClient] = None
         self._collector_http_client: Optional[CollectorHttpClient] = None
 
+        # HTTP request counters populated by event hooks on _shared_httpx_client
+        self._http_counters: Dict[str, Dict[str, int]] = {}
+
         # Run tracking (per-run, not per-initialize)
         self._execution_id: str = ""
         self._run_tracking_available: bool = False
@@ -665,10 +673,29 @@ class DiscoveryPipeline:
             logger.warning(f"SlackNotifier initialization failed (non-fatal): {e}")
             self._notifier = None
 
-        # Phase C: Create shared HTTP client for collectors
+        # Phase C: Create shared HTTP client for collectors with event hooks
+        # for per-collector api_calls / rate_limit_hits attribution
+        async def _on_request(request):
+            name = _current_collector.get("unknown")
+            if name not in self._http_counters:
+                self._http_counters[name] = {"api_calls": 0, "rate_limit_hits": 0}
+            self._http_counters[name]["api_calls"] += 1
+
+        async def _on_response(response):
+            name = _current_collector.get("unknown")
+            if name in self._http_counters:
+                status = response.status_code
+                if status == 429:
+                    self._http_counters[name]["rate_limit_hits"] += 1
+                elif status == 403:
+                    # GitHub-specific: secondary rate limit (abuse detection)
+                    if "api.github.com" in str(response.url):
+                        self._http_counters[name]["rate_limit_hits"] += 1
+
         self._shared_httpx_client = httpx.AsyncClient(
             timeout=30.0,
             follow_redirects=True,
+            event_hooks={"request": [_on_request], "response": [_on_response]},
         )
         logger.info("Shared HTTP client initialized (Phase C)")
 
@@ -974,6 +1001,18 @@ class DiscoveryPipeline:
                 1 for r in collector_results if r.status == CollectorStatus.SKIPPED
             )
             stats.signals_collected = sum(r.signals_found for r in collector_results)
+            stats.signals_stored = sum(
+                getattr(r, "signals_new", 0) or 0 for r in collector_results
+            )
+            stats.signals_deduplicated = sum(
+                getattr(r, "signals_suppressed", 0) or 0
+                for r in collector_results
+            )
+            # Note: signals_suppressed includes in-run dedup, DB-level dedup,
+            # and Notion suppression cache hits. All represent "not stored
+            # because already known."
+            # getattr guards against collectors that bypass BaseCollector or
+            # return partial CollectorResult objects.
 
             # Stage 1.5: Run promotion sweep on updated CompanyFiles
             if self.config.use_thin_files:
@@ -1068,6 +1107,9 @@ class DiscoveryPipeline:
             {"mode": "collect_only", "collectors": collector_names, "dry_run": dry_run},
         )
 
+        # Reset collector metrics for this run
+        self._collector_metrics = []
+
         logger.info(f"Running collectors: {collector_names} (dry_run={dry_run})")
 
         run_error: Optional[str] = None
@@ -1077,9 +1119,40 @@ class DiscoveryPipeline:
             run_error = str(e)
             raise
         finally:
-            await self._end_run_tracking(
-                success=run_error is None, error=run_error,
-            )
+            # Save metrics (collect-only mode) — skip on dry_run to preserve read-only invariant
+            if self._store and not dry_run and self._collector_metrics:
+                try:
+                    stats = PipelineStats()
+                    stats.collectors_run = len(self._collector_metrics)
+                    stats.collectors_succeeded = sum(
+                        1 for m in self._collector_metrics if m.status == "success"
+                    )
+                    stats.collectors_failed = sum(
+                        1 for m in self._collector_metrics if m.status == "error"
+                    )
+                    stats.collectors_skipped = sum(
+                        1 for m in self._collector_metrics if m.status == "skipped"
+                    )
+                    stats.signals_collected = sum(
+                        m.signals_found for m in self._collector_metrics
+                    )
+                    if run_error:
+                        stats.errors.append(run_error)
+                    stats.complete()
+                    await self._save_pipeline_metrics(stats)
+                except Exception as save_err:
+                    logger.warning(
+                        f"Failed to save collect-mode metrics (non-fatal): {save_err}"
+                    )
+
+            try:
+                await self._end_run_tracking(
+                    success=run_error is None, error=run_error,
+                )
+            except Exception as track_err:
+                logger.warning(
+                    f"Failed to end run tracking (non-fatal): {track_err}"
+                )
 
         return results
 
@@ -1209,6 +1282,9 @@ class DiscoveryPipeline:
             logger.warning("No collectors specified")
             return []
 
+        # Reset per-run HTTP counters so previous runs don't bleed through
+        self._http_counters.clear()
+
         results: List[CollectorResult] = []
 
         if self.config.parallel_collectors:
@@ -1268,6 +1344,8 @@ class DiscoveryPipeline:
         )
         collector = None
 
+        # Set ContextVar so httpx event hooks attribute requests to this collector
+        token = _current_collector.set(collector_name)
         try:
             logger.info(f"Running collector: {collector_name}")
 
@@ -1292,7 +1370,10 @@ class DiscoveryPipeline:
                 )
             elif collector_name == "sec_edgar":
                 from collectors.sec_edgar import SECEdgarCollector
-                collector = SECEdgarCollector(**common_args)
+                all_filings = os.getenv("SEC_EDGAR_ALL_FILINGS", "").lower() in ("true", "1", "yes")
+                if all_filings:
+                    logger.info("SEC Edgar SIC filter bypassed (SEC_EDGAR_ALL_FILINGS=true)")
+                collector = SECEdgarCollector(**common_args, target_sectors_only=not all_filings)
             elif collector_name == "companies_house":
                 from collectors.companies_house import CompaniesHouseCollector
                 collector = CompaniesHouseCollector(
@@ -1388,7 +1469,7 @@ class DiscoveryPipeline:
                 if not oc_key:
                     logger.warning("OPENCORPORATES_API_KEY not set - rate limits apply")
                 collector = OpenCorporatesCollector(
-                    store=common_args.get("store"),
+                    **common_args,
                     api_key=oc_key,
                 )
             elif collector_name == "telegram":
@@ -1475,6 +1556,11 @@ class DiscoveryPipeline:
             metrics.errors = len(getattr(collector, '_errors', []))
             metrics.error_messages = getattr(collector, '_errors', [])
 
+            # Wire api_calls and rate_limit_hits from httpx event hooks
+            counters = self._http_counters.get(collector_name, {})
+            metrics.api_calls = counters.get("api_calls", 0)
+            metrics.rate_limit_hits = counters.get("rate_limit_hits", 0)
+
             logger.info(
                 f"Collector {collector_name} completed: "
                 f"{result.signals_found} signals found"
@@ -1497,6 +1583,7 @@ class DiscoveryPipeline:
                 dry_run=dry_run,
             )
         finally:
+            _current_collector.reset(token)
             # Always capture timing
             metrics.complete()
             self._collector_metrics.append(metrics)

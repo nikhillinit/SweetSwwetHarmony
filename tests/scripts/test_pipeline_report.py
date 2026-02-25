@@ -418,14 +418,15 @@ async def test_report_overall_verdict_rollup(real_schema_db, rw_conn):
 # ---------------------------------------------------------------------------
 
 def test_gather_env_summary_no_secrets():
-    """API keys show only true/false, never values."""
-    with patch.dict(os.environ, {"GITHUB_TOKEN": "ghp_secret123", "PH_API_KEY": ""}):
+    """API keys show 'configured'/'(not set)'/'(empty)', never actual values."""
+    with patch.dict(os.environ, {"GITHUB_TOKEN": "ghp_secret123", "PH_API_KEY": ""}, clear=False):
         env = _gather_env_summary()
-        assert env["api_keys"]["GITHUB_TOKEN"] is True
-        assert env["api_keys"]["PH_API_KEY"] is False
+        assert env["api_keys"]["GITHUB_TOKEN"] == "configured"
+        assert env["api_keys"]["PH_API_KEY"] == "(empty)"
         # No actual value leaked
         for v in env["api_keys"].values():
-            assert isinstance(v, bool)
+            assert isinstance(v, str)
+            assert "ghp_secret" not in v
 
 
 def test_gather_env_summary_feature_flags():
@@ -433,3 +434,391 @@ def test_gather_env_summary_feature_flags():
     with patch.dict(os.environ, {"DELIVERY_MODE": "manual_publish"}, clear=False):
         env = _gather_env_summary()
         assert env["feature_flags"]["DELIVERY_MODE"] == "manual_publish"
+
+
+# ---------------------------------------------------------------------------
+# DRIFT ALERT DETAILS
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_report_drift_alert_details(real_schema_db, rw_conn):
+    """Insert drift alerts -> verify details array has alert_type, severity, message."""
+    now = datetime.now(timezone.utc).isoformat()
+    await rw_conn.execute(
+        """INSERT INTO canary_drift_alerts
+           (alert_type, severity, metric_name, message, expected_value, actual_value,
+            status, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        ("pass_rate_drop", "warning", "pass_rate", "Pass rate dropped below 0.9",
+         0.9, 0.85, "open", now),
+    )
+    await rw_conn.commit()
+
+    import aiosqlite
+    ro = await aiosqlite.connect(f"file:{real_schema_db}?mode=ro", uri=True)
+    ro.row_factory = aiosqlite.Row
+    try:
+        readiness = await _gather_readiness(ro, real_schema_db)
+        drift = readiness["drift_alerts"]
+        assert drift["open_warning"] == 1
+        assert len(drift["details"]) == 1
+        detail = drift["details"][0]
+        assert detail["alert_type"] == "pass_rate_drop"
+        assert detail["severity"] == "warning"
+        assert detail["message"] == "Pass rate dropped below 0.9"
+    finally:
+        await ro.close()
+
+
+@pytest.mark.asyncio
+async def test_report_drift_alert_severity_ordering(real_schema_db, rw_conn):
+    """Insert one critical + one warning -> critical comes first in details."""
+    now = datetime.now(timezone.utc).isoformat()
+    # Insert warning first (by created_at)
+    await rw_conn.execute(
+        """INSERT INTO canary_drift_alerts
+           (alert_type, severity, metric_name, message, expected_value, actual_value,
+            status, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        ("spc_violation", "warning", "signal_count", "Signal count low",
+         10.0, 3.0, "open", now),
+    )
+    await rw_conn.execute(
+        """INSERT INTO canary_drift_alerts
+           (alert_type, severity, metric_name, message, expected_value, actual_value,
+            status, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+        ("pass_rate_drop", "critical", "pass_rate", "Critical pass rate failure",
+         0.9, 0.5, "open", now),
+    )
+    await rw_conn.commit()
+
+    import aiosqlite
+    ro = await aiosqlite.connect(f"file:{real_schema_db}?mode=ro", uri=True)
+    ro.row_factory = aiosqlite.Row
+    try:
+        readiness = await _gather_readiness(ro, real_schema_db)
+        details = readiness["drift_alerts"]["details"]
+        assert len(details) == 2
+        assert details[0]["severity"] == "critical"
+        assert details[1]["severity"] == "warning"
+    finally:
+        await ro.close()
+
+
+# ---------------------------------------------------------------------------
+# GHOST RUN DETECTION
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_report_ghost_run_detection(real_schema_db, rw_conn):
+    """Insert ghost run + productive run -> verify is_ghost flags and productive_runs count."""
+    now = datetime.now(timezone.utc).isoformat()
+    # Ghost run: 0 collectors, 0 signals, fast
+    await rw_conn.execute(
+        """INSERT INTO pipeline_runs
+           (run_id, started_at, completed_at, duration_seconds,
+            collectors_run, collectors_succeeded, collectors_failed,
+            signals_collected, signals_stored, signals_deduplicated,
+            signals_processed, signals_held, errors, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        ("ghost-1", now, now, 0.1, 0, 0, 0, 0, 0, 0, 0, 0, "[]", now),
+    )
+    # Productive run
+    await rw_conn.execute(
+        """INSERT INTO pipeline_runs
+           (run_id, started_at, completed_at, duration_seconds,
+            collectors_run, collectors_succeeded, collectors_failed,
+            signals_collected, signals_stored, signals_deduplicated,
+            signals_processed, signals_held, errors, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        ("prod-1", now, now, 12.5, 3, 3, 0, 50, 40, 10, 40, 0, "[]", now),
+    )
+    await rw_conn.commit()
+
+    import aiosqlite
+    ro = await aiosqlite.connect(f"file:{real_schema_db}?mode=ro", uri=True)
+    ro.row_factory = aiosqlite.Row
+    try:
+        runs = await _gather_pipeline_runs(ro)
+        assert runs["totals"]["runs"] == 2
+        assert runs["totals"]["productive_runs"] == 1
+        assert runs["totals"]["idle_runs"] == 0
+
+        by_id = {r["run_id"]: r for r in runs["recent_runs"]}
+        assert by_id["ghost-1"]["is_ghost"] is True
+        assert by_id["ghost-1"]["is_idle"] is False
+        assert by_id["prod-1"]["is_ghost"] is False
+        assert by_id["prod-1"]["is_idle"] is False
+    finally:
+        await ro.close()
+
+
+# ---------------------------------------------------------------------------
+# ANOMALY DETECTION
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_report_anomaly_triple_zero(real_schema_db, rw_conn):
+    """Productive runs with collected>0, stored=0, deduped=0 -> anomaly message."""
+    now = datetime.now(timezone.utc).isoformat()
+    for i in range(3):
+        await rw_conn.execute(
+            """INSERT INTO pipeline_runs
+               (run_id, started_at, completed_at, duration_seconds,
+                collectors_run, collectors_succeeded, collectors_failed,
+                signals_collected, signals_stored, signals_deduplicated,
+                signals_processed, signals_held, errors, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (f"bad-{i}", now, now, 10.0, 3, 3, 0, 50, 0, 0, 0, 0, "[]", now),
+        )
+    await rw_conn.commit()
+
+    import aiosqlite
+    ro = await aiosqlite.connect(f"file:{real_schema_db}?mode=ro", uri=True)
+    ro.row_factory = aiosqlite.Row
+    try:
+        runs = await _gather_pipeline_runs(ro)
+        assert len(runs["anomalies"]) > 0
+        assert "metrics wiring" in runs["anomalies"][0]
+    finally:
+        await ro.close()
+
+
+@pytest.mark.asyncio
+async def test_report_no_anomaly_when_stored_nonzero(real_schema_db, rw_conn):
+    """Run with signals_stored=30 -> no anomaly."""
+    now = datetime.now(timezone.utc).isoformat()
+    await rw_conn.execute(
+        """INSERT INTO pipeline_runs
+           (run_id, started_at, completed_at, duration_seconds,
+            collectors_run, collectors_succeeded, collectors_failed,
+            signals_collected, signals_stored, signals_deduplicated,
+            signals_processed, signals_held, errors, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        ("good-1", now, now, 10.0, 3, 3, 0, 50, 30, 20, 30, 0, "[]", now),
+    )
+    await rw_conn.commit()
+
+    import aiosqlite
+    ro = await aiosqlite.connect(f"file:{real_schema_db}?mode=ro", uri=True)
+    ro.row_factory = aiosqlite.Row
+    try:
+        runs = await _gather_pipeline_runs(ro)
+        assert runs["anomalies"] == []
+    finally:
+        await ro.close()
+
+
+@pytest.mark.asyncio
+async def test_report_no_anomaly_when_all_deduped(real_schema_db, rw_conn):
+    """Run with collected=50, stored=0, deduped=50 -> NO anomaly (legitimate)."""
+    now = datetime.now(timezone.utc).isoformat()
+    await rw_conn.execute(
+        """INSERT INTO pipeline_runs
+           (run_id, started_at, completed_at, duration_seconds,
+            collectors_run, collectors_succeeded, collectors_failed,
+            signals_collected, signals_stored, signals_deduplicated,
+            signals_processed, signals_held, errors, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        ("dedup-1", now, now, 10.0, 3, 3, 0, 50, 0, 50, 0, 0, "[]", now),
+    )
+    await rw_conn.commit()
+
+    import aiosqlite
+    ro = await aiosqlite.connect(f"file:{real_schema_db}?mode=ro", uri=True)
+    ro.row_factory = aiosqlite.Row
+    try:
+        runs = await _gather_pipeline_runs(ro)
+        assert runs["anomalies"] == []
+    finally:
+        await ro.close()
+
+
+# ---------------------------------------------------------------------------
+# THREE-TIER CLASSIFICATION (ghost / idle / productive)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_report_idle_run_classification(real_schema_db, rw_conn):
+    """Idle run (collectors ran, 0 signals) gets is_idle=True, not counted as productive."""
+    now = datetime.now(timezone.utc).isoformat()
+    # Idle run: collectors ran, 0 signals, slow (not ghost)
+    await rw_conn.execute(
+        """INSERT INTO pipeline_runs
+           (run_id, started_at, completed_at, duration_seconds,
+            collectors_run, collectors_succeeded, collectors_failed,
+            signals_collected, signals_stored, signals_deduplicated,
+            signals_processed, signals_held, errors, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        ("idle-1", now, now, 20.9, 4, 4, 0, 0, 0, 0, 0, 0, "[]", now),
+    )
+    # Productive run
+    await rw_conn.execute(
+        """INSERT INTO pipeline_runs
+           (run_id, started_at, completed_at, duration_seconds,
+            collectors_run, collectors_succeeded, collectors_failed,
+            signals_collected, signals_stored, signals_deduplicated,
+            signals_processed, signals_held, errors, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        ("prod-1", now, now, 12.5, 6, 6, 0, 78, 60, 18, 60, 0, "[]", now),
+    )
+    # Ghost run
+    await rw_conn.execute(
+        """INSERT INTO pipeline_runs
+           (run_id, started_at, completed_at, duration_seconds,
+            collectors_run, collectors_succeeded, collectors_failed,
+            signals_collected, signals_stored, signals_deduplicated,
+            signals_processed, signals_held, errors, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        ("ghost-1", now, now, 0.1, 0, 0, 0, 0, 0, 0, 0, 0, "[]", now),
+    )
+    await rw_conn.commit()
+
+    import aiosqlite
+    ro = await aiosqlite.connect(f"file:{real_schema_db}?mode=ro", uri=True)
+    ro.row_factory = aiosqlite.Row
+    try:
+        runs = await _gather_pipeline_runs(ro)
+        by_id = {r["run_id"]: r for r in runs["recent_runs"]}
+
+        # Idle: not ghost, not productive
+        assert by_id["idle-1"]["is_idle"] is True
+        assert by_id["idle-1"]["is_ghost"] is False
+
+        # Productive: not ghost, not idle
+        assert by_id["prod-1"]["is_idle"] is False
+        assert by_id["prod-1"]["is_ghost"] is False
+
+        # Ghost: not idle
+        assert by_id["ghost-1"]["is_ghost"] is True
+        assert by_id["ghost-1"]["is_idle"] is False
+
+        # Counts: 3 total, 1 productive, 1 idle
+        assert runs["totals"]["runs"] == 3
+        assert runs["totals"]["productive_runs"] == 1
+        assert runs["totals"]["idle_runs"] == 1
+    finally:
+        await ro.close()
+
+
+@pytest.mark.asyncio
+async def test_report_idle_runs_dont_consume_anomaly_slots(real_schema_db, rw_conn):
+    """Idle runs must NOT consume anomaly-check slots — regression test for 4b007675 bug.
+
+    Scenario: 3 idle runs (most recent) + 1 productive run with anomaly.
+    Before fix: idle runs consumed all 3 anomaly-check slots, anomaly missed.
+    After fix: idle runs excluded, productive anomaly run is checked and flagged.
+    """
+    now = datetime.now(timezone.utc).isoformat()
+
+    # Insert 3 idle runs (newest, consume slots in the old code)
+    for i in range(3):
+        await rw_conn.execute(
+            """INSERT INTO pipeline_runs
+               (run_id, started_at, completed_at, duration_seconds,
+                collectors_run, collectors_succeeded, collectors_failed,
+                signals_collected, signals_stored, signals_deduplicated,
+                signals_processed, signals_held, errors, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (f"idle-{i}", f"2026-02-24T10:0{i + 3}:00Z", now, 15.0,
+             4, 4, 0, 0, 0, 0, 0, 0, "[]", f"2026-02-24T10:0{i + 3}:00Z"),
+        )
+
+    # Insert 1 productive run with anomaly (older, pushed out of window in old code)
+    await rw_conn.execute(
+        """INSERT INTO pipeline_runs
+           (run_id, started_at, completed_at, duration_seconds,
+            collectors_run, collectors_succeeded, collectors_failed,
+            signals_collected, signals_stored, signals_deduplicated,
+            signals_processed, signals_held, errors, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        ("anomaly-run", "2026-02-24T10:00:00Z", now, 25.0,
+         6, 6, 0, 90, 0, 0, 0, 0, "[]", "2026-02-24T10:00:00Z"),
+    )
+    await rw_conn.commit()
+
+    import aiosqlite
+    ro = await aiosqlite.connect(f"file:{real_schema_db}?mode=ro", uri=True)
+    ro.row_factory = aiosqlite.Row
+    try:
+        runs = await _gather_pipeline_runs(ro)
+
+        # The anomaly run MUST be detected despite idle runs being newer
+        assert len(runs["anomalies"]) == 1
+        assert "anomaly-run" in runs["anomalies"][0]
+        assert "metrics wiring" in runs["anomalies"][0]
+
+        # Verify counts
+        assert runs["totals"]["productive_runs"] == 1
+        assert runs["totals"]["idle_runs"] == 3
+    finally:
+        await ro.close()
+
+
+# ---------------------------------------------------------------------------
+# ENV REDACTION & PROVENANCE
+# ---------------------------------------------------------------------------
+
+def test_report_env_redaction():
+    """Set a fake NOTION_API_KEY env var -> report shows 'configured', not the value."""
+    with patch.dict(os.environ, {"NOTION_API_KEY": "secret_supersecret123"}, clear=False):
+        env = _gather_env_summary()
+        assert env["api_keys"]["NOTION_API_KEY"] == "configured"
+        # Verify actual value is not anywhere in the dict
+        serialized = json.dumps(env)
+        assert "supersecret" not in serialized
+
+
+def test_report_env_provenance_note():
+    """env_summary['note'] contains 'report-generating process'."""
+    env = _gather_env_summary()
+    assert "note" in env
+    assert "report-generating process" in env["note"]
+
+
+def test_report_env_runtime_metadata():
+    """env_summary['runtime'] has cwd, python_version, platform."""
+    env = _gather_env_summary()
+    assert "runtime" in env
+    runtime = env["runtime"]
+    assert "cwd" in runtime
+    assert "python_version" in runtime
+    assert "platform" in runtime
+    assert runtime["platform"] == sys.platform
+
+
+# ---------------------------------------------------------------------------
+# DRIFT DETAIL SCOPE ANNOTATION
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_report_drift_detail_scope(real_schema_db, rw_conn):
+    """Drift details include detail_scope key and all severity levels."""
+    now = datetime.now(timezone.utc).isoformat()
+    # Use valid alert_types from the CHECK constraint
+    alert_types = {"critical": "pass_rate_drop", "warning": "spc_violation", "info": "trend_alert"}
+    for sev in ("critical", "warning", "info"):
+        await rw_conn.execute(
+            """INSERT INTO canary_drift_alerts
+               (alert_type, severity, metric_name, message, expected_value, actual_value,
+                status, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (alert_types[sev], sev, "metric", f"{sev} alert", 1.0, 0.0, "open", now),
+        )
+    await rw_conn.commit()
+
+    import aiosqlite
+    ro = await aiosqlite.connect(f"file:{real_schema_db}?mode=ro", uri=True)
+    ro.row_factory = aiosqlite.Row
+    try:
+        readiness = await _gather_readiness(ro, real_schema_db)
+        drift = readiness["drift_alerts"]
+        assert drift.get("detail_scope") == "all_open_severities"
+        severities = [d["severity"] for d in drift["details"]]
+        assert "critical" in severities
+        assert "warning" in severities
+        assert "info" in severities
+    finally:
+        await ro.close()
