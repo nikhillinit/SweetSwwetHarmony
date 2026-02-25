@@ -48,8 +48,9 @@ from verification.verification_gate_v2 import Signal, VerificationStatus
 
 logger = logging.getLogger(__name__)
 
-# USPTO PatentsView API
-PATENTSVIEW_API = "https://api.patentsview.org/patents/query"
+# USPTO PatentsView API (v1 - PatentSearch API, replaces legacy API retired May 2025)
+PATENTSVIEW_API = "https://search.patentsview.org/api/v1/patent/"
+PATENTSVIEW_API_KEY_ENV = "PATENTSVIEW_API_KEY"
 
 
 # =============================================================================
@@ -141,8 +142,8 @@ class PatentFiling:
         provenance = create_provenance(
             source_url=source_url,
             response_data=raw_data_for_hash,
-            endpoint="/patents/query",
-            query_params={"patent_number": self.patent_number},
+            endpoint="/api/v1/patent/",
+            query_params={"patent_id": self.patent_number},
             retrieved_at=retrieved_at,
         )
 
@@ -213,6 +214,7 @@ class USPTOCollector(BaseCollector):
             asset_store: Optional SourceAssetStore for change detection
         """
         super().__init__(store=store, collector_name="uspto", api_name="uspto", http=http, asset_store=asset_store)
+        self.api_key = os.environ.get(PATENTSVIEW_API_KEY_ENV, "")
         self.keywords = keywords or [
             "artificial intelligence",
             "machine learning",
@@ -233,6 +235,13 @@ class USPTOCollector(BaseCollector):
 
     async def _collect_signals(self) -> List[Signal]:
         """Collect USPTO patents as signals."""
+        if not self.api_key:
+            logger.warning(
+                "PATENTSVIEW_API_KEY not set — PatentSearch API requires an API key. "
+                "Request one at https://patentsview.org/apis/keyrequest"
+            )
+            return []
+
         patents = await self._fetch_patents()
 
         signals = []
@@ -286,44 +295,56 @@ class USPTOCollector(BaseCollector):
                 })
             query["_and"].append({"_or": keyword_conditions})
 
-        # Add CPC code conditions
+        # Add CPC code conditions (v1 uses cpc_current.cpc_group_id)
         if self.cpc_codes:
             cpc_conditions = []
             for code in self.cpc_codes[:5]:
                 cpc_conditions.append({
-                    "_begins": {"cpc_subgroup_id": code}
+                    "_begins": {"cpc_current.cpc_group_id": code}
                 })
             query["_and"].append({"_or": cpc_conditions})
 
-        # Request fields
+        # Request fields (v1 uses dot-notation for nested entities)
         fields = [
             "patent_id",
-            "patent_number",
             "patent_title",
             "patent_abstract",
             "patent_date",
-            "patent_firstnamed_inventor_id",
-            "patent_num_cited_by_us_patents",
+            "inventors.inventor_name_first",
+            "inventors.inventor_name_last",
+            "inventors.inventor_city",
+            "inventors.inventor_country",
+            "assignees.assignee_organization",
+            "assignees.assignee_individual_name_first",
+            "assignees.assignee_individual_name_last",
+            "assignees.assignee_type",
+            "cpc_current.cpc_group_id",
+            "cpc_current.cpc_section",
         ]
 
-        # Request options
+        # Request options (v1 uses "size" instead of "page"/"per_page")
         options = {
-            "page": 1,
-            "per_page": min(self.max_results, 1000),
+            "size": min(self.max_results, 1000),
         }
 
         try:
             # Use _fetch_with_retry for automatic retry and rate limiting
+            headers = {
+                "Content-Type": "application/json",
+                "X-Api-Key": self.api_key,
+            }
+            payload = {
+                "q": query,
+                "f": fields,
+                "o": options,
+            }
+
             async def fetch_patents():
                 if self.http:
                     response = await self.http._client.post(
                         PATENTSVIEW_API,
-                        json={
-                            "q": query,
-                            "f": fields,
-                            "o": options,
-                        },
-                        headers={"Content-Type": "application/json"},
+                        json=payload,
+                        headers=headers,
                         timeout=60.0,
                     )
                     response.raise_for_status()
@@ -331,12 +352,8 @@ class USPTOCollector(BaseCollector):
                 async with httpx.AsyncClient(timeout=60.0) as client:
                     response = await client.post(
                         PATENTSVIEW_API,
-                        json={
-                            "q": query,
-                            "f": fields,
-                            "o": options,
-                        },
-                        headers={"Content-Type": "application/json"},
+                        json=payload,
+                        headers=headers,
                     )
                     response.raise_for_status()
                     return response.json()
@@ -360,39 +377,42 @@ class USPTOCollector(BaseCollector):
                 except ValueError:
                     filing_date = datetime.now(timezone.utc)
 
-                # Extract inventors
+                # Extract inventors (v1 field names)
                 inventors = []
                 if "inventors" in p:
                     for inv in p.get("inventors", [])[:5]:
                         inventors.append({
-                            "name_first": inv.get("inventor_first_name", ""),
-                            "name_last": inv.get("inventor_last_name", ""),
+                            "name_first": inv.get("inventor_name_first", ""),
+                            "name_last": inv.get("inventor_name_last", ""),
                             "city": inv.get("inventor_city", ""),
                             "country": inv.get("inventor_country", ""),
                         })
 
-                # Extract assignees
+                # Extract assignees (v1 field names)
                 assignees = []
                 if "assignees" in p:
                     for assign in p.get("assignees", [])[:3]:
                         assignees.append({
                             "organization": assign.get("assignee_organization", ""),
-                            "name_first": assign.get("assignee_first_name", ""),
-                            "name_last": assign.get("assignee_last_name", ""),
+                            "name_first": assign.get("assignee_individual_name_first", ""),
+                            "name_last": assign.get("assignee_individual_name_last", ""),
                             "type": assign.get("assignee_type", ""),
                         })
 
-                # Extract CPC codes
+                # Extract CPC codes (v1: cpc_current instead of cpcs)
                 cpc_codes = []
-                if "cpcs" in p:
-                    for cpc in p.get("cpcs", [])[:10]:
-                        code = cpc.get("cpc_subgroup_id", "")
+                if "cpc_current" in p:
+                    for cpc in p.get("cpc_current", [])[:10]:
+                        code = cpc.get("cpc_group_id", "")
                         if code:
                             cpc_codes.append(code)
 
+                # patent_id is the patent number in v1
+                patent_id = p.get("patent_id", "")
+
                 patent = PatentFiling(
-                    patent_id=p.get("patent_id", ""),
-                    patent_number=p.get("patent_number", ""),
+                    patent_id=patent_id,
+                    patent_number=patent_id,
                     title=p.get("patent_title", ""),
                     abstract=p.get("patent_abstract", ""),
                     filing_date=filing_date,
@@ -400,7 +420,7 @@ class USPTOCollector(BaseCollector):
                     inventors=inventors,
                     assignees=assignees,
                     cpc_codes=cpc_codes,
-                    citations_count=p.get("patent_num_cited_by_us_patents", 0) or 0,
+                    citations_count=0,  # v1 API doesn't return citation counts inline
                 )
                 patents.append(patent)
 
