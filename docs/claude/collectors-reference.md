@@ -15,7 +15,7 @@ Full collector inventory, signal strength heuristics, and key requirements.
 | `product_hunt.py` | Product Hunt launches | 0.5-0.7 | PH_API_KEY |
 | `hacker_news.py` | HN mentions/Show HN | 0.5-0.7 | None |
 | `arxiv.py` | ArXiv research papers | 0.3-0.5 | None |
-| `uspto.py` | USPTO patent filings | 0.4-0.6 | None |
+| `uspto.py` | USPTO patent filings | 0.4-0.6 | PATENTSVIEW_API_KEY |
 | `linkedin.py` | LinkedIn company/jobs | 0.5-0.8 | PROXYCURL_API_KEY |
 | `crunchbase.py` | Crunchbase funding data | 0.6-0.9 | CRUNCHBASE_API_KEY |
 | `opencorporates.py` | Global incorporations | 0.6-0.75 | OPENCORPORATES_API_KEY |
