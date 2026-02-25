@@ -285,6 +285,7 @@ class FormDFiling:
                 "offering_amount": self.offering_amount,
                 "offering_sold": self.offering_sold,
                 "sic_code": self.sic_code,
+                "sic_matched": self.is_target_sector,
                 "industry_group": self.industry_group,
                 "state": self.state,
                 "country": self.country,
@@ -397,6 +398,8 @@ class SECEdgarCollector(BaseCollector):
         if self.target_sectors_only:
             filings = [f for f in filings if f.is_target_sector]
             logger.info(f"Filtered to {len(filings)} filings in target sectors")
+        else:
+            logger.info(f"SIC filter disabled — passing all {len(filings)} filings through")
 
         # Convert to signals and detect changes
         signals = []

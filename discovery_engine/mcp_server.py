@@ -97,6 +97,7 @@ class CollectorResult:
     signals_found: int = 0
     signals_new: int = 0
     signals_suppressed: int = 0
+    api_calls: int = 0
     dry_run: bool = True
     error_message: Optional[str] = None
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -108,6 +109,7 @@ class CollectorResult:
             "signals_found": self.signals_found,
             "signals_new": self.signals_new,
             "signals_suppressed": self.signals_suppressed,
+            "api_calls": self.api_calls,
             "dry_run": self.dry_run,
             "error_message": self.error_message,
             "timestamp": self.timestamp,

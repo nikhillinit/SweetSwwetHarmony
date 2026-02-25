@@ -32,6 +32,7 @@ Usage:
 
 from __future__ import annotations
 
+import html as html_lib
 import logging
 import re
 import xml.etree.ElementTree as ET
@@ -51,9 +52,11 @@ from utils.canonical_keys import build_canonical_key_candidates, NEWS_PUBLISHER_
 from utils.company_name_extractor import (
     extract_company_info,
     extract_via_regex,
+    is_blocked_domain,
     warmup_ner,
     ExtractionResult,
 )
+from utils.hn_title import HN_SEP_RE
 from verification.verification_gate_v2 import Signal, VerificationStatus
 
 logger = logging.getLogger(__name__)
@@ -201,6 +204,85 @@ class RSSArticle:
         Kept as compatibility wrapper so existing tests pass unchanged.
         """
         return extract_via_regex(self.title)
+
+
+# =============================================================================
+# PRESS-RELEASE TITLE-SEGMENT HEURISTIC
+# =============================================================================
+
+# Extend HN_SEP_RE with colon for press releases (separate regex to avoid HN regression)
+_RSS_TITLE_SEP_RE = re.compile(
+    HN_SEP_RE.pattern + r"|\s*:\s*"
+)
+
+_PR_BOILERPLATE = frozenset({
+    "breaking", "exclusive", "update", "alert", "report",
+    "press release", "funding update", "pr newswire",
+    "business wire", "globe newswire", "news release",
+})
+
+_FIRST_TOKEN_STOP = frozenset({
+    "the", "a", "an", "new", "how", "why", "what", "when",
+    "breaking", "exclusive", "update", "alert",
+})
+
+_QUARTER_TICKER_RE = re.compile(r"^(Q[1-4]\b|FY\d|[A-Z]{1,5}:\s)")
+
+
+def _extract_press_release_prefix(title: str) -> Optional[str]:
+    """Extract company name from press-release title prefix before delimiter."""
+    if not title or not title.strip():
+        return None
+
+    m = _RSS_TITLE_SEP_RE.search(title)
+    if not m:
+        return None
+
+    segment = title[:m.start()].strip().strip("\"'")
+
+    # Length guardrails
+    if len(segment) < 2 or len(segment) > 35:
+        return None
+
+    tokens = segment.split()
+    if not (1 <= len(tokens) <= 4):
+        return None
+
+    # Reject if first token is stopword
+    if tokens[0].lower() in _FIRST_TOKEN_STOP:
+        return None
+
+    # Reject PR boilerplate
+    if segment.lower() in _PR_BOILERPLATE:
+        return None
+
+    # Reject quarter/ticker patterns (pre-split: "Q4 2026", "FY2026", "AAPL:")
+    if _QUARTER_TICKER_RE.match(segment):
+        return None
+
+    # Reject likely stock tickers: single all-uppercase alphabetic token, 1-5 chars
+    if len(tokens) == 1 and segment.isalpha() and segment.isupper() and len(segment) <= 5:
+        return None
+
+    # Must contain at least one letter
+    if not any(c.isalpha() for c in segment):
+        return None
+
+    return segment
+
+
+# =============================================================================
+# TITLE PRE-NORMALIZATION
+# =============================================================================
+
+
+def _normalize_title(raw: str) -> str:
+    """Unescape HTML entities, strip trademark symbols, normalize whitespace."""
+    t = html_lib.unescape(raw)          # &amp; → &, &#39; → '
+    t = re.sub(r'[®™©℠]', '', t)       # strip to empty string (not space)
+    t = t.replace('\u2018', "'").replace('\u2019', "'")  # smart quotes → ASCII
+    t = re.sub(r'\s+', ' ', t).strip()  # collapse whitespace
+    return t
 
 
 # =============================================================================
@@ -387,7 +469,7 @@ class RSSFeedCollector(BaseCollector):
         if feed_type == "{http://www.w3.org/2005/Atom}feed":
             # Atom format
             ns = {"atom": "http://www.w3.org/2005/Atom"}
-            title = item.findtext("atom:title", "", ns)
+            title = _normalize_title(item.findtext("atom:title", "", ns))
             link_elem = item.find("atom:link", ns)
             url = link_elem.get("href", "") if link_elem is not None else ""
             description = item.findtext("atom:summary", "", ns) or item.findtext("atom:content", "", ns)
@@ -395,7 +477,7 @@ class RSSFeedCollector(BaseCollector):
             author = item.findtext("atom:author/atom:name", "", ns)
         else:
             # RSS format
-            title = item.findtext("title", "")
+            title = _normalize_title(item.findtext("title", ""))
             url = item.findtext("link", "")
             description = item.findtext("description", "")
             pub_date = item.findtext("pubDate", "")
@@ -571,16 +653,40 @@ class RSSFeedCollector(BaseCollector):
         company_name = extraction.company_name
 
         # Build canonical key: prefer promoted_domain, then article domain, then name
+        # Use suffix-aware blocklist check (catches subdomains like m.reuters.com)
         domain_for_key = ""
-        if extraction.promoted_domain:
+        if extraction.promoted_domain and not is_blocked_domain(extraction.promoted_domain):
             domain_for_key = extraction.promoted_domain
-        elif article.domain and article.domain not in NEWS_PUBLISHER_DOMAINS:
+        elif article.domain and not is_blocked_domain(article.domain):
             domain_for_key = article.domain
 
         canonical_keys = build_canonical_key_candidates(
             domain_or_website=domain_for_key,
             fallback_company_name=company_name or "",
         )
+
+        # Segmented extraction: split on strong delimiters, re-run start-anchored extractor
+        if not company_name:
+            for segment in re.split(r'[?:—|•]\s*', article.title):
+                segment = segment.strip()
+                if segment and segment[0].isupper():
+                    seg_result = extract_via_regex(segment)
+                    if seg_result:
+                        company_name = seg_result
+                        canonical_keys = build_canonical_key_candidates(
+                            domain_or_website=domain_for_key,
+                            fallback_company_name=company_name,
+                        )
+                        break
+
+        # Fallback: press-release title-segment heuristic
+        if not canonical_keys and not company_name and article.is_press_release:
+            segment_name = _extract_press_release_prefix(article.title)
+            if segment_name:
+                company_name = segment_name
+                canonical_keys = build_canonical_key_candidates(
+                    fallback_company_name=segment_name,
+                )
 
         # Create unique signal ID
         import hashlib
