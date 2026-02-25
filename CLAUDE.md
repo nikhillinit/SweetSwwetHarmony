@@ -107,6 +107,7 @@ After the task, remove those lines (or run `git restore CLAUDE.md`) so they don'
 | CRUNCHBASE_API_KEY | ❌ Missing | crunchbase.py | Crunchbase collector disabled |
 | OPENCORPORATES_API_KEY | ❌ Missing | opencorporates.py | Global incorporations disabled |
 | GNEWS_API_KEY | ✅ Configured | news_api.py | News API enabled |
+| PATENTSVIEW_API_KEY | ❌ Missing | uspto.py | USPTO patents disabled (API key required since May 2025) |
 | CHANGEDETECTION_API_KEY | ⛔ ABANDONED | changedetection.py | Use built-in `monitoring/` instead (free, more features) |
 | SLACK_WEBHOOK_URL | ❌ Missing | CI/CD notifications | No Slack alerts |
 
@@ -117,18 +118,17 @@ These collectors work without API keys:
 - `job_postings.py` - Greenhouse/Lever (public)
 - `hacker_news.py` - HN API (public)
 - `arxiv.py` - ArXiv (public)
-- `uspto.py` - USPTO (public)
 - `rss_feeds.py` - RSS feeds (public)
 
 ### Collector Availability Summary
 ```
-Fully operational:  7 collectors (no key needed)
+Fully operational:  6 collectors (no key needed)
 Configured:         3 collectors (github, github_activity, news_api)
-Disabled:           5 collectors (missing keys)
+Disabled:           6 collectors (missing keys, includes uspto)
 Abandoned:          1 collector (changedetection - use built-in monitoring/)
 ─────────────────────────────────────────────
 Total:             16 collectors
-Working:           10 collectors (63%)
+Working:            9 collectors (56%)
 ```
 
 ---

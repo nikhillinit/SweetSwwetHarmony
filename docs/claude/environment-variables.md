@@ -15,6 +15,9 @@ GOOGLE_API_KEY=xxx (Gemini - free at aistudio.google.com/apikey)
 OPENCORPORATES_API_KEY=xxx (free tier at opencorporates.com/api_accounts/new)
 DISCOVERY_DB_PATH=signals.db (default)
 
+# Patent collector (required since legacy API retired May 2025)
+PATENTSVIEW_API_KEY=xxx (request at patentsview.org/apis/keyrequest - rate limit 45 req/min)
+
 # News collectors
 GNEWS_API_KEY=xxx (free tier at gnews.io - 100 requests/day)
 RSS_FEEDS=https://... (optional, comma-separated custom RSS feed URLs)
