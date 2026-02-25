@@ -57,10 +57,11 @@ class TestUSPTOAPIIntegration:
     """Test USPTO API integration with mocked responses."""
 
     @pytest.mark.asyncio
-    async def test_fetch_patents_success(self):
+    async def test_fetch_patents_success(self, monkeypatch):
         """Should successfully fetch patents from API."""
         from collectors.uspto import USPTOCollector
 
+        monkeypatch.setenv("PATENTSVIEW_API_KEY", "test-key")
         collector = USPTOCollector(keywords=["ai"], max_results=10)
 
         mock_response = Mock()
@@ -69,11 +70,9 @@ class TestUSPTOAPIIntegration:
             "patents": [
                 {
                     "patent_id": "11234567",
-                    "patent_number": "11234567",
                     "patent_title": "Machine Learning System",
                     "patent_abstract": "A novel system for machine learning...",
                     "patent_date": "2024-01-15",
-                    "patent_num_cited_by_us_patents": 5,
                 }
             ]
         })
@@ -236,14 +235,50 @@ class TestSignalTypeAssignment:
 
 
 # =============================================================================
+# API KEY GUARD TESTS
+# =============================================================================
+
+class TestAPIKeyGuard:
+    """Test that collector requires PATENTSVIEW_API_KEY."""
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_without_api_key(self, monkeypatch):
+        """Should return empty signals list when API key is missing."""
+        from collectors.uspto import USPTOCollector
+
+        monkeypatch.delenv("PATENTSVIEW_API_KEY", raising=False)
+        collector = USPTOCollector(keywords=["ai"])
+
+        async with collector:
+            signals = await collector._collect_signals()
+            assert signals == []
+
+    @pytest.mark.asyncio
+    async def test_proceeds_with_api_key(self, monkeypatch):
+        """Should proceed when API key is set."""
+        from collectors.uspto import USPTOCollector
+
+        monkeypatch.setenv("PATENTSVIEW_API_KEY", "test-key")
+        collector = USPTOCollector(keywords=["ai"], max_results=10)
+
+        async with collector:
+            with patch.object(collector, "_fetch_with_retry", new_callable=AsyncMock) as mock_retry:
+                mock_retry.return_value = {"patents": []}
+                signals = await collector._collect_signals()
+                assert signals == []
+                mock_retry.assert_called_once()
+
+
+# =============================================================================
 # INTEGRATION TESTS
 # =============================================================================
 
 @pytest.mark.asyncio
-async def test_full_collection_flow():
+async def test_full_collection_flow(monkeypatch):
     """Test full collection flow from API to signals."""
     from collectors.uspto import USPTOCollector
 
+    monkeypatch.setenv("PATENTSVIEW_API_KEY", "test-key")
     collector = USPTOCollector(keywords=["ai"], max_results=10)
 
     mock_response = Mock()
@@ -252,13 +287,11 @@ async def test_full_collection_flow():
         "patents": [
             {
                 "patent_id": "11234567",
-                "patent_number": "11234567",
                 "patent_title": "AI Neural Network System",
                 "patent_abstract": "A novel neural network architecture for AI applications.",
                 "patent_date": (datetime.now(timezone.utc) - timedelta(days=30)).strftime("%Y-%m-%d"),
-                "patent_num_cited_by_us_patents": 10,
                 "inventors": [
-                    {"inventor_first_name": "John", "inventor_last_name": "Doe"}
+                    {"inventor_name_first": "John", "inventor_name_last": "Doe"}
                 ],
                 "assignees": [
                     {"assignee_organization": "Tech Corp"}
