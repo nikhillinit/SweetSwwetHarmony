@@ -1,0 +1,31 @@
+{
+  "example_key": "domain:whoop.com",
+  "signals": [
+    {
+      "id": 448,
+      "signal_type": "hiring_signal",
+      "source_api": "lever_jobs",
+      "canonical_key": "domain:whoop.com",
+      "evidence_family": "hiring",
+      "canonical_key_v2": "domain:whoop.com",
+      "detected_at": "2026-02-25T17:32:22.070000+00:00"
+    },
+    {
+      "id": 468,
+      "signal_type": "news_mention",
+      "source_api": "manual_seed_buzz",
+      "canonical_key": "domain:whoop.com",
+      "evidence_family": "public_buzz",
+      "canonical_key_v2": "domain:whoop.com",
+      "detected_at": "2026-02-26T07:31:31.247155+00:00"
+    }
+  ],
+  "n_source_apis": 2,
+  "n_families": 2,
+  "note": "mercari.com excluded from 30d KPI \u2014 job signal detected_at=2025-12-15 outside window",
+  "track_a_gate": {
+    "keys_with_2plus_source_apis": 19,
+    "keys_with_2plus_families": 19,
+    "gate_passed": true
+  }
+}
