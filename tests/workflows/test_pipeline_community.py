@@ -188,11 +188,11 @@ class TestDiscordCollectorIntegration:
 
                 # Verify server IDs were parsed as integers
                 call_kwargs = MockCollector.call_args.kwargs
-                server_ids = call_kwargs.get("server_ids", [])
-                assert len(server_ids) == 2
-                assert 123456789 in server_ids
-                assert 987654321 in server_ids
-                assert all(isinstance(sid, int) for sid in server_ids)
+                guild_ids = call_kwargs.get("guild_ids", [])
+                assert len(guild_ids) == 2
+                assert 123456789 in guild_ids
+                assert 987654321 in guild_ids
+                assert all(isinstance(sid, int) for sid in guild_ids)
 
 
 # =============================================================================
@@ -324,4 +324,4 @@ class TestCommunityCollectorEnvVars:
 
                 # Server IDs should be None (use defaults)
                 call_kwargs = MockCollector.call_args.kwargs
-                assert call_kwargs.get("server_ids") is None or call_kwargs.get("server_ids") == []
+                assert call_kwargs.get("guild_ids") is None or call_kwargs.get("guild_ids") == []
