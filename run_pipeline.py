@@ -112,7 +112,7 @@ from workflows.pipeline import (
 )
 from utils.signal_health import SignalHealthMonitor
 from connectors.notion_connector_v2 import NotionConnector
-from storage.signal_store import SignalStore
+from storage.signal_store import SignalStore, CURRENT_SCHEMA_VERSION
 
 try:
     import httpx
@@ -4183,6 +4183,114 @@ Examples:
         help="Path to SQLite database (overrides env var)",
     )
 
+    # =========================================================================
+    # v6.6.2 Canary Phase 0 commands
+    # =========================================================================
+
+    from utils.db_path_helper import add_db_path_args
+
+    # canary-preflight
+    preflight_parser = subparsers.add_parser(
+        "canary-preflight",
+        help="Run canary pre-flight checks (schema, env, backup)",
+    )
+    add_db_path_args(preflight_parser)
+    preflight_parser.add_argument(
+        "--reports", type=str, default=None,
+        help="Directory for report artifacts",
+    )
+    preflight_parser.add_argument(
+        "--report", type=str, default=None,
+        help="Path to write JSON report",
+    )
+    preflight_parser.add_argument(
+        "--require-env", action="append", default=[],
+        help="Required env var KEY=VALUE (can repeat)",
+    )
+    preflight_parser.add_argument(
+        "--create-backup", action="store_true", default=False,
+        help="Create WAL-safe backup before proceeding",
+    )
+    preflight_parser.add_argument(
+        "--backup-dir", type=str, default=None,
+        help="Directory for backup file",
+    )
+    preflight_parser.add_argument(
+        "--apply-migrations", action="store_true", default=False,
+        help="Apply pending schema migrations",
+    )
+    preflight_parser.add_argument(
+        "--maintenance-window-id", type=str, default=None,
+        help="Maintenance window identifier for audit trail",
+    )
+    preflight_parser.add_argument(
+        "--writer-exclusivity-mode", type=str, default="best_effort",
+        choices=["none", "best_effort"],
+        help="Writer exclusivity check mode (default: best_effort)",
+    )
+
+    # backfill-evidence-family
+    backfill_ef_parser = subparsers.add_parser(
+        "backfill-evidence-family",
+        help="Backfill evidence_family column for existing signals",
+    )
+    add_db_path_args(backfill_ef_parser)
+    backfill_ef_group = backfill_ef_parser.add_mutually_exclusive_group(required=True)
+    backfill_ef_group.add_argument("--dry-run", action="store_true", help="Preview changes without writing")
+    backfill_ef_group.add_argument("--commit", action="store_true", help="Apply changes to database")
+    backfill_ef_parser.add_argument("--chunk-size", type=int, default=1000, help="Rows per chunk (default: 1000)")
+    backfill_ef_parser.add_argument("--report", type=str, default=None, help="Path to write JSON report")
+    backfill_ef_parser.add_argument("--rewrite-unknown", action="store_true", help="Also rewrite 'unknown' rows")
+    backfill_ef_parser.add_argument("--source-api", type=str, default=None, help="Filter by source_api")
+    backfill_ef_parser.add_argument("--signal-type", type=str, default=None, help="Filter by signal_type")
+    backfill_ef_parser.add_argument("--baseline-report", type=str, default=None, help="Path to baseline report for delta comparison")
+    backfill_ef_parser.add_argument("--baseline-unknown-rate", type=float, default=None, help="Baseline unknown rate for delta gate")
+    backfill_ef_parser.add_argument("--abort-on-delta", action="store_true", help="Abort if unknown rate exceeds delta threshold")
+    backfill_ef_parser.add_argument("--unknown-delta-max-pp", type=float, default=10.0, help="Max unknown rate delta in percentage points (default: 10.0)")
+
+    # rehydrate-canonical-keys-v2
+    rehydrate_parser = subparsers.add_parser(
+        "rehydrate-canonical-keys-v2",
+        help="Rehydrate canonical_key_v2 column for existing signals",
+    )
+    add_db_path_args(rehydrate_parser)
+    rehydrate_group = rehydrate_parser.add_mutually_exclusive_group(required=True)
+    rehydrate_group.add_argument("--dry-run", action="store_true", help="Preview changes without writing")
+    rehydrate_group.add_argument("--commit", action="store_true", help="Apply changes to database")
+    rehydrate_parser.add_argument("--sources", type=str, default="all", help="Comma-separated source_api filter (default: all)")
+    rehydrate_parser.add_argument("--chunk-size", type=int, default=1000, help="Rows per chunk (default: 1000)")
+    rehydrate_parser.add_argument("--report", type=str, default=None, help="Path to write JSON report")
+    rehydrate_parser.add_argument("--max-fanin", type=int, default=10, help="Max signals per canonical_key_v2 (default: 10)")
+    rehydrate_parser.add_argument("--audit-sample", type=int, default=100, help="Number of rows to audit sample (default: 100)")
+    rehydrate_parser.add_argument("--audit-sample-out", type=str, default=None, help="Path to write audit sample JSON")
+    rehydrate_parser.add_argument("--max-collision-rate", type=float, default=None, help="Max collision rate threshold")
+    rehydrate_parser.add_argument("--limit", type=int, default=None, help="Max rows to process")
+
+    # convergence-kpi
+    convergence_parser = subparsers.add_parser(
+        "convergence-kpi",
+        help="Compute multi-source convergence KPI metrics",
+    )
+    add_db_path_args(convergence_parser)
+    convergence_parser.add_argument("--days", type=int, default=30, help="Look-back period in days (default: 30)")
+    convergence_parser.add_argument("--exclude-unlinked-buzz", action="store_true", default=True, help="Exclude unlinked_buzz synthetic keys (default: true)")
+    convergence_parser.add_argument("--no-exclude-unlinked-buzz", action="store_false", dest="exclude_unlinked_buzz", help="Include unlinked_buzz synthetic keys")
+    convergence_parser.add_argument("--report", type=str, default=None, help="Path to write JSON report")
+    convergence_parser.add_argument("--baseline-report", type=str, default=None, help="Path to baseline report for delta comparison")
+    convergence_parser.add_argument("--baseline-kpi-report", type=str, default=None, help="Path to baseline KPI report")
+    convergence_parser.add_argument("--abort-on-delta", action="store_true", help="Abort if unknown rate exceeds delta threshold")
+    convergence_parser.add_argument("--unknown-delta-max-pp", type=float, default=10.0, help="Max unknown rate delta in pp (default: 10.0)")
+    convergence_parser.add_argument("--unlinked-delta-max-pp", type=float, default=10.0, help="Max unlinked rate delta in pp (default: 10.0)")
+
+    # health-json-pure
+    health_json_parser = subparsers.add_parser(
+        "health-json-pure",
+        help="Health check with strict JSON output (no text on stdout)",
+    )
+    add_db_path_args(health_json_parser)
+    health_json_parser.add_argument("--report", type=str, default=None, help="Path to write JSON report")
+    health_json_parser.add_argument("--allow-external-failures", action="store_true", help="Record external failures as warnings instead of errors")
+
     return parser
 
 
@@ -6905,6 +7013,399 @@ async def cmd_drift_export_metrics(args):
         await store.close()
 
 
+# =============================================================================
+# v6.6.2 CANARY PHASE 0 COMMAND HANDLERS
+# =============================================================================
+
+
+async def cmd_canary_preflight(args):
+    """Run canary pre-flight checks: schema, env, backup, migrations."""
+    from datetime import datetime, timezone
+    from utils.db_path_helper import resolve_db_path
+    from utils.report_envelope import create_report, write_report
+
+    started_at = datetime.now(timezone.utc)
+    db_path = resolve_db_path(args)
+    report_path = getattr(args, "report", None)
+
+    try:
+        checks = []
+        warnings = []
+        errors = []
+        metrics = {}
+
+        # Check DB exists
+        db_file = Path(db_path)
+        if not db_file.exists():
+            errors.append(f"Database not found: {db_path}")
+        else:
+            # Schema version check
+            import sqlite3
+            conn = sqlite3.connect(db_path)
+            try:
+                row = conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()
+                schema_ver = row[0] if row and row[0] else 0
+                metrics["schema_version_pre"] = schema_ver
+                metrics["schema_version_expected"] = CURRENT_SCHEMA_VERSION
+
+                if schema_ver < CURRENT_SCHEMA_VERSION:
+                    if getattr(args, "apply_migrations", False):
+                        warnings.append(
+                            f"Schema at v{schema_ver}, will apply migrations to v{CURRENT_SCHEMA_VERSION}"
+                        )
+                    else:
+                        errors.append(
+                            f"Schema version {schema_ver} < {CURRENT_SCHEMA_VERSION}. "
+                            "Use --apply-migrations to upgrade."
+                        )
+
+                # Integrity check
+                result = conn.execute("PRAGMA integrity_check").fetchone()
+                if result[0] != "ok":
+                    errors.append(f"Database integrity check failed: {result[0]}")
+            except sqlite3.OperationalError as exc:
+                errors.append(f"Database error: {exc}")
+            finally:
+                conn.close()
+
+        # Check required env vars
+        for req in getattr(args, "require_env", []):
+            if "=" in req:
+                key, expected = req.split("=", 1)
+                actual = os.environ.get(key)
+                if actual is None:
+                    errors.append(f"Required env var {key} is not set")
+                elif actual != expected:
+                    errors.append(f"Env var {key}={actual!r}, expected {expected!r}")
+            else:
+                if not os.environ.get(req):
+                    errors.append(f"Required env var {req} is not set")
+
+        # Apply migrations if requested
+        if getattr(args, "apply_migrations", False) and db_file.exists() and not errors:
+            store = SignalStore(db_path)
+            await store.initialize()
+            await store.close()
+            # Re-check schema version
+            conn = sqlite3.connect(db_path)
+            try:
+                row = conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()
+                metrics["schema_version_post"] = row[0] if row and row[0] else 0
+            finally:
+                conn.close()
+
+        # Writer exclusivity check
+        if getattr(args, "writer_exclusivity_mode", "none") == "best_effort" and db_file.exists():
+            try:
+                conn = sqlite3.connect(db_path)
+                conn.execute("BEGIN IMMEDIATE")
+                conn.rollback()
+                conn.close()
+                metrics["writer_exclusivity"] = "ok"
+            except sqlite3.OperationalError as exc:
+                warnings.append(f"Writer exclusivity check failed: {exc}")
+                metrics["writer_exclusivity"] = "failed"
+
+        # Create backup if requested
+        if getattr(args, "create_backup", False) and db_file.exists():
+            import shutil
+            backup_dir = getattr(args, "backup_dir", None) or str(db_file.parent)
+            timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S")
+            backup_path = Path(backup_dir) / f"{db_file.stem}.backup-{timestamp}{db_file.suffix}"
+            shutil.copy2(str(db_file), str(backup_path))
+            metrics["backup_path"] = str(backup_path)
+
+        ok = len(errors) == 0
+        report = create_report(
+            command="canary-preflight", ok=ok, db_path=db_path,
+            started_at=started_at, metrics=metrics,
+            warnings=warnings, errors=errors,
+        )
+
+        if report_path:
+            write_report(report, report_path)
+
+        # Output summary
+        if ok:
+            print(f"Canary preflight: PASS ({len(warnings)} warnings)")
+        else:
+            print(f"Canary preflight: FAIL ({len(errors)} errors)")
+            for e in errors:
+                print(f"  ERROR: {e}")
+
+        return 0 if ok else 1
+
+    except Exception as exc:
+        report = create_report(
+            command="canary-preflight", ok=False, db_path=db_path,
+            started_at=started_at, errors=[str(exc)],
+        )
+        if report_path:
+            write_report(report, report_path)
+        print(f"Canary preflight: FATAL ({exc})")
+        return 1
+
+
+async def cmd_backfill_evidence_family(args):
+    """Backfill evidence_family column for existing signals."""
+    from datetime import datetime, timezone
+    from utils.db_path_helper import resolve_db_path
+    from utils.report_envelope import create_report, write_report
+
+    started_at = datetime.now(timezone.utc)
+    db_path = resolve_db_path(args)
+    report_path = getattr(args, "report", None)
+    dry_run = getattr(args, "dry_run", True)
+
+    try:
+        from scripts.backfill_evidence_family import run as run_backfill
+
+        result = await run_backfill(
+            db_path=db_path,
+            dry_run=dry_run,
+            chunk_size=getattr(args, "chunk_size", 1000),
+            rewrite_unknown=getattr(args, "rewrite_unknown", False),
+            source_api=getattr(args, "source_api", None),
+            signal_type=getattr(args, "signal_type", None),
+            baseline_unknown_rate=getattr(args, "baseline_unknown_rate", None),
+            unknown_delta_max_pp=getattr(args, "unknown_delta_max_pp", 10.0),
+        )
+
+        ok = not result.get("delta_exceeded", False)
+        report = create_report(
+            command="backfill-evidence-family", ok=ok, db_path=db_path,
+            started_at=started_at, metrics=result,
+        )
+        if report_path:
+            write_report(report, report_path)
+
+        mode = "DRY RUN" if dry_run else "COMMIT"
+        print(f"Backfill evidence_family [{mode}]: {result['rows_updated']}/{result['rows_scanned']} rows")
+        print(f"  Unknown rate: {result['unknown_rate']}%")
+        return 0 if ok else 1
+
+    except Exception as exc:
+        report = create_report(
+            command="backfill-evidence-family", ok=False, db_path=db_path,
+            started_at=started_at, errors=[str(exc)],
+        )
+        if report_path:
+            write_report(report, report_path)
+        print(f"Backfill evidence_family: FATAL ({exc})")
+        return 1
+
+
+async def cmd_rehydrate_canonical_keys_v2(args):
+    """Rehydrate canonical_key_v2 column for existing signals."""
+    from datetime import datetime, timezone
+    from utils.db_path_helper import resolve_db_path
+    from utils.report_envelope import create_report, write_report
+
+    started_at = datetime.now(timezone.utc)
+    db_path = resolve_db_path(args)
+    report_path = getattr(args, "report", None)
+    dry_run = getattr(args, "dry_run", True)
+
+    try:
+        from scripts.rehydrate_canonical_keys_v2 import run as run_rehydrate
+
+        result = await run_rehydrate(
+            db_path=db_path,
+            dry_run=dry_run,
+            chunk_size=getattr(args, "chunk_size", 1000),
+            sources=getattr(args, "sources", "all"),
+            max_fanin=getattr(args, "max_fanin", 10),
+            audit_sample=getattr(args, "audit_sample", 100),
+            audit_sample_out=getattr(args, "audit_sample_out", None),
+            max_collision_rate=getattr(args, "max_collision_rate", None),
+            limit=getattr(args, "limit", None),
+        )
+
+        ok = len(result.get("fanin_violations", [])) == 0
+        report = create_report(
+            command="rehydrate-canonical-keys-v2", ok=ok, db_path=db_path,
+            started_at=started_at, metrics=result,
+        )
+        if report_path:
+            write_report(report, report_path)
+
+        mode = "DRY RUN" if dry_run else "COMMIT"
+        print(f"Rehydrate canonical_key_v2 [{mode}]: {result['rows_updated']}/{result['rows_scanned']} rows")
+        print(f"  Null v2 rate: {result['null_v2_rate']}%")
+        if result.get("fanin_violations"):
+            print(f"  Fan-in violations: {len(result['fanin_violations'])}")
+        return 0 if ok else 1
+
+    except Exception as exc:
+        report = create_report(
+            command="rehydrate-canonical-keys-v2", ok=False, db_path=db_path,
+            started_at=started_at, errors=[str(exc)],
+        )
+        if report_path:
+            write_report(report, report_path)
+        print(f"Rehydrate canonical_key_v2: FATAL ({exc})")
+        return 1
+
+
+async def cmd_convergence_kpi(args):
+    """Compute multi-source convergence KPI metrics."""
+    from datetime import datetime, timezone
+    from utils.db_path_helper import resolve_db_path
+    from utils.report_envelope import create_report, write_report
+
+    started_at = datetime.now(timezone.utc)
+    db_path = resolve_db_path(args)
+    report_path = getattr(args, "report", None)
+
+    try:
+        from scripts.convergence_kpi import run as run_kpi
+
+        result = await run_kpi(
+            db_path=db_path,
+            days=getattr(args, "days", 30),
+            exclude_unlinked_buzz=getattr(args, "exclude_unlinked_buzz", True),
+            unknown_delta_max_pp=getattr(args, "unknown_delta_max_pp", 10.0),
+            unlinked_delta_max_pp=getattr(args, "unlinked_delta_max_pp", 10.0),
+        )
+
+        if not result.get("ok", False):
+            error_msg = result.get("error", "Unknown error")
+            report = create_report(
+                command="convergence-kpi", ok=False, db_path=db_path,
+                started_at=started_at, metrics=result, errors=[error_msg],
+            )
+            if report_path:
+                write_report(report, report_path)
+            print(f"Convergence KPI: FAIL ({error_msg})")
+            return 1
+
+        report = create_report(
+            command="convergence-kpi", ok=True, db_path=db_path,
+            started_at=started_at, metrics=result,
+        )
+        if report_path:
+            write_report(report, report_path)
+
+        print(f"Convergence KPI ({result['days']}d window):")
+        print(f"  Keys with 2+ families: {result['keys_with_2plus_families']}")
+        print(f"  Keys with 2+ source APIs: {result['keys_with_2plus_source_apis']}")
+        print(f"  Unknown family rate: {result['unknown_family_rate']}%")
+        print(f"  Unlinked buzz rate: {result['unlinked_buzz_rate']}%")
+        return 0
+
+    except Exception as exc:
+        report = create_report(
+            command="convergence-kpi", ok=False, db_path=db_path,
+            started_at=started_at, errors=[str(exc)],
+        )
+        if report_path:
+            write_report(report, report_path)
+        print(f"Convergence KPI: FATAL ({exc})")
+        return 1
+
+
+async def cmd_health_json_pure(args):
+    """Health check with strict JSON output (no non-JSON text on stdout)."""
+    from datetime import datetime, timezone
+    from utils.db_path_helper import resolve_db_path
+    from utils.report_envelope import create_report, write_report
+    import io
+
+    started_at = datetime.now(timezone.utc)
+    db_path = resolve_db_path(args)
+    report_path = getattr(args, "report", None)
+    allow_external = getattr(args, "allow_external_failures", False)
+
+    try:
+        checks = []
+        warnings_list = []
+        errors_list = []
+        metrics = {}
+
+        # DB check
+        db_file = Path(db_path)
+        if not db_file.exists():
+            errors_list.append(f"Database not found: {db_path}")
+        else:
+            import sqlite3
+            conn = sqlite3.connect(db_path)
+            try:
+                result = conn.execute("PRAGMA integrity_check").fetchone()
+                if result[0] == "ok":
+                    checks.append({"check": "database", "status": "pass"})
+                else:
+                    checks.append({"check": "database", "status": "fail", "message": result[0]})
+                    errors_list.append(f"Database integrity: {result[0]}")
+
+                # Schema version
+                row = conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()
+                schema_ver = row[0] if row and row[0] else 0
+                metrics["schema_version"] = schema_ver
+                checks.append({"check": "schema_version", "status": "pass", "version": schema_ver})
+
+                # Signal count
+                sig_count = conn.execute("SELECT COUNT(*) FROM signals").fetchone()[0]
+                metrics["signal_count"] = sig_count
+            except sqlite3.OperationalError as exc:
+                errors_list.append(f"Database error: {exc}")
+                checks.append({"check": "database", "status": "fail", "message": str(exc)})
+            finally:
+                conn.close()
+
+        # External API checks (suppressed output)
+        for api_name, check_fn_name in [
+            ("github", "check_github_api"),
+            ("sec_edgar", "check_sec_edgar_api"),
+        ]:
+            try:
+                check_fn = globals().get(check_fn_name)
+                if check_fn:
+                    ok, msg = await check_fn()
+                    if ok:
+                        checks.append({"check": api_name, "status": "pass"})
+                    else:
+                        if allow_external:
+                            warnings_list.append(f"{api_name}: {msg}")
+                            checks.append({"check": api_name, "status": "warn", "message": msg})
+                        else:
+                            errors_list.append(f"{api_name}: {msg}")
+                            checks.append({"check": api_name, "status": "fail", "message": msg})
+            except Exception as exc:
+                if allow_external:
+                    warnings_list.append(f"{api_name}: {exc}")
+                    checks.append({"check": api_name, "status": "warn", "message": str(exc)})
+                else:
+                    errors_list.append(f"{api_name}: {exc}")
+                    checks.append({"check": api_name, "status": "fail", "message": str(exc)})
+
+        ok = len(errors_list) == 0
+        metrics["checks"] = checks
+
+        report = create_report(
+            command="health-json-pure", ok=ok, db_path=db_path,
+            started_at=started_at, metrics=metrics,
+            warnings=warnings_list, errors=errors_list,
+        )
+
+        if report_path:
+            write_report(report, report_path)
+
+        # Strict JSON to stdout — nothing else
+        print(json.dumps(report, indent=2, ensure_ascii=False))
+        return 0 if ok else 1
+
+    except Exception as exc:
+        report = create_report(
+            command="health-json-pure", ok=False, db_path=db_path,
+            started_at=started_at, errors=[str(exc)],
+        )
+        if report_path:
+            write_report(report, report_path)
+        # Still output JSON even on fatal
+        print(json.dumps(report, indent=2, ensure_ascii=False))
+        return 1
+
+
 async def main():
     """Main entry point"""
 
@@ -7177,6 +7678,16 @@ async def main():
             exit_code = await cmd_entity_merge_preview(args)
         elif args.command == "entity-audit":
             exit_code = await cmd_entity_audit(args)
+        elif args.command == "canary-preflight":
+            exit_code = await cmd_canary_preflight(args)
+        elif args.command == "backfill-evidence-family":
+            exit_code = await cmd_backfill_evidence_family(args)
+        elif args.command == "rehydrate-canonical-keys-v2":
+            exit_code = await cmd_rehydrate_canonical_keys_v2(args)
+        elif args.command == "convergence-kpi":
+            exit_code = await cmd_convergence_kpi(args)
+        elif args.command == "health-json-pure":
+            exit_code = await cmd_health_json_pure(args)
         else:
             print(f"Unknown command: {args.command}")
             parser.print_help()

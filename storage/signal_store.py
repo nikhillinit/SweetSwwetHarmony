@@ -68,6 +68,8 @@ from storage.migrations.v38_wave2_shadow_canary import V38_WAVE2_SHADOW_CANARY_D
 from storage.migrations.v39_active_hunter import V39_ACTIVE_HUNTER_DDL
 from storage.migrations.v40_merge_lifecycle import V40_MERGE_LIFECYCLE_DDL
 from storage.migrations.v41_drift_monitoring import V41_DRIFT_MONITORING_DDL
+from storage.migrations.v42_evidence_family import V42_EVIDENCE_FAMILY_DDL
+from storage.migrations.v43_canonical_key_v2 import V43_CANONICAL_KEY_V2_DDL
 
 if TYPE_CHECKING:
     from workflows.pipeline import PipelineStats, CollectorMetrics
@@ -81,7 +83,7 @@ logger = logging.getLogger(__name__)
 # SCHEMA VERSION
 # =============================================================================
 
-CURRENT_SCHEMA_VERSION = 41
+CURRENT_SCHEMA_VERSION = 43
 
 # SQL for creating tables (migrations applied in order)
 MIGRATIONS = {
@@ -1730,6 +1732,8 @@ MIGRATIONS = {
     39: V39_ACTIVE_HUNTER_DDL,
     40: V40_MERGE_LIFECYCLE_DDL,
     41: V41_DRIFT_MONITORING_DDL,
+    42: V42_EVIDENCE_FAMILY_DDL,
+    43: V43_CANONICAL_KEY_V2_DDL,
 }
 
 
@@ -2561,6 +2565,26 @@ class SignalStore:
         detected_at = detected_at or datetime.now(timezone.utc)
         created_at = datetime.now(timezone.utc)
 
+        # Classify evidence_family + canonical_key_v2 (never fail insert)
+        evidence_family = None
+        canonical_key_v2_val = None
+        try:
+            from verification.evidence_families import get_family
+            evidence_family = get_family(signal_type, source_api)
+        except Exception:
+            logger.warning("evidence_family classification failed", exc_info=True)
+        try:
+            from utils.canonical_key_v2 import build_canonical_key_v2
+            canonical_key_v2_val, _, _ = build_canonical_key_v2(
+                raw_data=raw_data, source_api=source_api,
+                signal_type=signal_type, canonical_key=canonical_key,
+            )
+        except Exception:
+            logger.warning("canonical_key_v2 build failed", exc_info=True)
+        # Fallback: evidence_family = "unknown" if classification failed
+        if evidence_family is None:
+            evidence_family = "unknown"
+
         # Choose transaction mode based on identity store presence
         if self._identity_store:
             tx_cm = self.transaction_immediate()
@@ -2592,9 +2616,10 @@ class SignalStore:
                 """
                 INSERT INTO signals (
                     signal_type, source_api, canonical_key, company_name,
-                    confidence, raw_data, detected_at, created_at, company_id
+                    confidence, raw_data, detected_at, created_at, company_id,
+                    evidence_family, canonical_key_v2
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     signal_type,
@@ -2606,6 +2631,8 @@ class SignalStore:
                     detected_at.isoformat(),
                     created_at.isoformat(),
                     company_id,
+                    evidence_family,
+                    canonical_key_v2_val,
                 ),
             )
 
