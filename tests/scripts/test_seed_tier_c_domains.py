@@ -16,7 +16,7 @@ import pytest
 
 sys.path.insert(0, ".")
 
-from scripts.seed_tier_c_domains import seed_tier_c, _load_domains, _merge_metadata
+from scripts.seed_tier_c_domains import seed_tier_c, _load_domains, _merge_metadata, _is_filtered
 from utils.canonical_keys import derive_company_id
 
 
@@ -411,3 +411,86 @@ class TestErrorHandling:
         path.write_text("")
         result = seed_tier_c(test_db, str(path), commit=True)
         assert result["total"] == 0
+
+
+# ============================================================================
+# Domain filtering tests
+# ============================================================================
+
+class TestDomainFiltering:
+    """Blocked subdomain exclusion and filter counters."""
+
+    def test_blocked_domains_excluded(self, test_db, tmp_path):
+        """Infra and social domains are filtered out; counters are correct."""
+        path = tmp_path / "mixed.txt"
+        path.write_text(
+            "acme.ai\n"
+            "vercel.app\n"
+            "my-app.netlify.app\n"
+            "ycombinator.com\n"
+            "olipop.com\n"
+        )
+        result = seed_tier_c(test_db, str(path), commit=True)
+
+        # Only acme.ai and olipop.com should pass filtering
+        assert result["inserted"] == 2
+        assert result["infra_blocked"] == 2  # vercel.app, my-app.netlify.app
+        assert result["social_blocked"] == 1  # ycombinator.com
+        assert result["total"] == 2
+
+    def test_publisher_domains_excluded(self, test_db, tmp_path):
+        """Publisher domains (e.g. techcrunch.com subdomain) are filtered."""
+        path = tmp_path / "publishers.txt"
+        path.write_text(
+            "acme.ai\n"
+            "techcrunch.com\n"
+        )
+        result = seed_tier_c(test_db, str(path), commit=True)
+
+        assert result["inserted"] == 1  # only acme.ai
+        assert result["publisher_blocked"] == 1  # techcrunch.com
+
+    def test_allow_blocked_bypasses_filter(self, test_db, tmp_path):
+        """--allow-blocked flag lets all domains through."""
+        path = tmp_path / "infra.txt"
+        path.write_text("vercel.app\nycombinator.com\nacme.ai\n")
+        result = seed_tier_c(test_db, str(path), commit=True, allow_blocked=True)
+
+        assert result["inserted"] == 3
+        assert result["infra_blocked"] == 0
+        assert result["social_blocked"] == 0
+        assert result["publisher_blocked"] == 0
+
+    def test_is_filtered_function(self):
+        """_is_filtered correctly classifies domains."""
+        assert _is_filtered("vercel.app") is True
+        assert _is_filtered("my-site.vercel.app") is True
+        assert _is_filtered("ycombinator.com") is True
+        assert _is_filtered("techcrunch.com") is True
+        assert _is_filtered("acme.ai") is False
+        assert _is_filtered("olipop.com") is False
+
+
+# ============================================================================
+# Malformed metadata resilience tests
+# ============================================================================
+
+class TestMalformedResilience:
+    """Script continues on malformed input without crashing."""
+
+    def test_malformed_lines_skipped(self, test_db, tmp_path):
+        """Lines that are not valid domains are skipped with a warning."""
+        path = tmp_path / "malformed.txt"
+        path.write_text(
+            "acme.ai\n"
+            "not-a-valid-domain\n"
+            '{"json": "not a domain"}\n'
+            "olipop.com\n"
+            "   \n"
+            "# comment\n"
+        )
+        result = seed_tier_c(test_db, str(path), commit=True)
+
+        # Only acme.ai and olipop.com are valid domains
+        assert result["inserted"] == 2
+        assert result["total"] == 2
