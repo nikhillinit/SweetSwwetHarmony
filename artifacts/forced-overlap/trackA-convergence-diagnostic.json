@@ -1,0 +1,200 @@
+{
+  "generated_at": "2026-02-26T07:52:57.833386+00:00",
+  "db_path": "signals.db",
+  "scoped_run_id": null,
+  "sections": {
+    "multi_source_overlap": [
+      {
+        "canonical_key": "domain:betterhelp.com",
+        "sources": "greenhouse_jobs,manual_seed_buzz",
+        "source_count": 2
+      },
+      {
+        "canonical_key": "domain:calm.com",
+        "sources": "greenhouse_jobs,manual_seed_buzz",
+        "source_count": 2
+      },
+      {
+        "canonical_key": "domain:cerebral.com",
+        "sources": "greenhouse_jobs,manual_seed_buzz",
+        "source_count": 2
+      },
+      {
+        "canonical_key": "domain:faire.com",
+        "sources": "greenhouse_jobs,manual_seed_buzz",
+        "source_count": 2
+      },
+      {
+        "canonical_key": "domain:flyr.com",
+        "sources": "greenhouse_jobs,manual_seed_buzz",
+        "source_count": 2
+      },
+      {
+        "canonical_key": "domain:glossier.com",
+        "sources": "greenhouse_jobs,manual_seed_buzz",
+        "source_count": 2
+      },
+      {
+        "canonical_key": "domain:hopper.com",
+        "sources": "ashby_jobs,manual_seed_buzz",
+        "source_count": 2
+      },
+      {
+        "canonical_key": "domain:hungryroot.com",
+        "sources": "greenhouse_jobs,manual_seed_buzz",
+        "source_count": 2
+      },
+      {
+        "canonical_key": "domain:lyrahealth.com",
+        "sources": "lever_jobs,manual_seed_buzz",
+        "source_count": 2
+      },
+      {
+        "canonical_key": "domain:mercari.com",
+        "sources": "greenhouse_jobs,manual_seed_buzz",
+        "source_count": 2
+      },
+      {
+        "canonical_key": "domain:offerup.com",
+        "sources": "greenhouse_jobs,manual_seed_buzz",
+        "source_count": 2
+      },
+      {
+        "canonical_key": "domain:olaplex.com",
+        "sources": "greenhouse_jobs,manual_seed_buzz",
+        "source_count": 2
+      },
+      {
+        "canonical_key": "domain:olipop.com",
+        "sources": "greenhouse_jobs,manual_seed_buzz",
+        "source_count": 2
+      },
+      {
+        "canonical_key": "domain:oura.com",
+        "sources": "greenhouse_jobs,manual_seed_buzz",
+        "source_count": 2
+      },
+      {
+        "canonical_key": "domain:poshmark.com",
+        "sources": "ashby_jobs,manual_seed_buzz",
+        "source_count": 2
+      },
+      {
+        "canonical_key": "domain:ro.co",
+        "sources": "lever_jobs,manual_seed_buzz",
+        "source_count": 2
+      },
+      {
+        "canonical_key": "domain:stockx.com",
+        "sources": "greenhouse_jobs,manual_seed_buzz",
+        "source_count": 2
+      },
+      {
+        "canonical_key": "domain:talkiatry.com",
+        "sources": "ashby_jobs,manual_seed_buzz",
+        "source_count": 2
+      },
+      {
+        "canonical_key": "domain:tonal.com",
+        "sources": "ashby_jobs,manual_seed_buzz",
+        "source_count": 2
+      },
+      {
+        "canonical_key": "domain:whoop.com",
+        "sources": "lever_jobs,manual_seed_buzz",
+        "source_count": 2
+      }
+    ],
+    "promoted_multi_source": {
+      "promoted_multi_source_raw": 0,
+      "promoted_multi_source_eligible": 0,
+      "details": []
+    },
+    "news_api_key_distribution": [
+      {
+        "key_type": "domain",
+        "count": 7
+      },
+      {
+        "key_type": "other",
+        "count": 4
+      },
+      {
+        "key_type": "name_loc",
+        "count": 1
+      }
+    ],
+    "publisher_leakage": {
+      "publisher_domain_keys_total": 20,
+      "top_leaked": [
+        "domain:paraschopra.github.io",
+        "domain:inc.com",
+        "domain:reuters.com",
+        "domain:bostonglobe.com",
+        "domain:simonhalvdansson.github.io",
+        "domain:interestingengineering.com",
+        "domain:bobbiec.github.io",
+        "domain:apps.apple.com",
+        "domain:usaherald.com",
+        "domain:foxbusiness.com"
+      ]
+    },
+    "api_calls_per_collector": [
+      {
+        "collector_name": "job_postings",
+        "api_calls": 1026,
+        "rate_limit_hits": 0,
+        "signals_found": 20,
+        "status": "success"
+      }
+    ],
+    "sic_matched_distribution": [],
+    "domain_key_counts": [
+      {
+        "source_api": "manual_seed_buzz",
+        "domain_keys": 20,
+        "total": 20
+      },
+      {
+        "source_api": "greenhouse_jobs",
+        "domain_keys": 13,
+        "total": 13
+      },
+      {
+        "source_api": "news_api",
+        "domain_keys": 7,
+        "total": 12
+      },
+      {
+        "source_api": "ashby_jobs",
+        "domain_keys": 4,
+        "total": 4
+      },
+      {
+        "source_api": "lever_jobs",
+        "domain_keys": 3,
+        "total": 3
+      },
+      {
+        "source_api": "product_hunt",
+        "domain_keys": 2,
+        "total": 2
+      },
+      {
+        "source_api": "rss_feeds",
+        "domain_keys": 0,
+        "total": 66
+      },
+      {
+        "source_api": "github",
+        "domain_keys": 0,
+        "total": 2
+      },
+      {
+        "source_api": "arxiv",
+        "domain_keys": 0,
+        "total": 178
+      }
+    ]
+  }
+}

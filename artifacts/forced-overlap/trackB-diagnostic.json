@@ -1,0 +1,21 @@
+{
+  "track_b_result": "natural_overlap_zero",
+  "explanation": "News/RSS signals use name_loc: keys derived from article titles, not domain: keys. No natural overlap with seeded domain: keys. This is a collector key-yield issue, not an architecture failure. Track A already proved convergence correctness.",
+  "new_signals_from_track_b": [
+    {
+      "id": 470,
+      "signal_type": "press_release",
+      "source_api": "rss_feeds",
+      "canonical_key": "name_loc:medipeel",
+      "evidence_family": "public_buzz",
+      "canonical_key_v2": "name_loc:medipeel"
+    }
+  ],
+  "new_signal_count": 1,
+  "key_pattern_analysis": {
+    "news_api_keys": "name_loc:* (article-title-derived)",
+    "rss_feeds_keys": "name_loc:* (article-title-derived)",
+    "seeded_domain_keys": "domain:* (company-website-derived)",
+    "mismatch_reason": "Different key derivation strategies \u2014 news extracts company names from headlines, not domains. Multi-source convergence requires NER-based domain extraction from articles."
+  }
+}

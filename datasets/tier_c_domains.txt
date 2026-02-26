@@ -1,0 +1,74 @@
+# Tier C Consumer Startup Domains for Forced-Overlap Proof
+# Curated: CPG, health/wellness, travel, consumer marketplaces
+# Selection criteria: known active Greenhouse or Lever job boards
+#
+# Categories:
+#   CPG (food, beverage, beauty)
+#   Health Tech (fitness, wellness, mental health)
+#   Travel & Hospitality
+#   Consumer Marketplaces
+
+# --- CPG: Food & Beverage ---
+olipop.com
+drinkagh.com
+drinkculturepop.com
+athleticbrewing.com
+huel.com
+dailyharvest.com
+hungryroot.com
+freshly.com
+factor75.com
+territoryfoods.com
+thecookingguild.com
+drinkmati.com
+drinkpoppi.com
+
+# --- CPG: Beauty & Personal Care ---
+glossier.com
+functionofbeauty.com
+versed.com
+summerfridays.com
+kosas.com
+rfrancybeauty.com
+aesop.com
+ceremonia.com
+olaplex.com
+jfrfranco.com
+
+# --- Health Tech: Fitness & Wellness ---
+whoop.com
+calm.com
+noom.com
+tonal.com
+oura.com
+headspace.com
+mindbloom.com
+hims.com
+ro.co
+parsley.health
+
+# --- Health Tech: Mental Health ---
+cerebral.com
+betterhelp.com
+talkiatry.com
+spring.health
+lyrahealth.com
+
+# --- Travel & Hospitality ---
+getaround.com
+hipcamp.com
+sonder.com
+selina.com
+hopper.com
+flyr.com
+
+# --- Consumer Marketplaces ---
+poshmark.com
+mercari.com
+offerup.com
+depop.com
+stockx.com
+goat.com
+chairish.com
+1stdibs.com
+faire.com

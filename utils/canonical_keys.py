@@ -22,6 +22,7 @@ Priority order:
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
 from typing import Dict, List, Optional
@@ -126,6 +127,14 @@ def normalize_domain(value: str) -> str:
         return ""
 
     return host
+
+
+def derive_company_id(canonical_key: str) -> str:
+    """Deterministic company ID from a canonical key (SHA256[:16]).
+
+    Maintains parity with EntityIdentityStore.entity_id_for_seed().
+    """
+    return hashlib.sha256(canonical_key.encode("utf-8")).hexdigest()[:16]
 
 
 def normalize_companies_house_number(value: str) -> str:
