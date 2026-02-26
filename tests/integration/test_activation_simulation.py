@@ -79,8 +79,28 @@ def _set_step4_flags(monkeypatch):
 def _create_test_db(path: Path) -> Path:
     """Create a minimal DB with required tables for activation gate."""
     conn = sqlite3.connect(str(path))
-    conn.execute("CREATE TABLE schema_migrations (version INTEGER)")
-    conn.execute("INSERT INTO schema_migrations VALUES (41)")
+    conn.execute(
+        "CREATE TABLE schema_migrations ("
+        "version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL, description TEXT)"
+    )
+    # Build a v41-compatible baseline so v42/v43 upgrades can run in tests.
+    conn.execute(
+        "CREATE TABLE signals ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "signal_type TEXT NOT NULL, "
+        "source_api TEXT NOT NULL, "
+        "canonical_key TEXT NOT NULL, "
+        "company_name TEXT, "
+        "confidence REAL NOT NULL, "
+        "raw_data TEXT NOT NULL, "
+        "detected_at TEXT NOT NULL, "
+        "created_at TEXT NOT NULL)"
+    )
+    conn.execute(
+        "INSERT INTO schema_migrations (version, applied_at, description) "
+        "VALUES (?, ?, ?)",
+        (41, FROZEN_NOW, "Schema version 41"),
+    )
     conn.execute(
         "CREATE TABLE canary_runs ("
         "id INTEGER PRIMARY KEY, verdict TEXT, pass_rate REAL, created_at TEXT)"
