@@ -1001,3 +1001,134 @@ class TestSignalRegression:
             "with Values Aligned to Theirs, Acosta Group Finds"
         )
         assert result is None
+
+
+# =============================================================================
+# DNS PROBE ENRICHMENT INTEGRATION TESTS
+# =============================================================================
+
+
+class TestDnsProbeEnrichment:
+    """Integration tests for DNS probe enrichment in _collect_signals."""
+
+    @pytest.fixture
+    def _make_collector(self):
+        """Factory for RSSFeedCollector with mocked feed fetching."""
+        def factory(articles):
+            collector = RSSFeedCollector(store=None, feeds=["https://example.com/feed"])
+            # Patch _parse_feed to return given articles
+            async def fake_parse(url):
+                return articles
+            collector._parse_feed = fake_parse
+            return collector
+        return factory
+
+    @pytest.fixture
+    def _consumer_article(self):
+        """A consumer-relevant article for testing."""
+        return RSSArticle(
+            title="WellnessApp raises $8M Series A for fitness tracking",
+            description="Consumer health startup expands with wellness features.",
+            url="https://techcrunch.com/2024/01/15/wellnessapp-raises",
+            source_feed="TechCrunch Startups",
+            published_at=datetime.now(timezone.utc) - timedelta(hours=2),
+        )
+
+    @pytest.fixture
+    def _no_company_article(self):
+        """An article that won't produce a company_name via regex."""
+        return RSSArticle(
+            title="New trends in consumer wellness and fitness markets",
+            description="The beauty and wellness industry sees growth.",
+            url="https://techcrunch.com/2024/01/15/wellness-trends",
+            source_feed="TechCrunch Startups",
+            published_at=datetime.now(timezone.utc) - timedelta(hours=2),
+        )
+
+    @pytest.mark.asyncio
+    async def test_dns_probe_disabled_status(self, _make_collector, _consumer_article, monkeypatch):
+        """When DNS_PROBE_ENABLED is unset/false, all signals get skipped_disabled."""
+        monkeypatch.delenv("DNS_PROBE_ENABLED", raising=False)
+        collector = _make_collector([_consumer_article])
+        signals = await collector._collect_signals()
+        assert len(signals) >= 1
+        for sig in signals:
+            assert sig.raw_data["dns_probe_attempted"] is False
+            assert sig.raw_data["dns_probe_domain"] is None
+            assert sig.raw_data["dns_probe_status"] == "skipped_disabled"
+            # Canonical key candidates untouched
+            assert "canonical_key_candidates" in sig.raw_data
+
+    @pytest.mark.asyncio
+    async def test_dns_probe_hit_metadata(self, _make_collector, _consumer_article, monkeypatch):
+        """When probe hits, dns_probe_domain is populated; canonical unchanged."""
+        monkeypatch.setenv("DNS_PROBE_ENABLED", "true")
+        collector = _make_collector([_consumer_article])
+
+        async def fake_probe(name, max_attempts=4, cache=None):
+            return "wellnessapp.com"
+
+        with patch("utils.dns_probe.dns_probe_company", fake_probe):
+            signals = await collector._collect_signals()
+
+        hit_signals = [s for s in signals if s.raw_data.get("dns_probe_status") == "hit"]
+        assert len(hit_signals) >= 1
+        for sig in hit_signals:
+            assert sig.raw_data["dns_probe_attempted"] is True
+            assert sig.raw_data["dns_probe_domain"] == "wellnessapp.com"
+            # Canonical key candidates should NOT contain DNS domain
+            ck = sig.raw_data.get("canonical_key_candidates", [])
+            assert not any("wellnessapp.com" in c for c in ck), \
+                "DNS probe should NOT promote to canonical key in Phase 1"
+
+    @pytest.mark.asyncio
+    async def test_dns_probe_cap_status(self, _make_collector, monkeypatch):
+        """Signals beyond DNS_PROBE_CAP get skipped_cap."""
+        monkeypatch.setenv("DNS_PROBE_ENABLED", "true")
+        monkeypatch.setenv("DNS_PROBE_CAP", "1")
+
+        articles = [
+            RSSArticle(
+                title="WellnessApp raises $8M for fitness tracking",
+                description="Consumer health startup expands with wellness.",
+                url="https://techcrunch.com/2024/01/15/wellnessapp",
+                source_feed="TechCrunch Startups",
+                published_at=datetime.now(timezone.utc) - timedelta(hours=1),
+            ),
+            RSSArticle(
+                title="MealBox launches nationwide meal delivery service",
+                description="D2C food startup announces expansion.",
+                url="https://techcrunch.com/2024/01/15/mealbox",
+                source_feed="TechCrunch Startups",
+                published_at=datetime.now(timezone.utc) - timedelta(hours=2),
+            ),
+        ]
+        collector = _make_collector(articles)
+
+        async def fake_probe(name, max_attempts=4, cache=None):
+            return f"{name.lower().replace(' ', '')}.com"
+
+        with patch("utils.dns_probe.dns_probe_company", fake_probe):
+            signals = await collector._collect_signals()
+
+        statuses = {s.raw_data["dns_probe_status"] for s in signals}
+        # With cap=1, at most 1 unique company probed; others get skipped_cap
+        # (Both articles have different company names → one gets capped)
+        if len(signals) >= 2:
+            assert "skipped_cap" in statuses or len({s.raw_data.get("company_name") for s in signals}) <= 1
+
+    @pytest.mark.asyncio
+    async def test_dns_probe_no_company(self, _make_collector, _no_company_article, monkeypatch):
+        """Signals without company_name get skipped_no_company."""
+        monkeypatch.setenv("DNS_PROBE_ENABLED", "true")
+        collector = _make_collector([_no_company_article])
+
+        async def fake_probe(name, max_attempts=4, cache=None):
+            return f"{name.lower()}.com"
+
+        with patch("utils.dns_probe.dns_probe_company", fake_probe):
+            signals = await collector._collect_signals()
+
+        no_company = [s for s in signals if not s.raw_data.get("company_name")]
+        for sig in no_company:
+            assert sig.raw_data["dns_probe_status"] == "skipped_no_company"

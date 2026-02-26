@@ -32,8 +32,10 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
 import html as html_lib
 import logging
+import os
 import re
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
@@ -388,6 +390,57 @@ class RSSFeedCollector(BaseCollector):
                 continue
 
         logger.info(f"Parsed {len(self.feeds)} feeds, found {articles_found} articles, {len(signals)} relevant signals")
+
+        # --- DNS probe enrichment pass (candidate-only) ---
+        dns_enabled = os.environ.get("DNS_PROBE_ENABLED", "false").lower() in ("true", "1", "yes")
+        dns_cap = int(os.environ.get("DNS_PROBE_CAP", "50"))
+        dns_concurrency = int(os.environ.get("DNS_PROBE_CONCURRENCY", "8"))
+
+        if not dns_enabled:
+            for sig in signals:
+                sig.raw_data["dns_probe_attempted"] = False
+                sig.raw_data["dns_probe_domain"] = None
+                sig.raw_data["dns_probe_status"] = "skipped_disabled"
+        else:
+            # 1. Collect unique company names from signals
+            name_to_signals: dict[str, list[Signal]] = {}
+            for sig in signals:
+                cname = sig.raw_data.get("company_name")
+                if cname:
+                    name_to_signals.setdefault(cname, []).append(sig)
+                else:
+                    sig.raw_data["dns_probe_attempted"] = False
+                    sig.raw_data["dns_probe_domain"] = None
+                    sig.raw_data["dns_probe_status"] = "skipped_no_company"
+
+            # 2. Probe unique names with bounded concurrency
+            from utils.dns_probe import dns_probe_company
+
+            sem = asyncio.Semaphore(dns_concurrency)
+            names_to_probe = list(name_to_signals.keys())[:dns_cap]
+            capped_names = set(name_to_signals.keys()) - set(names_to_probe)
+
+            async def _probe_with_sem(name):
+                async with sem:
+                    return name, await dns_probe_company(name)
+
+            results = await asyncio.gather(*[_probe_with_sem(n) for n in names_to_probe])
+            probe_map = dict(results)
+
+            # 3. Patch raw_data on matching signals
+            for cname, sigs in name_to_signals.items():
+                if cname in capped_names:
+                    for sig in sigs:
+                        sig.raw_data["dns_probe_attempted"] = False
+                        sig.raw_data["dns_probe_domain"] = None
+                        sig.raw_data["dns_probe_status"] = "skipped_cap"
+                else:
+                    domain = probe_map.get(cname)
+                    for sig in sigs:
+                        sig.raw_data["dns_probe_attempted"] = True
+                        sig.raw_data["dns_probe_domain"] = domain
+                        sig.raw_data["dns_probe_status"] = "hit" if domain else "miss"
+
         return signals
 
     async def _fetch_feed(self, url: str) -> str:
