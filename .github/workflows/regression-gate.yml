@@ -46,6 +46,14 @@ jobs:
           python -m pytest tests/ops/test_schema_invariants.py \
             --tb=short -q
 
+      - name: UTF-8 docs guard
+        run: python scripts/ci/check_docs_utf8.py
+
+      - name: v6.6.2 help contract
+        run: |
+          python -m pytest tests/cli/test_v662_help_contract.py \
+            --tb=short -q
+
   docker-build:
     name: Docker Build & Smoke
     runs-on: ubuntu-latest
