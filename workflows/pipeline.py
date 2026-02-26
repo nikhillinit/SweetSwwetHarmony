@@ -1510,7 +1510,7 @@ class DiscoveryPipeline:
                 collector = DiscordCollector(
                     **common_args,
                     bot_token=discord_token,
-                    server_ids=discord_servers if discord_servers else None,
+                    guild_ids=discord_servers if discord_servers else None,
                 )
             elif collector_name == "news_api":
                 from collectors.news_api import NewsAPICollector
