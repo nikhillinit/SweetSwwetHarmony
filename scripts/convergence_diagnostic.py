@@ -2,14 +2,17 @@
 """
 Convergence diagnostic report.
 
-Reports 7 sections:
-1. Multi-source signal overlap
+Reports 10 sections:
+1. Multi-source signal overlap (domain: keys only)
 2. Promoted entities with >=2 sources (raw + eligible KPI)
 3. news_api key distribution (run-scoped)
 4. Publisher leakage count
 5. api_calls per collector (explicit latest-run CTE)
 6. SEC Edgar sic_matched distribution
 7. Per-collector domain key counts (non-HN)
+8. All-prefix multi-source overlap (all key types, not just domain:)
+9. Key prefix distribution (signal counts and unique keys per prefix per collector)
+10. Per-collector domain-key yield (domain vs name_loc vs total)
 
 Usage:
     python scripts/convergence_diagnostic.py --db signals.db
@@ -252,6 +255,72 @@ def _section_7_domain_key_counts(conn: sqlite3.Connection) -> list[dict]:
     ]
 
 
+def _section_8_all_prefix_overlap(conn: sqlite3.Connection) -> list[dict]:
+    """Multi-source signal overlap across ALL key prefixes (not just domain:)."""
+    rows = conn.execute("""
+        SELECT canonical_key, GROUP_CONCAT(DISTINCT source_api) as sources,
+               COUNT(DISTINCT source_api) as n
+        FROM signals
+        GROUP BY canonical_key HAVING n >= 2
+        ORDER BY n DESC
+    """).fetchall()
+    return [
+        {"canonical_key": r[0], "sources": r[1], "source_count": r[2]}
+        for r in rows
+    ]
+
+
+def _section_9_key_prefix_distribution(conn: sqlite3.Connection) -> list[dict]:
+    """Key prefix distribution: signal counts and unique keys per prefix per collector."""
+    rows = conn.execute("""
+        SELECT
+            source_api,
+            CASE
+                WHEN canonical_key LIKE 'domain:%' THEN 'domain'
+                WHEN canonical_key LIKE 'name_loc:%' THEN 'name_loc'
+                ELSE 'other'
+            END as prefix,
+            COUNT(*) as signal_count,
+            COUNT(DISTINCT canonical_key) as unique_keys
+        FROM signals
+        GROUP BY source_api, prefix
+        ORDER BY source_api, signal_count DESC
+    """).fetchall()
+    return [
+        {
+            "source_api": r[0],
+            "prefix": r[1],
+            "signal_count": r[2],
+            "unique_keys": r[3],
+        }
+        for r in rows
+    ]
+
+
+def _section_10_per_collector_domain_yield(conn: sqlite3.Connection) -> list[dict]:
+    """Per-collector domain-key yield: domain vs name_loc vs total."""
+    rows = conn.execute("""
+        SELECT
+            source_api,
+            SUM(CASE WHEN canonical_key LIKE 'domain:%' THEN 1 ELSE 0 END) as domain_key_count,
+            SUM(CASE WHEN canonical_key LIKE 'name_loc:%' THEN 1 ELSE 0 END) as name_loc_count,
+            COUNT(*) as total
+        FROM signals
+        GROUP BY source_api
+        ORDER BY total DESC
+    """).fetchall()
+    return [
+        {
+            "source_api": r[0],
+            "domain_key_count": r[1],
+            "name_loc_count": r[2],
+            "total": r[3],
+            "domain_yield_pct": round(r[1] / r[3] * 100, 1) if r[3] > 0 else 0.0,
+        }
+        for r in rows
+    ]
+
+
 def run_diagnostic(
     db_path: str,
     run_id: str | None = None,
@@ -305,6 +374,18 @@ def run_diagnostic(
     # Section 7
     s7 = _section_7_domain_key_counts(conn)
     report["sections"]["domain_key_counts"] = s7
+
+    # Section 8
+    s8 = _section_8_all_prefix_overlap(conn)
+    report["sections"]["all_prefix_overlap"] = s8
+
+    # Section 9
+    s9 = _section_9_key_prefix_distribution(conn)
+    report["sections"]["key_prefix_distribution"] = s9
+
+    # Section 10
+    s10 = _section_10_per_collector_domain_yield(conn)
+    report["sections"]["per_collector_domain_yield"] = s10
 
     conn.close()
 
@@ -370,6 +451,48 @@ def run_diagnostic(
             )
     else:
         print("  No non-HN signals found.")
+
+    print(f"\n--- 8. All-Prefix Multi-Source Overlap ---")
+    if s8:
+        for item in s8:
+            print(f"  {item['canonical_key']}: {item['sources']} ({item['source_count']} sources)")
+    else:
+        print("  No multi-source overlap found across any prefix.")
+
+    print(f"\n--- 9. Key Prefix Distribution ---")
+    if s9:
+        # Group by source_api for readability
+        current_api = None
+        for item in s9:
+            if item['source_api'] != current_api:
+                current_api = item['source_api']
+                print(f"  [{current_api}]")
+            pct = (
+                round(item['signal_count'] / sum(
+                    i['signal_count'] for i in s9 if i['source_api'] == current_api
+                ) * 100, 1)
+            )
+            print(
+                f"    {item['prefix']}: "
+                f"{item['signal_count']} signals, "
+                f"{item['unique_keys']} unique keys "
+                f"({pct}%)"
+            )
+    else:
+        print("  No signals found.")
+
+    print(f"\n--- 10. Per-Collector Domain-Key Yield ---")
+    if s10:
+        for item in s10:
+            print(
+                f"  {item['source_api']}: "
+                f"domain={item['domain_key_count']}, "
+                f"name_loc={item['name_loc_count']}, "
+                f"total={item['total']}, "
+                f"domain_yield={item['domain_yield_pct']}%"
+            )
+    else:
+        print("  No signals found.")
 
     print("\n" + "=" * 60)
 
