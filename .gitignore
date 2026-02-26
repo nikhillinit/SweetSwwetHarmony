@@ -70,6 +70,12 @@ tmpclaude-*
 #Ignore vscode AI rules
 .github\instructions\codacy.instructions.md
 
+# tldextract offline cache
+.tldextract_cache/
+
+# Canary report artifacts
+reports/
+
 # Phase 0C: Shadow analysis artifacts
 shadow_logs.jsonl
 artifacts/shadow/
