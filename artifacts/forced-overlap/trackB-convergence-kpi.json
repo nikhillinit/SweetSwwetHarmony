@@ -1,0 +1,63 @@
+{
+  "ok": true,
+  "command": "convergence-kpi",
+  "version": "v6.6.2",
+  "db_path": "signals.db",
+  "started_at": "2026-02-26T07:54:50.910251+00:00",
+  "finished_at": "2026-02-26T07:54:50.940428+00:00",
+  "metrics": {
+    "ok": true,
+    "schema_version": 43,
+    "days": 30,
+    "total_signals": 467,
+    "keys_with_2plus_families": 19,
+    "keys_with_2plus_source_apis": 19,
+    "unknown_family_rate": 0.0,
+    "unlinked_buzz_rate": 15.42,
+    "per_source_breakdown": [
+      {
+        "source_api": "arxiv",
+        "count": 178,
+        "unknown_family_count": 0
+      },
+      {
+        "source_api": "hacker_news",
+        "count": 168,
+        "unknown_family_count": 0
+      },
+      {
+        "source_api": "rss_feeds",
+        "count": 71,
+        "unknown_family_count": 0
+      },
+      {
+        "source_api": "manual_seed_buzz",
+        "count": 20,
+        "unknown_family_count": 0
+      },
+      {
+        "source_api": "greenhouse_jobs",
+        "count": 12,
+        "unknown_family_count": 0
+      },
+      {
+        "source_api": "news_api",
+        "count": 11,
+        "unknown_family_count": 0
+      },
+      {
+        "source_api": "ashby_jobs",
+        "count": 4,
+        "unknown_family_count": 0
+      },
+      {
+        "source_api": "lever_jobs",
+        "count": 3,
+        "unknown_family_count": 0
+      }
+    ],
+    "exclude_unlinked_buzz": true
+  },
+  "warnings": [],
+  "errors": []
+}
