@@ -126,7 +126,7 @@ async def test_group_signals_by_canonical_key(temp_db):
         dry_run=True
     )
 
-    prospects = pusher._group_by_canonical_key(pending)
+    prospects = await pusher._group_by_canonical_key(pending)
 
     # Should have 2 unique prospects
     assert len(prospects) == 2
@@ -180,7 +180,7 @@ async def test_aggregated_prospect_metadata(temp_db):
         dry_run=True
     )
 
-    prospects = pusher._group_by_canonical_key(pending)
+    prospects = await pusher._group_by_canonical_key(pending)
     prospect = prospects[0]
 
     # Check aggregated metadata
