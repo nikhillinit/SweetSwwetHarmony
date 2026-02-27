@@ -219,6 +219,26 @@ def handle_conflict_error(e: ConflictError):
 
 
 # =============================================================================
+# SHARED STORE DEPENDENCY
+# =============================================================================
+
+async def get_store(request: Request) -> "SignalStore":
+    """Get the lifespan-managed SignalStore from app state.
+
+    All routers should use this instead of creating per-request stores.
+    Falls back to creating a new store for tests that don't set up lifespan.
+    """
+    store = getattr(request.app.state, "store", None)
+    if store is not None:
+        return store
+    # Fallback for isolated test apps that don't set up lifespan
+    from storage.signal_store import SignalStore
+    store = SignalStore()
+    await store.initialize()
+    return store
+
+
+# =============================================================================
 # UTILITIES
 # =============================================================================
 

@@ -20,7 +20,8 @@ from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, field_validator
 
 from fastapi.responses import Response
-from storage.signal_store import SignalStore
+from api.db import get_store
+from storage.signal_store import SignalStore, CURRENT_SCHEMA_VERSION
 from api.health_bounds import BoundedParams
 
 logger = logging.getLogger(__name__)
@@ -107,21 +108,6 @@ class DetailedHealthResponse(BaseModel):
 # DEPENDENCY INJECTION
 # =============================================================================
 
-async def get_store(request: Request) -> SignalStore:
-    """Get the lifespan-managed SignalStore from app state.
-
-    Falls back to creating a new store if app.state.store is unavailable
-    (e.g., in tests that don't use the full app lifespan).
-    """
-    store = getattr(request.app.state, "store", None)
-    if store is not None:
-        return store
-    # Fallback for isolated test apps that don't set up lifespan
-    store = SignalStore()
-    await store.initialize()
-    return store
-
-
 # =============================================================================
 # ENDPOINTS
 # =============================================================================
@@ -154,7 +140,7 @@ async def get_detailed_health(
             last_checked=datetime.now(timezone.utc),
             details={
                 "total_signals": stats.get("total_signals", 0),
-                "schema_version": 16,  # Current version
+                "schema_version": CURRENT_SCHEMA_VERSION,
             },
         )
     except Exception as e:

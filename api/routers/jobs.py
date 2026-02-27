@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from api.auth.jwt_auth import get_current_user, require_role, User, Role
+from api.db import get_store
 from api.services.job_service import JobService
 from storage.signal_store import SignalStore, Job, JobLog
 
@@ -76,13 +77,6 @@ class JobListResponse(BaseModel):
 # =============================================================================
 # DEPENDENCY INJECTION
 # =============================================================================
-
-async def get_store() -> SignalStore:
-    """Get initialized SignalStore."""
-    store = SignalStore()
-    await store.initialize()
-    return store
-
 
 async def get_job_service(store: SignalStore = Depends(get_store)) -> JobService:
     """Get job service instance."""
