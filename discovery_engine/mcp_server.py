@@ -155,8 +155,7 @@ async def get_signal_store() -> SignalStore:
     """Get or create the signal store instance."""
     global _signal_store
     if _signal_store is None:
-        db_path = os.environ.get("SIGNAL_DB_PATH", "signals.db")
-        _signal_store = SignalStore(db_path=db_path)
+        _signal_store = SignalStore()  # resolves via env (DISCOVERY_DB_PATH > SIGNAL_DB_PATH > signals.db)
         await _signal_store.initialize()
     return _signal_store
 

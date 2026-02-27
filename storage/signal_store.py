@@ -1959,7 +1959,7 @@ class SignalStore:
 
     def __init__(
         self,
-        db_path: str | Path = "signals.db",
+        db_path: str | Path | None = None,
         suppression_ttl_days: int = 7,
         identity_store: Optional[EntityIdentityStore] = None,
         use_thin_files: bool = False,
@@ -1968,12 +1968,14 @@ class SignalStore:
         Initialize signal store.
 
         Args:
-            db_path: Path to SQLite database file
+            db_path: Path to SQLite database file.  When None (default),
+                     resolves via DISCOVERY_DB_PATH > SIGNAL_DB_PATH > "signals.db".
             suppression_ttl_days: How long to cache Notion entries before re-checking
             identity_store: Phase G EntityIdentityStore for company_id resolution
             use_thin_files: Enable thin file upsert on save_signal()
         """
-        self.db_path = Path(db_path)
+        from utils.db_path_helper import resolve_db_path_env
+        self.db_path = Path(resolve_db_path_env(db_path))
         self.suppression_ttl_days = suppression_ttl_days
         self._identity_store = identity_store
         self._use_thin_files = use_thin_files
@@ -6475,14 +6477,16 @@ class SignalStore:
 
 @asynccontextmanager
 async def signal_store(
-    db_path: str | Path = "signals.db",
+    db_path: str | Path | None = None,
     **kwargs
 ) -> AsyncIterator[SignalStore]:
     """
     Context manager for SignalStore that handles initialization and cleanup.
 
+    When db_path is None, resolves via DISCOVERY_DB_PATH > SIGNAL_DB_PATH > "signals.db".
+
     Usage:
-        async with signal_store("signals.db") as store:
+        async with signal_store() as store:
             await store.save_signal(...)
     """
     store = SignalStore(db_path, **kwargs)
