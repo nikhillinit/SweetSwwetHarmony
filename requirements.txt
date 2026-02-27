@@ -3,8 +3,9 @@
 # MCP SDK (Model Context Protocol)
 mcp>=1.0.0
 
-# HTTP client (async)
+# HTTP clients (async)
 httpx>=0.25.0
+aiohttp>=3.9.0
 
 # Retry logic
 tenacity>=8.2.0
@@ -45,6 +46,12 @@ pytest>=7.4.0
 pytest-asyncio>=0.21.0
 respx>=0.22.0
 
+# Notion SDK
+notion-client>=2.0.0
+
+# Rich terminal output
+rich>=13.0.0
+
 # API Layer (FastAPI backend)
 fastapi>=0.109.0
 uvicorn[standard]>=0.27.0
@@ -60,8 +67,8 @@ streamlit>=1.30.0
 pandas>=2.0.0
 altair>=5.0.0
 
-# LLM (Gemini)
-google-generativeai>=0.3.0
+# LLM (Gemini) — new unified SDK (replaces legacy google-generativeai)
+google-genai>=1.0.0
 
 # PDF Profiler (Phase 1)
 pymupdf>=1.23.0
@@ -76,6 +83,9 @@ inspect-flow>=0.1.0
 
 # Domain extraction (canonical_key_v2)
 tldextract>=5.0.0
+
+# Optional: curl-cffi for monitoring transport (lazy import in monitoring/content_pipeline/transport_curl.py)
+# curl-cffi>=0.7.0
 
 # Phase G: Identity Resolution
 rapidfuzz>=3.0.0

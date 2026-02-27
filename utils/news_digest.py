@@ -23,12 +23,12 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional
 
-# Gemini LLM
+# Gemini LLM (new google-genai SDK, lazy import)
 try:
-    import google.generativeai as genai
+    from google import genai as _genai_module
     GENAI_AVAILABLE = True
 except ImportError:
-    genai = None
+    _genai_module = None
     GENAI_AVAILABLE = False
 
 from verification.verification_gate_v2 import Signal
@@ -130,17 +130,30 @@ class NewsDigestGenerator:
             config: Optional configuration (defaults to DigestConfig())
         """
         self.config = config or DigestConfig()
+        self._client = None
 
-        # Initialize Gemini if available
-        if GENAI_AVAILABLE and GOOGLE_API_KEY:
-            genai.configure(api_key=GOOGLE_API_KEY)
-            self._model = genai.GenerativeModel(self.config.llm_model)
-        else:
-            self._model = None
+        # Check availability at init time for early warnings
+        if not GENAI_AVAILABLE:
+            logger.warning("google-genai not installed, LLM summaries disabled")
+        elif not GOOGLE_API_KEY:
+            logger.warning("GOOGLE_API_KEY not set, LLM summaries disabled")
+
+    @property
+    def _model_available(self) -> bool:
+        """Check if LLM model is available."""
+        return GENAI_AVAILABLE and bool(GOOGLE_API_KEY)
+
+    @property
+    def client(self):
+        """Lazy-load Gemini client (matches llm_classifier.py pattern)."""
+        if self._client is None:
             if not GENAI_AVAILABLE:
-                logger.warning("google-generativeai not installed, LLM summaries disabled")
-            elif not GOOGLE_API_KEY:
-                logger.warning("GOOGLE_API_KEY not set, LLM summaries disabled")
+                return None
+            api_key = GOOGLE_API_KEY
+            if not api_key:
+                return None
+            self._client = _genai_module.Client(api_key=api_key)
+        return self._client
 
     async def generate(
         self,
@@ -191,7 +204,7 @@ class NewsDigestGenerator:
             items = [self._signal_to_item(s) for s in limited_signals]
 
             # Generate section summary
-            if self.config.use_llm_summary and self._model:
+            if self.config.use_llm_summary and self._model_available:
                 section_summary = await self._summarize_section(category, limited_signals)
             else:
                 section_summary = f"{len(items)} {category.replace('_', ' ')} signals"
@@ -207,7 +220,7 @@ class NewsDigestGenerator:
         sections.sort(key=lambda s: len(s.items), reverse=True)
 
         # Generate overall summary
-        if self.config.use_llm_summary and self._model:
+        if self.config.use_llm_summary and self._model_available:
             overall_summary = await self._summarize_with_llm(news_signals)
         else:
             overall_summary = self._fallback_summary(news_signals)
@@ -328,7 +341,7 @@ class NewsDigestGenerator:
 
     async def _summarize_section(self, category: str, signals: List[Signal]) -> str:
         """Generate summary for a section using LLM."""
-        if not self._model:
+        if not self.client:
             return f"{len(signals)} signals in {category}"
 
         titles = [s.raw_data.get("title", "") for s in signals if s.raw_data]
@@ -343,7 +356,10 @@ Headlines:
 Summary:"""
 
         try:
-            response = await self._model.generate_content_async(prompt)
+            response = self.client.models.generate_content(
+                model=self.config.llm_model,
+                contents=prompt,
+            )
             return response.text.strip()
         except Exception as e:
             logger.warning(f"LLM section summary failed: {e}")
@@ -359,7 +375,7 @@ Summary:"""
         Returns:
             Summary string
         """
-        if not self._model:
+        if not self.client:
             return self._fallback_summary(signals)
 
         # Build context
@@ -386,7 +402,10 @@ Today's headlines:
 Summary:"""
 
         try:
-            response = await self._model.generate_content_async(prompt)
+            response = self.client.models.generate_content(
+                model=self.config.llm_model,
+                contents=prompt,
+            )
             return response.text.strip()
         except Exception as e:
             logger.warning(f"LLM summary failed: {e}")
