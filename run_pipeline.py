@@ -4298,6 +4298,21 @@ Examples:
     health_json_parser.add_argument("--report", type=str, default=None, help="Path to write JSON report")
     health_json_parser.add_argument("--allow-external-failures", action="store_true", help="Record external failures as warnings instead of errors")
 
+    # dns-phase2-guardrails
+    dns_guard_parser = subparsers.add_parser(
+        "dns-phase2-guardrails",
+        help="DNS Phase 2 guardrail checks with artifact emission",
+    )
+    add_db_path_args(dns_guard_parser)
+    dns_guard_parser.add_argument(
+        "--report", type=str, default=None,
+        help="Path to write JSON report",
+    )
+    dns_guard_parser.add_argument(
+        "--alias-threshold", type=int, default=100,
+        help="Max aliases allowed before breach (default: 100)",
+    )
+
     return parser
 
 
@@ -7491,6 +7506,117 @@ async def cmd_health_json_pure(args):
         return 1
 
 
+async def cmd_dns_phase2_guardrails(args):
+    """DNS Phase 2 guardrail checks with artifact emission."""
+    from datetime import datetime, timezone
+    from utils.db_path_helper import resolve_db_path
+    from utils.report_envelope import create_report, write_report
+    import sqlite3
+
+    started_at = datetime.now(timezone.utc)
+    db_path = resolve_db_path(args)
+    report_path = getattr(args, "report", None)
+    alias_threshold = getattr(args, "alias_threshold", 100)
+
+    try:
+        warnings_list = []
+        errors_list = []
+        metrics = {}
+
+        db_file = Path(db_path)
+        if not db_file.exists():
+            errors_list.append(f"Database not found: {db_path}")
+        else:
+            conn = sqlite3.connect(db_path)
+            try:
+                # Check if dns_promotion_aliases table exists
+                row = conn.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='dns_promotion_aliases'"
+                ).fetchone()
+                table_exists = row is not None
+                metrics["table_exists"] = table_exists
+
+                if not table_exists:
+                    warnings_list.append("dns_promotion_aliases table not found (pre-v44 schema)")
+                    metrics["alias_count"] = 0
+                    metrics["enabled_count"] = 0
+                    metrics["orphan_count"] = 0
+                else:
+                    # Alias count
+                    alias_count = conn.execute(
+                        "SELECT COUNT(*) FROM dns_promotion_aliases"
+                    ).fetchone()[0]
+                    metrics["alias_count"] = alias_count
+
+                    # Enabled count
+                    enabled_count = conn.execute(
+                        "SELECT COUNT(*) FROM dns_promotion_aliases WHERE enabled = 1"
+                    ).fetchone()[0]
+                    metrics["enabled_count"] = enabled_count
+
+                    # Orphan aliases (target_key not in signals)
+                    orphan_count = conn.execute(
+                        "SELECT COUNT(*) FROM dns_promotion_aliases a "
+                        "WHERE a.enabled = 1 AND NOT EXISTS ("
+                        "  SELECT 1 FROM signals s WHERE s.canonical_key = a.target_key"
+                        ")"
+                    ).fetchone()[0]
+                    metrics["orphan_count"] = orphan_count
+
+                    if orphan_count > 0:
+                        warnings_list.append(
+                            f"{orphan_count} orphan alias(es) point to keys not in signals"
+                        )
+
+                    # Enabled ratio
+                    if alias_count > 0:
+                        metrics["enabled_ratio"] = round(enabled_count / alias_count, 4)
+                    else:
+                        metrics["enabled_ratio"] = None
+
+                    # Threshold breach check
+                    if enabled_count > alias_threshold:
+                        override = os.environ.get("DNS_PHASE2_GUARDRAILS_OVERRIDE", "").lower()
+                        if override in ("1", "true", "yes"):
+                            warnings_list.append(
+                                f"Alias threshold breached ({enabled_count} > {alias_threshold}) "
+                                f"but DNS_PHASE2_GUARDRAILS_OVERRIDE is set"
+                            )
+                        else:
+                            errors_list.append(
+                                f"Alias threshold breached: {enabled_count} enabled aliases "
+                                f"exceeds threshold of {alias_threshold}"
+                            )
+
+            except sqlite3.OperationalError as exc:
+                errors_list.append(f"Database error: {exc}")
+            finally:
+                conn.close()
+
+        ok = len(errors_list) == 0
+        report = create_report(
+            command="dns-phase2-guardrails", ok=ok, db_path=db_path,
+            started_at=started_at, metrics=metrics,
+            warnings=warnings_list, errors=errors_list,
+        )
+
+        if report_path:
+            write_report(report, report_path)
+
+        print(json.dumps(report, indent=2, ensure_ascii=False))
+        return 0 if ok else 1
+
+    except Exception as exc:
+        report = create_report(
+            command="dns-phase2-guardrails", ok=False, db_path=db_path,
+            started_at=started_at, errors=[str(exc)],
+        )
+        if report_path:
+            write_report(report, report_path)
+        print(json.dumps(report, indent=2, ensure_ascii=False))
+        return 1
+
+
 async def main():
     """Main entry point"""
 
@@ -7773,6 +7899,8 @@ async def main():
             exit_code = await cmd_convergence_kpi(args)
         elif args.command == "health-json-pure":
             exit_code = await cmd_health_json_pure(args)
+        elif args.command == "dns-phase2-guardrails":
+            exit_code = await cmd_dns_phase2_guardrails(args)
         else:
             print(f"Unknown command: {args.command}")
             parser.print_help()

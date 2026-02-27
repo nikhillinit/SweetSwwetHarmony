@@ -70,6 +70,7 @@ from storage.migrations.v40_merge_lifecycle import V40_MERGE_LIFECYCLE_DDL
 from storage.migrations.v41_drift_monitoring import V41_DRIFT_MONITORING_DDL
 from storage.migrations.v42_evidence_family import V42_EVIDENCE_FAMILY_DDL
 from storage.migrations.v43_canonical_key_v2 import V43_CANONICAL_KEY_V2_DDL
+from storage.migrations.v44_dns_promotion_aliases import V44_DNS_PROMOTION_ALIASES_DDL
 
 if TYPE_CHECKING:
     from workflows.pipeline import PipelineStats, CollectorMetrics
@@ -83,7 +84,7 @@ logger = logging.getLogger(__name__)
 # SCHEMA VERSION
 # =============================================================================
 
-CURRENT_SCHEMA_VERSION = 43
+CURRENT_SCHEMA_VERSION = 44
 
 # SQL for creating tables (migrations applied in order)
 MIGRATIONS = {
@@ -1734,6 +1735,7 @@ MIGRATIONS = {
     41: V41_DRIFT_MONITORING_DDL,
     42: V42_EVIDENCE_FAMILY_DDL,
     43: V43_CANONICAL_KEY_V2_DDL,
+    44: V44_DNS_PROMOTION_ALIASES_DDL,
 }
 
 
