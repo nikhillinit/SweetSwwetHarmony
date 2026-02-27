@@ -135,7 +135,21 @@
 - **Next:** PR10a
 
 ### PR10a: Collector key hygiene
-- **Status:** PENDING
+- **Status:** READY FOR COMMIT (branch: fix/collector-key-hygiene)
+- **Files changed:** collectors/crunchbase.py, collectors/github_activity.py, collectors/hacker_news.py, collectors/linkedin.py, collectors/product_hunt.py, tests/collectors/test_collector_key_hygiene.py (new)
+- **Changes:**
+  - Added `canonical_key_candidates` to raw_data in 5 collectors that previously only emitted `canonical_key`
+  - Each collector now emits [domain_key, source_specific_key] when both are available
+  - Enables `select_strongest_candidate()` (PR9) to work for crunchbase, github_activity, hacker_news, linkedin, product_hunt signals
+  - 20 new tests across 5 test classes
+- **Gates:**
+  - `compileall -q collectors` — PASS
+  - `ci_smoke_imports.py` — PASS (32/32)
+  - `pytest tests/collectors/test_collector_key_hygiene.py` — PASS (20/20)
+  - `pytest tests/collectors/test_hacker_news.py tests/collectors/test_github_activity_*.py` — PASS (84/84, no regressions)
+  - `pytest tests/test_canonical_foundation.py` — PASS (30/30, PR9 compat)
+- **Residual risks:** None
+- **Next:** PR10b
 
 ### PR10b: DNS promotion delivery
 - **Status:** PENDING
