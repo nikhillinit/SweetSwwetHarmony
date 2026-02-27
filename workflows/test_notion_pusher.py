@@ -101,7 +101,7 @@ class FixedDecisionGate:
         self.auto_push_status = "Source"
         self.needs_review_status = "Tracking"
 
-    def evaluate(self, signals):
+    def evaluate(self, signals, **kwargs):
         sources = sorted({s.source_api for s in signals})
         verification_status = (
             VerificationStatus.MULTI_SOURCE if len(sources) > 1 else VerificationStatus.SINGLE_SOURCE
@@ -338,6 +338,50 @@ async def test_medium_confidence_single_signal_holds_under_current_scoring(temp_
     assert result.pushed == 0
     assert result.held == 1
     assert len(mock_notion.pushed_prospects) == 0
+
+
+@pytest.mark.asyncio
+async def test_medium_confidence_multi_signal_routes_tracking(temp_db, mock_notion, verification_gate, monkeypatch):
+    """Real-gate medium path should remain reachable with fresh multi-source evidence."""
+    monkeypatch.setenv("DELIVERY_MODE", "auto_publish")
+    store = temp_db
+
+    now = datetime.now(timezone.utc)
+    await store.save_signal(
+        signal_type="incorporation",
+        source_api="companies_house",
+        canonical_key="domain:medroute.ai",
+        company_name="Medium Route Inc",
+        confidence=0.90,
+        raw_data={"company_number": "87654321"},
+        detected_at=now - timedelta(days=1),
+    )
+    await store.save_signal(
+        signal_type="github_spike",
+        source_api="github",
+        canonical_key="domain:medroute.ai",
+        company_name="Medium Route Inc",
+        confidence=0.80,
+        raw_data={"repo": "medroute/ai", "stars": 120},
+        detected_at=now - timedelta(days=1),
+    )
+
+    pusher = NotionPusher(
+        signal_store=store,
+        notion_connector=mock_notion,
+        verification_gate=verification_gate,
+        dry_run=False,
+    )
+
+    result = await pusher.process_batch()
+
+    assert result.total_processed == 1
+    assert result.pushed == 1
+    assert result.held == 0
+    assert len(mock_notion.pushed_prospects) == 1
+    payload = mock_notion.pushed_prospects[0]
+    assert payload.status == "Tracking"
+    assert 0.4 <= payload.confidence_score < 0.7
 
 
 def test_gate_reachability_contract(verification_gate):
