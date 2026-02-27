@@ -1,0 +1,92 @@
+{
+  "policy_version": "v2.1",
+  "score_recalibration_factor": 1.35,
+  "cases": [
+    {
+      "id": "auto_push_strong_multi",
+      "signals": [
+        {
+          "id": "ap-1",
+          "signal_type": "hiring_signal",
+          "source_api": "jobs",
+          "confidence": 0.98,
+          "age_days": 1
+        },
+        {
+          "id": "ap-2",
+          "signal_type": "funding_announcement",
+          "source_api": "news",
+          "confidence": 0.95,
+          "age_days": 2
+        }
+      ],
+      "expected": {
+        "decision": "auto_push",
+        "suggested_status": "Source",
+        "score_min": 0.9,
+        "score_max": 1.0
+      }
+    },
+    {
+      "id": "needs_review_medium_multi",
+      "signals": [
+        {
+          "id": "nr-1",
+          "signal_type": "incorporation",
+          "source_api": "companies_house",
+          "confidence": 0.85,
+          "age_days": 1
+        },
+        {
+          "id": "nr-2",
+          "signal_type": "github_spike",
+          "source_api": "github",
+          "confidence": 0.75,
+          "age_days": 1
+        }
+      ],
+      "expected": {
+        "decision": "needs_review",
+        "suggested_status": "Tracking",
+        "score_min": 0.6,
+        "score_max": 0.7
+      }
+    },
+    {
+      "id": "hold_low_single",
+      "signals": [
+        {
+          "id": "h-1",
+          "signal_type": "domain_registration",
+          "source_api": "whois",
+          "confidence": 0.35,
+          "age_days": 20
+        }
+      ],
+      "expected": {
+        "decision": "hold",
+        "suggested_status": "",
+        "score_min": 0.03,
+        "score_max": 0.2
+      }
+    },
+    {
+      "id": "reject_hard_kill",
+      "signals": [
+        {
+          "id": "rk-1",
+          "signal_type": "company_dissolved",
+          "source_api": "companies_house",
+          "confidence": 1.0,
+          "age_days": 1
+        }
+      ],
+      "expected": {
+        "decision": "reject",
+        "suggested_status": "",
+        "score_min": 0.0,
+        "score_max": 0.0
+      }
+    }
+  ]
+}

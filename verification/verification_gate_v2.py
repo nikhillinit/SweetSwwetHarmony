@@ -32,6 +32,7 @@ from typing import Optional, List, Dict, Any
 from collections import defaultdict
 import hashlib
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -187,6 +188,9 @@ class ConfidenceBreakdown:
     momentum_score: float = 0.0  # Raw momentum score (0-1)
     enrichment_boost: float = 0.0  # Boost from enrichment data (Phase 2)
     community_sentiment_boost: float = 0.0  # Boost/penalty from community sentiment (-0.15 to +0.15)
+    raw_overall: float = 0.0
+    score_recalibration_factor: float = 1.0
+    policy_version: str = "v2.0"
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -200,6 +204,9 @@ class ConfidenceBreakdown:
             "momentum_score": round(self.momentum_score, 3),
             "enrichment_boost": round(self.enrichment_boost, 3),
             "community_sentiment_boost": round(self.community_sentiment_boost, 3),
+            "raw_overall": round(self.raw_overall, 3),
+            "score_recalibration_factor": round(self.score_recalibration_factor, 3),
+            "policy_version": self.policy_version,
             "signals_contributing": self.signals_contributing,
             "sources_checked": self.sources_checked,
             "sources": self.sources,
@@ -230,6 +237,8 @@ class VerificationGate:
     HIGH_CONFIDENCE_THRESHOLD = 0.7
     MEDIUM_CONFIDENCE_THRESHOLD = 0.4
     MIN_SOURCES_FOR_AUTO_PUSH = 2
+    POLICY_VERSION = "v2.1"
+    SCORE_RECALIBRATION_FACTOR = 1.35
 
     # Founder score thresholds
     FOUNDER_HIGH_SCORE = 0.7  # Serial founder, FAANG, etc.
@@ -262,6 +271,29 @@ class VerificationGate:
         self.needs_review_status = needs_review_status
         self.use_founder_scoring = use_founder_scoring
         self.use_velocity_scoring = use_velocity_scoring
+        self.HIGH_CONFIDENCE_THRESHOLD = self._read_float_env(
+            "VERIFICATION_GATE_HIGH_THRESHOLD",
+            self.HIGH_CONFIDENCE_THRESHOLD,
+        )
+        self.MEDIUM_CONFIDENCE_THRESHOLD = self._read_float_env(
+            "VERIFICATION_GATE_MEDIUM_THRESHOLD",
+            self.MEDIUM_CONFIDENCE_THRESHOLD,
+        )
+        self.score_recalibration_factor = self._read_float_env(
+            "VERIFICATION_GATE_SCORE_SCALE",
+            self.SCORE_RECALIBRATION_FACTOR,
+        )
+
+    @staticmethod
+    def _read_float_env(name: str, default: float) -> float:
+        value = os.getenv(name)
+        if value is None:
+            return default
+        try:
+            return float(value)
+        except ValueError:
+            logger.warning("Invalid %s=%r; using default %s", name, value, default)
+            return default
     
     def evaluate(
         self,
@@ -528,11 +560,19 @@ class VerificationGate:
                 "effect": "boost" if community_sentiment_boost_applied >= 0 else "penalty"
             })
 
-        # Final score with all boosts (can't go below 0)
-        final_score = max(0.0, min(
-            intermediate_score + founder_boost + velocity_boost_applied + enrichment_boost_applied + community_sentiment_boost_applied,
-            1.0
-        ))
+        raw_overall = (
+            intermediate_score
+            + founder_boost
+            + velocity_boost_applied
+            + enrichment_boost_applied
+            + community_sentiment_boost_applied
+        )
+
+        # Recalibrate weighted scores so fixed routing thresholds remain reachable.
+        final_score = max(
+            0.0,
+            min(raw_overall * self.score_recalibration_factor, 1.0),
+        )
 
         return ConfidenceBreakdown(
             overall=final_score,
@@ -545,6 +585,9 @@ class VerificationGate:
             momentum_score=momentum_score,
             enrichment_boost=enrichment_boost_applied,
             community_sentiment_boost=community_sentiment_boost_applied,
+            raw_overall=raw_overall,
+            score_recalibration_factor=self.score_recalibration_factor,
+            policy_version=self.POLICY_VERSION,
             signals_contributing=distinct_types,
             sources_checked=sources_checked,
             sources=list(by_source.keys()),
