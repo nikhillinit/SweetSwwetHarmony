@@ -788,8 +788,8 @@ class TestGetKeyStrengthScore:
         assert get_key_strength_score("crunchbase:anthropic") == 80
 
     def test_pitchbook_score(self):
-        """PitchBook should have score 80"""
-        assert get_key_strength_score("pitchbook:pb123") == 80
+        """PitchBook should have score 75"""
+        assert get_key_strength_score("pitchbook:pb123") == 75
 
     def test_github_org_score(self):
         """GitHub org should have score 50"""

@@ -97,10 +97,42 @@
 - **Next:** PR8
 
 ### PR8: API store lifecycle + correctness
-- **Status:** PENDING
+- **Status:** COMPLETE (branch: fix/api-store-lifecycle, PR #81, commit ab3b10f)
+- **Files changed:** api/db.py, api/routers/actions.py, api/routers/companies.py, api/routers/entities.py, api/routers/health.py, api/routers/jobs.py, api/routers/public.py
+- **New test files:** tests/api/test_store_singleton.py, tests/api/test_optimistic_locking.py, tests/api/test_health_schema_version.py, tests/api/test_store_concurrency.py
+- **Skills invoked:** async-python-patterns (store lifecycle), verification-before-completion
+- **Agent:** sqlite-expert (total_changes lock fix, singleton lifecycle)
+- **Gates:**
+  - `compileall -q api` — PASS
+  - `ci_smoke_imports.py` — PASS (32/32)
+  - `pytest tests/api/test_store_singleton.py` — PASS (20/20)
+  - `pytest tests/api/test_optimistic_locking.py` — PASS (8/8)
+  - `pytest tests/api/test_health_schema_version.py` — PASS (5/5)
+  - `pytest tests/api/test_store_concurrency.py` — PASS (9/9)
+  - All 42 tests PASS
+- **Changes:**
+  - Replaced per-request `SignalStore()` creation in 6 routers with shared `get_store` from `api.db`
+  - Fixed optimistic lock bug: `db.total_changes` (connection-global) → `cursor.rowcount` (statement-scoped)
+  - Fixed hardcoded `schema_version: 16` → `CURRENT_SCHEMA_VERSION` (43) in health endpoint
+- **Reproducibility:** commit ab3b10f, Python 3.11.9, Windows 11, local
+- **Residual risks:** None
+- **Next:** PR9
 
 ### PR9: Canonical foundation + no-regress tests
-- **Status:** PENDING
+- **Status:** READY FOR COMMIT (branch: feat/canonical-foundation)
+- **Files changed:** utils/canonical_keys.py, collectors/base.py, tests/test_canonical_foundation.py (new), tests/utils/test_canonical_keys.py
+- **Changes:**
+  - Added `select_strongest_candidate(candidates)` — picks best key using `get_key_strength_score()`
+  - Added `DOMAIN_SOURCE_PRIORITY` constant — establishes promoted > article > dns_probe invariant for DNS Phase 2
+  - Updated `_extract_canonical_key()` in `collectors/base.py` — now collects all available keys (raw_data canonical_key + candidates) and selects strongest, instead of blindly taking raw_data["canonical_key"] or candidates[0]
+  - Adjusted pitchbook score from 80→75 to differentiate from crunchbase (80), matching `_CANONICAL_PREFIX_ORDER`
+  - 30 new tests in `tests/test_canonical_foundation.py`
+- **Gates:**
+  - `compileall -q utils collectors` — PASS
+  - `ci_smoke_imports.py` — PASS (32/32)
+  - `pytest tests/test_canonical_foundation.py tests/utils/test_canonical_keys.py tests/utils/test_canonical_key_v2.py` — PASS (169/169)
+- **Residual risks:** None
+- **Next:** PR10a
 
 ### PR10a: Collector key hygiene
 - **Status:** PENDING
