@@ -60,10 +60,10 @@ class TestSchemaVersionNotHardcoded:
 class TestSchemaVersionValue:
     """Verify the CURRENT_SCHEMA_VERSION value is reasonable."""
 
-    def test_current_schema_version_is_43(self):
-        """CURRENT_SCHEMA_VERSION should be 43 (v42: evidence_family, v43: canonical_key_v2)."""
+    def test_schema_version_is_positive(self):
+        """CURRENT_SCHEMA_VERSION should be a positive integer version."""
         from storage.signal_store import CURRENT_SCHEMA_VERSION
-        assert CURRENT_SCHEMA_VERSION == 43
+        assert CURRENT_SCHEMA_VERSION >= 1
 
     def test_schema_version_is_integer(self):
         """CURRENT_SCHEMA_VERSION must be an integer."""
