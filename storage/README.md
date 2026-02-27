@@ -311,23 +311,23 @@ stats = await store.get_stats()
 
 ## Migration Tools
 
-The `migrations.py` script provides utilities for schema management:
+The `storage.migrations` package provides utilities for schema management:
 
 ```bash
 # List applied migrations
-python storage/migrations.py list signals.db
+python -m storage.migrations list signals.db
 
 # Export database to JSON (for backup)
-python storage/migrations.py export signals.db backup.json
+python -m storage.migrations export signals.db backup.json
 
 # Import from JSON
-python storage/migrations.py import backup.json new_signals.db
+python -m storage.migrations import backup.json new_signals.db
 
 # Validate schema
-python storage/migrations.py validate signals.db
+python -m storage.migrations validate signals.db
 
 # Get database info
-python storage/migrations.py info signals.db
+python -m storage.migrations info signals.db
 ```
 
 ## Testing
@@ -360,7 +360,7 @@ Tests cover:
 
 ```bash
 # Daily backup
-0 2 * * * cd /app && python storage/migrations.py export signals.db backups/signals_$(date +\%Y\%m\%d).json
+0 2 * * * cd /app && python -m storage.migrations export signals.db backups/signals_$(date +\%Y\%m\%d).json
 
 # Weekly cleanup of old backups
 0 3 * * 0 find /app/backups -name "signals_*.json" -mtime +30 -delete
@@ -483,7 +483,7 @@ await store._db.execute(...)
 Validate schema regularly:
 
 ```bash
-python storage/migrations.py validate signals.db
+python -m storage.migrations validate signals.db
 ```
 
 ### Performance issues
