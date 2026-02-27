@@ -31,6 +31,18 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Compile check (catch SyntaxErrors early)
+        run: |
+          python -m compileall -q \
+            api collectors connectors consumer dashboard \
+            discovery_engine distribution enrichment importers \
+            integrations intelligence monitoring ops profilers \
+            scripts services storage utils verification \
+            visualization workflows
+
+      - name: Smoke imports
+        run: python scripts/ci_smoke_imports.py
+
       - name: Run regression suite
         env:
           DELIVERY_MODE: staging_only
