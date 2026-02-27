@@ -147,16 +147,20 @@ class GitHubActivitySignal:
         """
         confidence = self.calculate_signal_score(apply_founder_boost=apply_founder_boost)
 
-        # Build canonical key
+        # Build canonical key and candidates
+        candidates = []
+        domain = ""
         if self.website_url:
             parsed = urlparse(self.website_url)
             domain = parsed.netloc.replace("www.", "").lower()
             if domain:
                 canonical_key = f"domain:{domain}"
+                candidates.append(f"domain:{domain}")
             else:
                 canonical_key = f"github_user:{self.username.lower()}"
         else:
             canonical_key = f"github_user:{self.username.lower()}"
+        candidates.append(f"github_user:{self.username.lower()}")
 
         # Build signal ID
         signal_id_parts = [
@@ -187,6 +191,7 @@ class GitHubActivitySignal:
         # Build raw_data dict
         signal_raw_data = {
             "canonical_key": canonical_key,
+            "canonical_key_candidates": candidates,
             "username": self.username,
             "activity_type": self.signal_type,
             "repo_name": self.repo_name,

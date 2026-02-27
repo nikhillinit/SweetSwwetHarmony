@@ -133,13 +133,15 @@ class LinkedInCompany:
             parsed = urlparse(self.website)
             domain = parsed.netloc.lower().replace("www.", "")
 
-        # Create canonical key
+        # Create canonical key and candidates
+        candidates = []
+        linkedin_slug = self.linkedin_url.rstrip("/").split("/")[-1]
         if domain:
             canonical_key = f"domain:{domain}"
+            candidates.append(f"domain:{domain}")
         else:
-            # Use LinkedIn URL as fallback
-            linkedin_slug = self.linkedin_url.rstrip("/").split("/")[-1]
             canonical_key = f"linkedin:{linkedin_slug}"
+        candidates.append(f"linkedin:{linkedin_slug}")
 
         # Create unique signal ID
         signal_hash = hashlib.sha256(self.linkedin_url.encode()).hexdigest()[:12]
@@ -177,6 +179,7 @@ class LinkedInCompany:
             verified_by_sources=["linkedin"],
             raw_data={
                 "canonical_key": canonical_key,
+                "canonical_key_candidates": candidates,
                 "company_name": self.name,
                 "company_domain": domain,
                 "description": self.description[:500] if self.description else "",

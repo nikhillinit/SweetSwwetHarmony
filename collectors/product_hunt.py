@@ -151,6 +151,10 @@ class ProductHuntLaunch:
             verified_by_sources=["product_hunt"],
             raw_data={
                 "canonical_key": f"domain:{domain}" if domain else f"product_hunt:{self.product_id}",
+                "canonical_key_candidates": (
+                    [f"domain:{domain}", f"product_hunt:{self.product_id}"] if domain
+                    else [f"product_hunt:{self.product_id}"]
+                ),
                 "company_name": self.name,
                 "company_domain": domain,
                 "product_hunt_id": self.product_id,
