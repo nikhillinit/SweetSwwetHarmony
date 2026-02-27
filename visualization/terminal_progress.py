@@ -122,7 +122,6 @@ if __name__ == "__main__":
         for i in range(steps):
             await asyncio.sleep(duration / steps)
             yield i + 1
-        return signals
 
     async def main():
         progress_ui = PipelineProgress()
