@@ -144,11 +144,14 @@ class CrunchbaseCompany:
             parsed = urlparse(self.website_url)
             domain = parsed.netloc.lower().replace("www.", "")
 
-        # Create canonical key
+        # Create canonical key and candidates
+        candidates = []
         if domain:
             canonical_key = f"domain:{domain}"
+            candidates.append(f"domain:{domain}")
         else:
             canonical_key = f"crunchbase:{self.permalink}"
+        candidates.append(f"crunchbase:{self.permalink}")
 
         # Create unique signal ID
         signal_hash = hashlib.sha256(self.uuid.encode()).hexdigest()[:12]
@@ -194,6 +197,7 @@ class CrunchbaseCompany:
             verified_by_sources=["crunchbase"],
             raw_data={
                 "canonical_key": canonical_key,
+                "canonical_key_candidates": candidates,
                 "company_name": self.name,
                 "company_domain": domain,
                 "crunchbase_uuid": self.uuid,

@@ -187,11 +187,14 @@ class HackerNewsPost:
         """Convert to verification gate Signal."""
         confidence = self.calculate_signal_score()
 
-        # Create canonical key from domain or HN ID
+        # Create canonical key and candidates from domain or HN ID
+        candidates = []
         if self.domain:
             canonical_key = f"domain:{self.domain}"
+            candidates.append(f"domain:{self.domain}")
         else:
             canonical_key = f"hacker_news:{self.object_id}"
+        candidates.append(f"hacker_news:{self.object_id}")
 
         # Create unique signal ID
         signal_id = f"hn_{self.object_id}"
@@ -231,6 +234,7 @@ class HackerNewsPost:
             verified_by_sources=["hacker_news"],
             raw_data={
                 "canonical_key": canonical_key,
+                "canonical_key_candidates": candidates,
                 "company_name": self._extract_company_name(),
                 "company_domain": self.domain,
                 "hacker_news_id": self.object_id,
