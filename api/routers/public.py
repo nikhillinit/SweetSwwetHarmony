@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import HTMLResponse
 from jinja2 import Environment, FileSystemLoader
 
+from api.db import get_store
 from storage.signal_store import SignalStore
 
 router = APIRouter(prefix="/companies", tags=["public"])
@@ -33,13 +34,6 @@ def get_jinja_env() -> Environment:
             autoescape=True,
         )
     return _jinja_env
-
-
-async def get_store() -> SignalStore:
-    """Get initialized SignalStore."""
-    store = SignalStore()
-    await store.initialize()
-    return store
 
 
 @router.get("/{canonical_key}/public", response_class=HTMLResponse)
