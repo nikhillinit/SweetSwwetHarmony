@@ -352,7 +352,7 @@ async def test_medium_confidence_multi_signal_routes_tracking(temp_db, mock_noti
         source_api="companies_house",
         canonical_key="domain:medroute.ai",
         company_name="Medium Route Inc",
-        confidence=0.90,
+        confidence=0.85,
         raw_data={"company_number": "87654321"},
         detected_at=now - timedelta(days=1),
     )
@@ -361,7 +361,7 @@ async def test_medium_confidence_multi_signal_routes_tracking(temp_db, mock_noti
         source_api="github",
         canonical_key="domain:medroute.ai",
         company_name="Medium Route Inc",
-        confidence=0.80,
+        confidence=0.75,
         raw_data={"repo": "medroute/ai", "stars": 120},
         detected_at=now - timedelta(days=1),
     )
@@ -387,7 +387,7 @@ async def test_medium_confidence_multi_signal_routes_tracking(temp_db, mock_noti
 def test_gate_reachability_contract(verification_gate):
     """Lock reachability assumptions for current threshold policy.
 
-    - A best-case single signal cannot reach MEDIUM threshold.
+    - A best-case single signal can reach MEDIUM threshold after recalibration.
     - Strong fresh multi-source evidence can reach HIGH threshold.
     """
     now = datetime.now(timezone.utc)
@@ -400,7 +400,8 @@ def test_gate_reachability_contract(verification_gate):
         raw_data={},
     )
     single_result = verification_gate.evaluate([single])
-    assert single_result.confidence_score < verification_gate.MEDIUM_CONFIDENCE_THRESHOLD
+    assert single_result.confidence_score >= verification_gate.MEDIUM_CONFIDENCE_THRESHOLD
+    assert single_result.confidence_score < verification_gate.HIGH_CONFIDENCE_THRESHOLD
 
     multi = [
         Signal(
