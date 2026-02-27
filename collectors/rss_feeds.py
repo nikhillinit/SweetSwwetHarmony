@@ -441,6 +441,26 @@ class RSSFeedCollector(BaseCollector):
                         sig.raw_data["dns_probe_domain"] = domain
                         sig.raw_data["dns_probe_status"] = "hit" if domain else "miss"
 
+        # --- DNS promotion pass (key upgrade) ---
+        from utils.dns_promotion import is_dns_promote_enabled, get_dns_confidence_penalty
+
+        if is_dns_promote_enabled():
+            penalty = get_dns_confidence_penalty()
+            for sig in signals:
+                if (
+                    sig.raw_data.get("dns_probe_status") == "hit"
+                    and sig.raw_data.get("dns_probe_domain")
+                ):
+                    domain = sig.raw_data["dns_probe_domain"]
+                    domain_key = f"domain:{domain}"
+                    candidates = sig.raw_data.get("canonical_key_candidates", [])
+                    if domain_key not in candidates:
+                        sig.raw_data["canonical_key_candidates"] = candidates + [domain_key]
+                    sig.confidence -= penalty
+                    sig.raw_data["dns_promoted"] = True
+                    sig.raw_data["dns_promoted_domain"] = domain
+                    sig.raw_data["dns_confidence_penalty"] = penalty
+
         return signals
 
     async def _fetch_feed(self, url: str) -> str:

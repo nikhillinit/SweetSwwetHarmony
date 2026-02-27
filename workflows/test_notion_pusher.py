@@ -186,7 +186,7 @@ async def test_group_signals_by_canonical_key(temp_db):
         dry_run=True
     )
 
-    prospects = pusher._group_by_canonical_key(pending)
+    prospects = await pusher._group_by_canonical_key(pending)
 
     # Should have 2 unique prospects
     assert len(prospects) == 2
@@ -240,7 +240,7 @@ async def test_aggregated_prospect_metadata(temp_db):
         dry_run=True
     )
 
-    prospects = pusher._group_by_canonical_key(pending)
+    prospects = await pusher._group_by_canonical_key(pending)
     prospect = prospects[0]
 
     # Check aggregated metadata
@@ -964,6 +964,100 @@ async def test_delivery_guard_manual_publish_blocks_auto_intent(
 
     # Nothing pushed to Notion
     assert len(mock_notion.pushed_prospects) == 0
+
+
+# =============================================================================
+# TESTS: DNS ALIAS RESOLUTION IN GROUPING
+# =============================================================================
+
+@pytest.mark.asyncio
+async def test_alias_resolution_merges_groups(temp_db, mock_notion, verification_gate):
+    """Two signals with different keys merge into one prospect when one is an alias."""
+    store = temp_db
+    from unittest.mock import AsyncMock, patch
+
+    await store.save_signal(
+        signal_type="rss_mention",
+        source_api="rss_feeds",
+        canonical_key="name_loc:acme-labs",
+        company_name="Acme Labs",
+        confidence=0.5,
+        raw_data={"title": "Acme Labs launches"},
+    )
+    await store.save_signal(
+        signal_type="github_spike",
+        source_api="github",
+        canonical_key="domain:acmelabs.io",
+        company_name="Acme Labs",
+        confidence=0.7,
+        raw_data={"repo": "acmelabs/app", "stars": 200},
+    )
+
+    pusher = NotionPusher(
+        signal_store=store,
+        notion_connector=mock_notion,
+        verification_gate=verification_gate,
+        dry_run=True,
+    )
+
+    # Mock alias resolution: name_loc:acme-labs → domain:acmelabs.io
+    async def mock_resolve(keys, conn):
+        result = {k: k for k in keys}
+        result["name_loc:acme-labs"] = "domain:acmelabs.io"
+        return result
+
+    with patch("utils.dns_alias_resolver.resolve_aliases_batch_async", new=mock_resolve):
+        pending = await store.get_pending_signals()
+        prospects = await pusher._group_by_canonical_key(pending)
+
+    # Both signals should be grouped under domain:acmelabs.io
+    keys = [p.canonical_key for p in prospects]
+    assert "domain:acmelabs.io" in keys
+    assert "name_loc:acme-labs" not in keys
+
+    merged = [p for p in prospects if p.canonical_key == "domain:acmelabs.io"][0]
+    assert len(merged.signals) == 2
+
+
+@pytest.mark.asyncio
+async def test_alias_resolution_no_alias_table(temp_db, mock_notion, verification_gate):
+    """Pre-v44 DB (no alias table) groups signals normally by original key."""
+    store = temp_db
+
+    await store.save_signal(
+        signal_type="rss_mention",
+        source_api="rss_feeds",
+        canonical_key="name_loc:beta-corp",
+        company_name="Beta Corp",
+        confidence=0.5,
+        raw_data={"title": "Beta Corp news"},
+    )
+    await store.save_signal(
+        signal_type="github_spike",
+        source_api="github",
+        canonical_key="domain:betacorp.com",
+        company_name="Beta Corp",
+        confidence=0.7,
+        raw_data={"repo": "betacorp/api", "stars": 150},
+    )
+
+    pusher = NotionPusher(
+        signal_store=store,
+        notion_connector=mock_notion,
+        verification_gate=verification_gate,
+        dry_run=True,
+    )
+
+    # No mock — resolve_aliases_batch_async will hit the real DB which has no
+    # dns_promotion_aliases table, so it falls through to identity mapping
+    pending = await store.get_pending_signals()
+    prospects = await pusher._group_by_canonical_key(pending)
+
+    # Without alias table, signals stay in separate groups
+    keys = sorted([p.canonical_key for p in prospects])
+    assert len(keys) == 2
+    assert "domain:betacorp.com" in keys
+    assert "name_loc:beta-corp" in keys
 
 
 if __name__ == "__main__":
