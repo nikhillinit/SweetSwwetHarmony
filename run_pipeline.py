@@ -3816,6 +3816,13 @@ Examples:
         default=None,
         help="Path to SQLite database (overrides env var)",
     )
+    export_queue_parser.add_argument(
+        "--schema",
+        type=str,
+        choices=["v1", "v2"],
+        default="v1",
+        help="Export schema version: v1 (core columns, default) or v2 (extended with precedents/exemplars/ACH)",
+    )
 
     # --- push command ---
     push_parser = subparsers.add_parser(
@@ -5840,65 +5847,136 @@ async def cmd_export_queue(args):
 
     Phase 0, Task 0.5: Lets operators review the signal queue offline
     without needing Notion access.
+
+    Schema versions:
+        v1 (default): Core 14 columns (signals + processing + schema + thesis).
+        v2: Extended 23 columns (v1 + precedents + exemplars + ACH analysis).
+             Missing optional tables are handled gracefully (defaults to empty/0).
     """
     import csv
     from datetime import datetime, timedelta, timezone
 
     db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+    schema_version = getattr(args, "schema", "v1") or "v1"
     store = SignalStore(db_path)
     await store.initialize()
 
     try:
-        # Build query with optional filters (Phase 2: functional_schemas + thesis; Phase 3: case-law + exemplars)
-        query = """
-            SELECT s.id, s.company_name, s.canonical_key, s.confidence,
-                   s.signal_type, s.source_api, s.detected_at,
-                   COALESCE(sp.status, 'pending') as status, s.company_id,
-                   fs.problem_solved_text,
-                   fs.customer_archetype,
-                   fs.schema_confidence,
-                   fs.is_advisory,
-                   tc.category as thesis_category,
-                   tc.rationale as thesis_rationale,
-                   COALESCE(pcl.tp_count, 0) as precedent_tp_count,
-                   COALESCE(pcl.fp_count, 0) as precedent_fp_count,
-                   em.exemplar_category,
-                   em.exemplar_key,
-                   ach.top_hypothesis as ach_top_hypothesis,
-                   ach.top_score as ach_top_score,
-                   ach.bull_summary as ach_bull_summary,
-                   ach.bear_summary as ach_bear_summary,
-                   ach.differentiator_count as ach_differentiator_count
-            FROM signals s
-            LEFT JOIN signal_processing sp ON sp.signal_id = s.id
-            LEFT JOIN functional_schemas fs
-                ON fs.company_id = s.company_id AND fs.is_active = 1
-            LEFT JOIN thesis_classifications tc ON tc.signal_id = s.id
-            LEFT JOIN (
-                SELECT company_id,
-                       SUM(CASE WHEN human_label = 'TP' THEN 1 ELSE 0 END) as tp_count,
-                       SUM(CASE WHEN human_label = 'FP' THEN 1 ELSE 0 END) as fp_count
-                FROM precedents
-                GROUP BY company_id
-            ) pcl ON pcl.company_id = s.company_id
-            LEFT JOIN (
-                SELECT canonical_key,
-                       category as exemplar_category,
-                       exemplar_key
-                FROM thesis_exemplars
-                WHERE is_active = 1
-                GROUP BY canonical_key
-            ) em ON em.canonical_key = s.canonical_key
-            LEFT JOIN (
-                SELECT company_id, top_hypothesis, top_score, bull_summary,
-                       bear_summary, differentiator_count,
-                       ROW_NUMBER() OVER (PARTITION BY company_id ORDER BY created_at DESC, id DESC) as rn
-                FROM ach_analyses
-            ) ach ON ach.company_id = s.company_id AND ach.rn = 1
-            WHERE 1=1
-        """
-        params = []
+        # Discover which optional tables exist
+        cursor = await store._db.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        )
+        existing_tables = {row[0] for row in await cursor.fetchall()}
 
+        has_functional_schemas = "functional_schemas" in existing_tables
+        has_thesis_classifications = "thesis_classifications" in existing_tables
+        has_precedents = "precedents" in existing_tables
+        has_exemplars = "thesis_exemplars" in existing_tables
+        has_ach = "ach_analyses" in existing_tables
+
+        # --- Build SELECT columns ---
+        select_parts = [
+            "s.id", "s.company_name", "s.canonical_key", "s.confidence",
+            "s.signal_type", "s.source_api", "s.detected_at",
+            "COALESCE(sp.status, 'pending') as status", "s.company_id",
+        ]
+        if has_functional_schemas:
+            select_parts += [
+                "fs.problem_solved_text",
+                "fs.customer_archetype",
+                "fs.schema_confidence",
+                "fs.is_advisory",
+            ]
+        else:
+            select_parts += [
+                "NULL as problem_solved_text",
+                "NULL as customer_archetype",
+                "NULL as schema_confidence",
+                "NULL as is_advisory",
+            ]
+        if has_thesis_classifications:
+            select_parts += [
+                "tc.category as thesis_category",
+                "tc.rationale as thesis_rationale",
+            ]
+        else:
+            select_parts += [
+                "NULL as thesis_category",
+                "NULL as thesis_rationale",
+            ]
+
+        if schema_version == "v2":
+            if has_precedents:
+                select_parts += [
+                    "COALESCE(pcl.tp_count, 0) as precedent_tp_count",
+                    "COALESCE(pcl.fp_count, 0) as precedent_fp_count",
+                ]
+            else:
+                select_parts += [
+                    "0 as precedent_tp_count",
+                    "0 as precedent_fp_count",
+                ]
+            if has_exemplars:
+                select_parts += ["em.exemplar_category", "em.exemplar_key"]
+            else:
+                select_parts += ["NULL as exemplar_category", "NULL as exemplar_key"]
+            if has_ach:
+                select_parts += [
+                    "ach.top_hypothesis as ach_top_hypothesis",
+                    "ach.top_score as ach_top_score",
+                    "ach.bull_summary as ach_bull_summary",
+                    "ach.bear_summary as ach_bear_summary",
+                    "ach.differentiator_count as ach_differentiator_count",
+                ]
+            else:
+                select_parts += [
+                    "NULL as ach_top_hypothesis",
+                    "NULL as ach_top_score",
+                    "NULL as ach_bull_summary",
+                    "NULL as ach_bear_summary",
+                    "0 as ach_differentiator_count",
+                ]
+
+        # --- Build FROM / JOIN ---
+        join_parts = ["FROM signals s", "LEFT JOIN signal_processing sp ON sp.signal_id = s.id"]
+        if has_functional_schemas:
+            join_parts.append(
+                "LEFT JOIN functional_schemas fs ON fs.company_id = s.company_id AND fs.is_active = 1"
+            )
+        if has_thesis_classifications:
+            join_parts.append("LEFT JOIN thesis_classifications tc ON tc.signal_id = s.id")
+        if schema_version == "v2":
+            if has_precedents:
+                join_parts.append("""LEFT JOIN (
+                    SELECT company_id,
+                           SUM(CASE WHEN human_label = 'TP' THEN 1 ELSE 0 END) as tp_count,
+                           SUM(CASE WHEN human_label = 'FP' THEN 1 ELSE 0 END) as fp_count
+                    FROM precedents
+                    GROUP BY company_id
+                ) pcl ON pcl.company_id = s.company_id""")
+            if has_exemplars:
+                join_parts.append("""LEFT JOIN (
+                    SELECT canonical_key,
+                           category as exemplar_category,
+                           exemplar_key
+                    FROM thesis_exemplars
+                    WHERE is_active = 1
+                    GROUP BY canonical_key
+                ) em ON em.canonical_key = s.canonical_key""")
+            if has_ach:
+                join_parts.append("""LEFT JOIN (
+                    SELECT company_id, top_hypothesis, top_score, bull_summary,
+                           bear_summary, differentiator_count,
+                           ROW_NUMBER() OVER (PARTITION BY company_id ORDER BY created_at DESC, id DESC) as rn
+                    FROM ach_analyses
+                ) ach ON ach.company_id = s.company_id AND ach.rn = 1""")
+
+        # --- Assemble query ---
+        query = "SELECT " + ",\n                   ".join(select_parts)
+        query += "\n            " + "\n            ".join(join_parts)
+        query += "\n            WHERE 1=1\n        "
+
+        params = []
         if getattr(args, "status", None):
             query += " AND COALESCE(sp.status, 'pending') = ?"
             params.append(args.status)
@@ -5917,15 +5995,19 @@ async def cmd_export_queue(args):
         cursor = await store._db.execute(query, params)
         rows = await cursor.fetchall()
 
+        # --- Column headers ---
         columns = [
             "signal_id", "company_name", "canonical_key", "confidence",
             "signal_type", "source_api", "detected_at", "status", "company_id",
             "problem_solved", "customer_archetype", "schema_confidence",
             "thesis_category", "thesis_rationale",
-            "precedent_tp", "precedent_fp", "exemplar_category", "exemplar_key",
-            "ach_top_hypothesis", "ach_top_score", "ach_bull_summary",
-            "ach_bear_summary", "ach_differentiator_count",
         ]
+        if schema_version == "v2":
+            columns += [
+                "precedent_tp", "precedent_fp", "exemplar_category", "exemplar_key",
+                "ach_top_hypothesis", "ach_top_score", "ach_bull_summary",
+                "ach_bear_summary", "ach_differentiator_count",
+            ]
 
         def _sanitize_csv_field(value):
             """Prefix text fields starting with = + - @ to prevent CSV injection."""
@@ -5934,9 +6016,9 @@ async def cmd_export_queue(args):
             return value
 
         # Post-process rows: advisory * suffix, convert NULLs to empty strings
-        # Query columns: 0-8 core, 9 problem, 10 archetype, 11 schema_conf,
-        #   12 is_advisory, 13 thesis_cat, 14 thesis_rat,
-        #   15 tp_count, 16 fp_count, 17 exemplar_cat, 18 exemplar_key,
+        # Query columns (both v1 and v2): 0-8 core, 9 problem, 10 archetype,
+        #   11 schema_conf, 12 is_advisory, 13 thesis_cat, 14 thesis_rat
+        # v2 extends: 15 tp_count, 16 fp_count, 17 exemplar_cat, 18 exemplar_key,
         #   19 ach_top_hypothesis, 20 ach_top_score, 21 ach_bull_summary,
         #   22 ach_bear_summary, 23 ach_differentiator_count
         output_rows = []
@@ -5952,16 +6034,19 @@ async def cmd_export_queue(args):
                 + [row[11] or ""]                   # schema_confidence
                 + [row[13] or ""]                   # thesis_category
                 + [row[14] or ""]                   # thesis_rationale
-                + [row[15] or 0]                    # precedent_tp_count
-                + [row[16] or 0]                    # precedent_fp_count
-                + [row[17] or ""]                   # exemplar_category
-                + [row[18] or ""]                   # exemplar_key
-                + [row[19] or ""]                   # ach_top_hypothesis
-                + [row[20] if row[20] is not None else ""]  # ach_top_score
-                + [row[21] or ""]                   # ach_bull_summary
-                + [row[22] or ""]                   # ach_bear_summary
-                + [row[23] if row[23] is not None else 0]  # ach_differentiator_count
             )
+            if schema_version == "v2":
+                out_row += [
+                    row[15] or 0,                   # precedent_tp_count
+                    row[16] or 0,                   # precedent_fp_count
+                    row[17] or "",                   # exemplar_category
+                    row[18] or "",                   # exemplar_key
+                    row[19] or "",                   # ach_top_hypothesis
+                    row[20] if row[20] is not None else "",  # ach_top_score
+                    row[21] or "",                   # ach_bull_summary
+                    row[22] or "",                   # ach_bear_summary
+                    row[23] if row[23] is not None else 0,  # ach_differentiator_count
+                ]
             # CSV injection sanitization (B7)
             output_rows.append([_sanitize_csv_field(v) for v in out_row])
 
