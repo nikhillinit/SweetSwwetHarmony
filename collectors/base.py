@@ -447,10 +447,13 @@ class BaseCollector(ABC):
         """
         Extract canonical key from a signal's raw_data.
 
-        Looks for:
-        1. raw_data["canonical_key"]
-        2. raw_data["canonical_key_candidates"][0]
+        Collects all available keys and selects the strongest:
+        1. raw_data["canonical_key"] (if present)
+        2. raw_data["canonical_key_candidates"] (if present)
         3. Falls back to signal.id
+
+        Uses strength-based selection so a strong candidate (e.g. domain:)
+        is preferred over a weak raw_data key (e.g. name_loc:).
 
         Args:
             signal: Signal object
@@ -458,17 +461,25 @@ class BaseCollector(ABC):
         Returns:
             Canonical key string
         """
+        from utils.canonical_keys import select_strongest_candidate
+
         raw_data = signal.raw_data or {}
 
-        # First try direct canonical_key
-        if "canonical_key" in raw_data and raw_data["canonical_key"]:
-            return raw_data["canonical_key"]
+        all_keys: List[str] = []
 
-        # Try canonical_key_candidates
-        if "canonical_key_candidates" in raw_data:
-            candidates = raw_data["canonical_key_candidates"]
-            if isinstance(candidates, list) and len(candidates) > 0:
-                return candidates[0]
+        # Collect explicit canonical_key
+        ck = raw_data.get("canonical_key")
+        if ck and isinstance(ck, str):
+            all_keys.append(ck)
+
+        # Collect candidates
+        candidates = raw_data.get("canonical_key_candidates")
+        if isinstance(candidates, list):
+            all_keys.extend(c for c in candidates if isinstance(c, str) and c)
+
+        # Select strongest
+        if all_keys:
+            return select_strongest_candidate(all_keys)
 
         # Fall back to signal ID
         return signal.id

@@ -505,7 +505,7 @@ def get_key_strength_score(canonical_key: str) -> int:
       - domain: 100 (most stable)
       - companies_house: 95 (authoritative for UK)
       - crunchbase: 80 (widely used)
-      - pitchbook: 80 (if you have access)
+      - pitchbook: 75 (if you have access)
       - github_org: 50 (can change)
       - github_repo: 40 (can change/rename)
       - name_loc: 10 (ambiguous)
@@ -519,13 +519,45 @@ def get_key_strength_score(canonical_key: str) -> int:
         "domain": 100,
         "companies_house": 95,
         "crunchbase": 80,
-        "pitchbook": 80,
+        "pitchbook": 75,
         "github_org": 50,
         "github_repo": 40,
         "name_loc": 10,
     }
     
     return scores.get(prefix, 0)
+
+
+def select_strongest_candidate(candidates: List[str]) -> str:
+    """Select the strongest canonical key from a list of candidates.
+
+    Uses get_key_strength_score() to determine the best key.
+    If multiple keys have the same score, returns the first one
+    (preserving the caller's priority order as tiebreaker).
+
+    Returns empty string if candidates is empty.
+    """
+    if not candidates:
+        return ""
+    best = candidates[0]
+    best_score = get_key_strength_score(best)
+    for candidate in candidates[1:]:
+        score = get_key_strength_score(candidate)
+        if score > best_score:
+            best = candidate
+            best_score = score
+    return best
+
+
+# Domain source priority for Phase 2 DNS probe integration.
+# Higher = more trusted. Used when multiple domain sources exist for
+# the same signal (e.g., URL extraction vs site domain vs DNS probe).
+# Invariant: promoted_domain > article_domain > dns_probe_domain
+DOMAIN_SOURCE_PRIORITY: Dict[str, int] = {
+    "promoted_domain": 100,    # URL extraction from article text
+    "article_domain": 80,      # Non-blocked site domain
+    "dns_probe_domain": 60,    # DNS probe (80% precision, penalty applied)
+}
 
 
 # =============================================================================
