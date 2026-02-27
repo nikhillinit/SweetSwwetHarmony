@@ -1,0 +1,14 @@
+Config Validation:
+  [OK] DELIVERY_MODE: Set to manual_publish
+  [OK] thresholds: All thresholds using defaults (valid)
+  [OK] MERGE_WRITES_ENABLED: Set to shadow (Entity merge write operations)
+  [OK] BULK_TRIAGE_ENABLED: Set to active (Bulk triage actions)
+  [OK] HUNTER_PROMOTE_ENABLED: Set to active (Hunter result promotion)
+  [OK] DRIFT_MONITORING_ENABLED: Set to active (Drift monitoring and alert mutations)
+  [OK] NOTION_API_KEY: Configured
+  [OK] NOTION_DATABASE_ID: Configured
+  All checks passed.
+  collector_volume: insufficient data
+  confidence_calibration_ece: insufficient data
+  overall_fp_rate: insufficient data
+  quarantine_regret: insufficient data

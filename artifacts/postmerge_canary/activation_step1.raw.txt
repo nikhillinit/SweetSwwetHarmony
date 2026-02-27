@@ -1,0 +1,28 @@
+2026-02-27 14:38:53,450 - storage.signal_store - INFO - SignalStore initialized: signals.db
+2026-02-27 14:38:53,455 - monitoring.activation_gate - INFO - activation_gate_check step=1 verdict=ready reasons=[]
+Config Validation:
+  [OK] DELIVERY_MODE: Set to manual_publish
+  [OK] thresholds: All thresholds using defaults (valid)
+  [OK] MERGE_WRITES_ENABLED: Set to shadow (Entity merge write operations)
+  [OK] BULK_TRIAGE_ENABLED: Set to active (Bulk triage actions)
+  [OK] HUNTER_PROMOTE_ENABLED: Set to active (Hunter result promotion)
+  [OK] DRIFT_MONITORING_ENABLED: Set to active (Drift monitoring and alert mutations)
+  [OK] NOTION_API_KEY: Configured
+  [OK] NOTION_DATABASE_ID: Configured
+  All checks passed.
+{
+  "verdict": "ready",
+  "step": 1,
+  "reasons": [],
+  "can_proceed": true,
+  "canary": {
+    "verdict": "pass",
+    "pass_rate": 0.9333,
+    "run_age_hours": 1.5
+  },
+  "alerts": {
+    "open_critical": 0,
+    "open_warning": 2
+  },
+  "checked_at": "2026-02-27T22:38:53.453861+00:00"
+}
