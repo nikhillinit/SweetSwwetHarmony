@@ -130,6 +130,18 @@ async def _create_test_db(db_path: str) -> None:
             updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
         )
     """)
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS ach_analyses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            company_id TEXT NOT NULL,
+            top_hypothesis TEXT,
+            top_score REAL,
+            bull_summary TEXT,
+            bear_summary TEXT,
+            differentiator_count INTEGER DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+        )
+    """)
 
     # Insert test signals
     await db.execute("""
@@ -190,6 +202,8 @@ EXPECTED_COLUMNS = [
     "problem_solved", "customer_archetype", "schema_confidence",
     "thesis_category", "thesis_rationale",
     "precedent_tp", "precedent_fp", "exemplar_category", "exemplar_key",
+    "ach_top_hypothesis", "ach_top_score", "ach_bull_summary",
+    "ach_bear_summary", "ach_differentiator_count",
 ]
 
 
@@ -210,7 +224,7 @@ class TestCSVExportSchema:
 
         mock_store, real_db = await _get_mock_store(db_path)
         try:
-            args = Namespace(db_path=db_path, status=None, min_confidence=None, days=None, out=output_path)
+            args = Namespace(db_path=db_path, status=None, min_confidence=None, days=None, out=output_path, schema="v2")
             with patch("run_pipeline.SignalStore", return_value=mock_store):
                 await cmd_export_queue(args)
 
@@ -230,7 +244,7 @@ class TestCSVExportSchema:
 
         mock_store, real_db = await _get_mock_store(db_path)
         try:
-            args = Namespace(db_path=db_path, status=None, min_confidence=None, days=None, out=output_path)
+            args = Namespace(db_path=db_path, status=None, min_confidence=None, days=None, out=output_path, schema="v2")
             with patch("run_pipeline.SignalStore", return_value=mock_store):
                 await cmd_export_queue(args)
 
@@ -255,7 +269,7 @@ class TestCSVExportSchema:
 
         mock_store, real_db = await _get_mock_store(db_path)
         try:
-            args = Namespace(db_path=db_path, status=None, min_confidence=None, days=None, out=output_path)
+            args = Namespace(db_path=db_path, status=None, min_confidence=None, days=None, out=output_path, schema="v2")
             with patch("run_pipeline.SignalStore", return_value=mock_store):
                 await cmd_export_queue(args)
 
@@ -280,7 +294,7 @@ class TestCSVExportSchema:
 
         mock_store, real_db = await _get_mock_store(db_path)
         try:
-            args = Namespace(db_path=db_path, status=None, min_confidence=None, days=None, out=output_path)
+            args = Namespace(db_path=db_path, status=None, min_confidence=None, days=None, out=output_path, schema="v2")
             with patch("run_pipeline.SignalStore", return_value=mock_store):
                 await cmd_export_queue(args)
 
@@ -302,7 +316,7 @@ class TestCSVExportSchema:
 
         mock_store, real_db = await _get_mock_store(db_path)
         try:
-            args = Namespace(db_path=db_path, status=None, min_confidence=None, days=None, out=output_path)
+            args = Namespace(db_path=db_path, status=None, min_confidence=None, days=None, out=output_path, schema="v2")
             with patch("run_pipeline.SignalStore", return_value=mock_store):
                 await cmd_export_queue(args)
 
@@ -322,7 +336,7 @@ class TestCSVExportSchema:
 
         mock_store, real_db = await _get_mock_store(db_path)
         try:
-            args = Namespace(db_path=db_path, status=None, min_confidence=None, days=None, out=output_path)
+            args = Namespace(db_path=db_path, status=None, min_confidence=None, days=None, out=output_path, schema="v2")
             with patch("run_pipeline.SignalStore", return_value=mock_store):
                 await cmd_export_queue(args)
 
@@ -344,7 +358,7 @@ class TestCSVExportSchema:
 
         mock_store, real_db = await _get_mock_store(db_path)
         try:
-            args = Namespace(db_path=db_path, status=None, min_confidence=None, days=None, out=output_path)
+            args = Namespace(db_path=db_path, status=None, min_confidence=None, days=None, out=output_path, schema="v2")
             with patch("run_pipeline.SignalStore", return_value=mock_store):
                 await cmd_export_queue(args)
 
@@ -367,7 +381,7 @@ class TestCSVExportSchema:
 
         mock_store, real_db = await _get_mock_store(db_path)
         try:
-            args = Namespace(db_path=db_path, status=None, min_confidence=None, days=None, out=output_path)
+            args = Namespace(db_path=db_path, status=None, min_confidence=None, days=None, out=output_path, schema="v2")
             with patch("run_pipeline.SignalStore", return_value=mock_store):
                 await cmd_export_queue(args)
 
@@ -406,7 +420,7 @@ class TestCSVExportSchema:
         from run_pipeline import cmd_export_queue
         mock_store, real_db = await _get_mock_store(db_path)
         try:
-            args = Namespace(db_path=db_path, status=None, min_confidence=None, days=None, out=output_path)
+            args = Namespace(db_path=db_path, status=None, min_confidence=None, days=None, out=output_path, schema="v2")
             with patch("run_pipeline.SignalStore", return_value=mock_store):
                 await cmd_export_queue(args)
 
@@ -440,7 +454,7 @@ class TestCSVExportSchema:
         from run_pipeline import cmd_export_queue
         mock_store, real_db = await _get_mock_store(db_path)
         try:
-            args = Namespace(db_path=db_path, status=None, min_confidence=None, days=None, out=output_path)
+            args = Namespace(db_path=db_path, status=None, min_confidence=None, days=None, out=output_path, schema="v2")
             with patch("run_pipeline.SignalStore", return_value=mock_store):
                 await cmd_export_queue(args)
 
