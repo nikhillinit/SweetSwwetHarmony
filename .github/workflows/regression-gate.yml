@@ -43,6 +43,12 @@ jobs:
       - name: Smoke imports
         run: python scripts/ci_smoke_imports.py
 
+      - name: Schema version fast-fail
+        run: |
+          python -m pytest tests/storage/test_schema_version_parity.py \
+            tests/api/test_health_schema_version.py \
+            --tb=short -q
+
       - name: Run regression suite
         env:
           DELIVERY_MODE: staging_only
