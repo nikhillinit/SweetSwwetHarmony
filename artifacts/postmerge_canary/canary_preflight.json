@@ -1,0 +1,18 @@
+{
+  "ok": true,
+  "command": "canary-preflight",
+  "version": "v6.6.2",
+  "db_path": "signals.db",
+  "started_at": "2026-02-27T21:05:25.705096+00:00",
+  "finished_at": "2026-02-27T21:05:25.760989+00:00",
+  "metrics": {
+    "schema_version_pre": 43,
+    "schema_version_expected": 44,
+    "schema_version_post": 44,
+    "writer_exclusivity": "ok"
+  },
+  "warnings": [
+    "Schema at v43, will apply migrations to v44"
+  ],
+  "errors": []
+}

@@ -1,0 +1,17 @@
+2026-02-27 14:43:21,976 - storage.signal_store - INFO - SignalStore initialized: signals.db
+Config Validation:
+  [OK] DELIVERY_MODE: Set to manual_publish
+  [OK] thresholds: All thresholds using defaults (valid)
+  [OK] MERGE_WRITES_ENABLED: Set to shadow (Entity merge write operations)
+  [OK] BULK_TRIAGE_ENABLED: Set to active (Bulk triage actions)
+  [OK] HUNTER_PROMOTE_ENABLED: Set to active (Hunter result promotion)
+  [OK] DRIFT_MONITORING_ENABLED: Set to active (Drift monitoring and alert mutations)
+  [OK] NOTION_API_KEY: Configured
+  [OK] NOTION_DATABASE_ID: Configured
+  All checks passed.
+   ID  Type                       Sev         Status          Message
+----------------------------------------------------------------------------------------------------
+   38  pass_rate_improvement      info        open            Pass rate improved from 76.67% to 96.67%
+   39  archetype_improvement      info        open            Stratum 'archetype:excluded' improved: 82.14% ? 100.00%
+   40  archetype_improvement      info        open            Stratum 'collector:rss_feeds' improved: 50.00% ? 100.00%
+   41  archetype_improvement      info        open            Stratum 'collector:news_api' improved: 20.00% ? 80.00%

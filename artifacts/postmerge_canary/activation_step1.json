@@ -1,0 +1,16 @@
+{
+  "verdict": "ready",
+  "step": 1,
+  "reasons": [],
+  "can_proceed": true,
+  "canary": {
+    "verdict": "pass",
+    "pass_rate": 0.9333,
+    "run_age_hours": 1.5
+  },
+  "alerts": {
+    "open_critical": 0,
+    "open_warning": 2
+  },
+  "checked_at": "2026-02-27T22:38:53.453861+00:00"
+}
