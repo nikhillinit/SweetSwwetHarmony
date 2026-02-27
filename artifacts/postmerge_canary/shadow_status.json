@@ -1,0 +1,24 @@
+{
+  "period_days": 7,
+  "flags": {
+    "LLM_THESIS_MODE": "shadow",
+    "ML_ENABLEMENT": "shadow",
+    "V2_ENABLEMENT": "live",
+    "USE_SHADOW_ENTITY_RESOLUTION": "true",
+    "MERGE_WRITES_ENABLED": "shadow",
+    "DELIVERY_MODE": "manual_publish",
+    "BULK_TRIAGE_ENABLED": "active",
+    "HUNTER_PROMOTE_ENABLED": "active",
+    "USE_PHASE_G_IDENTITY_RESOLUTION": "true",
+    "USE_CLAIM_FACTS": "false"
+  },
+  "volumes": {
+    "thesis_classifications": 600,
+    "merge_suggestions": 0,
+    "entity_blocking_index": 150
+  },
+  "health": {
+    "llm_agreement_rate": 0.938,
+    "llm_total_classifications": 600
+  }
+}

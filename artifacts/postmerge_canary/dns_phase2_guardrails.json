@@ -1,0 +1,17 @@
+{
+  "ok": true,
+  "command": "dns-phase2-guardrails",
+  "version": "v6.6.2",
+  "db_path": "signals.db",
+  "started_at": "2026-02-27T21:05:48.433022+00:00",
+  "finished_at": "2026-02-27T21:05:48.437104+00:00",
+  "metrics": {
+    "table_exists": true,
+    "alias_count": 0,
+    "enabled_count": 0,
+    "orphan_count": 0,
+    "enabled_ratio": null
+  },
+  "warnings": [],
+  "errors": []
+}
