@@ -13,6 +13,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
+from api.db import get_store
 from storage.signal_store import SignalStore, InboxCompany, CompanyState, CompanyAction
 
 router = APIRouter(prefix="/companies", tags=["companies"])
@@ -81,13 +82,6 @@ class ActionHistoryResponse(BaseModel):
 # =============================================================================
 # DEPENDENCY INJECTION
 # =============================================================================
-
-async def get_store() -> SignalStore:
-    """Get initialized SignalStore."""
-    store = SignalStore()
-    await store.initialize()
-    return store
-
 
 # =============================================================================
 # ENDPOINTS
