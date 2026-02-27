@@ -181,3 +181,37 @@ class TestBuildCanonicalKeyV2:
         )
         assert key == "domain:acme.ai"
         assert key_type == "domain"
+
+    def test_dns_promoted_signal_uses_dns_probe_domain(self):
+        """DNS-promoted signal with dns_probe_domain returns domain key."""
+        raw = {
+            "company_name": "Acme Labs",
+            "dns_probe_domain": "acmelabs.io",
+            "dns_promoted": True,
+        }
+        key, key_type, reasons = build_canonical_key_v2(
+            raw_data=raw,
+            source_api="rss_feeds",
+            signal_type="rss_mention",
+            canonical_key="name_loc:acme-labs",
+        )
+        assert key == "domain:acmelabs.io"
+        assert key_type == "domain"
+        assert any("dns_probe" in r for r in reasons)
+
+    def test_dns_probed_but_not_promoted_falls_through(self):
+        """dns_probe_domain without dns_promoted falls through to name_loc."""
+        raw = {
+            "company_name": "Acme Labs",
+            "dns_probe_domain": "acmelabs.io",
+            # dns_promoted absent → not promoted, speculative probe
+        }
+        key, key_type, reasons = build_canonical_key_v2(
+            raw_data=raw,
+            source_api="rss_feeds",
+            signal_type="rss_mention",
+            canonical_key="name_loc:acme-labs",
+        )
+        # Should NOT use dns_probe_domain; falls through to name_loc
+        assert key_type == "name_loc"
+        assert "acme" in key.lower()

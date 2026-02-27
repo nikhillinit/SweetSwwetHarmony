@@ -164,6 +164,16 @@ def build_canonical_key_v2(
             reasons.append(f"domain extracted: {domain}")
             return (f"domain:{domain}", "domain", reasons)
 
+        # Step 1b: DNS probe fallback — use dns_probe_domain if standard
+        # extraction found nothing and this signal was DNS-promoted
+        if not domain:
+            dns_domain = raw_data.get("dns_probe_domain")
+            if dns_domain and isinstance(dns_domain, str) and raw_data.get("dns_promoted"):
+                domain = dns_domain.strip().lower()
+                if domain:
+                    reasons.append(f"domain from dns_probe: {domain}")
+                    return (f"domain:{domain}", "domain", reasons)
+
         # Step 2: Try name_loc from company_name
         company_name = raw_data.get("company_name", "")
         if not company_name and canonical_key:
