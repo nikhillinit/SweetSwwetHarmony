@@ -77,13 +77,10 @@ jobs:
       - name: Build Docker image
         run: docker build -t harmonic:${{ github.sha }} .
 
-      - name: Prepare data directory
-        run: mkdir -p ${{ runner.temp }}/harmonic-data
-
       - name: Start container
         run: |
           docker run -d --name harmonic-ci -p 8000:8000 \
-            -v ${{ runner.temp }}/harmonic-data:/app/data \
+            --tmpfs /app/data:rw \
             -e DISCOVERY_DB_PATH=/app/data/signals.db \
             -e DELIVERY_MODE=staging_only \
             -e STRICT_CONFIG_VALIDATION=false \
@@ -101,6 +98,12 @@ jobs:
           echo "API failed to become healthy within 60s"
           docker logs harmonic-ci
           exit 1
+
+      - name: Debug container on failure
+        if: failure()
+        run: |
+          docker ps -a || true
+          docker logs harmonic-ci || true
 
       - name: Stop container
         if: always()
