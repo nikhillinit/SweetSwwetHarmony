@@ -7,6 +7,9 @@ Provides three-tier visualization system:
 - Tier 3: Dashboard trends (historical)
 """
 
-from .terminal_progress import PipelineProgress
+try:
+    from .terminal_progress import PipelineProgress
+except ImportError:
+    PipelineProgress = None
 
 __all__ = ["PipelineProgress"]
