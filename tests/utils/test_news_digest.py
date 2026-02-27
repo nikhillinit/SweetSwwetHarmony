@@ -3,13 +3,14 @@ Tests for News Digest Generator
 
 Tests for:
 - Digest generation from news signals
-- Gemini LLM integration for summarization
+- Gemini LLM integration (google-genai SDK) for summarization
 - Thesis category grouping
 - Output formatting
+- SDK-unavailable and missing-API-key fallback paths
 """
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
 from datetime import datetime, timezone, timedelta
 
 from utils.news_digest import (
@@ -269,69 +270,187 @@ class TestDigestGeneration:
     async def test_generate_calls_llm_for_summary(self, sample_signals, config):
         """LLM is called to generate summary."""
         generator = NewsDigestGenerator(config=config)
-        # Mock the model so generator thinks LLM is available
-        generator._model = MagicMock()
 
         with patch.object(generator, '_summarize_with_llm', new_callable=AsyncMock) as mock_llm, \
              patch.object(generator, '_summarize_section', new_callable=AsyncMock) as mock_section:
             mock_llm.return_value = "AI-generated summary"
             mock_section.return_value = "Section summary"
-            digest = await generator.generate(sample_signals)
+            # Make generator think LLM is available
+            with patch.object(type(generator), '_model_available', new_callable=PropertyMock, return_value=True):
+                digest = await generator.generate(sample_signals)
 
         # LLM should be called at least once (for overall summary)
         assert mock_llm.called
 
 
 # =============================================================================
-# LLM INTEGRATION TESTS
+# LLM INTEGRATION TESTS (new google-genai SDK)
 # =============================================================================
 
 class TestLLMIntegration:
-    """Tests for Gemini LLM integration."""
+    """Tests for Gemini LLM integration via google-genai SDK."""
 
     @pytest.mark.asyncio
-    async def test_summarize_with_llm_called(self, sample_signals):
-        """LLM summarization is attempted."""
+    async def test_summarize_with_llm_success(self, sample_signals):
+        """LLM summarization succeeds with mocked client."""
         generator = NewsDigestGenerator()
 
-        with patch('utils.news_digest.genai') as mock_genai:
-            mock_model = MagicMock()
-            mock_model.generate_content_async = AsyncMock(
-                return_value=MagicMock(text="Summary from Gemini")
-            )
-            mock_genai.GenerativeModel.return_value = mock_model
+        mock_response = MagicMock()
+        mock_response.text = "Summary from Gemini"
 
-            summary = await generator._summarize_with_llm(sample_signals)
+        mock_client = MagicMock()
+        mock_client.models.generate_content.return_value = mock_response
 
-        assert summary is not None
+        # Inject mock client directly
+        generator._client = mock_client
+
+        summary = await generator._summarize_with_llm(sample_signals)
+
+        assert summary == "Summary from Gemini"
+        mock_client.models.generate_content.assert_called_once()
+        # Verify model name is passed
+        call_kwargs = mock_client.models.generate_content.call_args
+        assert call_kwargs.kwargs.get("model") == generator.config.llm_model
+
+    @pytest.mark.asyncio
+    async def test_summarize_section_success(self, sample_signals):
+        """Section summarization succeeds with mocked client."""
+        generator = NewsDigestGenerator()
+
+        mock_response = MagicMock()
+        mock_response.text = "Section insight"
+
+        mock_client = MagicMock()
+        mock_client.models.generate_content.return_value = mock_response
+
+        generator._client = mock_client
+
+        summary = await generator._summarize_section("cpg", sample_signals)
+
+        assert summary == "Section insight"
+        mock_client.models.generate_content.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_summarize_handles_api_error(self, sample_signals):
         """Gracefully handles LLM API errors."""
         generator = NewsDigestGenerator()
 
-        with patch('utils.news_digest.genai') as mock_genai:
-            mock_model = MagicMock()
-            mock_model.generate_content_async = AsyncMock(
-                side_effect=Exception("API Error")
-            )
-            mock_genai.GenerativeModel.return_value = mock_model
+        mock_client = MagicMock()
+        mock_client.models.generate_content.side_effect = Exception("API Error")
 
-            # Should not raise, returns fallback
-            summary = await generator._summarize_with_llm(sample_signals)
-            assert summary is not None
+        generator._client = mock_client
+
+        # Should not raise, returns fallback
+        summary = await generator._summarize_with_llm(sample_signals)
+        assert summary is not None
+        # Fallback summary should be from _fallback_summary
+        assert "signals" in summary.lower() or "digest" in summary.lower()
+
+    @pytest.mark.asyncio
+    async def test_summarize_section_handles_api_error(self, sample_signals):
+        """Section summary falls back on API error."""
+        generator = NewsDigestGenerator()
+
+        mock_client = MagicMock()
+        mock_client.models.generate_content.side_effect = Exception("API Error")
+
+        generator._client = mock_client
+
+        summary = await generator._summarize_section("health_tech", sample_signals)
+        assert "health tech" in summary.lower() or "signals" in summary.lower()
 
     @pytest.mark.asyncio
     async def test_summarize_without_api_key(self, sample_signals):
         """Works without API key (fallback summary)."""
         generator = NewsDigestGenerator()
 
-        with patch.dict('os.environ', {}, clear=True):
-            with patch('utils.news_digest.GOOGLE_API_KEY', None):
-                summary = await generator._summarize_with_llm(sample_signals)
+        with patch('utils.news_digest.GOOGLE_API_KEY', None):
+            # client property returns None when no API key
+            generator._client = None  # Reset any cached client
+            summary = await generator._summarize_with_llm(sample_signals)
 
         # Should return fallback summary
         assert summary is not None
+
+    @pytest.mark.asyncio
+    async def test_summarize_without_sdk(self, sample_signals):
+        """Works when google-genai SDK is not installed."""
+        generator = NewsDigestGenerator()
+
+        with patch('utils.news_digest.GENAI_AVAILABLE', False):
+            generator._client = None  # Reset any cached client
+            summary = await generator._summarize_with_llm(sample_signals)
+
+        # Should return fallback summary
+        assert summary is not None
+
+    @pytest.mark.asyncio
+    async def test_empty_response_text(self, sample_signals):
+        """Handles empty response text gracefully."""
+        generator = NewsDigestGenerator()
+
+        mock_response = MagicMock()
+        mock_response.text = ""
+
+        mock_client = MagicMock()
+        mock_client.models.generate_content.return_value = mock_response
+
+        generator._client = mock_client
+
+        summary = await generator._summarize_with_llm(sample_signals)
+        # Empty string is valid (stripped from "")
+        assert isinstance(summary, str)
+
+    @pytest.mark.asyncio
+    async def test_response_whitespace_stripped(self, sample_signals):
+        """Response text has leading/trailing whitespace stripped."""
+        generator = NewsDigestGenerator()
+
+        mock_response = MagicMock()
+        mock_response.text = "  Summary with spaces  \n"
+
+        mock_client = MagicMock()
+        mock_client.models.generate_content.return_value = mock_response
+
+        generator._client = mock_client
+
+        summary = await generator._summarize_with_llm(sample_signals)
+        assert summary == "Summary with spaces"
+
+    def test_client_lazy_init(self):
+        """Client is lazily initialized on first access."""
+        generator = NewsDigestGenerator()
+        assert generator._client is None
+
+    def test_client_returns_none_without_key(self):
+        """Client property returns None when API key is missing."""
+        generator = NewsDigestGenerator()
+        with patch('utils.news_digest.GOOGLE_API_KEY', None):
+            generator._client = None
+            assert generator.client is None
+
+    def test_client_returns_none_without_sdk(self):
+        """Client property returns None when SDK is not available."""
+        generator = NewsDigestGenerator()
+        with patch('utils.news_digest.GENAI_AVAILABLE', False):
+            generator._client = None
+            assert generator.client is None
+
+    def test_model_available_requires_both(self):
+        """_model_available requires both SDK and API key."""
+        generator = NewsDigestGenerator()
+
+        with patch('utils.news_digest.GENAI_AVAILABLE', True), \
+             patch('utils.news_digest.GOOGLE_API_KEY', 'test-key'):
+            assert generator._model_available is True
+
+        with patch('utils.news_digest.GENAI_AVAILABLE', False), \
+             patch('utils.news_digest.GOOGLE_API_KEY', 'test-key'):
+            assert generator._model_available is False
+
+        with patch('utils.news_digest.GENAI_AVAILABLE', True), \
+             patch('utils.news_digest.GOOGLE_API_KEY', None):
+            assert generator._model_available is False
 
 
 # =============================================================================
