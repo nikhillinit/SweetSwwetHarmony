@@ -1,0 +1,35 @@
+2026-02-27 14:41:03,123 - storage.signal_store - INFO - SignalStore initialized: signals.db
+Config Validation:
+  [OK] DELIVERY_MODE: Set to manual_publish
+  [OK] thresholds: All thresholds using defaults (valid)
+  [OK] MERGE_WRITES_ENABLED: Set to shadow (Entity merge write operations)
+  [OK] BULK_TRIAGE_ENABLED: Set to active (Bulk triage actions)
+  [OK] HUNTER_PROMOTE_ENABLED: Set to active (Hunter result promotion)
+  [OK] DRIFT_MONITORING_ENABLED: Set to active (Drift monitoring and alert mutations)
+  [OK] NOTION_API_KEY: Configured
+  [OK] NOTION_DATABASE_ID: Configured
+  All checks passed.
+{
+  "period_days": 7,
+  "flags": {
+    "LLM_THESIS_MODE": "shadow",
+    "ML_ENABLEMENT": "shadow",
+    "V2_ENABLEMENT": "live",
+    "USE_SHADOW_ENTITY_RESOLUTION": "true",
+    "MERGE_WRITES_ENABLED": "shadow",
+    "DELIVERY_MODE": "manual_publish",
+    "BULK_TRIAGE_ENABLED": "active",
+    "HUNTER_PROMOTE_ENABLED": "active",
+    "USE_PHASE_G_IDENTITY_RESOLUTION": "true",
+    "USE_CLAIM_FACTS": "false"
+  },
+  "volumes": {
+    "thesis_classifications": 600,
+    "merge_suggestions": 0,
+    "entity_blocking_index": 150
+  },
+  "health": {
+    "llm_agreement_rate": 0.938,
+    "llm_total_classifications": 600
+  }
+}
