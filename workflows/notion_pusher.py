@@ -237,8 +237,8 @@ class NotionPusher:
 
             logger.info(f"Found {len(pending)} pending signals")
 
-            # 2. Group by canonical key
-            prospects = self._group_by_canonical_key(pending)
+            # 2. Group by canonical key (with DNS alias resolution)
+            prospects = await self._group_by_canonical_key(pending)
             logger.info(f"Grouped into {len(prospects)} unique prospects")
 
             # 3. Process each prospect
@@ -326,19 +326,35 @@ class NotionPusher:
     # SIGNAL AGGREGATION
     # =========================================================================
 
-    def _group_by_canonical_key(
+    async def _group_by_canonical_key(
         self,
         signals: List[StoredSignal]
     ) -> List[AggregatedProspect]:
         """
-        Group signals by canonical key.
+        Group signals by canonical key, with DNS alias resolution.
 
         Multiple signals for same canonical_key = multi-source verification.
+        Alias resolution merges name_loc:X → domain:Y when a DNS promotion
+        alias exists (v44 dns_promotion_aliases table).
         """
+        # Attempt alias resolution via dns_promotion_aliases
+        raw_keys = list({s.canonical_key for s in signals})
+        resolved_map: Dict[str, str] = {k: k for k in raw_keys}
+
+        if self.store and getattr(self.store, "_db", None):
+            try:
+                from utils.dns_alias_resolver import resolve_aliases_batch_async
+                resolved_map = await resolve_aliases_batch_async(
+                    raw_keys, self.store._db
+                )
+            except Exception:
+                logger.debug("Alias resolution unavailable, using original keys")
+
         grouped: Dict[str, List[StoredSignal]] = defaultdict(list)
 
         for signal in signals:
-            grouped[signal.canonical_key].append(signal)
+            resolved_key = resolved_map.get(signal.canonical_key, signal.canonical_key)
+            grouped[resolved_key].append(signal)
 
         prospects = []
         for canonical_key, sigs in grouped.items():
