@@ -82,7 +82,19 @@
 - **Next:** PR7
 
 ### PR7: DB path unification
-- **Status:** PENDING
+- **Status:** COMPLETE (branch: fix/db-path-unification, commit 08d0727)
+- **Files changed:** utils/db_path_helper.py, storage/signal_store.py, discovery_engine/mcp_server.py, tests/test_db_path_resolution.py (new)
+- **Skills invoked:** database-schema-designer, verification-before-completion
+- **Agent:** sqlite-expert (path resolution, SignalStore env tests)
+- **Gates:**
+  - `compileall -q storage utils api discovery_engine distribution` — PASS
+  - `pytest tests/test_db_path_resolution.py` — PASS (20/20)
+  - `ci_smoke_imports.py` — PASS (32/32)
+  - Env probe: `DISCOVERY_DB_PATH=/tmp/test_signals.db SignalStore().db_path` — PASS (outputs expected temp path)
+- **Baseline #9 resolved:** SignalStore() now correctly reads DISCOVERY_DB_PATH
+- **Reproducibility:** commit 08d0727, Python 3.11.9, Windows 11, local
+- **Residual risks:** Existing callers passing explicit `"signals.db"` string still bypass env (by design — explicit wins)
+- **Next:** PR8
 
 ### PR8: API store lifecycle + correctness
 - **Status:** PENDING
