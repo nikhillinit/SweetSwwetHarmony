@@ -26,6 +26,7 @@ from jinja2 import Environment, FileSystemLoader
 
 from api.auth.magic_tokens import consume_token, peek_token, TokenError
 from api.services.action_handler import CompanyActionHandler, ActionResult
+from api.db import get_store
 from storage.signal_store import SignalStore
 
 # Template setup for HTML responses
@@ -87,13 +88,6 @@ class ActionResponse(BaseModel):
 # =============================================================================
 # DEPENDENCY INJECTION
 # =============================================================================
-
-async def get_store() -> SignalStore:
-    """Get initialized SignalStore."""
-    store = SignalStore()
-    await store.initialize()
-    return store
-
 
 async def get_handler(store: SignalStore = Depends(get_store)) -> CompanyActionHandler:
     """Get action handler with store."""

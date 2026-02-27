@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status, Request
 from pydantic import BaseModel
 
 from api.auth.jwt_auth import get_current_user, require_role, User, Role
-from api.db import execute_write_with_version, OptimisticLockError, handle_optimistic_lock_error, write_transaction
+from api.db import execute_write_with_version, OptimisticLockError, handle_optimistic_lock_error, write_transaction, get_store
 from storage.signal_store import SignalStore, EntityStage, EntitySnapshot, EntityAlert
 
 router = APIRouter(prefix="/entities", tags=["entities"])
@@ -141,13 +141,6 @@ VALID_STAGES = [
 # =============================================================================
 # DEPENDENCY INJECTION
 # =============================================================================
-
-async def get_store() -> SignalStore:
-    """Get initialized SignalStore."""
-    store = SignalStore()
-    await store.initialize()
-    return store
-
 
 # =============================================================================
 # ENDPOINTS
@@ -484,7 +477,7 @@ async def update_entity_stage(
         # Update with optimistic locking
         try:
             async with write_transaction(request):
-                await db.execute("""
+                cursor = await db.execute("""
                     UPDATE entity_stages
                     SET stage = ?,
                         owner = COALESCE(?, owner),
@@ -509,8 +502,8 @@ async def update_entity_stage(
                 ))
                 await db.commit()
 
-                # Check if update happened
-                if db.total_changes == 0:
+                # Check if update happened (cursor.rowcount is statement-scoped)
+                if cursor.rowcount == 0:
                     raise OptimisticLockError()
 
         except OptimisticLockError:
