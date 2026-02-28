@@ -611,10 +611,36 @@ async def cmd_stats(args):
 
 
 async def cmd_health(args):
-    """Run health checks on all components"""
-    output_json = getattr(args, "output_json", False)
-    verbose = getattr(args, "verbose", False)
-    lookback_days = getattr(args, "lookback_days", 30)
+    """Run health checks.
+
+    Default behavior is intentionally backward-compatible:
+      - External integration failures (GitHub/SEC/Notion/Gemini) fail the command.
+
+    Flags:
+      - --allow-external-failures: record integration failures as WARN and exit 0
+        if core checks are healthy.
+      - --core-only: skip all integration checks entirely.
+    """
+
+    from services.readiness import CheckResult, CheckScope, CheckStatus, ReadinessReport
+
+    def _bool_arg(name: str, default: bool = False) -> bool:
+        """Robust bool extraction for argparse args *and* MagicMock test args."""
+        val = getattr(args, name, default)
+        return val if isinstance(val, bool) else default
+
+    def _int_arg(name: str, default: int) -> int:
+        val = getattr(args, name, default)
+        try:
+            return int(val)
+        except Exception:
+            return default
+
+    output_json = _bool_arg("output_json", False)
+    verbose = _bool_arg("verbose", False)
+    lookback_days = _int_arg("lookback_days", 30)
+    core_only = _bool_arg("core_only", False)
+    allow_external_failures = _bool_arg("allow_external_failures", False)
 
     if not output_json:
         print("=" * 70)
@@ -623,154 +649,131 @@ async def cmd_health(args):
         print()
 
     config = PipelineConfig.from_env()
-
-    if args.db_path:
+    if getattr(args, "db_path", None):
         config.db_path = args.db_path
 
     pipeline = DiscoveryPipeline(config)
 
-    all_healthy = True
-    checks = []
+    checks: list[CheckResult] = []
     health_report_dict = None
-    suppression_stats = {}
+    suppression_stats: dict = {}
 
     try:
-        # 1. Database connectivity check
+        # ------------------------------------------------------------------
+        # 1) Core: pipeline init / DB connectivity
+        # ------------------------------------------------------------------
         if not output_json:
             print("Checking database connectivity...")
         try:
             await pipeline.initialize()
-
-            if pipeline._store and pipeline._store._db:
+            db_ok = bool(getattr(getattr(pipeline, "_store", None), "_db", None))
+            if db_ok:
                 if not output_json:
                     print("  Database: HEALTHY")
-                checks.append(("Database", True, None))
+                checks.append(CheckResult("Database", CheckScope.CORE, CheckStatus.PASS, None))
             else:
                 if not output_json:
                     print("  Database: FAILED (no connection)")
-                checks.append(("Database", False, "No database connection"))
-                all_healthy = False
+                checks.append(CheckResult("Database", CheckScope.CORE, CheckStatus.FAIL, "No database connection"))
         except Exception as e:
             if not output_json:
                 print(f"  Database: FAILED ({e})")
-            checks.append(("Database", False, str(e)))
-            all_healthy = False
+            checks.append(CheckResult("Database", CheckScope.CORE, CheckStatus.FAIL, str(e)))
 
-        # 2. Configuration validation check
+        # ------------------------------------------------------------------
+        # 2) Core: configuration validation (non-fatal)
+        # ------------------------------------------------------------------
         if not output_json:
             print("Checking configuration...")
         try:
+            cfg = getattr(pipeline, "config", config)
             config_issues = []
-            if not config.notion_api_key:
+            if not getattr(cfg, "notion_api_key", None):
                 config_issues.append("NOTION_API_KEY not set")
-            if not config.notion_database_id:
+            if not getattr(cfg, "notion_database_id", None):
                 config_issues.append("NOTION_DATABASE_ID not set")
 
             if config_issues:
                 if not output_json:
                     print(f"  Configuration: WARNING ({', '.join(config_issues)})")
-                checks.append(("Configuration", True, ", ".join(config_issues)))
+                # Backward-compatible: this is informational, not a hard fail.
+                checks.append(CheckResult("Configuration", CheckScope.CORE, CheckStatus.PASS, ", ".join(config_issues)))
             else:
                 if not output_json:
                     print("  Configuration: HEALTHY")
-                checks.append(("Configuration", True, None))
+                checks.append(CheckResult("Configuration", CheckScope.CORE, CheckStatus.PASS, None))
         except Exception as e:
             if not output_json:
                 print(f"  Configuration: FAILED ({e})")
-            checks.append(("Configuration", False, str(e)))
+            checks.append(CheckResult("Configuration", CheckScope.CORE, CheckStatus.WARN, str(e)))
 
-        # 3. API connectivity checks
+        # ------------------------------------------------------------------
+        # 3) External integrations
+        # ------------------------------------------------------------------
         if not output_json:
             print("Checking API connectivity...")
 
-        # GitHub API
-        try:
-            ok, msg = await check_github_api()
+        async def _run_external(name: str, fn):
+            """Run a single external check with strict/lenient semantics."""
+            if core_only:
+                if not output_json:
+                    print(f"  {name}: SKIPPED (--core-only)")
+                checks.append(CheckResult(name, CheckScope.EXTERNAL, CheckStatus.SKIP, "--core-only"))
+                return
+
+            try:
+                ok, msg = await fn()
+            except Exception as e:
+                ok, msg = False, str(e)
+
             if ok:
                 if not output_json:
-                    print("  GitHub API: OK")
-                checks.append(("GitHub API", True, None))
+                    print(f"  {name}: OK")
+                checks.append(CheckResult(name, CheckScope.EXTERNAL, CheckStatus.PASS, None))
             else:
+                status = CheckStatus.WARN if allow_external_failures else CheckStatus.FAIL
+                label = "WARNING" if allow_external_failures else "FAILED"
                 if not output_json:
-                    print(f"  GitHub API: FAILED ({msg})")
-                checks.append(("GitHub API", False, msg))
-                all_healthy = False
-        except Exception as e:
-            if not output_json:
-                print(f"  GitHub API: FAILED ({e})")
-            checks.append(("GitHub API", False, str(e)))
-            all_healthy = False
+                    print(f"  {name}: {label} ({msg})")
+                checks.append(CheckResult(name, CheckScope.EXTERNAL, status, msg))
 
-        # SEC EDGAR API
-        try:
-            ok, msg = await check_sec_edgar_api()
-            if ok:
-                if not output_json:
-                    print("  SEC EDGAR API: OK")
-                checks.append(("SEC EDGAR API", True, None))
-            else:
-                if not output_json:
-                    print(f"  SEC EDGAR API: FAILED ({msg})")
-                checks.append(("SEC EDGAR API", False, msg))
-                all_healthy = False
-        except Exception as e:
-            if not output_json:
-                print(f"  SEC EDGAR API: FAILED ({e})")
-            checks.append(("SEC EDGAR API", False, str(e)))
-            all_healthy = False
+        await _run_external("GitHub API", lambda: check_github_api())
+        await _run_external("SEC EDGAR API", lambda: check_sec_edgar_api())
 
-        # Notion API
-        try:
-            if config.notion_api_key:
-                ok, msg = await check_notion_api(config.notion_api_key)
-                if ok:
-                    if not output_json:
-                        print("  Notion API: OK")
-                    checks.append(("Notion API", True, None))
-                else:
-                    if not output_json:
-                        print(f"  Notion API: FAILED ({msg})")
-                    checks.append(("Notion API", False, msg))
-                    all_healthy = False
-            else:
-                if not output_json:
-                    print("  Notion API: SKIPPED (not configured)")
-                checks.append(("Notion API", True, "Not configured"))
-        except Exception as e:
+        # Notion API (only if configured)
+        cfg = getattr(pipeline, "config", config)
+        notion_key = getattr(cfg, "notion_api_key", None)
+        if core_only:
             if not output_json:
-                print(f"  Notion API: FAILED ({e})")
-            checks.append(("Notion API", False, str(e)))
-            all_healthy = False
-
-        # Gemini API
-        try:
-            gemini_key = os.getenv("GOOGLE_API_KEY", "")
-            if gemini_key:
-                ok, msg = await check_gemini_api(gemini_key)
-                if ok:
-                    if not output_json:
-                        print("  Gemini API: OK")
-                    checks.append(("Gemini API", True, None))
-                else:
-                    if not output_json:
-                        print(f"  Gemini API: FAILED ({msg})")
-                    checks.append(("Gemini API", False, msg))
-                    all_healthy = False
-            else:
-                if not output_json:
-                    print("  Gemini API: SKIPPED (not configured)")
-                checks.append(("Gemini API", True, "Not configured"))
-        except Exception as e:
+                print("  Notion API: SKIPPED (--core-only)")
+            checks.append(CheckResult("Notion API", CheckScope.EXTERNAL, CheckStatus.SKIP, "--core-only"))
+        elif notion_key:
+            await _run_external("Notion API", lambda: check_notion_api(notion_key))
+        else:
             if not output_json:
-                print(f"  Gemini API: FAILED ({e})")
-            checks.append(("Gemini API", False, str(e)))
-            all_healthy = False
+                print("  Notion API: SKIPPED (not configured)")
+            checks.append(CheckResult("Notion API", CheckScope.EXTERNAL, CheckStatus.SKIP, "Not configured"))
 
-        # 4. Suppression cache stats
+        # Gemini API (only if configured)
+        gemini_key = os.getenv("GOOGLE_API_KEY", "")
+        if core_only:
+            if not output_json:
+                print("  Gemini API: SKIPPED (--core-only)")
+            checks.append(CheckResult("Gemini API", CheckScope.EXTERNAL, CheckStatus.SKIP, "--core-only"))
+        elif gemini_key:
+            await _run_external("Gemini API", lambda: check_gemini_api(gemini_key))
+        else:
+            if not output_json:
+                print("  Gemini API: SKIPPED (not configured)")
+            checks.append(CheckResult("Gemini API", CheckScope.EXTERNAL, CheckStatus.SKIP, "Not configured"))
+
+        # ------------------------------------------------------------------
+        # 4) Core: suppression cache
+        # ------------------------------------------------------------------
         if not output_json:
             print("Checking suppression cache...")
         try:
-            if pipeline._store and pipeline._store._db:
+            if getattr(getattr(pipeline, "_store", None), "_db", None):
                 stats = await pipeline.get_stats()
                 storage = stats.get("storage", {})
                 cache_entries = storage.get("active_suppression_entries", 0)
@@ -782,72 +785,77 @@ async def cmd_health(args):
                 if cache_entries > 0:
                     if not output_json:
                         print(f"  Suppression Cache: HEALTHY ({cache_entries} entries)")
-                    checks.append(("Suppression Cache", True, f"{cache_entries} entries"))
+                    checks.append(CheckResult("Suppression Cache", CheckScope.CORE, CheckStatus.PASS, f"{cache_entries} entries"))
                 else:
                     if not output_json:
                         print("  Suppression Cache: WARNING (empty - run 'sync' command)")
-                    checks.append(("Suppression Cache", True, "Empty - run 'sync' to populate"))
+                    checks.append(CheckResult("Suppression Cache", CheckScope.CORE, CheckStatus.WARN, "Empty - run 'sync' to populate"))
             else:
                 if not output_json:
                     print("  Suppression Cache: SKIPPED (no database)")
-                checks.append(("Suppression Cache", True, "Database unavailable"))
+                checks.append(CheckResult("Suppression Cache", CheckScope.CORE, CheckStatus.SKIP, "Database unavailable"))
         except Exception as e:
             if not output_json:
-                print(f"  Suppression Cache: FAILED ({e})")
-            checks.append(("Suppression Cache", False, str(e)))
+                print(f"  Suppression Cache: WARNING ({e})")
+            checks.append(CheckResult("Suppression Cache", CheckScope.CORE, CheckStatus.WARN, str(e)))
 
-        # 5. Signal health check
+        # ------------------------------------------------------------------
+        # 5) Core: signal health
+        # ------------------------------------------------------------------
         if not output_json:
             print(f"Checking signal health (last {lookback_days} days)...")
         try:
-            if pipeline._store and pipeline._store._db:
+            if getattr(getattr(pipeline, "_store", None), "_db", None):
                 monitor = SignalHealthMonitor(pipeline._store)
                 report = await monitor.generate_report(lookback_days=lookback_days)
 
                 if not output_json:
                     print(f"  Signal Health: {report.overall_status}")
 
-                # Store for JSON output
                 health_report_dict = report.to_dict()
 
-                # Print the full health report if verbose
                 if verbose and not output_json:
                     print()
                     print(report)
 
-                # Track health status
-                # DEGRADED = soft warning (low confidence variance etc.) — not a hard failure
-                if report.overall_status in ("HEALTHY", "DEGRADED"):
-                    msg = "System degraded (informational)" if report.overall_status == "DEGRADED" else None
-                    checks.append(("Signal Health", True, msg))
-                else:  # CRITICAL
-                    checks.append(("Signal Health", False, "System critical"))
-                    all_healthy = False
+                if report.overall_status == "HEALTHY":
+                    checks.append(CheckResult("Signal Health", CheckScope.CORE, CheckStatus.PASS, None))
+                elif report.overall_status == "DEGRADED":
+                    checks.append(CheckResult("Signal Health", CheckScope.CORE, CheckStatus.WARN, "System degraded (informational)"))
+                else:
+                    checks.append(CheckResult("Signal Health", CheckScope.CORE, CheckStatus.FAIL, "System critical"))
             else:
                 if not output_json:
                     print("  Signal Health: SKIPPED (no database)")
-                checks.append(("Signal Health", True, "Database unavailable"))
+                checks.append(CheckResult("Signal Health", CheckScope.CORE, CheckStatus.SKIP, "Database unavailable"))
         except Exception as e:
             if not output_json:
-                print(f"  Signal Health: FAILED ({e})")
-            checks.append(("Signal Health", False, str(e)))
-            all_healthy = False
+                print(f"  Signal Health: WARNING ({e})")
+            checks.append(CheckResult("Signal Health", CheckScope.CORE, CheckStatus.WARN, str(e)))
 
-        # Output as JSON or human-readable
+        # ------------------------------------------------------------------
+        # Summarize
+        # ------------------------------------------------------------------
+        readiness = ReadinessReport(checks)
+
         if output_json:
+            cfg = getattr(pipeline, "config", config)
             result = {
-                "overall_status": "HEALTHY" if all_healthy else "UNHEALTHY",
-                "checks": [
-                    {"name": name, "passed": ok, "message": msg}
-                    for name, ok, msg in checks
-                ],
+                "overall_status": readiness.overall_status,
+                "core_status": readiness.core_status,
+                "integration_status": readiness.integration_status,
+                "checks": [c.to_dict() for c in checks],
                 "signal_health": health_report_dict,
                 "suppression_cache": suppression_stats,
+                "flags": {
+                    "core_only": core_only,
+                    "allow_external_failures": allow_external_failures,
+                },
                 "config": {
-                    "db_path": config.db_path,
-                    "use_gating": config.use_gating,
-                    "use_entities": config.use_entities,
-                    "use_asset_store": config.use_asset_store,
+                    "db_path": getattr(cfg, "db_path", config.db_path),
+                    "use_gating": getattr(cfg, "use_gating", False),
+                    "use_entities": getattr(cfg, "use_entities", False),
+                    "use_asset_store": getattr(cfg, "use_asset_store", False),
                     "lookback_days": lookback_days,
                 },
             }
@@ -860,20 +868,16 @@ async def cmd_health(args):
             print("=" * 70)
             print()
 
-            for check_name, check_ok, check_msg in checks:
-                status_symbol = "PASS" if check_ok else "FAIL"
-                print(f"  [{status_symbol}] {check_name}")
-                if check_msg:
-                    print(f"       {check_msg}")
+            for c in checks:
+                print(f"  [{c.status.upper()}] {c.name}")
+                if c.message:
+                    print(f"       {c.message}")
 
             print()
-            if all_healthy:
-                print("Overall Status: HEALTHY")
-            else:
-                print("Overall Status: UNHEALTHY")
+            print(f"Overall Status: {readiness.overall_status}")
             print()
 
-        return 0 if all_healthy else 1
+        return readiness.exit_code()
 
     except Exception as e:
         if output_json:
@@ -884,7 +888,10 @@ async def cmd_health(args):
         logging.exception("Health check error")
         return 1
     finally:
-        await pipeline.close()
+        try:
+            await pipeline.close()
+        except Exception:
+            pass
 
 
 async def cmd_step3b_readiness(args):
@@ -2641,6 +2648,20 @@ Environment variables:
         "--verbose",
         action="store_true",
         help="Show detailed signal health report",
+    )
+
+    # Health semantics flags
+    # - default behavior remains strict (external failures fail the command)
+    # - operators can opt into core-only or degraded-on-external semantics
+    health_parser.add_argument(
+        "--core-only",
+        action="store_true",
+        help="Run only core checks (DB/pipeline/signal health); skip external integrations",
+    )
+    health_parser.add_argument(
+        "--allow-external-failures",
+        action="store_true",
+        help="Treat external integration failures as warnings (exit 0 if core is healthy)",
     )
 
     # Step 3B readiness command
@@ -7420,15 +7441,17 @@ async def cmd_health_json_pure(args):
     from datetime import datetime, timezone
     from utils.db_path_helper import resolve_db_path
     from utils.report_envelope import create_report, write_report
-    import io
+
+    from services.readiness import CheckResult, CheckScope, CheckStatus, ReadinessReport
 
     started_at = datetime.now(timezone.utc)
     db_path = resolve_db_path(args)
     report_path = getattr(args, "report", None)
     allow_external = getattr(args, "allow_external_failures", False)
+    allow_external = allow_external if isinstance(allow_external, bool) else False
 
     try:
-        checks = []
+        check_results: list[CheckResult] = []
         warnings_list = []
         errors_list = []
         metrics = {}
@@ -7437,29 +7460,38 @@ async def cmd_health_json_pure(args):
         db_file = Path(db_path)
         if not db_file.exists():
             errors_list.append(f"Database not found: {db_path}")
+            check_results.append(CheckResult("Database", CheckScope.CORE, CheckStatus.FAIL, f"Database not found: {db_path}"))
         else:
             import sqlite3
             conn = sqlite3.connect(db_path)
             try:
                 result = conn.execute("PRAGMA integrity_check").fetchone()
                 if result[0] == "ok":
-                    checks.append({"check": "database", "status": "pass"})
+                    check_results.append(CheckResult("Database", CheckScope.CORE, CheckStatus.PASS, None))
                 else:
-                    checks.append({"check": "database", "status": "fail", "message": result[0]})
                     errors_list.append(f"Database integrity: {result[0]}")
+                    check_results.append(CheckResult("Database", CheckScope.CORE, CheckStatus.FAIL, result[0]))
 
                 # Schema version
                 row = conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()
                 schema_ver = row[0] if row and row[0] else 0
                 metrics["schema_version"] = schema_ver
-                checks.append({"check": "schema_version", "status": "pass", "version": schema_ver})
+                check_results.append(
+                    CheckResult(
+                        "Schema Version",
+                        CheckScope.CORE,
+                        CheckStatus.PASS,
+                        f"v{schema_ver}",
+                        details={"version": schema_ver},
+                    )
+                )
 
                 # Signal count
                 sig_count = conn.execute("SELECT COUNT(*) FROM signals").fetchone()[0]
                 metrics["signal_count"] = sig_count
             except sqlite3.OperationalError as exc:
                 errors_list.append(f"Database error: {exc}")
-                checks.append({"check": "database", "status": "fail", "message": str(exc)})
+                check_results.append(CheckResult("Database", CheckScope.CORE, CheckStatus.FAIL, str(exc)))
             finally:
                 conn.close()
 
@@ -7473,24 +7505,29 @@ async def cmd_health_json_pure(args):
                 if check_fn:
                     ok, msg = await check_fn()
                     if ok:
-                        checks.append({"check": api_name, "status": "pass"})
+                        check_results.append(CheckResult(api_name, CheckScope.EXTERNAL, CheckStatus.PASS, None))
                     else:
                         if allow_external:
                             warnings_list.append(f"{api_name}: {msg}")
-                            checks.append({"check": api_name, "status": "warn", "message": msg})
+                            check_results.append(CheckResult(api_name, CheckScope.EXTERNAL, CheckStatus.WARN, msg))
                         else:
                             errors_list.append(f"{api_name}: {msg}")
-                            checks.append({"check": api_name, "status": "fail", "message": msg})
+                            check_results.append(CheckResult(api_name, CheckScope.EXTERNAL, CheckStatus.FAIL, msg))
             except Exception as exc:
                 if allow_external:
                     warnings_list.append(f"{api_name}: {exc}")
-                    checks.append({"check": api_name, "status": "warn", "message": str(exc)})
+                    check_results.append(CheckResult(api_name, CheckScope.EXTERNAL, CheckStatus.WARN, str(exc)))
                 else:
                     errors_list.append(f"{api_name}: {exc}")
-                    checks.append({"check": api_name, "status": "fail", "message": str(exc)})
+                    check_results.append(CheckResult(api_name, CheckScope.EXTERNAL, CheckStatus.FAIL, str(exc)))
 
-        ok = len(errors_list) == 0
-        metrics["checks"] = checks
+        readiness = ReadinessReport(check_results)
+        ok = readiness.overall_status != "UNHEALTHY"
+        # Keep checks as a metric for contract continuity.
+        metrics["checks"] = [c.to_dict() for c in check_results]
+        metrics["core_status"] = readiness.core_status
+        metrics["integration_status"] = readiness.integration_status
+        metrics["overall_status"] = readiness.overall_status
 
         report = create_report(
             command="health-json-pure", ok=ok, db_path=db_path,
