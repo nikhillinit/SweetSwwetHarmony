@@ -17,7 +17,9 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "scripts"))
 
 from lint_identity_patterns import (
+    MAX_CHUNK_LEN_FOR_REGEX,
     PHASE_G_TABLES,
+    PARSE_DEGRADED_ALLOWLIST,
     RULE1_ALLOWLIST,
     RULE2_ALLOWLIST,
     RULE3_ALLOWLIST,
@@ -286,6 +288,21 @@ entity_id = hashlib.sha256(name.encode()).hexdigest()[:16]
         break  # Just test one
 
 
+def test_rule2_regex_cap_still_catches_prefix_match(tmp_path):
+    """Rule 2 still triggers when the matching expression appears in the prefix of a huge chunk."""
+    filler = "a" * (2 * MAX_CHUNK_LEN_FOR_REGEX + 1024)
+    code = (
+        "import hashlib\n"
+        "x = hashlib.sha256(b'a').hexdigest()[:16] + \"" + filler + "\"\n"
+    )
+    rel = "huge_module.py"
+    baseline_path = _make_baseline(tmp_path, rule2_files={})
+    baseline = _load_baseline(baseline_path)
+    violations, _ = _scan_single(tmp_path, rel, code, baseline=baseline)
+    rule2 = [v for v in violations if v.rule_id == "RULE2"]
+    assert len(rule2) >= 1
+
+
 # ═══════════════════════════════════════════════════════════════════
 # RULE 3 Tests
 # ═══════════════════════════════════════════════════════════════════
@@ -419,13 +436,12 @@ def test_scanner_git_failure_write_mode(tmp_path, monkeypatch):
     assert os.path.exists(out_path)
 
 
-def test_ast_parse_failure_path(tmp_path, monkeypatch, capsys):
-    """Test 21: AST parse errors are handled per mode."""
+def test_rule0_parse_degraded_emitted_in_check_mode(tmp_path, monkeypatch, capsys):
+    """Test 21: Parse errors are violations (RULE0), not exit 2."""
     # Write an invalid Python file
     bad_file = tmp_path / "bad_syntax.py"
     bad_file.write_text("def foo(:\n    pass\n", encoding="utf-8")
 
-    # ── check mode: exit 2 ──
     def mock_run_check(cmd, **kwargs):
         if cmd[0] == "git" and "ls-files" in cmd:
             result = type("R", (), {
@@ -450,9 +466,123 @@ def test_ast_parse_failure_path(tmp_path, monkeypatch, capsys):
         "--baseline", baseline_path,
         "--root", str(tmp_path),
     ])
-    assert exit_code == 2
+    assert exit_code == 1
     captured = capsys.readouterr()
-    assert "bad_syntax" in captured.err
+    assert "RULE0" in captured.out
+    assert "bad_syntax.py" in captured.out
+
+
+def test_rule0_parse_degraded_allowlist_suppressed(tmp_path, monkeypatch):
+    """Parse-degraded allowlisted files do not fail CI."""
+    bad_file = tmp_path / "bad_syntax.py"
+    bad_file.write_text("def foo(:\n    pass\n", encoding="utf-8")
+
+    def mock_run_check(cmd, **kwargs):
+        if cmd[0] == "git" and "ls-files" in cmd:
+            result = type("R", (), {
+                "returncode": 0,
+                "stdout": b"bad_syntax.py\0",
+                "stderr": b"",
+            })()
+            return result
+        if cmd[0] == "git" and "rev-parse" in cmd:
+            result = type("R", (), {
+                "returncode": 0,
+                "stdout": str(tmp_path).encode() + b"\n",
+                "stderr": b"",
+            })()
+            return result
+        return subprocess.run(cmd, **kwargs)
+
+    # Temporarily allowlist in-test.
+    monkeypatch.setitem(
+        PARSE_DEGRADED_ALLOWLIST,
+        "bad_syntax.py",
+        {"owner": "test", "remove_by": "2099-01-01", "reason": "unit test"},
+    )
+
+    baseline_path = _make_baseline(tmp_path)
+    monkeypatch.setattr(subprocess, "run", mock_run_check)
+    exit_code = main([
+        "--check",
+        "--baseline", baseline_path,
+        "--root", str(tmp_path),
+    ])
+    assert exit_code == 0
+
+
+def test_rule0_not_emitted_when_fail_on_parse_degraded_false(tmp_path, monkeypatch, capsys):
+    """--fail-on-parse-degraded false disables RULE0 enforcement."""
+    bad_file = tmp_path / "bad_syntax.py"
+    bad_file.write_text("def foo(:\n    pass\n", encoding="utf-8")
+
+    def mock_run_check(cmd, **kwargs):
+        if cmd[0] == "git" and "ls-files" in cmd:
+            result = type("R", (), {
+                "returncode": 0,
+                "stdout": b"bad_syntax.py\0",
+                "stderr": b"",
+            })()
+            return result
+        if cmd[0] == "git" and "rev-parse" in cmd:
+            result = type("R", (), {
+                "returncode": 0,
+                "stdout": str(tmp_path).encode() + b"\n",
+                "stderr": b"",
+            })()
+            return result
+        return subprocess.run(cmd, **kwargs)
+
+    baseline_path = _make_baseline(tmp_path)
+    monkeypatch.setattr(subprocess, "run", mock_run_check)
+    exit_code = main([
+        "--check",
+        "--fail-on-parse-degraded", "false",
+        "--baseline", baseline_path,
+        "--root", str(tmp_path),
+    ])
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert "passed" in captured.out.lower()
+
+
+def test_json_includes_rule0_and_parse_degraded_files(tmp_path, monkeypatch, capsys):
+    """JSON output includes RULE0 entry and parse_degraded_files."""
+    bad_file = tmp_path / "bad_syntax.py"
+    bad_file.write_text("def foo(:\n    pass\n", encoding="utf-8")
+
+    def mock_run_check(cmd, **kwargs):
+        if cmd[0] == "git" and "ls-files" in cmd:
+            result = type("R", (), {
+                "returncode": 0,
+                "stdout": b"bad_syntax.py\0",
+                "stderr": b"",
+            })()
+            return result
+        if cmd[0] == "git" and "rev-parse" in cmd:
+            result = type("R", (), {
+                "returncode": 0,
+                "stdout": str(tmp_path).encode() + b"\n",
+                "stderr": b"",
+            })()
+            return result
+        return subprocess.run(cmd, **kwargs)
+
+    baseline_path = _make_baseline(tmp_path)
+    monkeypatch.setattr(subprocess, "run", mock_run_check)
+    exit_code = main([
+        "--check",
+        "--format", "json",
+        "--baseline", baseline_path,
+        "--root", str(tmp_path),
+    ])
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert "bad_syntax.py" in payload.get("parse_degraded_files", [])
+    rules = {r["rule_id"]: r for r in payload.get("rules", [])}
+    assert rules["RULE0"]["status"] == "fail"
+    assert any(v["file"] == "bad_syntax.py" for v in rules["RULE0"]["violations"])
 
 
 # ═══════════════════════════════════════════════════════════════════
@@ -505,6 +635,20 @@ def test_clean_codebase_passes():
     repo_root = os.path.abspath(
         os.path.join(os.path.dirname(__file__), "..", "..")
     )
+
+    # Integration guard: this test requires a real git worktree (the linter's
+    # --check mode intentionally hard-requires git ls-files for determinism).
+    try:
+        r = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            cwd=repo_root,
+            capture_output=True,
+        )
+    except FileNotFoundError:
+        pytest.skip("git not available")
+    if r.returncode != 0:
+        pytest.skip("not a git worktree")
+
     baseline_path = os.path.join(repo_root, "scripts", "identity_lint_baseline.json")
     if not os.path.exists(baseline_path):
         pytest.skip("Baseline file not found (not in repo yet)")
