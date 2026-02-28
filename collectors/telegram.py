@@ -465,7 +465,13 @@ class TelegramCollector(BaseCollector):
             )
 
         # Build raw_data
+        from collectors.provenance import create_provenance
+        provenance = create_provenance(
+            source_url=message.message_url,
+            endpoint=f"t.me/{message.channel_username}",
+        )
         raw_data: Dict[str, Any] = {
+            **provenance,
             "channel_username": message.channel_username,
             "message_id": message.message_id,
             "canonical_key_candidates": canonical_key_candidates,

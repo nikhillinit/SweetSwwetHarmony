@@ -71,6 +71,7 @@ from storage.migrations.v41_drift_monitoring import V41_DRIFT_MONITORING_DDL
 from storage.migrations.v42_evidence_family import V42_EVIDENCE_FAMILY_DDL
 from storage.migrations.v43_canonical_key_v2 import V43_CANONICAL_KEY_V2_DDL
 from storage.migrations.v44_dns_promotion_aliases import V44_DNS_PROMOTION_ALIASES_DDL
+from storage.migrations.v45_evidence_key import V45_EVIDENCE_KEY_DDL
 
 if TYPE_CHECKING:
     from workflows.pipeline import PipelineStats, CollectorMetrics
@@ -84,7 +85,7 @@ logger = logging.getLogger(__name__)
 # SCHEMA VERSION
 # =============================================================================
 
-CURRENT_SCHEMA_VERSION = 44
+CURRENT_SCHEMA_VERSION = 45
 
 # SQL for creating tables (migrations applied in order)
 MIGRATIONS = {
@@ -1736,6 +1737,7 @@ MIGRATIONS = {
     42: V42_EVIDENCE_FAMILY_DDL,
     43: V43_CANONICAL_KEY_V2_DDL,
     44: V44_DNS_PROMOTION_ALIASES_DDL,
+    45: V45_EVIDENCE_KEY_DDL,
 }
 
 
@@ -2544,9 +2546,18 @@ class SignalStore:
         raw_data: Dict[str, Any],
         company_name: Optional[str] = None,
         detected_at: Optional[datetime] = None,
+        evidence_key: Optional[str] = None,
     ) -> int:
         """
         Save a new signal to the database.
+
+        When evidence_key is provided (strict mode):
+        - SELECT-then-INSERT: checks for existing signal with same evidence_key
+        - If found, returns existing signal ID (skips all post-insert operations)
+        - Uses BEGIN IMMEDIATE for write serialization
+
+        When evidence_key is None (legacy mode):
+        - Falls back to tuple-based dedup (IntegrityError on exact match)
 
         When identity_store is configured:
         - Resolves company_id via lookup_strong_keys / entity_id_for_seed
@@ -2554,8 +2565,7 @@ class SignalStore:
         - Processes merge pairs via cascade_merge
         - Upserts company_file if use_thin_files is enabled
 
-        Returns the signal ID.
-        Raises IntegrityError if duplicate (same canonical_key, signal_type, source_api, detected_at).
+        Returns the signal ID (existing if dedup hit, new if inserted).
         """
         if not self._db:
             raise RuntimeError("Database not initialized")
@@ -2589,8 +2599,18 @@ class SignalStore:
         if evidence_family is None:
             evidence_family = "unknown"
 
-        # Choose transaction mode based on identity store presence
-        if self._identity_store:
+        # Evidence-key fallback: extract from raw_data if not passed by caller
+        if evidence_key is None:
+            try:
+                from utils.evidence_key import extract_source_url_from_raw_data, compute_evidence_key
+                src_url = extract_source_url_from_raw_data(raw_data)
+                if src_url:
+                    evidence_key = compute_evidence_key(source_api, src_url) or None
+            except Exception:
+                logger.warning("evidence_key extraction failed", exc_info=True)
+
+        # Choose transaction mode: IMMEDIATE for identity store or evidence_key dedup
+        if self._identity_store or evidence_key:
             tx_cm = self.transaction_immediate()
         else:
             tx_cm = self.transaction()
@@ -2615,15 +2635,29 @@ class SignalStore:
                         canonical_key
                     )
 
+            # Strict mode: evidence_key-based dedup guard
+            if evidence_key:
+                existing = await conn.execute(
+                    "SELECT id FROM signals WHERE evidence_key = ? LIMIT 1",
+                    (evidence_key,),
+                )
+                existing_row = await existing.fetchone()
+                if existing_row:
+                    logger.debug(
+                        "evidence_key dedup: skipping duplicate %s (existing id=%d)",
+                        evidence_key, existing_row[0],
+                    )
+                    return int(existing_row[0])
+
             # Insert signal (with company_id if resolved)
             cursor = await conn.execute(
                 """
                 INSERT INTO signals (
                     signal_type, source_api, canonical_key, company_name,
                     confidence, raw_data, detected_at, created_at, company_id,
-                    evidence_family, canonical_key_v2
+                    evidence_family, canonical_key_v2, evidence_key
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     signal_type,
@@ -2637,6 +2671,7 @@ class SignalStore:
                     company_id,
                     evidence_family,
                     canonical_key_v2_val,
+                    evidence_key,
                 ),
             )
 
@@ -2827,6 +2862,7 @@ class SignalStore:
         signal_type: Optional[str] = None,
         source_api: Optional[str] = None,
         detected_at: Optional[datetime] = None,
+        evidence_key: Optional[str] = None,
     ) -> bool:
         """Check for duplicate signals.
 
@@ -2834,6 +2870,9 @@ class SignalStore:
         - Multi-source convergence is allowed: same canonical_key across
           different (signal_type, source_api) is NOT a duplicate.
         - "Duplicate" means same evidence identity, not "same company."
+
+        When evidence_key is provided, checks by evidence_key first
+        (fast path, uses partial index).
 
         When signal_type, source_api, and detected_at are all provided,
         checks for an exact-tuple match — allowing different sources to
@@ -2843,9 +2882,23 @@ class SignalStore:
         blanket canonical-key check.
 
         Returns True if matching signals exist, False otherwise.
+
+        NOTE: This check runs outside the save_signal() transaction,
+        so a concurrent insert between is_duplicate() and save_signal()
+        could cause a false negative. Data correctness is preserved by
+        the SELECT-then-INSERT guard inside save_signal()'s transaction.
         """
         if not self._db:
             raise RuntimeError("Database not initialized")
+
+        # Fast path: evidence_key-based dedup
+        if evidence_key:
+            cursor = await self._db.execute(
+                "SELECT 1 FROM signals WHERE evidence_key = ? LIMIT 1",
+                (evidence_key,),
+            )
+            if await cursor.fetchone():
+                return True
 
         if signal_type is not None and source_api is not None and detected_at is not None:
             # Exact-tuple check: same source + type + time = true duplicate

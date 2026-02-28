@@ -31,8 +31,19 @@ Usage:
 
 import hashlib
 import json
+import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
+
+# URL patterns indicating a container/search endpoint rather than
+# a specific evidence page. Signals with these URLs produce weak
+# evidence_keys (many articles share the same search URL).
+CONTAINER_URL_PATTERNS = [
+    "/search?", "/api/v", "/feed", "/rss",
+    "api.github.com/search", "gnews.io/api",
+]
 
 
 def hash_response(data: Any) -> str:
@@ -159,6 +170,26 @@ def validate_provenance(raw_data: Dict[str, Any]) -> tuple[bool, list[str]]:
         issues.append("Missing source_response_hash")
 
     return len(issues) == 0, issues
+
+
+def warn_if_container_url(source_url: str) -> Optional[str]:
+    """Check if source_url looks like a container/search endpoint.
+
+    Container URLs (search pages, API endpoints, RSS feeds) produce
+    weak evidence_keys because many distinct articles share the same
+    URL. This is a warning, not a hard reject — the signal is still
+    saved, but the evidence_key may collide.
+
+    Returns a warning string if suspicious, None if OK.
+    """
+    if not source_url:
+        return None
+    for pattern in CONTAINER_URL_PATTERNS:
+        if pattern in source_url:
+            warning = f"source_url appears to be a container/search URL: {source_url[:80]}"
+            logger.warning(warning)
+            return warning
+    return None
 
 
 class ProvenanceBuilder:

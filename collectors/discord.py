@@ -495,7 +495,13 @@ class DiscordCollector(BaseCollector):
             )
 
         # Build raw_data
+        from collectors.provenance import create_provenance
+        provenance = create_provenance(
+            source_url=message.message_url,
+            endpoint=f"discord/{message.guild_id}",
+        )
         raw_data: Dict[str, Any] = {
+            **provenance,
             "guild_id": message.guild_id,
             "guild_name": message.guild_name,
             "channel_id": message.channel_id,
