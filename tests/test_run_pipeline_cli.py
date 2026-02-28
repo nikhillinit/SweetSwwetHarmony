@@ -1,8 +1,10 @@
 """Tests for run_pipeline.py CLI flags."""
 import pytest
 import asyncio
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
-from run_pipeline import create_parser, cmd_health
+from run_pipeline import create_parser, cmd_collect, cmd_health
+from discovery_engine.mcp_server import CollectorResult, CollectorStatus
 from utils.signal_health import HealthReport, SourceHealth
 
 
@@ -305,3 +307,57 @@ class TestHealthCommand:
 
                     # Should return error exit code when DB is down
                     assert exit_code == 1
+
+
+class TestCollectCommandOutput:
+    """Test collect command output formatting for collector statuses."""
+
+    @pytest.mark.asyncio
+    async def test_cmd_collect_renders_skipped_as_skip_label(self, capsys):
+        """Collectors with skipped status should render with [SKIP] label."""
+        args = SimpleNamespace(
+            db_path=None,
+            parallel=None,
+            disable_gating=False,
+            enable_gating=False,
+            use_asset_store=False,
+            collectors="domain_whois,news_api,broken_collector",
+            dry_run=True,
+        )
+
+        mock_config = MagicMock()
+        mock_config.parallel_collectors = True
+
+        results = [
+            CollectorResult(
+                collector="domain_whois",
+                status=CollectorStatus.SKIPPED,
+                error_message="no domains provided",
+            ),
+            CollectorResult(
+                collector="news_api",
+                status=CollectorStatus.SUCCESS,
+                signals_found=3,
+                signals_new=2,
+            ),
+            CollectorResult(
+                collector="broken_collector",
+                status=CollectorStatus.ERROR,
+                error_message="boom",
+            ),
+        ]
+
+        mock_pipeline = MagicMock()
+        mock_pipeline.initialize = AsyncMock()
+        mock_pipeline.close = AsyncMock()
+        mock_pipeline.run_collectors = AsyncMock(return_value=results)
+
+        with patch("run_pipeline.PipelineConfig.from_env", return_value=mock_config):
+            with patch("run_pipeline.DiscoveryPipeline", return_value=mock_pipeline):
+                await cmd_collect(args)
+
+        output = capsys.readouterr().out
+        assert "[SKIP] domain_whois" in output
+        assert "[OK] news_api" in output
+        assert "[FAIL] broken_collector" in output
+        assert "Skipped collectors: 1" in output

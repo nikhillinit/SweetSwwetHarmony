@@ -391,8 +391,17 @@ async def cmd_collect(args):
         print("=" * 70)
         print()
 
+        status_symbols = {
+            "success": "[OK]",
+            "skipped": "[SKIP]",
+            "partial_success": "[WARN]",
+            "dry_run": "[DRY]",
+            "error": "[FAIL]",
+            "not_found": "[FAIL]",
+        }
+
         for result in results:
-            status_symbol = "[OK]" if result.status.value == "success" else "[FAIL]"
+            status_symbol = status_symbols.get(result.status.value, "[WARN]")
             print(f"{status_symbol} {result.collector}")
             print(f"  Status: {result.status.value}")
             print(f"  Signals found: {result.signals_found}")
@@ -405,7 +414,9 @@ async def cmd_collect(args):
         # Summary
         total_signals = sum(r.signals_found for r in results)
         succeeded = sum(1 for r in results if r.status.value == "success")
+        skipped = sum(1 for r in results if r.status.value == "skipped")
         print(f"Summary: {succeeded}/{len(results)} collectors succeeded")
+        print(f"Skipped collectors: {skipped}")
         print(f"Total signals: {total_signals}")
 
     finally:
