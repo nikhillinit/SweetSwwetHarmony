@@ -60,6 +60,10 @@ logs/
 Thumbs.db
 .worktrees/
 
+# Local/ephemeral worktrees (some dev workflows use singular variants)
+.worktree*/
+.worktree_*/
+
 # Git worktrees
 .worktrees/
 
