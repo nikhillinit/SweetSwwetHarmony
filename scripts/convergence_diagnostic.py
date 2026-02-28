@@ -47,6 +47,67 @@ def _get_latest_run_id(conn: sqlite3.Connection) -> str | None:
     return row[0] if row else None
 
 
+def _build_scope_filter(
+    run_id: str | None = None,
+    since_days: int | None = None,
+    base_conditions: list[str] | None = None,
+) -> tuple[str, list]:
+    """Build a WHERE clause from scope + base conditions.
+
+    Returns (where_clause, params) suitable for f"WHERE {where_clause}".
+    Scope priority: run_id > since_days.
+    """
+    parts: list[str] = []
+    params: list = []
+
+    if base_conditions:
+        parts.append("(" + " AND ".join(base_conditions) + ")")
+
+    if run_id is not None:
+        parts.append("""(rowid IN (
+                SELECT s.rowid FROM signals s
+                JOIN pipeline_runs pr ON pr.run_id = ?
+                WHERE s.created_at >= pr.started_at
+                  AND (pr.completed_at IS NULL OR s.created_at <= pr.completed_at)
+            ))""")
+        params.append(run_id)
+    elif since_days is not None:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=since_days)).isoformat()
+        parts.append("(created_at >= ?)")
+        params.append(cutoff)
+
+    if not parts:
+        return "1=1", []
+
+    return " AND ".join(parts), params
+
+
+def _determine_scope_mode(
+    run_id: str | None, since_days: int | None
+) -> str:
+    """Return the active scope mode string."""
+    if run_id:
+        return "run_id"
+    elif since_days is not None:
+        return "since_days"
+    return "all_time"
+
+
+def _format_scope_description(
+    run_id: str | None,
+    since_days: int | None,
+    resolved_from_latest: bool,
+) -> str:
+    """Human-readable scope description."""
+    if run_id and resolved_from_latest:
+        return f"Scoped to latest pipeline run: {run_id}"
+    elif run_id:
+        return f"Scoped to pipeline run: {run_id}"
+    elif since_days is not None:
+        return f"Scoped to last {since_days} days"
+    return "All-time (section 5 defaults to latest run)"
+
+
 def _section_1_multi_source_overlap(conn: sqlite3.Connection) -> list[dict]:
     """Multi-source signal overlap (informational)."""
     rows = conn.execute("""
@@ -107,27 +168,7 @@ def _section_3_news_api_key_distribution(
     conn: sqlite3.Connection, run_id: str | None, since_days: int | None
 ) -> list[dict]:
     """news_api key distribution (scoped)."""
-    conditions = ["source_api = 'news_api'"]
-    params: list = []
-
-    if run_id:
-        # Scope to signals from this run via pipeline_runs timing
-        conditions.append("""
-            rowid IN (
-                SELECT s.rowid FROM signals s
-                JOIN pipeline_runs pr ON pr.run_id = ?
-                WHERE s.source_api = 'news_api'
-                  AND s.created_at >= pr.started_at
-                  AND (pr.completed_at IS NULL OR s.created_at <= pr.completed_at)
-            )
-        """)
-        params.append(run_id)
-    elif since_days:
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=since_days)).isoformat()
-        conditions.append("created_at >= ?")
-        params.append(cutoff)
-
-    where = " AND ".join(conditions)
+    where, params = _build_scope_filter(run_id, since_days, ["source_api = 'news_api'"])
 
     rows = conn.execute(f"""
         SELECT
@@ -151,26 +192,7 @@ def _section_4_publisher_leakage(
     conn: sqlite3.Connection, run_id: str | None, since_days: int | None
 ) -> dict:
     """Publisher leakage count (first-class line item)."""
-    conditions = ["canonical_key LIKE 'domain:%'"]
-    params: list = []
-
-    if run_id:
-        conditions.append("""
-            rowid IN (
-                SELECT s.rowid FROM signals s
-                JOIN pipeline_runs pr ON pr.run_id = ?
-                WHERE s.canonical_key LIKE 'domain:%%'
-                  AND s.created_at >= pr.started_at
-                  AND (pr.completed_at IS NULL OR s.created_at <= pr.completed_at)
-            )
-        """)
-        params.append(run_id)
-    elif since_days:
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=since_days)).isoformat()
-        conditions.append("created_at >= ?")
-        params.append(cutoff)
-
-    where = " AND ".join(conditions)
+    where, params = _build_scope_filter(run_id, since_days, ["canonical_key LIKE 'domain:%'"])
 
     rows = conn.execute(
         f"SELECT canonical_key FROM signals WHERE {where}",
@@ -333,17 +355,40 @@ def run_diagnostic(
     conn = sqlite3.connect(db_path)
 
     # Resolve run_id
+    resolved_from_latest = False
     if latest_run and not run_id:
         run_id = _get_latest_run_id(conn)
         if run_id:
+            resolved_from_latest = True
             print(f"Using latest run_id: {run_id}")
         else:
-            print("No pipeline_runs found — running without run scope.")
+            logger.warning("No pipeline_runs found — running without run scope.")
+
+    scope_mode = _determine_scope_mode(run_id, since_days)
+    scope_description = _format_scope_description(run_id, since_days, resolved_from_latest)
+
+    if scope_mode == "run_id":
+        applies_to = [3, 4, 5]
+    elif scope_mode == "since_days":
+        applies_to = [3, 4]
+    else:
+        applies_to = []
+
+    active_scope = {
+        "mode": scope_mode,
+        "run_id": run_id,
+        "since_days": since_days,
+        "resolved_from_latest_run": resolved_from_latest,
+        "applies_to_sections": applies_to,
+        "section_5_default": None if run_id else "latest_run",
+        "description": scope_description,
+    }
 
     report = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "db_path": db_path,
         "scoped_run_id": run_id,
+        "active_scope": active_scope,
         "sections": {},
     }
 
@@ -395,8 +440,9 @@ def run_diagnostic(
     print("=" * 60)
 
     print(f"\nDB: {db_path}")
-    if run_id:
-        print(f"Scoped to run: {run_id}")
+    print(f"Scope: {scope_description}")
+    if scope_mode == "since_days":
+        print("  Note: Section 5 ignores --since (uses latest run).")
 
     print(f"\n--- 1. Multi-Source Signal Overlap ---")
     if s1:
@@ -515,6 +561,9 @@ def main():
     parser.add_argument("--json", action="store_true", help="Output JSON report")
     parser.add_argument("--out", help="Output file path for JSON report")
     args = parser.parse_args()
+
+    if args.since is not None and args.since < 1:
+        parser.error("--since must be >= 1")
 
     run_diagnostic(
         db_path=args.db,
