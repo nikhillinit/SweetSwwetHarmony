@@ -94,6 +94,7 @@ class TestActivationCheckHandler:
         data = json.loads(captured.out)
         assert "verdict" in data
         assert "step" in data
+        assert "drift_coverage" in data
         assert data["step"] == 1
 
     @pytest.mark.asyncio

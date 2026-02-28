@@ -1062,6 +1062,20 @@ class DiscoveryPipeline:
                 except Exception as e:
                     logger.warning(f"Slack daily summary failed (non-fatal): {e}")
 
+            # Daily aggregator hook — keep SPC baseline current
+            if not dry_run:
+                try:
+                    from monitoring.daily_aggregator import backfill_daily_metrics
+                    import sqlite3 as _sqlite3
+                    sync_conn = _sqlite3.connect(str(self._store.db_path), timeout=5)
+                    try:
+                        sync_conn.execute("PRAGMA busy_timeout=5000")
+                        backfill_daily_metrics(sync_conn, days=15)
+                    finally:
+                        sync_conn.close()
+                except Exception as exc:
+                    logger.warning("Daily aggregator hook failed (non-fatal): %s", exc)
+
             logger.info("Full pipeline completed successfully")
 
         except Exception as e:
