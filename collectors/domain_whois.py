@@ -48,7 +48,7 @@ import sys
 import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from collectors.base import BaseCollector
+from collectors.base import BaseCollector, CollectorSkipError
 from collectors.provenance import create_provenance, hash_response
 from collectors.retry_strategy import with_retry, RetryConfig
 from collectors.source_types import SOURCE_TYPE
@@ -375,12 +375,11 @@ class DomainWhoisCollector(BaseCollector):
             logger.info(f"Enrichment mode: checking {len(self._domains_to_check)} domains")
             registrations = await self._check_domains(self._domains_to_check[:self.max_domains])
         else:
-            # Discovery mode: would need a feed source
-            logger.warning(
-                "Discovery mode not available - most RDAP servers don't provide "
-                "new registration feeds. Use enrichment mode with specific domains."
+            # No domains provided — enrichment collector has nothing to do
+            raise CollectorSkipError(
+                "domain_whois requires domains for enrichment — "
+                "no domains provided, skipping"
             )
-            return []
 
         logger.info(f"Retrieved {len(registrations)} domain registrations")
 
