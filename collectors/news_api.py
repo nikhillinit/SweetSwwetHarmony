@@ -609,6 +609,12 @@ class NewsAPICollector(BaseCollector):
         url_hash = hashlib.md5(article.url.encode()).hexdigest()[:12]
         signal_id = f"news_{url_hash}"
 
+        from collectors.provenance import create_provenance
+        provenance = create_provenance(
+            source_url=article.url,
+            endpoint="gnews/search",
+        )
+
         return Signal(
             id=signal_id,
             signal_type=signal_type,
@@ -617,6 +623,7 @@ class NewsAPICollector(BaseCollector):
             source_url=article.url,
             detected_at=article.published_at,
             raw_data={
+                **provenance,
                 "title": article.title,
                 "description": article.description,
                 "url": article.url,

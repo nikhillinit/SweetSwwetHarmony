@@ -326,6 +326,12 @@ class BaseCollector(ABC):
                     )
                     canonical_key = signal.id
 
+                # Compute evidence_key for idempotent dedup
+                evidence_key = None
+                if signal.source_url:
+                    from utils.evidence_key import compute_evidence_key
+                    evidence_key = compute_evidence_key(signal.source_api, signal.source_url) or None
+
                 # Skip if we already processed this identity in this run
                 ident = self._run_identity(canonical_key, signal)
                 if ident in self._processed_identities:
@@ -333,12 +339,13 @@ class BaseCollector(ABC):
                     self._signals_suppressed += 1
                     continue
 
-                # Check if already in database (exact-tuple: multi-source OK)
+                # Check if already in database (evidence_key fast path + tuple fallback)
                 is_duplicate = await self.store.is_duplicate(
                     canonical_key,
                     signal_type=signal.signal_type,
                     source_api=signal.source_api,
                     detected_at=signal.detected_at,
+                    evidence_key=evidence_key,
                 )
 
                 if is_duplicate:
@@ -367,6 +374,7 @@ class BaseCollector(ABC):
                     raw_data=signal.raw_data,
                     company_name=signal.raw_data.get("company_name"),
                     detected_at=signal.detected_at,
+                    evidence_key=evidence_key,
                 )
 
                 logger.info(
@@ -412,18 +420,25 @@ class BaseCollector(ABC):
                 if not canonical_key:
                     canonical_key = signal.id
 
+                # Compute evidence_key for idempotent dedup (dry-run parity)
+                evidence_key = None
+                if signal.source_url:
+                    from utils.evidence_key import compute_evidence_key
+                    evidence_key = compute_evidence_key(signal.source_api, signal.source_url) or None
+
                 # Skip if already checked in this run
                 ident = self._run_identity(canonical_key, signal)
                 if ident in self._processed_identities:
                     self._signals_suppressed += 1
                     continue
 
-                # Check database (exact-tuple: multi-source OK)
+                # Check database (evidence_key fast path + tuple fallback)
                 is_duplicate = await self.store.is_duplicate(
                     canonical_key,
                     signal_type=signal.signal_type,
                     source_api=signal.source_api,
                     detected_at=signal.detected_at,
+                    evidence_key=evidence_key,
                 )
 
                 if is_duplicate:
