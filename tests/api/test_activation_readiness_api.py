@@ -107,6 +107,7 @@ class TestActivationReadinessAPI:
         assert "reasons" in data
         assert "canary" in data
         assert "alerts" in data
+        assert "drift_coverage" in data
         assert "checked_at" in data
 
     @pytest.mark.asyncio
