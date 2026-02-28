@@ -152,10 +152,33 @@
 - **Next:** PR10b
 
 ### PR10b: DNS promotion delivery
-- **Status:** PENDING
+- **Status:** COMPLETE (branch: feat/dns-phase2-promotion, PR #85)
+- **Files changed:** collectors/rss_feeds.py, collectors/news_api.py, utils/dns_probe.py, storage/migrations/v44_*, tests/collectors/test_dns_phase2_invariants.py, tests/collectors/test_rss_promotion_integration.py, tests/collectors/test_news_api_promotion_integration.py
+- **Gates:** compileall PASS, all invariant tests PASS
+- **Next:** PR11
+
+### Extra PRs (not in original plan)
+- **#84** — Notion pusher gate test alignment (merged 2026-02-27)
+- **#86** — Postmerge canary gate evidence (merged 2026-02-27)
+- **#87** — SPC coverage gate hardening (merged 2026-02-27)
 
 ### PR11: Enrichment SKIP semantics
-- **Status:** PENDING
+- **Status:** COMPLETE (branch: fix/enrichment-skip-semantics)
+- **Files changed:** collectors/domain_whois.py, collectors/opencorporates.py, tests/collectors/test_enrichment_collectors_skip.py (new)
+- **Skills invoked:** collector-framework (CollectorSkipError usage pattern)
+- **Changes:**
+  - `domain_whois.py`: replaced silent `return []` in `_collect_signals()` when no domains provided with `raise CollectorSkipError`
+  - `opencorporates.py`: replaced silent `return []` + info log in `_collect_signals()` with `raise CollectorSkipError`
+  - Both now map to `CollectorStatus.SKIPPED` via `BaseCollector.run()` exception handler
+  - 10 new tests covering: direct raise, run() status mapping, enrichment-with-input bypass, error message quality
+- **Gates:**
+  - `compileall -q collectors` — PASS
+  - `ci_smoke_imports.py` — PASS (32/32)
+  - `pytest tests/collectors/test_enrichment_collectors_skip.py` — PASS (10/10)
+  - Regression suite (`tests/api/ tests/integration/`) — PASS (693/693)
+- **Reproducibility:** Python 3.11.9, Windows 11, local
+- **Residual risks:** None
+- **Next:** PR12
 
 ### PR12: Diagnostic scoping + metrics contract
 - **Status:** PENDING
