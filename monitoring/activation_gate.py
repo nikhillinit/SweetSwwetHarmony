@@ -13,7 +13,9 @@ Step-specific policy matrix:
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Optional
@@ -28,6 +30,8 @@ STEP_POLICY = {
         "block_on_no_canary": False,
         "block_on_warning_alerts": False,
         "warn_on_warning_alerts": False,
+        "required_spc_metrics": [],
+        "optional_spc_metrics": [],
     },
     2: {
         "max_canary_age_hours": 48,
@@ -35,6 +39,8 @@ STEP_POLICY = {
         "block_on_no_canary": False,
         "block_on_warning_alerts": False,
         "warn_on_warning_alerts": True,
+        "required_spc_metrics": [],
+        "optional_spc_metrics": [],
     },
     3: {
         "max_canary_age_hours": 24,
@@ -42,6 +48,8 @@ STEP_POLICY = {
         "block_on_no_canary": True,
         "block_on_warning_alerts": False,
         "warn_on_warning_alerts": True,
+        "required_spc_metrics": ["collector_volume", "overall_fp_rate"],
+        "optional_spc_metrics": ["confidence_calibration_ece", "quarantine_regret"],
     },
     4: {
         "max_canary_age_hours": 24,
@@ -49,6 +57,8 @@ STEP_POLICY = {
         "block_on_no_canary": True,
         "block_on_warning_alerts": True,
         "warn_on_warning_alerts": False,
+        "required_spc_metrics": ["collector_volume", "overall_fp_rate"],
+        "optional_spc_metrics": ["confidence_calibration_ece", "quarantine_regret"],
     },
 }
 
@@ -63,6 +73,7 @@ class ActivationGateResult:
     canary_run_age_hours: Optional[float] = None
     open_critical_alerts: int = 0
     open_warning_alerts: int = 0
+    drift_coverage: dict[str, str] = field(default_factory=dict)
     checked_at: str = ""
 
     @property
@@ -84,8 +95,79 @@ class ActivationGateResult:
                 "open_critical": self.open_critical_alerts,
                 "open_warning": self.open_warning_alerts,
             },
+            "drift_coverage": self.drift_coverage,
             "checked_at": self.checked_at,
         }
+
+
+def _resolve_spc_metrics(policy: dict) -> tuple[list[str], list[str]]:
+    """Resolve SPC metric lists from env overrides or policy defaults.
+
+    Validates metric names against VALID_SPC_METRICS.  If the env override
+    yields an empty required list (all-invalid), falls back to policy defaults.
+    """
+    from monitoring.spc_monitor import VALID_SPC_METRICS
+
+    policy_required = list(policy.get("required_spc_metrics", []))
+    policy_optional = list(policy.get("optional_spc_metrics", []))
+
+    env_req = os.environ.get("SPC_REQUIRED_METRICS", "").strip()
+    env_opt = os.environ.get("SPC_OPTIONAL_METRICS", "").strip()
+
+    if env_req:
+        parsed = [m.strip().lower() for m in env_req.split(",") if m.strip()]
+        valid = [m for m in parsed if m in VALID_SPC_METRICS]
+        invalid = [m for m in parsed if m not in VALID_SPC_METRICS]
+        if invalid:
+            logger.warning(
+                "SPC_REQUIRED_METRICS contains invalid names %s (valid: %s)",
+                invalid, sorted(VALID_SPC_METRICS),
+            )
+        if valid:
+            policy_required = valid
+        else:
+            logger.warning(
+                "SPC_REQUIRED_METRICS resolved empty after validation — "
+                "falling back to policy defaults: %s",
+                policy.get("required_spc_metrics", []),
+            )
+
+    if env_opt:
+        parsed = [m.strip().lower() for m in env_opt.split(",") if m.strip()]
+        valid = [m for m in parsed if m in VALID_SPC_METRICS]
+        invalid = [m for m in parsed if m not in VALID_SPC_METRICS]
+        if invalid:
+            logger.warning(
+                "SPC_OPTIONAL_METRICS contains invalid names %s (valid: %s)",
+                invalid, sorted(VALID_SPC_METRICS),
+            )
+        if valid:
+            policy_optional = valid
+
+    return policy_required, policy_optional
+
+
+def _evaluate_spc_coverage(db_path, metrics: list[str]) -> dict[str, str]:
+    """Sync SPC coverage check — runs in a thread via asyncio.to_thread."""
+    import sqlite3 as _sqlite3
+    from monitoring.spc_monitor import SPCMonitor
+
+    conn = _sqlite3.connect(str(db_path), timeout=5)
+    try:
+        conn.execute("PRAGMA busy_timeout=5000")
+        spc = SPCMonitor()
+        result = {}
+        for metric in metrics:
+            try:
+                limits = spc.compute_control_limits(
+                    conn, metric, segment_type="overall", segment_key="",
+                )
+                result[metric] = "ok" if limits is not None else "insufficient_data"
+            except Exception:
+                result[metric] = "error"
+        return result
+    finally:
+        conn.close()
 
 
 async def check_activation_readiness(store, step: int = 1) -> ActivationGateResult:
@@ -207,6 +289,36 @@ async def check_activation_readiness(store, step: int = 1) -> ActivationGateResu
             reasons.append(f"{open_warning} open warning drift alert(s)")
         # else: pass (step 1 ignores warning alerts)
 
+    # --- SPC drift coverage check ---
+    drift_coverage = {}
+    policy_required = policy.get("required_spc_metrics", [])
+    policy_optional = policy.get("optional_spc_metrics", [])
+    if policy_required or policy_optional:
+        required, optional = _resolve_spc_metrics(policy)
+        all_metrics = required + optional
+        try:
+            drift_coverage = await asyncio.to_thread(
+                _evaluate_spc_coverage, store.db_path, all_metrics,
+            )
+        except Exception as exc:
+            logger.error("SPC coverage evaluation failed: %s", exc)
+            drift_coverage = {m: "error" for m in all_metrics}
+
+        req_gaps = [m for m in required if drift_coverage.get(m) != "ok"]
+        if req_gaps:
+            msg = f"{len(req_gaps)} required drift monitor(s) not ready: {', '.join(req_gaps)}"
+            if step >= 4:
+                verdict = "blocked"
+                reasons.append(f"{msg} (blocked at step {step})")
+            else:
+                if verdict != "blocked":
+                    verdict = "warn"
+                reasons.append(msg)
+
+        opt_gaps = [m for m in optional if drift_coverage.get(m) != "ok"]
+        if opt_gaps:
+            logger.info("Optional drift monitors not ready: %s", opt_gaps)
+
     result = ActivationGateResult(
         verdict=verdict,
         step=step,
@@ -216,6 +328,7 @@ async def check_activation_readiness(store, step: int = 1) -> ActivationGateResu
         canary_run_age_hours=round(canary_age_hours, 1) if canary_age_hours is not None else None,
         open_critical_alerts=open_critical,
         open_warning_alerts=open_warning,
+        drift_coverage=drift_coverage,
         checked_at=now.isoformat(),
     )
 

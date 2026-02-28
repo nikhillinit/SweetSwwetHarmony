@@ -1,16 +1,20 @@
 """
 Tests for monitoring/activation_gate.py -- step-specific activation readiness.
 
-9 tests covering the full step-specific policy matrix:
+15 tests covering the full step-specific policy matrix:
 - canary pass/fail/degraded/missing per step
 - critical/warning drift alerts per step
 - stale canary thresholds (48h for steps 1-2, 24h for steps 3-4)
+- SPC drift coverage: step 4 blocks, step 3 warns, steps 1-2 unaffected
+- drift_coverage in to_dict
+- env override validation with fallback
 """
 
 import os
 import sys
 import tempfile
 from datetime import datetime, timezone, timedelta
+from unittest.mock import patch
 
 import pytest
 import pytest_asyncio
@@ -196,3 +200,134 @@ class TestActivationGate:
             result = await check_activation_readiness(store, step=step)
             assert result.verdict == "blocked", f"step {step}: 25h canary exceeds 24h threshold"
             assert result.can_proceed is False
+
+
+class TestSPCCoverage:
+    """Tests for SPC drift coverage checks in activation gate."""
+
+    @pytest.mark.asyncio
+    async def test_step4_blocks_on_required_insufficient_data(self, store):
+        """Step 4 blocks when required SPC metrics have insufficient data."""
+        from monitoring.activation_gate import check_activation_readiness
+
+        await _insert_canary_run(store, verdict="pass", pass_rate=1.0)
+
+        # Mock _evaluate_spc_coverage to return insufficient_data for required metrics
+        with patch(
+            "monitoring.activation_gate._evaluate_spc_coverage",
+            return_value={
+                "collector_volume": "ok",
+                "overall_fp_rate": "insufficient_data",
+                "confidence_calibration_ece": "insufficient_data",
+                "quarantine_regret": "insufficient_data",
+            },
+        ):
+            result = await check_activation_readiness(store, step=4)
+
+        assert result.verdict == "blocked"
+        assert result.can_proceed is False
+        assert any("required drift monitor" in r for r in result.reasons)
+        assert "overall_fp_rate" in result.drift_coverage
+
+    @pytest.mark.asyncio
+    async def test_step3_warns_on_required_insufficient_data(self, store):
+        """Step 3 warns (non-blocking) when required SPC metrics have insufficient data."""
+        from monitoring.activation_gate import check_activation_readiness
+
+        await _insert_canary_run(store, verdict="pass", pass_rate=1.0)
+
+        with patch(
+            "monitoring.activation_gate._evaluate_spc_coverage",
+            return_value={
+                "collector_volume": "insufficient_data",
+                "overall_fp_rate": "insufficient_data",
+                "confidence_calibration_ece": "insufficient_data",
+                "quarantine_regret": "insufficient_data",
+            },
+        ):
+            result = await check_activation_readiness(store, step=3)
+
+        assert result.verdict == "warn"
+        assert result.can_proceed is True
+        assert any("required drift monitor" in r for r in result.reasons)
+
+    @pytest.mark.asyncio
+    async def test_step4_blocks_on_evaluator_error_fail_closed(self, store):
+        """Step 4 blocks when SPC evaluator raises (fail-closed)."""
+        from monitoring.activation_gate import check_activation_readiness
+
+        await _insert_canary_run(store, verdict="pass", pass_rate=1.0)
+
+        with patch(
+            "monitoring.activation_gate._evaluate_spc_coverage",
+            side_effect=RuntimeError("DB locked"),
+        ):
+            result = await check_activation_readiness(store, step=4)
+
+        assert result.verdict == "blocked"
+        assert result.can_proceed is False
+        # All metrics should be "error"
+        for m in ("collector_volume", "overall_fp_rate"):
+            assert result.drift_coverage.get(m) == "error"
+
+    @pytest.mark.asyncio
+    async def test_steps_1_2_unaffected_without_spc_checks(self, store):
+        """Steps 1 and 2 have no SPC requirements — drift_coverage is empty."""
+        from monitoring.activation_gate import check_activation_readiness
+
+        await _insert_canary_run(store, verdict="pass", pass_rate=1.0)
+
+        for step in (1, 2):
+            result = await check_activation_readiness(store, step=step)
+            assert result.drift_coverage == {}, f"step {step} should have empty drift_coverage"
+            assert result.verdict == "ready"
+
+    @pytest.mark.asyncio
+    async def test_drift_coverage_in_to_dict(self, store):
+        """drift_coverage appears in to_dict() output."""
+        from monitoring.activation_gate import check_activation_readiness
+
+        await _insert_canary_run(store, verdict="pass", pass_rate=1.0)
+
+        with patch(
+            "monitoring.activation_gate._evaluate_spc_coverage",
+            return_value={
+                "collector_volume": "ok",
+                "overall_fp_rate": "ok",
+                "confidence_calibration_ece": "insufficient_data",
+                "quarantine_regret": "insufficient_data",
+            },
+        ):
+            result = await check_activation_readiness(store, step=3)
+
+        d = result.to_dict()
+        assert "drift_coverage" in d
+        assert d["drift_coverage"]["collector_volume"] == "ok"
+        assert d["drift_coverage"]["overall_fp_rate"] == "ok"
+
+    @pytest.mark.asyncio
+    async def test_invalid_spc_required_metrics_falls_back_to_defaults(self, store):
+        """Invalid SPC_REQUIRED_METRICS env falls back to policy defaults."""
+        from monitoring.activation_gate import check_activation_readiness
+
+        await _insert_canary_run(store, verdict="pass", pass_rate=1.0)
+
+        with patch(
+            "monitoring.activation_gate._evaluate_spc_coverage",
+            return_value={
+                "collector_volume": "insufficient_data",
+                "overall_fp_rate": "insufficient_data",
+                "confidence_calibration_ece": "insufficient_data",
+                "quarantine_regret": "insufficient_data",
+            },
+        ) as mock_eval:
+            with patch.dict(os.environ, {"SPC_REQUIRED_METRICS": "bogus_metric,also_bad"}):
+                result = await check_activation_readiness(store, step=4)
+
+        # Should fall back to policy defaults and still block
+        assert result.verdict == "blocked"
+        # The evaluator should have been called with the default metrics
+        call_args = mock_eval.call_args
+        metrics_arg = call_args[0][1]  # positional arg 1 = metrics list
+        assert "collector_volume" in metrics_arg
+        assert "overall_fp_rate" in metrics_arg

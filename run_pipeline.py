@@ -6893,7 +6893,7 @@ async def cmd_drift_check(args):
 
 async def cmd_drift_aggregate(args):
     """Aggregate daily metrics."""
-    from storage.signal_store import SignalStore
+    import sqlite3 as _sqlite3
     from monitoring.daily_aggregator import backfill_daily_metrics
     from workflows.feature_guards import assert_write_enabled, WriteFeature
 
@@ -6901,13 +6901,13 @@ async def cmd_drift_aggregate(args):
 
     db_path = getattr(args, "db_path", None) or os.environ.get("DISCOVERY_DB_PATH", "signals.db")
     days = getattr(args, "days", 90)
-    store = SignalStore(db_path)
-    await store.initialize()
+    sync_conn = _sqlite3.connect(str(db_path), timeout=5)
     try:
-        count = await backfill_daily_metrics(store._db, days=days)
-        print(f"Aggregated metrics for {count} dates (backfill {days} days).")
+        sync_conn.execute("PRAGMA busy_timeout=5000")
+        result = backfill_daily_metrics(sync_conn, days=days)
+        print(f"Aggregated metrics for {result.get('computed', 0)} dates (backfill {days} days).")
     finally:
-        await store.close()
+        sync_conn.close()
 
 
 async def cmd_drift_alerts(args):
