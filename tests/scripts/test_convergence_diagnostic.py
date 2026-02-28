@@ -16,7 +16,12 @@ import pytest
 
 sys.path.insert(0, ".")
 
-from scripts.convergence_diagnostic import run_diagnostic
+from scripts.convergence_diagnostic import (
+    run_diagnostic,
+    _build_scope_filter,
+    _determine_scope_mode,
+    _format_scope_description,
+)
 
 
 @pytest.fixture
@@ -356,3 +361,336 @@ class TestJsonOutput:
         assert "sections" in loaded
         assert "multi_source_overlap" in loaded["sections"]
         assert "publisher_leakage" in loaded["sections"]
+
+
+class TestScopeBuilder:
+    """Unit tests for _build_scope_filter()."""
+
+    def test_no_scope_no_base(self):
+        """No scope, no base_conditions -> returns '1=1', empty params."""
+        where, params = _build_scope_filter()
+        assert where == "1=1"
+        assert params == []
+
+    def test_no_scope_with_base(self):
+        """No scope, with base_conditions -> returns base only."""
+        where, params = _build_scope_filter(base_conditions=["source_api = 'news_api'"])
+        assert where == "(source_api = 'news_api')"
+        assert params == []
+
+    def test_run_id_scope(self):
+        """run_id -> subquery with params."""
+        where, params = _build_scope_filter(run_id="run-abc")
+        assert "rowid IN" in where
+        assert params == ["run-abc"]
+
+    def test_since_days_scope(self):
+        """since_days -> created_at >= cutoff."""
+        where, params = _build_scope_filter(since_days=7)
+        assert "created_at >= ?" in where
+        assert len(params) == 1
+        # Param should be an ISO timestamp
+        cutoff = datetime.fromisoformat(params[0])
+        assert cutoff.tzinfo is not None
+
+    def test_run_id_beats_since_days(self):
+        """run_id + since_days -> only run_id used (precedence)."""
+        where, params = _build_scope_filter(run_id="run-abc", since_days=7)
+        assert "rowid IN" in where
+        assert "created_at >= ?" not in where
+        assert params == ["run-abc"]
+
+    def test_since_days_is_not_none_check(self):
+        """since_days=1 is valid (uses is not None, not truthiness)."""
+        where, params = _build_scope_filter(since_days=1)
+        assert "created_at >= ?" in where
+        assert len(params) == 1
+
+    def test_parenthesized_groups(self):
+        """base + scope conditions are parenthesized."""
+        where, params = _build_scope_filter(
+            run_id="run-abc", base_conditions=["source_api = 'news_api'"]
+        )
+        assert where.startswith("(source_api = 'news_api') AND (rowid IN")
+
+
+class TestActiveScopeOutput:
+    """Tests for active_scope in report output."""
+
+    def test_no_scope_all_time(self, test_db):
+        """No scope -> mode=all_time, run_id=None."""
+        report = run_diagnostic(test_db)
+        scope = report["active_scope"]
+        assert scope["mode"] == "all_time"
+        assert scope["run_id"] is None
+        assert scope["since_days"] is None
+        assert scope["resolved_from_latest_run"] is False
+        assert scope["applies_to_sections"] == []
+        assert scope["section_5_default"] == "latest_run"
+
+    def test_explicit_run_id(self, test_db):
+        """Explicit run_id -> mode=run_id, resolved_from_latest_run=False."""
+        conn = sqlite3.connect(test_db)
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            "INSERT INTO pipeline_runs (run_id, started_at, completed_at) VALUES (?, ?, ?)",
+            ("run-explicit", now, now),
+        )
+        conn.commit()
+        conn.close()
+
+        report = run_diagnostic(test_db, run_id="run-explicit")
+        scope = report["active_scope"]
+        assert scope["mode"] == "run_id"
+        assert scope["run_id"] == "run-explicit"
+        assert scope["resolved_from_latest_run"] is False
+        assert scope["applies_to_sections"] == [3, 4, 5]
+        assert scope["section_5_default"] is None
+
+    def test_latest_run_resolved(self, test_db):
+        """--latest-run resolved -> mode=run_id, resolved_from_latest_run=True."""
+        conn = sqlite3.connect(test_db)
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            "INSERT INTO pipeline_runs (run_id, started_at) VALUES (?, ?)",
+            ("resolved-run", now),
+        )
+        conn.commit()
+        conn.close()
+
+        report = run_diagnostic(test_db, latest_run=True)
+        scope = report["active_scope"]
+        assert scope["mode"] == "run_id"
+        assert scope["run_id"] == "resolved-run"
+        assert scope["resolved_from_latest_run"] is True
+
+    def test_since_days_scope(self, test_db):
+        """since_days -> mode=since_days, since_days populated."""
+        report = run_diagnostic(test_db, since_days=14)
+        scope = report["active_scope"]
+        assert scope["mode"] == "since_days"
+        assert scope["since_days"] == 14
+        assert scope["applies_to_sections"] == [3, 4]
+        assert scope["section_5_default"] == "latest_run"
+
+    def test_backward_compat_scoped_run_id(self, test_db):
+        """scoped_run_id field still present alongside active_scope."""
+        conn = sqlite3.connect(test_db)
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            "INSERT INTO pipeline_runs (run_id, started_at) VALUES (?, ?)",
+            ("compat-run", now),
+        )
+        conn.commit()
+        conn.close()
+
+        report = run_diagnostic(test_db, run_id="compat-run")
+        assert report["scoped_run_id"] == "compat-run"
+        assert report["active_scope"]["run_id"] == "compat-run"
+
+    def test_latest_run_unresolved(self, test_db):
+        """--latest-run with no pipeline_runs -> mode=all_time, warning."""
+        report = run_diagnostic(test_db, latest_run=True)
+        scope = report["active_scope"]
+        assert scope["mode"] == "all_time"
+        assert scope["run_id"] is None
+        assert scope["resolved_from_latest_run"] is False
+
+    def test_since_days_section5_note(self, test_db, capsys):
+        """since_days set -> note about section 5 ignoring --since."""
+        run_diagnostic(test_db, since_days=7)
+        captured = capsys.readouterr()
+        assert "Section 5 ignores --since" in captured.out
+
+
+class TestScopedSectionBehavior:
+    """Integration tests: scoping actually filters sections 3-4-5."""
+
+    def _setup_run_with_signals(self, test_db, run_id, run_started, run_completed,
+                                signals_inside, signals_outside=None):
+        """Helper: create a run + signals inside and outside its window."""
+        conn = sqlite3.connect(test_db)
+        conn.execute(
+            "INSERT INTO pipeline_runs (run_id, started_at, completed_at) VALUES (?, ?, ?)",
+            (run_id, run_started, run_completed),
+        )
+        for sig in signals_inside:
+            _insert_signal(conn, sig["key"], sig["source"], sig["created_at"])
+        for sig in (signals_outside or []):
+            _insert_signal(conn, sig["key"], sig["source"], sig["created_at"])
+        conn.commit()
+        conn.close()
+
+    def test_section3_run_id_includes_inside(self, test_db):
+        """Section 3: signals inside run window counted."""
+        now = datetime.now(timezone.utc)
+        started = (now - timedelta(minutes=10)).isoformat()
+        completed = now.isoformat()
+        inside_t = (now - timedelta(minutes=5)).isoformat()
+        outside_t = (now - timedelta(hours=2)).isoformat()
+
+        self._setup_run_with_signals(
+            test_db, "run-s3", started, completed,
+            signals_inside=[{"key": "domain:inside.ai", "source": "news_api", "created_at": inside_t}],
+            signals_outside=[{"key": "domain:outside.ai", "source": "news_api", "created_at": outside_t}],
+        )
+
+        report = run_diagnostic(test_db, run_id="run-s3")
+        s3 = report["sections"]["news_api_key_distribution"]
+        total = sum(item["count"] for item in s3)
+        assert total == 1  # Only inside signal
+
+    def test_section4_run_id_includes_inside(self, test_db):
+        """Section 4: leaked domains inside run window counted, outside excluded."""
+        now = datetime.now(timezone.utc)
+        started = (now - timedelta(minutes=10)).isoformat()
+        completed = now.isoformat()
+        inside_t = (now - timedelta(minutes=5)).isoformat()
+        outside_t = (now - timedelta(hours=2)).isoformat()
+
+        self._setup_run_with_signals(
+            test_db, "run-s4", started, completed,
+            signals_inside=[{"key": "domain:reuters.com", "source": "news_api", "created_at": inside_t}],
+            signals_outside=[{"key": "domain:reuters.com", "source": "news_api", "created_at": outside_t}],
+        )
+
+        report = run_diagnostic(test_db, run_id="run-s4")
+        s4 = report["sections"]["publisher_leakage"]
+        assert s4["publisher_domain_keys_total"] == 1  # Only inside
+
+    def test_section3_since_days(self, test_db):
+        """Section 3: signals within N days counted, older excluded."""
+        now = datetime.now(timezone.utc)
+        recent = (now - timedelta(days=1)).isoformat()
+        old = (now - timedelta(days=30)).isoformat()
+
+        conn = sqlite3.connect(test_db)
+        _insert_signal(conn, "domain:recent.ai", "news_api", recent)
+        _insert_signal(conn, "domain:old.ai", "news_api", old)
+        conn.commit()
+        conn.close()
+
+        report = run_diagnostic(test_db, since_days=7)
+        s3 = report["sections"]["news_api_key_distribution"]
+        total = sum(item["count"] for item in s3)
+        assert total == 1  # Only recent
+
+    def test_section4_since_days(self, test_db):
+        """Section 4: leaked domains within N days counted, older excluded."""
+        now = datetime.now(timezone.utc)
+        recent = (now - timedelta(days=1)).isoformat()
+        old = (now - timedelta(days=30)).isoformat()
+
+        conn = sqlite3.connect(test_db)
+        _insert_signal(conn, "domain:reuters.com", "news_api", recent)
+        _insert_signal(conn, "domain:reuters.com", "news_api", old)
+        conn.commit()
+        conn.close()
+
+        report = run_diagnostic(test_db, since_days=7)
+        s4 = report["sections"]["publisher_leakage"]
+        assert s4["publisher_domain_keys_total"] == 1
+
+    def test_section5_ignores_since(self, test_db):
+        """Section 5 unaffected by --since: returns latest-run data regardless."""
+        now = datetime.now(timezone.utc)
+        conn = sqlite3.connect(test_db)
+        conn.execute(
+            "INSERT INTO pipeline_runs (run_id, started_at) VALUES (?, ?)",
+            ("latest-run", now.isoformat()),
+        )
+        conn.execute(
+            "INSERT INTO collector_metrics (run_id, collector_name, api_calls, signals_found) VALUES (?, ?, ?, ?)",
+            ("latest-run", "github", 50, 25),
+        )
+        conn.commit()
+        conn.close()
+
+        report = run_diagnostic(test_db, since_days=7)
+        s5 = report["sections"]["api_calls_per_collector"]
+        assert len(s5) == 1
+        assert s5[0]["api_calls"] == 50
+
+    def test_run_id_overrides_since_section3(self, test_db):
+        """Precedence: run_id overrides since_days for section 3."""
+        now = datetime.now(timezone.utc)
+        started = (now - timedelta(minutes=10)).isoformat()
+        completed = now.isoformat()
+        inside_t = (now - timedelta(minutes=5)).isoformat()
+
+        self._setup_run_with_signals(
+            test_db, "run-prec", started, completed,
+            signals_inside=[{"key": "domain:prec.ai", "source": "news_api", "created_at": inside_t}],
+        )
+        # Add an old signal that since_days=365 would include
+        conn = sqlite3.connect(test_db)
+        old_t = (now - timedelta(days=100)).isoformat()
+        _insert_signal(conn, "domain:old.ai", "news_api", old_t)
+        conn.commit()
+        conn.close()
+
+        report = run_diagnostic(test_db, run_id="run-prec", since_days=365)
+        s3 = report["sections"]["news_api_key_distribution"]
+        total = sum(item["count"] for item in s3)
+        assert total == 1  # Only run-scoped signal
+
+    def test_run_id_overrides_since_section4(self, test_db):
+        """Precedence: run_id overrides since_days for section 4."""
+        now = datetime.now(timezone.utc)
+        started = (now - timedelta(minutes=10)).isoformat()
+        completed = now.isoformat()
+        inside_t = (now - timedelta(minutes=5)).isoformat()
+
+        self._setup_run_with_signals(
+            test_db, "run-prec4", started, completed,
+            signals_inside=[{"key": "domain:reuters.com", "source": "news_api", "created_at": inside_t}],
+        )
+        conn = sqlite3.connect(test_db)
+        old_t = (now - timedelta(days=100)).isoformat()
+        _insert_signal(conn, "domain:reuters.com", "news_api", old_t)
+        conn.commit()
+        conn.close()
+
+        report = run_diagnostic(test_db, run_id="run-prec4", since_days=365)
+        s4 = report["sections"]["publisher_leakage"]
+        assert s4["publisher_domain_keys_total"] == 1
+
+    def test_null_completed_at_open_window(self, test_db):
+        """NULL completed_at -> open upper bound (all signals after started_at)."""
+        now = datetime.now(timezone.utc)
+        started = (now - timedelta(minutes=10)).isoformat()
+        future_t = (now + timedelta(minutes=5)).isoformat()
+
+        conn = sqlite3.connect(test_db)
+        conn.execute(
+            "INSERT INTO pipeline_runs (run_id, started_at, completed_at) VALUES (?, ?, ?)",
+            ("run-open", started, None),
+        )
+        _insert_signal(conn, "domain:future.ai", "news_api", future_t)
+        conn.commit()
+        conn.close()
+
+        report = run_diagnostic(test_db, run_id="run-open")
+        s3 = report["sections"]["news_api_key_distribution"]
+        total = sum(item["count"] for item in s3)
+        assert total == 1  # Future signal included (open window)
+
+    def test_explicit_run_id_wins_over_latest(self, test_db):
+        """--run-id + --latest-run -> explicit run_id wins."""
+        conn = sqlite3.connect(test_db)
+        now = datetime.now(timezone.utc).isoformat()
+        conn.execute(
+            "INSERT INTO pipeline_runs (run_id, started_at) VALUES (?, ?)",
+            ("latest-run", now),
+        )
+        conn.execute(
+            "INSERT INTO pipeline_runs (run_id, started_at) VALUES (?, ?)",
+            ("explicit-run", (datetime.now(timezone.utc) - timedelta(hours=1)).isoformat()),
+        )
+        conn.commit()
+        conn.close()
+
+        report = run_diagnostic(test_db, run_id="explicit-run", latest_run=True)
+        assert report["scoped_run_id"] == "explicit-run"
+        assert report["active_scope"]["run_id"] == "explicit-run"
+        assert report["active_scope"]["resolved_from_latest_run"] is False
