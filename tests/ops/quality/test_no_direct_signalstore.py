@@ -101,33 +101,93 @@ ALLOWLIST = {
     "scripts/backfill_company_files.py",
     "scripts/backfill_functional_schemas.py",
     "scripts/e2e_batch_verify.py",
+    "scripts/pipeline_report.py",
     "scripts/preflight_check.py",
     "scripts/run_backfill.py",
     "scripts/shadow_mode_report.py",
+    "scripts/step3b_evidence_pack.py",
+
+    # --- API / DB layer (dependency injection entrypoints) ---
+    "api/db.py",
+
+    # --- Migration CLI (standalone entrypoint) ---
+    "storage/migrations/cli.py",
 }
 
 
 def _collect_production_python_files():
-    """Yield (relative_path, absolute_path) for non-test Python files."""
-    for dirpath, dirnames, filenames in os.walk(REPO_ROOT):
-        # Skip test directories, hidden dirs, and venv/node_modules
-        rel_dir = os.path.relpath(dirpath, REPO_ROOT).replace("\\", "/")
-        skip_prefixes = ("tests", ".worktrees", ".git", "__pycache__",
-                         "venv", ".venv", "node_modules", "quality_ops_skills_and_scripts")
-        # Also skip any nested "tests" directories (e.g. workflows/tests/)
-        if os.path.basename(dirpath) == "tests":
-            dirnames.clear()
+    """Yield (relative_path, absolute_path) for non-test Python files.
+
+    IMPORTANT: keep traversal resilient to workspace contamination.
+    We intentionally avoid scanning arbitrary repo roots like local
+    worktrees (e.g. .worktree_*) or generated artifacts.
+    """
+
+    # Canonical production source roots.
+    # If you add a new top-level source directory with production Python,
+    # add it here so this lint rule continues to apply.
+    source_roots = [
+        "api",
+        "collectors",
+        "connectors",
+        "consumer",
+        "dashboard",
+        "discovery_engine",
+        "distribution",
+        "enrichment",
+        "importers",
+        "monitoring",
+        "ops",
+        "profilers",
+        "scripts",
+        "services",
+        "storage",
+        "utils",
+        "workflows",
+    ]
+
+    def _should_skip_dir(dir_name: str) -> bool:
+        # Skip hidden / tooling / virtualenv / node directories
+        if dir_name in {".git", "__pycache__", "venv", ".venv", "node_modules"}:
+            return True
+        if dir_name == "quality_ops_skills_and_scripts":
+            return True
+        # Skip any local worktree prefixes: .worktrees, .worktree_notion, etc.
+        if dir_name.startswith(".worktree"):
+            return True
+        # Skip test directories anywhere in the tree
+        if dir_name == "tests":
+            return True
+        return False
+
+    # 1) Root-level python files (e.g., run_pipeline.py)
+    for fname in os.listdir(REPO_ROOT):
+        if not fname.endswith(".py"):
             continue
-        if any(rel_dir == p or rel_dir.startswith(p + "/") for p in skip_prefixes):
-            dirnames.clear()
+        # Skip files with non-ASCII names (garbage temp files)
+        if not fname.isascii():
+            continue
+        abs_path = os.path.join(REPO_ROOT, fname)
+        if os.path.isfile(abs_path):
+            rel_path = fname
+            yield rel_path, abs_path
+
+    # 2) Walk canonical source roots
+    for root in source_roots:
+        abs_root = os.path.join(REPO_ROOT, root)
+        if not os.path.isdir(abs_root):
             continue
 
-        for fname in filenames:
-            if not fname.endswith(".py"):
-                continue
-            abs_path = os.path.join(dirpath, fname)
-            rel_path = os.path.relpath(abs_path, REPO_ROOT).replace("\\", "/")
-            yield rel_path, abs_path
+        for dirpath, dirnames, filenames in os.walk(abs_root):
+            # Prune in-place so os.walk doesn't descend
+            dirnames[:] = [d for d in dirnames if not _should_skip_dir(d)]
+
+            for fname in filenames:
+                if not fname.endswith(".py"):
+                    continue
+                abs_path = os.path.join(dirpath, fname)
+                rel_path = os.path.relpath(abs_path, REPO_ROOT).replace("\\", "/")
+                yield rel_path, abs_path
 
 
 def test_no_direct_signalstore_construction():

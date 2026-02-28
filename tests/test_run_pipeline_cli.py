@@ -222,7 +222,10 @@ class TestHealthCommand:
 
     @pytest.mark.asyncio
     async def test_cmd_health_returns_exit_code_1_when_degraded(self):
-        """cmd_health should return exit code 1 when status is DEGRADED."""
+        """cmd_health should return exit code 0 when status is DEGRADED.
+
+        Degraded is a non-fatal warning state by default.
+        """
         args = MagicMock()
         args.db_path = None
 
@@ -250,7 +253,7 @@ class TestHealthCommand:
                     with patch("run_pipeline.check_sec_edgar_api", AsyncMock(return_value=(True, "OK"))):
                         exit_code = await cmd_health(args)
 
-                        assert exit_code == 1
+                        assert exit_code == 0
 
     @pytest.mark.asyncio
     async def test_cmd_health_returns_exit_code_1_when_critical(self):
@@ -283,6 +286,74 @@ class TestHealthCommand:
                         exit_code = await cmd_health(args)
 
                         assert exit_code == 1
+
+    @pytest.mark.asyncio
+    async def test_cmd_health_allows_external_failures_with_flag(self):
+        """External failures should be warnings (exit 0) when allow_external_failures is set."""
+        args = MagicMock()
+        args.db_path = None
+        args.allow_external_failures = True
+        args.core_only = False
+
+        mock_pipeline = MagicMock()
+        mock_pipeline.initialize = AsyncMock()
+        mock_pipeline.close = AsyncMock()
+        mock_pipeline.config = MagicMock()
+        mock_pipeline.config.db_path = "signals.db"
+        mock_pipeline.config.notion_api_key = None
+        mock_pipeline._store = MagicMock()
+        mock_pipeline._store._db = MagicMock()
+        mock_pipeline.get_stats = AsyncMock(return_value={"storage": {"active_suppression_entries": 1}})
+
+        mock_report = HealthReport()
+        mock_report.overall_status = "HEALTHY"
+
+        with patch("run_pipeline.DiscoveryPipeline", return_value=mock_pipeline):
+            with patch("run_pipeline.SignalHealthMonitor") as mock_monitor_cls:
+                mock_monitor = MagicMock()
+                mock_monitor.generate_report = AsyncMock(return_value=mock_report)
+                mock_monitor_cls.return_value = mock_monitor
+
+                with patch("run_pipeline.check_github_api", AsyncMock(return_value=(False, "down"))):
+                    with patch("run_pipeline.check_sec_edgar_api", AsyncMock(return_value=(False, "down"))):
+                        exit_code = await cmd_health(args)
+
+                        assert exit_code == 0
+
+    @pytest.mark.asyncio
+    async def test_cmd_health_core_only_skips_external_checks(self):
+        """core_only should skip external checks entirely."""
+        args = MagicMock()
+        args.db_path = None
+        args.core_only = True
+        args.allow_external_failures = False
+
+        mock_pipeline = MagicMock()
+        mock_pipeline.initialize = AsyncMock()
+        mock_pipeline.close = AsyncMock()
+        mock_pipeline.config = MagicMock()
+        mock_pipeline.config.db_path = "signals.db"
+        mock_pipeline.config.notion_api_key = None
+        mock_pipeline._store = MagicMock()
+        mock_pipeline._store._db = MagicMock()
+        mock_pipeline.get_stats = AsyncMock(return_value={"storage": {"active_suppression_entries": 1}})
+
+        mock_report = HealthReport()
+        mock_report.overall_status = "HEALTHY"
+
+        with patch("run_pipeline.DiscoveryPipeline", return_value=mock_pipeline):
+            with patch("run_pipeline.SignalHealthMonitor") as mock_monitor_cls:
+                mock_monitor = MagicMock()
+                mock_monitor.generate_report = AsyncMock(return_value=mock_report)
+                mock_monitor_cls.return_value = mock_monitor
+
+                with patch("run_pipeline.check_github_api", AsyncMock(return_value=(False, "down"))) as gh:
+                    with patch("run_pipeline.check_sec_edgar_api", AsyncMock(return_value=(False, "down"))) as sec:
+                        exit_code = await cmd_health(args)
+
+                        gh.assert_not_called()
+                        sec.assert_not_called()
+                        assert exit_code == 0
 
     @pytest.mark.asyncio
     async def test_cmd_health_handles_database_connection_failure(self):

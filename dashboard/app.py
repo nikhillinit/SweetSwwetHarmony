@@ -59,7 +59,6 @@ from dashboard.views.ops_health import render_ops_health_page
 from dashboard.views.scheduler import render_scheduler_page
 from dashboard.views.cost_analysis import render_cost_analysis_page
 from dashboard.views.drift_monitoring import render_drift_monitoring_page
-from dashboard.views.starwatcher import render_starwatcher_page
 
 # =============================================================================
 # CONFIG
@@ -2466,6 +2465,10 @@ def main():
     # CONSTELLATION VIEW (Starwatcher)
     # ==========================================================================
     elif view == "Constellation":
+        # Lazy import to avoid pulling in streamlit.components during test
+        # collection when Starwatcher is behind a feature flag.
+        from dashboard.views.starwatcher import render_starwatcher_page
+
         render_starwatcher_page()
 
     # Footer
