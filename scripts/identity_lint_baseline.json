@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "metadata": {
+    "generated_at": "2026-02-28T06:30:05Z",
+    "generated_from_commit": "3777135",
+    "tool_version": "1.0.0",
+    "description": "Ratchet state for identity/canonical anti-patterns."
+  },
+  "rule1_grandfathered": {
+    "monitoring/phase_g_readiness.py": {
+      "count": 3,
+      "reason": "pre-existing"
+    },
+    "run_pipeline.py": {
+      "count": 5,
+      "reason": "pre-existing"
+    },
+    "scripts/pipeline_report.py": {
+      "count": 1,
+      "reason": "pre-existing"
+    },
+    "storage/migrations/backfill_v28_identity.py": {
+      "count": 1,
+      "reason": "pre-existing"
+    }
+  },
+  "rule2_sha256_baseline": {
+    "total_files": 15,
+    "total_occurrences": 20,
+    "files": {
+      "api/contracts.py": 2,
+      "api/routers/batch.py": 1,
+      "api/routers/merge_review.py": 1,
+      "collectors/provenance.py": 2,
+      "connectors/notion_connector_v2.py": 1,
+      "consumer/collectors/bevnet_collector.py": 2,
+      "consumer/llm_classifier_v2.py": 1,
+      "intelligence/ach_matrix.py": 1,
+      "intelligence/query_generator.py": 1,
+      "intelligence/shadow_entity_evaluator.py": 1,
+      "monitoring/canary_checker.py": 3,
+      "monitoring/config.py": 1,
+      "monitoring/drift_detector.py": 1,
+      "profilers/url_profiler.py": 1,
+      "storage/merge_rollback.py": 1
+    }
+  }
+}

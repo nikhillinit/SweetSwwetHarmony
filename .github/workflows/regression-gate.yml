@@ -43,6 +43,9 @@ jobs:
       - name: Smoke imports
         run: python scripts/ci_smoke_imports.py
 
+      - name: Identity pattern lint
+        run: python scripts/lint_identity_patterns.py --check --baseline scripts/identity_lint_baseline.json --root .
+
       - name: Schema version fast-fail
         run: |
           python -m pytest tests/storage/test_schema_version_parity.py \
