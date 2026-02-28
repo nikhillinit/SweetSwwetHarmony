@@ -81,6 +81,53 @@ Organic KPI = the convergence KPI computed after excluding `source_api = 'manual
 
 No schema expansion for provenance fields. Synthetic vs organic discrimination is purely query-time filtering on `source_api`.
 
+## Diagnostic Scoping Semantics
+
+The convergence diagnostic (`scripts/convergence_diagnostic.py`) supports scoping sections to a pipeline run or time window. Scoping and synthetic/organic filtering are independent dimensions.
+
+### Scoping Matrix
+
+| Scope | Sections | Filter field |
+|-------|----------|--------------|
+| All-time | 1, 2, 6, 7, 8, 9, 10 | N/A |
+| `--run-id` | 3, 4 | `signals.created_at` within run window |
+| `--run-id` | 5 | `collector_metrics.run_id` (direct equality) |
+| `--since` | 3, 4 | `signals.created_at >= cutoff` |
+| Section 5 default | 5 (no run_id) | Latest `run_id` via CTE |
+
+**Important distinction:** Diagnostic scoping filters by `created_at` (when the row was inserted). KPI windows filter by `detected_at` (when the signal was first observed). These are different fields with different semantics.
+
+### Precedence
+
+```
+explicit --run-id > --latest-run (resolved run_id) > --since > all_time
+```
+
+- `--latest-run` is a run_id resolver: sets `run_id` from the latest `pipeline_runs` row. If no row exists, falls back to `all_time` with a warning.
+- If both `--run-id` and `--latest-run` are provided, the explicit `--run-id` wins.
+- `--since` must be >= 1; `--since 0` is rejected at CLI parse time.
+
+### `active_scope` JSON Shape
+
+Every report includes an `active_scope` object:
+
+```json
+{
+  "mode": "run_id | since_days | all_time",
+  "run_id": "abc123 | null",
+  "since_days": "14 | null",
+  "resolved_from_latest_run": true,
+  "applies_to_sections": [3, 4, 5],
+  "section_5_default": "latest_run | null",
+  "description": "Scoped to latest pipeline run: abc123"
+}
+```
+
+- `applies_to_sections`: `[3,4,5]` for `run_id`, `[3,4]` for `since_days`, `[]` for `all_time`
+- `section_5_default`: `"latest_run"` when no run_id provided, `null` otherwise
+- `resolved_from_latest_run`: `true` only when `--latest-run` resolved a run_id
+- The legacy `scoped_run_id` top-level field is retained for backward compatibility
+
 ## Reference Implementation
 
 See `scripts/convergence_kpi.py` for the canonical implementation of these queries.
