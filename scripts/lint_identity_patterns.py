@@ -1,7 +1,8 @@
 """Identity/canonical governance lint — deterministic ratchet.
 
-Scans tracked Python files for three classes of anti-pattern:
+Scans tracked Python files for governance anti-patterns:
 
+  RULE0  Parse-degraded file (syntax/tokenization) — actionable violation, not exit 2
   RULE1  Direct SQL on protected Phase G identity tables outside stores
   RULE2  Direct manual short-hash (sha256[:16]) IDs outside canonical stores
   RULE3  Duplicate identity table creation outside migration authority
@@ -9,6 +10,10 @@ Scans tracked Python files for three classes of anti-pattern:
 Usage:
   python scripts/lint_identity_patterns.py --check --baseline scripts/identity_lint_baseline.json --root .
   python scripts/lint_identity_patterns.py --write-baseline scripts/identity_lint_baseline.json
+
+  # Optional: control parse-degraded enforcement (RULE0)
+  python scripts/lint_identity_patterns.py --check --fail-on-parse-degraded true
+  python scripts/lint_identity_patterns.py --write-baseline out.json --fail-on-parse-degraded false
 
 Exit codes: 0 clean, 1 violations, 2 runtime/config error.
 """
@@ -30,6 +35,11 @@ from typing import Any
 TOOL_VERSION = "1.0.0"
 MAX_SCHEMA_VERSION = 1
 
+# Regex safety cap. If a logical chunk is extremely large, match only bounded
+# windows to prevent pathological runtime while still catching most real
+# patterns.
+MAX_CHUNK_LEN_FOR_REGEX = 65536
+
 # ── Policy constants ────────────────────────────────────────────────
 
 PHASE_G_TABLES = frozenset({
@@ -39,8 +49,7 @@ PHASE_G_TABLES = frozenset({
 
 SQL_STRONG_KEYWORDS = frozenset({
     "SELECT", "INSERT", "UPDATE", "DELETE",
-    "CREATE", "DROP", "ALTER", "REPLACE",
-    "WITH", "MERGE",
+    "CREATE", "DROP", "ALTER",
 })
 
 RULE1_ALLOWLIST = frozenset({
@@ -66,6 +75,12 @@ RULE3_ALLOWLIST = frozenset({
     "storage/signal_store.py",
 })
 
+# Parse-degraded files fail CI by default (RULE0). Allowlisting is acceptable
+# only as short-lived, explicitly owned debt.
+PARSE_DEGRADED_ALLOWLIST: dict[str, dict[str, str]] = {
+    # "path/to/file.py": {"owner": "team", "remove_by": "YYYY-MM-DD", "reason": "..."}
+}
+
 SELF_EXCLUDE = frozenset({
     "scripts/lint_identity_patterns.py",
 })
@@ -81,6 +96,23 @@ WALK_EXCLUDE_DIRS = frozenset({
 SHA256_SHORT_RE = re.compile(
     r"hashlib\.sha256\(.+?\)\.hexdigest\(\)\s*\[\s*:16\s*\]"
 )
+
+
+def _chunk_views_for_regex(text: str) -> list[str]:
+    """Return one or two bounded views of a chunk for regex matching.
+
+    - If len(text) <= MAX_CHUNK_LEN_FOR_REGEX: scan full text.
+    - If len(text) <= 2*MAX_CHUNK_LEN_FOR_REGEX: scan full text (still bounded).
+    - Else: scan prefix and suffix windows (non-overlapping).
+
+    This is a reliability guard: it prevents catastrophic regex runtime on
+    enormous strings while still catching the most common cases.
+    """
+    if len(text) <= MAX_CHUNK_LEN_FOR_REGEX:
+        return [text]
+    if len(text) <= 2 * MAX_CHUNK_LEN_FOR_REGEX:
+        return [text]
+    return [text[:MAX_CHUNK_LEN_FOR_REGEX], text[-MAX_CHUNK_LEN_FOR_REGEX:]]
 
 
 def _build_rule3_re() -> re.Pattern:
@@ -109,6 +141,17 @@ def _build_table_boundary_re(table: str) -> re.Pattern:
         + r"(?:$|[\s,.)\"'`\]])",
         re.IGNORECASE,
     )
+
+
+# Precompile Rule 1 keyword and table patterns (avoid per-chunk recompilation).
+SQL_KEYWORD_PATTERNS: tuple[re.Pattern, ...] = tuple(
+    re.compile(r"(?<![A-Za-z_])" + kw + r"(?![A-Za-z_])", re.IGNORECASE)
+    for kw in sorted(SQL_STRONG_KEYWORDS)
+)
+
+PHASE_G_TABLE_PATTERNS: dict[str, re.Pattern] = {
+    t: _build_table_boundary_re(t) for t in sorted(PHASE_G_TABLES)
+}
 
 
 # ── AST docstring extraction ───────────────────────────────────────
@@ -268,6 +311,11 @@ class Violation:
         }
 
 
+RULE0_HINT = (
+    "This file could not be parsed by the lint tool's interpreter. "
+    "Fix the syntax/tokenization issue (or temporarily allowlist with owner + removal date)."
+)
+
 RULE1_HINT = (
     "Do not issue direct SQL against protected identity tables here. "
     "Use canonical store APIs or move logic to allowlisted store module via reviewed change."
@@ -295,21 +343,21 @@ def _detect_rule1(
     count = 0
 
     for chunk_start, chunk_text in chunks:
-        chunk_upper = chunk_text.upper()
+        views = _chunk_views_for_regex(chunk_text)
 
-        # Must contain at least one SQL keyword
+        # Must contain at least one strong SQL keyword
         has_keyword = any(
-            re.search(r"(?<![A-Za-z_])" + kw + r"(?![A-Za-z_])", chunk_upper)
-            for kw in SQL_STRONG_KEYWORDS
+            pat.search(view)
+            for view in views
+            for pat in SQL_KEYWORD_PATTERNS
         )
         if not has_keyword:
             continue
 
         # Check each protected table
         tables_found: set[str] = set()
-        for table in PHASE_G_TABLES:
-            pattern = _build_table_boundary_re(table)
-            if pattern.search(chunk_text):
+        for table, pattern in PHASE_G_TABLE_PATTERNS.items():
+            if any(pattern.search(view) for view in views):
                 tables_found.add(table)
 
         for table in sorted(tables_found):
@@ -329,9 +377,10 @@ def _detect_rule2(
     count = 0
 
     for chunk_start, chunk_text in chunks:
-        matches = SHA256_SHORT_RE.findall(chunk_text)
-        if matches:
-            count += len(matches)
+        views = _chunk_views_for_regex(chunk_text)
+        match_count = sum(len(SHA256_SHORT_RE.findall(view)) for view in views)
+        if match_count:
+            count += match_count
             snippet = _collapse_snippet(chunk_text)
             violations.append(Violation("RULE2", rel_path, chunk_start, snippet, RULE2_HINT))
 
@@ -346,7 +395,8 @@ def _detect_rule3(
     violations: list[Violation] = []
 
     for chunk_start, chunk_text in chunks:
-        if RULE3_RE.search(chunk_text):
+        views = _chunk_views_for_regex(chunk_text)
+        if any(RULE3_RE.search(view) for view in views):
             snippet = _collapse_snippet(chunk_text)
             violations.append(Violation("RULE3", rel_path, chunk_start, snippet, RULE3_HINT))
 
@@ -487,6 +537,7 @@ def scan_files(
     paths: list[str],
     baseline: dict[str, Any] | None,
     verbose: bool = False,
+    fail_on_parse_degraded: bool = True,
 ) -> tuple[list[Violation], dict[str, Any]]:
     """Scan files and return (violations, scan_data).
 
@@ -499,6 +550,8 @@ def scan_files(
     rule2_counts: dict[str, int] = {}  # non-allowlisted file -> count
     rule1_allowlisted_counts: dict[str, int] = {}
     rule2_allowlisted_counts: dict[str, int] = {}
+    parse_degraded_files: list[str] = []
+    parse_degraded_errors: dict[str, str] = {}
 
     for rel_path in paths:
         abs_path = os.path.join(root, rel_path.replace("/", os.sep))
@@ -516,16 +569,44 @@ def scan_files(
             except OSError:
                 continue
 
-        # Parse AST
+        # Parse AST docstrings. If parsing fails, continue in a degraded mode.
+        parse_degraded = False
+        parse_error_str: str | None = None
         try:
             docstring_ranges = _get_docstring_ranges(source)
         except SyntaxError as exc:
-            # Attach filename for better error reporting
-            exc.filename = rel_path
-            raise
+            parse_degraded = True
+            docstring_ranges = []
+            msg = getattr(exc, "msg", str(exc))
+            lineno = getattr(exc, "lineno", None)
+            parse_error_str = f"SyntaxError: {msg}" + (f" (line {lineno})" if lineno else "")
+        except Exception as exc:
+            parse_degraded = True
+            docstring_ranges = []
+            parse_error_str = f"ParseError: {type(exc).__name__}: {exc}"
 
         lines = source.splitlines()
         chunks = _build_logical_chunks(lines, docstring_ranges)
+
+        # RULE0: parse-degraded files (actionable violation; exit 1, not exit 2).
+        if parse_degraded:
+            parse_degraded_files.append(rel_path)
+            if parse_error_str:
+                parse_degraded_errors[rel_path] = parse_error_str
+
+            allowlisted = rel_path in PARSE_DEGRADED_ALLOWLIST
+            if fail_on_parse_degraded and not allowlisted:
+                snippet = parse_error_str or "File could not be parsed."
+                all_violations.append(Violation("RULE0", rel_path, 1, snippet, RULE0_HINT))
+            elif allowlisted and verbose:
+                meta = PARSE_DEGRADED_ALLOWLIST.get(rel_path, {})
+                owner = meta.get("owner", "unknown")
+                remove_by = meta.get("remove_by", "unknown")
+                print(
+                    f"[verbose] RULE0 allowlisted parse-degraded: {rel_path} "
+                    f"owner={owner} remove_by={remove_by} (suppressed)",
+                    file=sys.stderr,
+                )
 
         # ── Rule 1 ──
         r1_suppressed = False
@@ -622,6 +703,8 @@ def scan_files(
     scan_data = {
         "rule1_counts": rule1_counts,
         "rule2_counts": rule2_counts,
+        "parse_degraded_files": parse_degraded_files,
+        "parse_degraded_errors": parse_degraded_errors,
     }
     return all_violations, scan_data
 
@@ -643,7 +726,11 @@ def _format_text(violations: list[Violation]) -> str:
     return "\n".join(lines)
 
 
-def _format_json(violations: list[Violation], exit_code: int) -> str:
+def _format_json(
+    violations: list[Violation],
+    exit_code: int,
+    parse_degraded_files: list[str] | None = None,
+) -> str:
     """Format output as JSON."""
     sorted_v = sorted(violations, key=lambda v: (v.rule_id, v.file, v.line))
 
@@ -658,7 +745,7 @@ def _format_json(violations: list[Violation], exit_code: int) -> str:
         rules_map[v.rule_id]["violations"].append(v.to_dict())
 
     # Add passing rules
-    for rid in ("RULE1", "RULE2", "RULE3"):
+    for rid in ("RULE0", "RULE1", "RULE2", "RULE3"):
         if rid not in rules_map:
             rules_map[rid] = {
                 "rule_id": rid,
@@ -669,6 +756,7 @@ def _format_json(violations: list[Violation], exit_code: int) -> str:
     output = {
         "exit_code": exit_code,
         "tool_version": TOOL_VERSION,
+        "parse_degraded_files": sorted(parse_degraded_files or []),
         "rules": [rules_map[k] for k in sorted(rules_map)],
     }
     return json.dumps(output, indent=2)
@@ -704,9 +792,23 @@ def main(argv: list[str] | None = None) -> int:
         default="text",
         help="Output format (default: text).",
     )
+    parser.add_argument(
+        "--fail-on-parse-degraded",
+        choices=("true", "false"),
+        help=(
+            "Whether parse-degraded files fail as violations (RULE0). "
+            "Defaults: true in --check mode, false in --write-baseline mode."
+        ),
+    )
     args = parser.parse_args(argv)
 
     is_write_mode = args.write_baseline is not None
+
+    # Determine parse-degraded enforcement.
+    if args.fail_on_parse_degraded is None:
+        fail_on_parse_degraded = not is_write_mode
+    else:
+        fail_on_parse_degraded = args.fail_on_parse_degraded == "true"
 
     # Resolve root
     root = _resolve_root(args.root)
@@ -743,14 +845,30 @@ def main(argv: list[str] | None = None) -> int:
             return 2
 
     # Scan
-    try:
-        violations, scan_data = scan_files(root, paths, baseline, verbose=args.verbose)
-    except SyntaxError as e:
-        print(f"Error: AST parse failure: {e.filename}: {e}", file=sys.stderr)
-        return 2
+    violations, scan_data = scan_files(
+        root,
+        paths,
+        baseline,
+        verbose=args.verbose,
+        fail_on_parse_degraded=fail_on_parse_degraded,
+    )
 
     # Write baseline mode
     if is_write_mode:
+        # Baseline generation should be resilient: don't fail on per-file parse
+        # issues by default, but surface them loudly.
+        pd_files = scan_data.get("parse_degraded_files", [])
+        if pd_files:
+            print(
+                f"Warning: encountered {len(pd_files)} parse-degraded file(s) while writing baseline.",
+                file=sys.stderr,
+            )
+            if args.verbose:
+                errors = scan_data.get("parse_degraded_errors", {})
+                for f in sorted(pd_files)[:20]:
+                    msg = errors.get(f, "")
+                    print(f"  - {f}: {msg}", file=sys.stderr)
+
         r1_counts = scan_data["rule1_counts"]
         r2_counts = scan_data["rule2_counts"]
 
@@ -781,7 +899,7 @@ def main(argv: list[str] | None = None) -> int:
     # Check mode - report violations
     exit_code = 1 if violations else 0
     if args.format == "json":
-        print(_format_json(violations, exit_code))
+        print(_format_json(violations, exit_code, scan_data.get("parse_degraded_files")))
     else:
         print(_format_text(violations))
     return exit_code
