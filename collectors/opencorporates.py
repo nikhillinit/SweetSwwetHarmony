@@ -33,7 +33,7 @@ from urllib.parse import urlencode
 
 import httpx
 
-from collectors.base import BaseCollector
+from collectors.base import BaseCollector, CollectorSkipError
 from collectors.provenance import create_provenance, hash_response
 from collectors.source_types import SOURCE_TYPE
 
@@ -508,8 +508,10 @@ class OpenCorporatesCollector(BaseCollector):
         For OpenCorporates, we don't do bulk collection - instead use
         collect_for_company() or batch_lookup() for targeted lookups.
         """
-        logger.info("OpenCorporates collector requires company names - use collect_for_company()")
-        return []
+        raise CollectorSkipError(
+            "opencorporates requires company names for enrichment — "
+            "use collect_for_company() or batch_lookup(), skipping"
+        )
 
     async def collect(self) -> List[Dict[str, Any]]:
         """
