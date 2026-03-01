@@ -22,6 +22,8 @@ import os
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
+from storage.claim_fact_store import count_claim_facts_in_range_sync
+
 logger = logging.getLogger(__name__)
 
 # Configurable constants
@@ -202,34 +204,43 @@ def _compute_feature_metrics(conn, date: str) -> None:
 
     Segment model: segment_type="feature", segment_key=<feature_name>
     """
-    # Check if shadow_log table exists
-    exists = conn.execute(
+    # ---------------------------------------------------------------------
+    # 1) feature_shadow_volume (if shadow_log exists)
+    # ---------------------------------------------------------------------
+    shadow_exists = conn.execute(
         "SELECT name FROM sqlite_master "
         "WHERE type='table' AND name='shadow_log'"
     ).fetchone()
-    if not exists:
-        return
 
-    rows = conn.execute(
-        """SELECT feature_name, COUNT(*) AS cnt
-        FROM shadow_log
-        WHERE logged_at >= ? AND logged_at < ?
-        GROUP BY feature_name""",
-        (date + "T00:00:00", _next_day(date) + "T00:00:00"),
-    ).fetchall()
+    if shadow_exists:
+        rows = conn.execute(
+            """SELECT feature_name, COUNT(*) AS cnt
+            FROM shadow_log
+            WHERE logged_at >= ? AND logged_at < ?
+            GROUP BY feature_name""",
+            (date + "T00:00:00", _next_day(date) + "T00:00:00"),
+        ).fetchall()
 
-    for feature_name, cnt in rows:
-        _upsert_metric(
-            conn, date, "feature_shadow_volume", float(cnt), cnt,
-            segment_type="feature", segment_key=feature_name,
-        )
+        for feature_name, cnt in rows:
+            _upsert_metric(
+                conn, date, "feature_shadow_volume", float(cnt), cnt,
+                segment_type="feature", segment_key=feature_name,
+            )
 
-    # Overall shadow volume across all features
-    total = sum(cnt for _, cnt in rows) if rows else 0
-    if total > 0:
-        _upsert_metric(
-            conn, date, "feature_shadow_volume", float(total), total,
-        )
+        # Overall shadow volume across all features
+        total = sum(cnt for _, cnt in rows) if rows else 0
+        if total > 0:
+            _upsert_metric(
+                conn, date, "feature_shadow_volume", float(total), total,
+            )
+
+    # ---------------------------------------------------------------------
+    # 2) claim_facts_volume (via allowlisted storage helper)
+    # ---------------------------------------------------------------------
+    cnt = count_claim_facts_in_range_sync(
+        conn, date + "T00:00:00", _next_day(date) + "T00:00:00"
+    )
+    _upsert_metric(conn, date, "claim_facts_volume", float(cnt), cnt)
 
 
 # =============================================================================
