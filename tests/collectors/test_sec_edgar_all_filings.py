@@ -176,3 +176,21 @@ class TestSicCodeField:
         filing = _make_filing(sic_code="9999")
         signal = filing.to_signal()
         assert signal.raw_data["sic_code"] == "9999"
+
+
+class TestSICCodeExpansion:
+    """LOB v7 0C: 737X software SIC codes added to TARGET_SIC_CODES."""
+
+    def test_software_sic_codes_included(self):
+        assert {"7371", "7372", "7379"} <= TARGET_SIC_CODES
+
+    def test_738x_excluded(self):
+        assert "7380" not in TARGET_SIC_CODES
+        assert "7381" not in TARGET_SIC_CODES
+
+    def test_existing_codes_unchanged(self):
+        assert "7370" in TARGET_SIC_CODES
+        assert "7374" in TARGET_SIC_CODES
+
+    def test_total_target_sic_codes(self):
+        assert len(TARGET_SIC_CODES) >= 64
