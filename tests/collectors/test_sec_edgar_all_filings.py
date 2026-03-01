@@ -92,9 +92,9 @@ class TestSicMatchedMetadata:
         assert signal.raw_data["sic_matched"] is True
 
     def test_sic_matched_false_for_non_target(self):
-        """Filing with non-target SIC (e.g., 7372) → sic_matched=False."""
+        """Filing with non-target SIC (e.g., 9999) → sic_matched=False."""
         filing = _make_filing(
-            sic_code="7372",
+            sic_code="9999",
             industry_group=None,  # Not classified
         )
         assert filing.is_target_sector is False
@@ -113,7 +113,7 @@ class TestSicMatchedMetadata:
         )
         filing_nontarget = _make_filing(
             company_name="Software Inc",
-            sic_code="7372",
+            sic_code="9999",
             industry_group=None,
             accession_number="0001234567-24-000002",
         )
@@ -137,7 +137,7 @@ class TestRelativeConfidence:
             accession_number="0001234567-24-000001",
         )
         filing_nontarget = _make_filing(
-            sic_code="7372",
+            sic_code="9999",
             industry_group=None,
             accession_number="0001234567-24-000002",
         )
@@ -155,7 +155,7 @@ class TestRelativeConfidence:
             industry_group="consumer_cpg",
         )
         filing_base = _make_filing(
-            sic_code="7372",
+            sic_code="9999",
             industry_group=None,
             accession_number="0001234567-24-999999",
         )
@@ -173,6 +173,6 @@ class TestSicCodeField:
 
     def test_sic_code_in_raw_data(self):
         """sic_code appears in raw_data for downstream queries."""
-        filing = _make_filing(sic_code="7372")
+        filing = _make_filing(sic_code="9999")
         signal = filing.to_signal()
-        assert signal.raw_data["sic_code"] == "7372"
+        assert signal.raw_data["sic_code"] == "9999"
