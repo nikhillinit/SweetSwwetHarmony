@@ -55,6 +55,7 @@ class Permission(str, Enum):
     BULK_TRIAGE = "bulk_triage"
     PUBLISH = "publish"
     MANAGE_USERS = "manage_users"
+    FEATURE_GOVERNANCE = "feature_governance"
 
 
 # Role → granted permissions

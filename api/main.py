@@ -36,7 +36,7 @@ from utils.logging_config import configure_logging, startup_check
 from utils.config_validator import validate_config
 
 from api.routers import actions, batch, companies, public, auth, health, jobs, entities, scheduler, triage
-from api.routers import merge_review, canary, hunter
+from api.routers import merge_review, canary, hunter, governance
 from api.auth.jwt_auth import seed_default_users
 from storage.signal_store import SignalStore
 
@@ -176,6 +176,7 @@ app.include_router(batch.router, prefix="/api/v1")
 app.include_router(merge_review.router, prefix="/api/v1")
 app.include_router(canary.router, prefix="/api/v1")
 app.include_router(hunter.router, prefix="/api/v1")
+app.include_router(governance.router, prefix="/api/v1")
 
 
 # =============================================================================

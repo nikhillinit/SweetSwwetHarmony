@@ -74,8 +74,8 @@ class AuditEvent(BaseModel):
 # WRITE OPERATIONS
 # =============================================================================
 
-async def record_event(
-    store: "SignalStore",
+async def insert_event(
+    conn,
     *,
     action_type: str,
     entity_type: str,
@@ -89,13 +89,21 @@ async def record_event(
     correlation_id: Optional[str] = None,
     metadata: Optional[dict[str, Any]] = None,
 ) -> int:
-    """Insert an immutable audit event.
+    """Insert an audit event within an existing transaction.
 
-    Returns the auto-generated event ID.
+    Unlike record_event(), this does NOT commit — the caller owns
+    the transaction lifecycle. Use inside store.transaction_immediate()
+    or store.transaction() blocks.
+
+    Args:
+        conn: The aiosqlite.Connection from a transaction context manager.
+        (all other args match record_event)
+
+    Returns:
+        The auto-generated event ID.
     """
     now = datetime.now(timezone.utc).isoformat()
-    db = store._db
-    cursor = await db.execute(
+    cursor = await conn.execute(
         """
         INSERT INTO audit_events (
             action_type, entity_type, entity_id,
@@ -120,16 +128,56 @@ async def record_event(
             now,
         ),
     )
-    await db.commit()
     event_id = cursor.lastrowid
     logger.debug(
-        "Audit event %d: %s %s/%s by %s",
+        "Audit event %d (tx-aware): %s %s/%s by %s",
         event_id,
         action_type,
         entity_type,
         entity_id,
         actor_email or actor_id,
     )
+    return event_id
+
+
+async def record_event(
+    store: "SignalStore",
+    *,
+    action_type: str,
+    entity_type: str,
+    entity_id: str,
+    actor_id: str,
+    actor_email: Optional[str] = None,
+    actor_role: Optional[str] = None,
+    before_state: Optional[dict[str, Any]] = None,
+    after_state: Optional[dict[str, Any]] = None,
+    reason: Optional[str] = None,
+    correlation_id: Optional[str] = None,
+    metadata: Optional[dict[str, Any]] = None,
+) -> int:
+    """Insert an immutable audit event (auto-commits).
+
+    For use outside of an explicit transaction. If you need to insert
+    an event within an existing transaction, use insert_event() instead.
+
+    Returns the auto-generated event ID.
+    """
+    db = store._db
+    event_id = await insert_event(
+        db,
+        action_type=action_type,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        actor_id=actor_id,
+        actor_email=actor_email,
+        actor_role=actor_role,
+        before_state=before_state,
+        after_state=after_state,
+        reason=reason,
+        correlation_id=correlation_id,
+        metadata=metadata,
+    )
+    await db.commit()
     return event_id
 
 
