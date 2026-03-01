@@ -249,8 +249,8 @@ def test_execute_canary_monitor_all_pass(scheduler, mock_subprocess_all_pass, tm
     result = asyncio.get_event_loop().run_until_complete(
         scheduler._execute_canary_monitor(run_id, schedule)
     )
-    # 3 required steps (canary, drift, activation)
-    assert len(result) == 3
+    # 3 subprocess steps (canary, drift, activation) + 1 inline (regret-check)
+    assert len(result) == 4
     assert all(v["returncode"] == 0 for v in result.values())
 
 
@@ -303,11 +303,13 @@ def test_execute_canary_monitor_optional_fail(scheduler, tmp_path, monkeypatch):
     result = asyncio.get_event_loop().run_until_complete(
         scheduler._execute_canary_monitor(run_id, schedule)
     )
-    # All 4 steps ran, but shadow-export failed (optional)
-    assert len(result) == 4
+    # 4 subprocess steps + 1 inline regret-check = 5 total, shadow-export failed
+    assert len(result) == 5
     assert result["shadow-export"]["returncode"] == 1
-    # The 3 required steps all passed
+    # The 3 required subprocess steps all passed
     assert result["canary"]["returncode"] == 0
+    # Regret-check is always present and non-blocking
+    assert result["regret-check"]["returncode"] == 0
 
 
 def test_canary_monitor_uses_store_results(scheduler, tmp_path, monkeypatch):

@@ -707,6 +707,24 @@ class PipelineScheduler:
                     if step["required"]:
                         failure_error = RuntimeError(f"canary-monitor required {msg}")
                         break
+
+            # Regret-check: inline, non-blocking, always returncode 0
+            # The ok flag distinguishes healthy from degraded governance.
+            try:
+                from monitoring.feature_gate import get_overdue_regret_checks
+                regret_result = get_overdue_regret_checks(db_path, strict=True)
+                regret_payload = {"ok": True, **regret_result}
+            except Exception as e:
+                logger.warning(f"canary-monitor regret-check degraded: {e}")
+                regret_payload = {
+                    "ok": False, "count": 0, "overdue": [],
+                    "error": str(e),
+                }
+            results["regret-check"] = {
+                "returncode": 0,
+                "stdout": json.dumps(regret_payload),
+                "stderr": "",
+            }
         finally:
             # R3-1: Always write artifact, even with partial results
             _write_cadence_artifact(artifacts_dir, run_id, results,
