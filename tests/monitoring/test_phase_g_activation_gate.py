@@ -325,6 +325,7 @@ class TestPhaseGReadinessGate:
 
         assert result.metrics["merge_rejection_rate"] == 0.0
         assert result.metrics["merge_suggestions_total"] == 0
+        assert result.metrics["merge_suggestions_rejected"] == 0
         # Should not be blocked or warned because of merge suggestions
         assert not any("rejection rate" in r.lower() for r in result.reasons)
 

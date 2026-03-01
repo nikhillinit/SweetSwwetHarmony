@@ -1648,6 +1648,7 @@ class DiscoveryPipeline:
             # Phase G Sprint 2 stats
             "phase_g_entities_resolved": 0,
             "phase_g_merges": 0,
+            "claim_facts_extracted": 0,
             "claim_facts_saved": 0,
         }
 
@@ -1771,13 +1772,24 @@ class DiscoveryPipeline:
         else:
             stats["avg_enrichment_boost"] = 0.0
 
-        # Phase G Sprint 2: Persist claim facts (after consolidation)
+        # Phase G Sprint 2: Extract claim facts (after consolidation)
+        # NOTE: Extraction runs even in dry_run to validate the extractor.
+        # Persistence is gated so dry_run never writes to the database.
         if self.config.use_claim_facts and self._claim_fact_store and self._claim_extractor:
-            claim_stats = await self._persist_claim_facts(
-                consolidated_map, entity_id_map
+            claim_stats = await self._extract_and_persist_claim_facts(
+                consolidated_map,
+                entity_id_map,
+                dry_run=dry_run,
             )
+            stats["claim_facts_extracted"] = claim_stats.get("facts_extracted", 0)
             stats["claim_facts_saved"] = claim_stats.get("facts_saved", 0)
-            logger.info(f"Persisted {stats['claim_facts_saved']} claim facts")
+            if dry_run:
+                logger.info(
+                    "Claim facts dry-run: %s extracted, 0 persisted",
+                    stats["claim_facts_extracted"],
+                )
+            else:
+                logger.info("Persisted %s claim facts", stats["claim_facts_saved"])
 
         logger.info(f"Processing stage complete: {stats}")
 
@@ -2912,27 +2924,30 @@ class DiscoveryPipeline:
             # Fall back to original grouping
             return by_key, {}, stats
 
-    async def _persist_claim_facts(
+    async def _extract_and_persist_claim_facts(
         self,
         consolidated_map: Dict[str, ConsolidatedSignal],
-        entity_id_map: Dict[str, str]
+        entity_id_map: Dict[str, str],
+        *,
+        dry_run: bool = False,
     ) -> Dict[str, int]:
         """
-        Persist claim facts extracted from consolidated signals.
+        Extract claim facts from consolidated signals and (optionally) persist them.
 
         Uses bi-temporal SCD-2 storage with authority-based supersession.
 
         Args:
             consolidated_map: Map of canonical_key -> ConsolidatedSignal
             entity_id_map: Map of canonical_key -> entity_id
+            dry_run: If True, run extraction but skip all DB writes
 
         Returns:
-            Stats dict with facts_saved count
+            Stats dict with facts_extracted and facts_saved counts
         """
         if not self._claim_fact_store or not self._claim_extractor:
-            return {"facts_saved": 0}
+            return {"facts_extracted": 0, "facts_saved": 0}
 
-        stats = {"facts_saved": 0}
+        stats = {"facts_extracted": 0, "facts_saved": 0}
 
         try:
             # Extract all claim facts
@@ -2940,6 +2955,13 @@ class DiscoveryPipeline:
                 list(consolidated_map.values()),
                 entity_id_map
             )
+
+            # Count extracted facts regardless of persistence
+            stats["facts_extracted"] = sum(len(facts) for facts in all_facts.values())
+
+            # Dry run: validate extraction, skip persistence
+            if dry_run:
+                return stats
 
             # Persist in batched transactions
             batch_size = 50

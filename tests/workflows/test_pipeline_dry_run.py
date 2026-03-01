@@ -30,6 +30,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
 from storage.signal_store import SignalStore, StoredSignal
+from storage.claim_fact_store import ClaimFact
 from verification.verification_gate_v2 import (
     PushDecision,
     Signal,
@@ -38,6 +39,7 @@ from verification.verification_gate_v2 import (
     VerificationStatus,
 )
 from workflows.pipeline import DiscoveryPipeline, PipelineConfig, PipelineStats
+from utils.signal_consolidator import ConsolidatedSignal
 
 
 # =============================================================================
@@ -146,6 +148,7 @@ def _build_pipeline(
     *,
     pipeline_db: str,
     with_notion: bool,
+    use_claim_facts: bool = False,
 ) -> DiscoveryPipeline:
     """Build a DiscoveryPipeline with mocked internals.
 
@@ -172,7 +175,7 @@ def _build_pipeline(
         use_exit_predictor=False,
         use_investor_matching=False,
         use_phase_g_identity_resolution=False,
-        use_claim_facts=False,
+        use_claim_facts=use_claim_facts,
         use_shadow_entity_resolution=False,
         use_functional_schema=False,
         use_thin_files=False,
@@ -595,6 +598,81 @@ class TestDryRunEdgeCases:
         assert result["decision"] == PushDecision.REJECT
         assert result["reason"] == "Suppressed"
         pipeline._store.mark_rejected.assert_called_once()
+
+
+# =============================================================================
+# TEST CASE 5: claim_facts enabled + dry_run=True
+# =============================================================================
+
+
+class TestClaimFactsDryRun:
+    """When claim facts are enabled, dry_run=True should extract but never persist."""
+
+    @pytest.mark.asyncio
+    async def test_extracts_but_does_not_persist(self, pipeline_db):
+        pipeline = _build_pipeline(
+            pipeline_db=pipeline_db,
+            with_notion=False,
+            use_claim_facts=True,
+        )
+
+        # Provide a single pending signal
+        pipeline._store.get_pending_signals = AsyncMock(return_value=[_make_test_signal()])
+
+        # Avoid exercising _process_company internals; we only care about the
+        # post-consolidation claim facts extraction/persistence behavior.
+        pipeline._process_company = AsyncMock(
+            return_value={
+                "decision": PushDecision.AUTO_PUSH,
+                "notion_status": "dry_run",
+            }
+        )
+
+        # Provide a deterministic ConsolidatedSignal for extraction input
+        consolidated = ConsolidatedSignal(
+            canonical_key="domain:test-dry-run.com",
+            company_name="DryRunTestCo",
+            contributing_signal_ids=[1],
+            signal_types=["github_trending"],
+            source_apis=["github"],
+            aggregated_confidence=0.8,
+            earliest_detected_at=datetime(2026, 1, 15, tzinfo=timezone.utc),
+            latest_detected_at=datetime(2026, 1, 15, tzinfo=timezone.utc),
+            merged_raw_data={},
+        )
+        pipeline._consolidator = MagicMock()
+        pipeline._consolidator.consolidate = MagicMock(return_value=consolidated)
+
+        # Mock claim extractor + store
+        mock_extractor = MagicMock()
+        mock_extractor.extract_batch = MagicMock(
+            return_value={
+                "entity-123": [
+                    ClaimFact(
+                        entity_id="entity-123",
+                        predicate="company_name",
+                        value_json='"DryRunTestCo"',
+                        source_tier=3,
+                        confidence=0.8,
+                        valid_from="2026-01-15T00:00:00+00:00",
+                        observed_at="2026-01-15T00:00:00+00:00",
+                    )
+                ]
+            }
+        )
+        pipeline._claim_extractor = mock_extractor
+
+        mock_claim_store = MagicMock()
+        mock_claim_store.save_fact = AsyncMock()
+        pipeline._claim_fact_store = mock_claim_store
+
+        # Dry run: extraction should happen; persistence should not
+        stats = await pipeline._process_signals_stage(dry_run=True)
+
+        mock_extractor.extract_batch.assert_called_once()
+        mock_claim_store.save_fact.assert_not_called()
+        assert stats["claim_facts_extracted"] == 1
+        assert stats["claim_facts_saved"] == 0
 
 
 if __name__ == "__main__":

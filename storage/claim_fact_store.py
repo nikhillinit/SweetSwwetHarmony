@@ -640,3 +640,36 @@ class ClaimFactStore:
                 seen.add(sig_id)
                 result.append(sig_id)
         return result
+
+
+# =============================================================================
+# SYNC HELPERS (for monitoring / daily_aggregator)
+# =============================================================================
+
+def count_claim_facts_in_range_sync(conn, start_ts: str, end_ts: str) -> int:
+    """Count claim facts observed in [start_ts, end_ts) range.
+
+    Sync API for use by daily_aggregator and other monitoring code.
+    Keeps all claim_facts SQL inside this allowlisted module.
+
+    Args:
+        conn: sqlite3.Connection (synchronous)
+        start_ts: ISO timestamp lower bound (inclusive)
+        end_ts: ISO timestamp upper bound (exclusive)
+
+    Returns:
+        Count of matching rows, or 0 if table doesn't exist.
+    """
+    exists = conn.execute(
+        "SELECT name FROM sqlite_master "
+        "WHERE type='table' AND name='claim_facts'"
+    ).fetchone()
+    if not exists:
+        return 0
+
+    row = conn.execute(
+        "SELECT COUNT(*) FROM claim_facts "
+        "WHERE observed_at >= ? AND observed_at < ?",
+        (start_ts, end_ts),
+    ).fetchone()
+    return row[0] if row else 0

@@ -118,7 +118,7 @@ async def check_phase_g_readiness(store) -> PhaseGReadinessResult:
         async with db.execute("""
             SELECT
                 COUNT(*) as total,
-                SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END) as rejected
+                COALESCE(SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END), 0) as rejected
             FROM merge_suggestions
         """) as cursor:
             row = await cursor.fetchone()
@@ -141,6 +141,7 @@ async def check_phase_g_readiness(store) -> PhaseGReadinessResult:
             result.metrics["merge_rejection_rate"] = 0.0
     else:
         result.metrics["merge_suggestions_total"] = 0
+        result.metrics["merge_suggestions_rejected"] = 0
         result.metrics["merge_rejection_rate"] = 0.0
 
     # -----------------------------------------------------------------------
