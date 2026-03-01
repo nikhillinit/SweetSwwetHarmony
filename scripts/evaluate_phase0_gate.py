@@ -22,24 +22,26 @@ TARGET_CONVERGENCE_PCT = 10.0
 def _get_weekly_fp_rates(
     conn: sqlite3.Connection, weeks: int = HALT_WEEK + 1
 ) -> list:
-    """Get weekly FP rates from quality_metrics_daily."""
+    """Get weekly FP rates from quality_metrics_daily.
+
+    Schema uses normalised rows: metric_name='overall_fp_rate', value=rate, n=sample_count.
+    """
     now = datetime.now(timezone.utc)
     rates = []
     for w in range(weeks):
         week_end = now - timedelta(weeks=w)
         week_start = week_end - timedelta(weeks=1)
         row = conn.execute(
-            "SELECT "
-            "  COALESCE(SUM(fp_count), 0) AS fp, "
-            "  COALESCE(SUM(tp_count), 0) AS tp "
+            "SELECT AVG(value) AS avg_rate, COALESCE(SUM(n), 0) AS total_n "
             "FROM quality_metrics_daily "
-            "WHERE metric_date >= ? AND metric_date < ?",
+            "WHERE metric_name = 'overall_fp_rate' "
+            "  AND metric_date >= ? AND metric_date < ?",
             (week_start.strftime("%Y-%m-%d"), week_end.strftime("%Y-%m-%d")),
         ).fetchone()
-        fp, tp = row[0], row[1]
-        total = fp + tp
-        rate = (fp / total * 100.0) if total > 0 else None
-        rates.append({"week": weeks - 1 - w, "fp": fp, "tp": tp, "rate": rate})
+        avg_rate = row[0]  # None if no rows
+        total_n = row[1]
+        rate = (avg_rate * 100.0) if avg_rate is not None else None
+        rates.append({"week": weeks - 1 - w, "n": total_n, "rate": rate})
     rates.sort(key=lambda r: r["week"])
     return rates
 
