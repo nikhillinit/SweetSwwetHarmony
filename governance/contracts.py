@@ -68,11 +68,20 @@ class FeatureDemoteMetadata(BaseModel):
         return v
 
 
-# Discriminated union for API endpoint deserialization
+class FeatureEvalMetadata(BaseModel):
+    """Metadata contract for a feature evaluation result."""
+
+    action_type: Literal["feature_eval_completed"] = "feature_eval_completed"
+    recommendation: str  # promote/extend_shadow/kill/insufficient_data
+    decision_reason: str
+    n_entities_evaluated: int
+    n_time_slices: int
+
 GovernanceEventMetadata = Union[
     FeaturePromoteMetadata,
     RegretCheckMetadata,
     FeatureDemoteMetadata,
+    FeatureEvalMetadata,
 ]
 
 # Map action_type string -> contract class for validation in writer
@@ -80,6 +89,7 @@ _CONTRACT_MAP = {
     "feature_promote": FeaturePromoteMetadata,
     "regret_check": RegretCheckMetadata,
     "feature_demote": FeatureDemoteMetadata,
+    "feature_eval_completed": FeatureEvalMetadata,
 }
 
 GOVERNANCE_ACTION_TYPES = frozenset(_CONTRACT_MAP.keys())

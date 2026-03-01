@@ -134,7 +134,10 @@ CONSUMER_MARKETPLACE_SIC_CODES = {
     "7299",  # Miscellaneous Personal Services, NEC
     "7310",  # Advertising Services (consumer-facing)
     "7370",  # Computer Programming, Data Processing (consumer apps)
+    "7371",  # Computer Programming Services
+    "7372",  # Prepackaged Software
     "7374",  # Computer Processing & Data Preparation
+    "7379",  # Computer Related Services, NEC
 }
 
 # Combine all target SIC codes

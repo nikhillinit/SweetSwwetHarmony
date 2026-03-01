@@ -74,6 +74,7 @@ from storage.migrations.v44_dns_promotion_aliases import V44_DNS_PROMOTION_ALIAS
 from storage.migrations.v45_evidence_key import V45_EVIDENCE_KEY_DDL
 from storage.migrations.v46_evidence_key_unique import V46_EVIDENCE_KEY_UNIQUE_DDL
 from storage.migrations.v47_governance_triggers import V47_GOVERNANCE_TRIGGERS_DDL
+from storage.migrations.v48_shadow_log_metrics import V48_SHADOW_LOG_METRICS_DDL
 
 if TYPE_CHECKING:
     from workflows.pipeline import PipelineStats, CollectorMetrics
@@ -87,7 +88,7 @@ logger = logging.getLogger(__name__)
 # SCHEMA VERSION
 # =============================================================================
 
-CURRENT_SCHEMA_VERSION = 47
+CURRENT_SCHEMA_VERSION = 48
 
 # SQL for creating tables (migrations applied in order)
 MIGRATIONS = {
@@ -1742,6 +1743,7 @@ MIGRATIONS = {
     45: V45_EVIDENCE_KEY_DDL,
     46: V46_EVIDENCE_KEY_UNIQUE_DDL,
     47: V47_GOVERNANCE_TRIGGERS_DDL,
+    48: V48_SHADOW_LOG_METRICS_DDL,
 }
 
 
@@ -3237,6 +3239,7 @@ class SignalStore:
         canonical_key: str,
         computed_value: Dict[str, Any],
         signal_id: Optional[int] = None,
+        metrics: Optional[Dict[str, Any]] = None,
     ) -> int:
         """
         Log a SHADOW feature computation for later analysis.
@@ -3250,6 +3253,9 @@ class SignalStore:
             canonical_key: Company/entity identifier
             computed_value: Computation result (will be JSON serialized)
             signal_id: Optional FK to link to a specific signal
+            metrics: Optional per-computation metrics dict with keys:
+                latency_ms, upstream_data_version, missingness_reason,
+                api_calls_made, error
 
         Returns:
             The shadow_log ID
@@ -3276,6 +3282,25 @@ class SignalStore:
                 )
             )
             log_id = cursor.lastrowid
+
+            if metrics:
+                await conn.execute(
+                    """
+                    INSERT INTO shadow_log_metrics (
+                        shadow_log_id, latency_ms, upstream_data_version,
+                        missingness_reason, api_calls_made, error
+                    )
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        log_id,
+                        metrics.get("latency_ms"),
+                        metrics.get("upstream_data_version"),
+                        metrics.get("missingness_reason"),
+                        metrics.get("api_calls_made", 0),
+                        metrics.get("error"),
+                    ),
+                )
 
         logger.debug(f"Logged SHADOW computation: {feature_name} for {canonical_key}")
         return log_id

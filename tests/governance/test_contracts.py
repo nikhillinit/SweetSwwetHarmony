@@ -145,5 +145,8 @@ class TestFeatureDemoteMetadata:
 class TestGovernanceActionTypes:
     def test_all_types_present(self):
         assert GOVERNANCE_ACTION_TYPES == {
-            "feature_promote", "regret_check", "feature_demote",
+            "feature_promote",
+            "regret_check",
+            "feature_demote",
+            "feature_eval_completed",
         }
