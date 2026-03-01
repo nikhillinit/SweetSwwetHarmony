@@ -251,3 +251,48 @@ class TestGetOverdueRegretChecks:
         result = get_overdue_regret_checks(gate_db)
         assert result["count"] == 1
         assert result["overdue"][0]["entity_id"] == "FLAG_Z"
+
+    def test_metadata_regret_due_at_overrides_legacy(self, gate_db):
+        """metadata.regret_due_at in future prevents false overdue even if created_at is old."""
+        # created_at far in past → legacy math would mark overdue
+        old = datetime.now(timezone.utc) - timedelta(days=REGRET_CHECK_WINDOW_DAYS + 30)
+        # But metadata says due date is in the future
+        future_due = (datetime.now(timezone.utc) + timedelta(days=30)).isoformat()
+        metadata = json.dumps({"regret_due_at": future_due})
+
+        conn = sqlite3.connect(gate_db)
+        conn.execute(
+            "INSERT INTO audit_events "
+            "(action_type, entity_type, entity_id, actor_id, metadata, created_at) "
+            "VALUES (?, 'feature_flag', ?, ?, ?, ?)",
+            ("feature_promote", "FLAG_META_FUTURE", "operator:test", metadata, old.isoformat()),
+        )
+        conn.commit()
+        conn.close()
+
+        result = get_overdue_regret_checks(gate_db)
+        # Should NOT be overdue because metadata.regret_due_at is in the future
+        overdue_ids = [r["entity_id"] for r in result["overdue"]]
+        assert "FLAG_META_FUTURE" not in overdue_ids
+
+    def test_metadata_regret_due_at_past_marks_overdue(self, gate_db):
+        """metadata.regret_due_at in past marks feature as overdue."""
+        # created_at recent → legacy math would NOT mark overdue
+        recent = datetime.now(timezone.utc) - timedelta(days=1)
+        # But metadata says due date has already passed
+        past_due = (datetime.now(timezone.utc) - timedelta(days=5)).isoformat()
+        metadata = json.dumps({"regret_due_at": past_due})
+
+        conn = sqlite3.connect(gate_db)
+        conn.execute(
+            "INSERT INTO audit_events "
+            "(action_type, entity_type, entity_id, actor_id, metadata, created_at) "
+            "VALUES (?, 'feature_flag', ?, ?, ?, ?)",
+            ("feature_promote", "FLAG_META_PAST", "operator:test", metadata, recent.isoformat()),
+        )
+        conn.commit()
+        conn.close()
+
+        result = get_overdue_regret_checks(gate_db)
+        overdue_ids = [r["entity_id"] for r in result["overdue"]]
+        assert "FLAG_META_PAST" in overdue_ids

@@ -12,7 +12,7 @@ Promotion flow:
    c. Re-check canonical_key against signals (temporal race guard)
    d. INSERT INTO signals
    e. UPDATE hunter_results SET status='promoted'
-   f. INSERT INTO audit_events
+   f. Audit event via insert_event()
    g. INSERT idempotency
 3. COMMIT
 """
@@ -24,6 +24,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional, TYPE_CHECKING
 
+from storage.audit_events import insert_event
 from storage.hunter_result_store import (
     InvalidHunterTransition,
     RESULT_TRANSITIONS,
@@ -167,23 +168,17 @@ async def promote_hunter_result(
                        WHERE id = ?""",
                     (existing_signal_id, now, now, result_id),
                 )
-                await tx.execute(
-                    """INSERT INTO audit_events
-                       (action_type, entity_type, entity_id, actor_id,
-                        before_state, after_state, created_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        "hunter_promote_collision",
-                        "hunter_result",
-                        str(result_id),
-                        actor,
-                        json.dumps({"status": "relevant"}),
-                        json.dumps({
-                            "status": "already_known",
-                            "existing_signal_id": existing_signal_id,
-                        }),
-                        now,
-                    ),
+                await insert_event(
+                    tx,
+                    action_type="hunter_promote_collision",
+                    entity_type="hunter_result",
+                    entity_id=str(result_id),
+                    actor_id=actor,
+                    before_state={"status": "relevant"},
+                    after_state={
+                        "status": "already_known",
+                        "existing_signal_id": existing_signal_id,
+                    },
                 )
                 return PromotionResult(
                     success=True,
@@ -227,20 +222,14 @@ async def promote_hunter_result(
         )
 
         # 2f. Audit event
-        await tx.execute(
-            """INSERT INTO audit_events
-               (action_type, entity_type, entity_id, actor_id,
-                before_state, after_state, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (
-                "hunter_promote",
-                "hunter_result",
-                str(result_id),
-                actor,
-                json.dumps({"status": "relevant"}),
-                json.dumps({"status": "promoted", "signal_id": signal_id}),
-                now,
-            ),
+        await insert_event(
+            tx,
+            action_type="hunter_promote",
+            entity_type="hunter_result",
+            entity_id=str(result_id),
+            actor_id=actor,
+            before_state={"status": "relevant"},
+            after_state={"status": "promoted", "signal_id": signal_id},
         )
 
         # 2g. Idempotency key
