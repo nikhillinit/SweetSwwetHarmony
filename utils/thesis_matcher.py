@@ -202,6 +202,24 @@ NEGATIVE_KEYWORDS: Dict[str, float] = {
     "framework": 0.4,
     "plugin": 0.4,
     "linter": 0.5,
+    # HN FP analysis (2026-03-01): B2B/dev tool patterns
+    "log aggregation": 0.5,
+    "mysql": 0.5,
+    "vector rendering": 0.4,
+    "compression algorithm": 0.4,
+    "embedded scheduler": 0.5,
+    "mcp server": 0.5,
+    "password system": 0.4,
+    "legal research": 0.4,
+    "stock movements": 0.4,
+    "benchmark for llms": 0.5,
+    "ship python to aws": 0.5,
+    "tabular data": 0.4,
+    "floor plans": 0.4,
+    "skills marketplace": 0.5,
+    "data-centric ai": 0.4,
+    "sentiment on ai": 0.4,
+    "production management tool": 0.4,
 }
 
 # Intent phrases that indicate commercial/consumer intent (Phase B)
