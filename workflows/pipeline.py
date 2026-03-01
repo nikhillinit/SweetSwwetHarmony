@@ -971,10 +971,16 @@ class DiscoveryPipeline:
         """
         await self.initialize()
 
-        # Per-run tracking
+        # Per-run tracking (with config pinning)
+        from monitoring.feature_gate import compute_config_snapshot
         await self._begin_run_tracking(
             "pipeline",
-            {"collectors": collectors or [], "dry_run": dry_run, "mode": "full"},
+            {
+                "collectors": collectors or [],
+                "dry_run": dry_run,
+                "mode": "full",
+                "config_snapshot": compute_config_snapshot(),
+            },
         )
 
         stats = PipelineStats()
@@ -1116,9 +1122,15 @@ class DiscoveryPipeline:
         """
         await self.initialize()
 
+        from monitoring.feature_gate import compute_config_snapshot
         await self._begin_run_tracking(
             "pipeline",
-            {"mode": "collect_only", "collectors": collector_names, "dry_run": dry_run},
+            {
+                "mode": "collect_only",
+                "collectors": collector_names,
+                "dry_run": dry_run,
+                "config_snapshot": compute_config_snapshot(),
+            },
         )
 
         # Reset collector metrics for this run
@@ -1188,8 +1200,14 @@ class DiscoveryPipeline:
         """
         await self.initialize()
 
+        from monitoring.feature_gate import compute_config_snapshot
         await self._begin_run_tracking(
-            "pipeline", {"mode": "process_only", "dry_run": dry_run},
+            "pipeline",
+            {
+                "mode": "process_only",
+                "dry_run": dry_run,
+                "config_snapshot": compute_config_snapshot(),
+            },
         )
 
         logger.info(f"Processing pending signals (dry_run={dry_run})")
