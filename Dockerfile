@@ -36,12 +36,14 @@ COPY connectors/ connectors/
 COPY dashboard/ dashboard/
 COPY discovery_engine/ discovery_engine/
 COPY distribution/ distribution/
+COPY governance/ governance/
 COPY intelligence/ intelligence/
 COPY integrations/ integrations/
 COPY monitoring/ monitoring/
 COPY ops/ ops/
 COPY scripts/ scripts/
 COPY storage/ storage/
+COPY telemetry/ telemetry/
 COPY utils/ utils/
 COPY workflows/ workflows/
 COPY run_pipeline.py .
