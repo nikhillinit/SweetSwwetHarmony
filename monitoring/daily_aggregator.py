@@ -202,34 +202,51 @@ def _compute_feature_metrics(conn, date: str) -> None:
 
     Segment model: segment_type="feature", segment_key=<feature_name>
     """
-    # Check if shadow_log table exists
-    exists = conn.execute(
+    # ---------------------------------------------------------------------
+    # 1) feature_shadow_volume (if shadow_log exists)
+    # ---------------------------------------------------------------------
+    shadow_exists = conn.execute(
         "SELECT name FROM sqlite_master "
         "WHERE type='table' AND name='shadow_log'"
     ).fetchone()
-    if not exists:
-        return
 
-    rows = conn.execute(
-        """SELECT feature_name, COUNT(*) AS cnt
-        FROM shadow_log
-        WHERE logged_at >= ? AND logged_at < ?
-        GROUP BY feature_name""",
-        (date + "T00:00:00", _next_day(date) + "T00:00:00"),
-    ).fetchall()
+    if shadow_exists:
+        rows = conn.execute(
+            """SELECT feature_name, COUNT(*) AS cnt
+            FROM shadow_log
+            WHERE logged_at >= ? AND logged_at < ?
+            GROUP BY feature_name""",
+            (date + "T00:00:00", _next_day(date) + "T00:00:00"),
+        ).fetchall()
 
-    for feature_name, cnt in rows:
-        _upsert_metric(
-            conn, date, "feature_shadow_volume", float(cnt), cnt,
-            segment_type="feature", segment_key=feature_name,
-        )
+        for feature_name, cnt in rows:
+            _upsert_metric(
+                conn, date, "feature_shadow_volume", float(cnt), cnt,
+                segment_type="feature", segment_key=feature_name,
+            )
 
-    # Overall shadow volume across all features
-    total = sum(cnt for _, cnt in rows) if rows else 0
-    if total > 0:
-        _upsert_metric(
-            conn, date, "feature_shadow_volume", float(total), total,
-        )
+        # Overall shadow volume across all features
+        total = sum(cnt for _, cnt in rows) if rows else 0
+        if total > 0:
+            _upsert_metric(
+                conn, date, "feature_shadow_volume", float(total), total,
+            )
+
+    # ---------------------------------------------------------------------
+    # 2) claim_facts_volume (if claim_facts exists)
+    # ---------------------------------------------------------------------
+    claim_exists = conn.execute(
+        "SELECT name FROM sqlite_master "
+        "WHERE type='table' AND name='claim_facts'"
+    ).fetchone()
+
+    if claim_exists:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM claim_facts WHERE observed_at >= ? AND observed_at < ?",
+            (date + "T00:00:00", _next_day(date) + "T00:00:00"),
+        ).fetchone()
+        cnt = row[0] if row else 0
+        _upsert_metric(conn, date, "claim_facts_volume", float(cnt), cnt)
 
 
 # =============================================================================

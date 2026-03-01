@@ -2030,6 +2030,10 @@ async def cmd_shadow_status(args) -> int:
                 "SELECT COUNT(*) FROM merge_suggestions WHERE created_at >= ?",
                 (cutoff,),
             ),
+            "claim_facts": (
+                "SELECT COUNT(*) FROM claim_facts WHERE observed_at >= ?",
+                (cutoff,),
+            ),
             "entity_blocking_index": (
                 "SELECT COUNT(*) FROM entity_blocking_index",
                 (),
