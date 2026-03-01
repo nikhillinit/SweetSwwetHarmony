@@ -22,6 +22,8 @@ import os
 from datetime import datetime, timezone, timedelta
 from typing import Optional
 
+from storage.claim_fact_store import count_claim_facts_in_range_sync
+
 logger = logging.getLogger(__name__)
 
 # Configurable constants
@@ -233,20 +235,12 @@ def _compute_feature_metrics(conn, date: str) -> None:
             )
 
     # ---------------------------------------------------------------------
-    # 2) claim_facts_volume (if claim_facts exists)
+    # 2) claim_facts_volume (via allowlisted storage helper)
     # ---------------------------------------------------------------------
-    claim_exists = conn.execute(
-        "SELECT name FROM sqlite_master "
-        "WHERE type='table' AND name='claim_facts'"
-    ).fetchone()
-
-    if claim_exists:
-        row = conn.execute(
-            "SELECT COUNT(*) FROM claim_facts WHERE observed_at >= ? AND observed_at < ?",
-            (date + "T00:00:00", _next_day(date) + "T00:00:00"),
-        ).fetchone()
-        cnt = row[0] if row else 0
-        _upsert_metric(conn, date, "claim_facts_volume", float(cnt), cnt)
+    cnt = count_claim_facts_in_range_sync(
+        conn, date + "T00:00:00", _next_day(date) + "T00:00:00"
+    )
+    _upsert_metric(conn, date, "claim_facts_volume", float(cnt), cnt)
 
 
 # =============================================================================
