@@ -12,10 +12,10 @@ import pytest
 from pathlib import Path
 
 
-# Expected category mapping - locks groupings for all 40 keywords
+# Expected category mapping - locks groupings for all 57 keywords
 # This is the source of truth for which category each keyword belongs to
 EXPECTED_CATEGORIES = {
-    # B2B/Enterprise (12 keywords)
+    # B2B/Enterprise (13 keywords)
     "enterprise": "B2B_ENTERPRISE",
     "b2b": "B2B_ENTERPRISE",
     "saas platform": "B2B_ENTERPRISE",
@@ -28,6 +28,7 @@ EXPECTED_CATEGORIES = {
     "logistics": "B2B_ENTERPRISE",
     "data platform": "B2B_ENTERPRISE",
     "sdk": "B2B_ENTERPRISE",
+    "production management tool": "B2B_ENTERPRISE",
     # Crypto/Web3 (6 keywords)
     "blockchain": "CRYPTO_WEB3",
     "crypto": "CRYPTO_WEB3",
@@ -55,12 +56,28 @@ EXPECTED_CATEGORIES = {
     "assignment": "EDUCATIONAL",
     "example": "EDUCATIONAL",
     "demo repo": "EDUCATIONAL",
-    # DevTools (5 keywords)
+    # DevTools (21 keywords)
     "cli": "DEVTOOLS",
     "library": "DEVTOOLS",
     "framework": "DEVTOOLS",
     "plugin": "DEVTOOLS",
     "linter": "DEVTOOLS",
+    "log aggregation": "DEVTOOLS",
+    "mysql": "DEVTOOLS",
+    "vector rendering": "DEVTOOLS",
+    "compression algorithm": "DEVTOOLS",
+    "embedded scheduler": "DEVTOOLS",
+    "mcp server": "DEVTOOLS",
+    "password system": "DEVTOOLS",
+    "legal research": "DEVTOOLS",
+    "stock movements": "DEVTOOLS",
+    "benchmark for llms": "DEVTOOLS",
+    "ship python to aws": "DEVTOOLS",
+    "tabular data": "DEVTOOLS",
+    "floor plans": "DEVTOOLS",
+    "skills marketplace": "DEVTOOLS",
+    "data-centric ai": "DEVTOOLS",
+    "sentiment on ai": "DEVTOOLS",
 }
 
 
@@ -418,14 +435,14 @@ class TestYAMLContentCompleteness:
         assert yaml_policy.get("schema") == "negative_keyword_policy_v1", "Wrong or missing schema"
         assert "negative_keywords" in yaml_policy, "Missing negative_keywords"
 
-    def test_keyword_count_is_40(self, yaml_policy):
-        """YAML should have exactly 40 keywords."""
+    def test_keyword_count_is_57(self, yaml_policy):
+        """YAML should have exactly 57 keywords."""
         from utils.thesis_matcher import NEGATIVE_KEYWORDS
 
         yaml_count = len(yaml_policy.get("negative_keywords", {}))
         python_count = len(NEGATIVE_KEYWORDS)
 
-        assert yaml_count == 40, f"Expected 40 keywords, got {yaml_count}"
+        assert yaml_count == 57, f"Expected 57 keywords, got {yaml_count}"
         assert yaml_count == python_count, f"YAML ({yaml_count}) != Python ({python_count})"
 
 
@@ -447,10 +464,10 @@ class TestCategoryEnumCoverage:
         for category in EXPECTED_CATEGORIES.values():
             category_counts[category] = category_counts.get(category, 0) + 1
 
-        assert category_counts["B2B_ENTERPRISE"] == 12
+        assert category_counts["B2B_ENTERPRISE"] == 13
         assert category_counts["CRYPTO_WEB3"] == 6
         assert category_counts["SERVICES"] == 3
         assert category_counts["STAGES"] == 4
         assert category_counts["EDUCATIONAL"] == 10
-        assert category_counts["DEVTOOLS"] == 5
-        assert sum(category_counts.values()) == 40
+        assert category_counts["DEVTOOLS"] == 21
+        assert sum(category_counts.values()) == 57

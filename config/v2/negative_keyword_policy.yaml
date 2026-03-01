@@ -130,7 +130,7 @@ negative_keywords:
     weight: 0.5
     category: EDUCATIONAL
 
-  # DevTools (5 keywords)
+  # DevTools (22 keywords)
   cli:
     weight: 0.4
     category: DEVTOOLS
@@ -146,3 +146,54 @@ negative_keywords:
   linter:
     weight: 0.5
     category: DEVTOOLS
+  log aggregation:
+    weight: 0.5
+    category: DEVTOOLS
+  mysql:
+    weight: 0.5
+    category: DEVTOOLS
+  vector rendering:
+    weight: 0.4
+    category: DEVTOOLS
+  compression algorithm:
+    weight: 0.4
+    category: DEVTOOLS
+  embedded scheduler:
+    weight: 0.5
+    category: DEVTOOLS
+  mcp server:
+    weight: 0.5
+    category: DEVTOOLS
+  password system:
+    weight: 0.4
+    category: DEVTOOLS
+  legal research:
+    weight: 0.4
+    category: DEVTOOLS
+  stock movements:
+    weight: 0.4
+    category: DEVTOOLS
+  benchmark for llms:
+    weight: 0.5
+    category: DEVTOOLS
+  ship python to aws:
+    weight: 0.5
+    category: DEVTOOLS
+  tabular data:
+    weight: 0.4
+    category: DEVTOOLS
+  floor plans:
+    weight: 0.4
+    category: DEVTOOLS
+  skills marketplace:
+    weight: 0.5
+    category: DEVTOOLS
+  data-centric ai:
+    weight: 0.4
+    category: DEVTOOLS
+  sentiment on ai:
+    weight: 0.4
+    category: DEVTOOLS
+  production management tool:
+    weight: 0.4
+    category: B2B_ENTERPRISE
