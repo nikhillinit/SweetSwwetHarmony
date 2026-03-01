@@ -86,6 +86,11 @@ jobs:
       - name: Build Docker image
         run: docker build -t harmonic:${{ github.sha }} .
 
+      - name: Smoke import governance modules in image
+        run: |
+          docker run --rm --entrypoint python harmonic:${{ github.sha }} -c \
+            "import governance.contracts; import api.routers.governance"
+
       - name: Start container
         run: |
           uid=$(docker run --rm --entrypoint id harmonic:${{ github.sha }} -u harmonic)
