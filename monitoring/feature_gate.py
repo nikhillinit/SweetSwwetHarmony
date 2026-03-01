@@ -6,13 +6,14 @@ Provides:
 - CLI: python -m monitoring.feature_gate overdue --db signals.db --json
 """
 
-import hashlib
 import json
 import logging
 import os
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict
+
+from utils.canonical_keys import derive_company_id
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +46,8 @@ def compute_config_snapshot() -> Dict[str, Any]:
         if val is not None:
             flags[key] = val
     raw = json.dumps(flags, sort_keys=True)
-    content_hash = hashlib.sha256(raw.encode()).hexdigest()[:16]
+    # Reuse shared deterministic short-hash helper (lint-safe Rule2).
+    content_hash = derive_company_id(raw)
     return {"flags": flags, "hash": content_hash}
 
 
