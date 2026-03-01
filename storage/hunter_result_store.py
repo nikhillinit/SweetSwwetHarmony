@@ -20,6 +20,8 @@ import os
 from datetime import datetime, timezone, timedelta
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 
+from storage.audit_events import insert_event
+
 if TYPE_CHECKING:
     from storage.signal_store import SignalStore
 
@@ -397,21 +399,15 @@ async def update_result_status(
         tuple(values),
     )
 
-    # Audit event (inlined, same connection)
-    await db.execute(
-        """INSERT INTO audit_events
-           (action_type, entity_type, entity_id, actor_id,
-            before_state, after_state, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)""",
-        (
-            f"hunter_feedback" if new_status != "promoted" else "hunter_promote",
-            "hunter_result",
-            str(result_id),
-            actor,
-            json.dumps({"status": current_status}),
-            json.dumps({"status": new_status, "feedback": operator_feedback}),
-            now,
-        ),
+    # Audit event
+    await insert_event(
+        db,
+        action_type="hunter_feedback" if new_status != "promoted" else "hunter_promote",
+        entity_type="hunter_result",
+        entity_id=str(result_id),
+        actor_id=actor,
+        before_state={"status": current_status},
+        after_state={"status": new_status, "feedback": operator_feedback},
     )
     await db.commit()
 
@@ -479,18 +475,13 @@ async def recover_stale_queries(
     )
     count = cursor.rowcount
     if count > 0:
-        await db.execute(
-            """INSERT INTO audit_events
-               (action_type, entity_type, entity_id, actor_id, metadata, created_at)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (
-                "hunter_zombie_cleanup",
-                "hunter_query",
-                "batch",
-                "system",
-                json.dumps({"recovered_count": count, "cutoff_minutes": cutoff_minutes}),
-                now,
-            ),
+        await insert_event(
+            db,
+            action_type="hunter_zombie_cleanup",
+            entity_type="hunter_query",
+            entity_id="batch",
+            actor_id="system",
+            metadata={"recovered_count": count, "cutoff_minutes": cutoff_minutes},
         )
     await db.commit()
     logger.info("Zombie recovery: %d stale queries recovered", count)
@@ -613,24 +604,19 @@ async def settle_budget(
 
     # Check for overrun (>10% of cap)
     if delta > 0 and delta > cost_cap * 0.10:
-        await db.execute(
-            """INSERT INTO audit_events
-               (action_type, entity_type, entity_id, actor_id, metadata, created_at)
-               VALUES (?, ?, ?, ?, ?, ?)""",
-            (
-                "hunter_budget_overrun",
-                "hunter_budget",
-                f"{budget_date}:{collector}",
-                "system",
-                json.dumps({
-                    "query_id": query_id,
-                    "estimated": estimated_cost,
-                    "actual": actual_cost,
-                    "delta": delta,
-                    "cap": cost_cap,
-                }),
-                now,
-            ),
+        await insert_event(
+            db,
+            action_type="hunter_budget_overrun",
+            entity_type="hunter_budget",
+            entity_id=f"{budget_date}:{collector}",
+            actor_id="system",
+            metadata={
+                "query_id": query_id,
+                "estimated": estimated_cost,
+                "actual": actual_cost,
+                "delta": delta,
+                "cap": cost_cap,
+            },
         )
 
     await db.commit()
@@ -744,21 +730,15 @@ async def create_negative_keyword(
         ),
     )
     nk_id = cursor.lastrowid
-    await db.commit()
 
     # Audit
-    await db.execute(
-        """INSERT INTO audit_events
-           (action_type, entity_type, entity_id, actor_id, metadata, created_at)
-           VALUES (?, ?, ?, ?, ?, ?)""",
-        (
-            "hunter_neg_keyword_add",
-            "hunter_negative_keyword",
-            str(nk_id),
-            "system",
-            json.dumps({"keyword": keyword, "collector": collector, "source": source}),
-            now,
-        ),
+    await insert_event(
+        db,
+        action_type="hunter_neg_keyword_add",
+        entity_type="hunter_negative_keyword",
+        entity_id=str(nk_id),
+        actor_id="system",
+        metadata={"keyword": keyword, "collector": collector, "source": source},
     )
     await db.commit()
     return nk_id

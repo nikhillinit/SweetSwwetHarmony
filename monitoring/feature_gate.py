@@ -150,7 +150,7 @@ def get_overdue_regret_checks(
 
             # Find all feature_promote events
             promotions = conn.execute(
-                "SELECT entity_id, created_at "
+                "SELECT entity_id, created_at, metadata "
                 "FROM audit_events "
                 "WHERE action_type = 'feature_promote' "
                 "ORDER BY created_at ASC"
@@ -160,7 +160,21 @@ def get_overdue_regret_checks(
             for row in promotions:
                 entity_id = row["entity_id"]
                 promoted_at = row["created_at"]
-                due_at = _parse_due_at(promoted_at, window_days)
+
+                # Prefer metadata.regret_due_at when available
+                regret_due_at = None
+                raw_meta = row["metadata"]
+                if raw_meta:
+                    try:
+                        meta = json.loads(raw_meta) if isinstance(raw_meta, str) else raw_meta
+                        regret_due_at = meta.get("regret_due_at")
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+
+                if regret_due_at:
+                    due_at = _parse_due_at(regret_due_at, 0)
+                else:
+                    due_at = _parse_due_at(promoted_at, window_days)
 
                 if now < due_at:
                     continue

@@ -9,9 +9,8 @@ Endpoints:
 - POST /triage/{review_id}/defer — Atomic defer
 
 All action endpoints execute status update + audit event + idempotency
-inside a single BEGIN IMMEDIATE transaction (CI-1). They inline the SQL
-instead of calling update_review_status() or record_event() to avoid
-nested transactions.
+inside a single BEGIN IMMEDIATE transaction (CI-1). They use insert_event()
+(tx-aware, no auto-commit) to avoid nested transactions.
 """
 
 from __future__ import annotations
@@ -25,6 +24,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
 
 from api.auth.rbac import OperatorContext, Permission, require_permission
+from storage.audit_events import insert_event
 from api.contracts import (
     BaseResponse,
     ListMeta,
@@ -157,33 +157,22 @@ async def _execute_triage_action(
             (new_status, now, now, operator.actor_label, body.reason, review_id),
         )
 
-        # e. Insert audit event (inlined — avoids separate commit)
-        cursor = await tx.execute(
-            """INSERT INTO audit_events (
-                action_type, entity_type, entity_id,
-                actor_id, actor_email, actor_role,
-                before_state, after_state,
-                reason, correlation_id, metadata,
-                created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                route,
-                "review_item",
-                resource_id,
-                operator.user_id,
-                operator.email,
-                operator.role.value
-                if hasattr(operator.role, "value")
-                else str(operator.role),
-                json.dumps({"status": current_status}),
-                json.dumps({"status": new_status}),
-                body.reason,
-                operator.request_id,
-                None,
-                now,
-            ),
+        # e. Insert audit event (tx-aware — no separate commit)
+        audit_event_id = await insert_event(
+            tx,
+            action_type=route,
+            entity_type="review_item",
+            entity_id=resource_id,
+            actor_id=operator.user_id,
+            actor_email=operator.email,
+            actor_role=operator.role.value
+            if hasattr(operator.role, "value")
+            else str(operator.role),
+            before_state={"status": current_status},
+            after_state={"status": new_status},
+            reason=body.reason,
+            correlation_id=operator.request_id,
         )
-        audit_event_id = cursor.lastrowid
 
         # f. Store idempotency result (INSERT OR IGNORE, no separate commit)
         response_body = {
@@ -689,29 +678,21 @@ async def bulk_triage(
                         (new_status, now, now, operator.actor_label, body.reason, item.review_id),
                     )
 
-                    # Audit event
-                    await tx.execute(
-                        """INSERT INTO audit_events (
-                            action_type, entity_type, entity_id,
-                            actor_id, actor_email, actor_role,
-                            before_state, after_state,
-                            reason, correlation_id, metadata,
-                            created_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                        (
-                            f"bulk_triage_{body.action}",
-                            "review_item",
-                            str(item.review_id),
-                            operator.user_id,
-                            operator.email,
-                            operator.role.value if hasattr(operator.role, "value") else str(operator.role),
-                            json.dumps({"status": current_status}),
-                            json.dumps({"status": new_status}),
-                            body.reason,
-                            operator.request_id,
-                            None,
-                            now,
-                        ),
+                    # Audit event (tx-aware)
+                    await insert_event(
+                        tx,
+                        action_type=f"bulk_triage_{body.action}",
+                        entity_type="review_item",
+                        entity_id=str(item.review_id),
+                        actor_id=operator.user_id,
+                        actor_email=operator.email,
+                        actor_role=operator.role.value
+                        if hasattr(operator.role, "value")
+                        else str(operator.role),
+                        before_state={"status": current_status},
+                        after_state={"status": new_status},
+                        reason=body.reason,
+                        correlation_id=operator.request_id,
                     )
 
                     results.append(BulkTriageItemResult(
