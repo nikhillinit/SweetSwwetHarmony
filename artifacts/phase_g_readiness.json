@@ -1,0 +1,18 @@
+{
+  "can_proceed": true,
+  "checked_at": "2026-03-01T08:52:20.866807+00:00",
+  "metrics": {
+    "blocking_index_rows": 209,
+    "claim_facts_checked": false,
+    "merge_rejection_rate": 0.0,
+    "merge_suggestions_rejected": 0,
+    "merge_suggestions_total": 0,
+    "orphaned_entity_ids": 0,
+    "tables_present": 4,
+    "tables_required": 4
+  },
+  "reasons": [
+    "All Phase G readiness checks passed"
+  ],
+  "verdict": "ready"
+}
