@@ -2,7 +2,7 @@
 """
 Convergence diagnostic report.
 
-Reports 10 sections:
+Reports 11 sections:
 1. Multi-source signal overlap (domain: keys only)
 2. Promoted entities with >=2 sources (raw + eligible KPI)
 3. news_api key distribution (run-scoped)
@@ -13,6 +13,7 @@ Reports 10 sections:
 8. All-prefix multi-source overlap (all key types, not just domain:)
 9. Key prefix distribution (signal counts and unique keys per prefix per collector)
 10. Per-collector domain-key yield (domain vs name_loc vs total)
+11. Multi-evidence-family convergence gate (Phase 0 MVP)
 
 Usage:
     python scripts/convergence_diagnostic.py --db signals.db
@@ -343,6 +344,63 @@ def _section_10_per_collector_domain_yield(conn: sqlite3.Connection) -> list[dic
     ]
 
 
+def _section_11_multi_family_convergence(conn: sqlite3.Connection, since_days: int = 30) -> dict:
+    """Multi-evidence-family entity convergence (LOB v7 Phase 0 Gate).
+
+    Correctness:
+    - Uses detected_at (not created_at) for temporal windowing
+    - Filters out NULL/empty canonical_key
+    - Excludes evidence_family='unknown'
+    - Collector criterion: >=2 families per collector (not >=1)
+    """
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=since_days)).strftime("%Y-%m-%d")
+
+    rows = conn.execute("""
+        SELECT canonical_key,
+               COUNT(DISTINCT evidence_family) AS family_count,
+               GROUP_CONCAT(DISTINCT evidence_family) AS families,
+               COUNT(DISTINCT source_api) AS source_count
+        FROM signals
+        WHERE evidence_family IS NOT NULL
+          AND evidence_family != 'unknown'
+          AND canonical_key IS NOT NULL
+          AND canonical_key != ''
+          AND detected_at >= ?
+        GROUP BY canonical_key
+        HAVING family_count >= 2
+        ORDER BY family_count DESC
+    """, (cutoff,)).fetchall()
+
+    entity_count = len(rows)
+
+    collector_families = conn.execute("""
+        SELECT source_api, COUNT(DISTINCT evidence_family) AS families
+        FROM signals
+        WHERE evidence_family IS NOT NULL
+          AND evidence_family != 'unknown'
+          AND canonical_key IS NOT NULL
+          AND canonical_key != ''
+          AND detected_at >= ?
+        GROUP BY source_api
+        HAVING families >= 2
+    """, (cutoff,)).fetchall()
+    collectors_with_2plus_families = len(collector_families)
+    families_per_collector = {r[0]: r[1] for r in collector_families}
+
+    mvp_pass = entity_count >= 10 and collectors_with_2plus_families >= 3
+
+    return {
+        "window_days": since_days,
+        "cutoff_date": cutoff,
+        "entities_with_2plus_families": entity_count,
+        "entities": [{"key": r[0], "families": r[2], "family_count": r[1]} for r in rows[:20]],
+        "collectors_with_2plus_families": collectors_with_2plus_families,
+        "families_per_collector": families_per_collector,
+        "mvp_gate_pass": mvp_pass,
+        "verdict": "PASS" if mvp_pass else "FAIL",
+    }
+
+
 def run_diagnostic(
     db_path: str,
     run_id: str | None = None,
@@ -431,6 +489,10 @@ def run_diagnostic(
     # Section 10
     s10 = _section_10_per_collector_domain_yield(conn)
     report["sections"]["per_collector_domain_yield"] = s10
+
+    # Section 11
+    s11 = _section_11_multi_family_convergence(conn)
+    report["sections"]["multi_family_convergence"] = s11
 
     conn.close()
 
@@ -539,6 +601,20 @@ def run_diagnostic(
             )
     else:
         print("  No signals found.")
+
+    print(f"\n--- 11. Multi-Family Convergence Gate (30d) ---")
+    print(
+        f"  Entities with 2+ families: {s11['entities_with_2plus_families']} "
+        f"(threshold >= 10)"
+    )
+    print(
+        f"  Collectors with 2+ families: {s11['collectors_with_2plus_families']} "
+        f"(threshold >= 3)"
+    )
+    if s11.get("families_per_collector"):
+        for coll, fam_count in sorted(s11["families_per_collector"].items()):
+            print(f"    {coll}: {fam_count} families")
+    print(f"  Verdict: {s11['verdict']}")
 
     print("\n" + "=" * 60)
 
