@@ -54,9 +54,25 @@ type artifacts\cadence\cadence_ledger.jsonl
 | canary | `monitoring.canary_checker run --db {db} --store-results` | required | 300s |
 | drift | `run_pipeline.py drift check --db-path {db}` | required | 300s |
 | activation | `run_pipeline.py activation-check --step 2 --json --db-path {db}` | required | 300s |
+| regret-check | inline `get_overdue_regret_checks(db, strict=True)` | non-blocking | — |
 | shadow-export | `scripts/shadow_report.py export --db-path {db} --since-days 1 --limit 2000` | optional | 300s |
 
 The shadow-export step is only included when `LLM_THESIS_MODE` is `shadow` or `active`.
+
+### Regret-check payload contract
+
+The regret-check step always produces `returncode: 0` (non-blocking). The `ok` field
+in the stdout JSON distinguishes healthy governance from degraded:
+
+```json
+// success:
+{"ok": true, "count": 0, "overdue": []}
+
+// failure (schema missing, DB locked, etc.):
+{"ok": false, "count": 0, "overdue": [], "error": "audit_events table missing"}
+```
+
+Operators should monitor `ok: false` for persistent governance degradation.
 
 ## Environment Variables
 
