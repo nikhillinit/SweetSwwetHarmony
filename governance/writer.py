@@ -23,6 +23,7 @@ import aiosqlite
 
 from governance.contracts import (
     FeatureDemoteMetadata,
+    FeatureEvalMetadata,
     FeaturePromoteMetadata,
     RegretCheckMetadata,
 )
@@ -132,6 +133,32 @@ async def record_feature_demote(
         entity_id=feature_name,
         reason=reason,
         metadata=contract.model_dump(),
+    )
+
+
+async def record_evaluation_result(
+    store_or_conn: Union["SignalStore", aiosqlite.Connection],
+    operator: "OperatorContext",
+    *,
+    feature_name: str,
+    result: Dict[str, Any],
+    reason: str,
+) -> int:
+    """Record a feature evaluation result (advisory, no DB trigger)."""
+    contract = FeatureEvalMetadata(
+        recommendation=result.get("recommendation", "unknown"),
+        decision_reason=result.get("decision_reason", ""),
+        n_entities_evaluated=result.get("n_entities_evaluated", 0),
+        n_time_slices=result.get("n_time_slices", 0),
+    )
+    return await _write_event(
+        store_or_conn,
+        operator=operator,
+        action_type="feature_eval_completed",
+        entity_type="feature_flag",
+        entity_id=feature_name,
+        reason=reason,
+        metadata={**contract.model_dump(), **result},
     )
 
 
