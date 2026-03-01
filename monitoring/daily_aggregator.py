@@ -194,6 +194,44 @@ def _next_day(date: str) -> str:
     return (d + timedelta(days=1)).strftime("%Y-%m-%d")
 
 
+def _compute_feature_metrics(conn, date: str) -> None:
+    """Compute feature-level metrics from shadow_log for a given UTC date.
+
+    Stores per-feature metrics:
+    - feature_shadow_volume: count of shadow computations
+
+    Segment model: segment_type="feature", segment_key=<feature_name>
+    """
+    # Check if shadow_log table exists
+    exists = conn.execute(
+        "SELECT name FROM sqlite_master "
+        "WHERE type='table' AND name='shadow_log'"
+    ).fetchone()
+    if not exists:
+        return
+
+    rows = conn.execute(
+        """SELECT feature_name, COUNT(*) AS cnt
+        FROM shadow_log
+        WHERE logged_at >= ? AND logged_at < ?
+        GROUP BY feature_name""",
+        (date + "T00:00:00", _next_day(date) + "T00:00:00"),
+    ).fetchall()
+
+    for feature_name, cnt in rows:
+        _upsert_metric(
+            conn, date, "feature_shadow_volume", float(cnt), cnt,
+            segment_type="feature", segment_key=feature_name,
+        )
+
+    # Overall shadow volume across all features
+    total = sum(cnt for _, cnt in rows) if rows else 0
+    if total > 0:
+        _upsert_metric(
+            conn, date, "feature_shadow_volume", float(total), total,
+        )
+
+
 # =============================================================================
 # Public API
 # =============================================================================
@@ -214,6 +252,7 @@ def aggregate_daily_metrics(conn, date: str) -> dict:
     _compute_collector_volume(conn, date)
     _compute_quarantine_regret(conn, date)
     _compute_calibration(conn, date)
+    _compute_feature_metrics(conn, date)
 
     # Read back what we wrote for the return
     rows = conn.execute(

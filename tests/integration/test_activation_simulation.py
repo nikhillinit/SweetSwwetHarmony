@@ -109,6 +109,23 @@ def _create_test_db(path: Path) -> Path:
         "CREATE TABLE canary_drift_alerts ("
         "id INTEGER PRIMARY KEY, severity TEXT, status TEXT)"
     )
+    # audit_events required by v47 governance triggers (created by v35 in prod)
+    conn.execute(
+        "CREATE TABLE audit_events ("
+        "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "action_type TEXT NOT NULL, "
+        "entity_type TEXT NOT NULL, "
+        "entity_id TEXT NOT NULL, "
+        "actor_id TEXT NOT NULL, "
+        "actor_email TEXT, "
+        "actor_role TEXT, "
+        "before_state TEXT, "
+        "after_state TEXT, "
+        "reason TEXT, "
+        "correlation_id TEXT, "
+        "metadata TEXT, "
+        "created_at TEXT NOT NULL)"
+    )
     conn.commit()
     conn.close()
     return path

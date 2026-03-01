@@ -1650,6 +1650,15 @@ Tip:
     except Exception as e:
         print(f"Warning: Quality ops CLI registration failed: {e}", file=sys.stderr)
 
+    # ── governance commands ────────────────────────────────────────
+    try:
+        from governance.cli import register_governance_commands
+        register_governance_commands(subparsers)
+    except ImportError:
+        pass  # Governance module not installed
+    except Exception as e:
+        print(f"Warning: Governance CLI registration failed: {e}", file=sys.stderr)
+
     args = parser.parse_args()
 
     try:
