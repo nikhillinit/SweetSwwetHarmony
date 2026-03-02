@@ -58,6 +58,10 @@ class ConsumerThesis(str, Enum):
     CONSUMER_HEALTH_TECH = "consumer_health_tech"
     TRAVEL_HOSPITALITY = "travel_hospitality"
     CONSUMER_MARKETPLACE = "consumer_marketplace"
+    # Phase 4a: Lexicon expansion — new consumer categories
+    CONSUMER_FINTECH = "consumer_fintech"
+    CONSUMER_SOCIAL = "consumer_social"
+    CONSUMER_GENERAL = "consumer_general"
     UNKNOWN = "unknown"
 
 
@@ -78,6 +82,12 @@ CONSUMER_KEYWORDS: Dict[ConsumerThesis, Dict[str, float]] = {
         "d2c": 0.7,
         "dtc": 0.7,
         "direct to consumer": 0.7,
+        # Phase 4a: expanded CPG keywords
+        "pet care": 0.7,
+        "pet food": 0.7,
+        "baby products": 0.7,
+        "home goods": 0.6,
+        "furniture": 0.5,
         # Medium weight - general terms
         "healthy": 0.4,
         "food": 0.4,
@@ -101,9 +111,19 @@ CONSUMER_KEYWORDS: Dict[ConsumerThesis, Dict[str, float]] = {
         "health tracker": 0.8,
         "meditation app": 0.8,
         "sleep app": 0.8,
-        "sleep tracking": 0.8,  # Added: "sleep tracking app" matches this
+        "sleep tracking": 0.8,
         "nutrition app": 0.7,
-        "personalized workout": 0.8,  # Added for fitness app specificity
+        "personalized workout": 0.8,
+        # Phase 4a: expanded health tech keywords
+        "telehealth": 0.7,
+        "telemedicine": 0.7,
+        "digital health": 0.7,
+        "health platform": 0.7,
+        "fertility": 0.5,
+        "womens health": 0.7,
+        "maternal health": 0.7,
+        "elder care": 0.6,
+        "pharmacy": 0.5,
         # Medium weight - general terms
         "fitness": 0.5,
         "workout": 0.5,
@@ -116,7 +136,9 @@ CONSUMER_KEYWORDS: Dict[ConsumerThesis, Dict[str, float]] = {
         "health app": 0.6,
         "mental health": 0.5,
         "therapy": 0.4,
-        "guided relaxation": 0.5,  # Added for meditation/sleep apps
+        "guided relaxation": 0.5,
+        "patient": 0.4,
+        "diagnostics": 0.4,
     },
     ConsumerThesis.TRAVEL_HOSPITALITY: {
         # High weight - specific travel terms
@@ -156,6 +178,67 @@ CONSUMER_KEYWORDS: Dict[ConsumerThesis, Dict[str, float]] = {
         "resale": 0.5,
         "secondhand": 0.5,
         "rental": 0.4,
+    },
+    # Phase 4a: new consumer categories
+    ConsumerThesis.CONSUMER_FINTECH: {
+        # High weight - specific consumer fintech terms
+        "budgeting app": 0.9,
+        "personal finance app": 0.9,
+        "personal finance": 0.7,
+        "payment app": 0.8,
+        "neobank": 0.8,
+        "consumer banking": 0.8,
+        "digital wallet": 0.7,
+        "money management": 0.7,
+        # Medium weight - general fintech terms
+        "fintech": 0.5,
+        "payments": 0.4,
+        "banking app": 0.6,
+        "savings app": 0.6,
+        "investing app": 0.6,
+        "insurance app": 0.6,
+        "lending platform": 0.5,
+        "credit score": 0.5,
+        "money transfer": 0.5,
+    },
+    ConsumerThesis.CONSUMER_SOCIAL: {
+        # High weight - specific consumer social terms
+        "dating app": 0.9,
+        "social network": 0.8,
+        "social media app": 0.9,
+        "messaging app": 0.8,
+        "community app": 0.8,
+        "content creator platform": 0.8,
+        # Medium weight - general social terms
+        "dating": 0.5,
+        "social media": 0.5,
+        "messaging": 0.4,
+        "social platform": 0.5,
+        "social app": 0.6,
+        "content sharing": 0.5,
+        "creator platform": 0.6,
+        "creator economy": 0.5,
+        "live streaming": 0.5,
+        "fan engagement": 0.5,
+    },
+    ConsumerThesis.CONSUMER_GENERAL: {
+        # High weight - specific consumer general terms
+        "consumer app": 0.8,
+        "consumer platform": 0.8,
+        "consumer brand": 0.8,
+        "consumer product": 0.7,
+        "lifestyle app": 0.7,
+        "family app": 0.7,
+        "parenting app": 0.7,
+        "kids app": 0.7,
+        # Medium weight - general consumer terms
+        "consumer": 0.3,
+        "mobile app": 0.3,
+        "home services": 0.5,
+        "on demand": 0.4,
+        "subscription service": 0.5,
+        "loyalty program": 0.5,
+        "rewards": 0.4,
     },
 }
 
