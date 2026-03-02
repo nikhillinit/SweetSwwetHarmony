@@ -435,3 +435,43 @@ class TestCascadeWiring:
         )
         assert result.routing == RoutingDecision.REJECTED
         assert result.decision_path_code == DecisionPathCode.VETO_HARD_REJECT
+
+
+# ===========================================================================
+# NaN/Inf safety tests (v12.2 requirement)
+# ===========================================================================
+
+class TestNaNInfSafety:
+    """Verify cascade routing handles malformed scores without crashing."""
+
+    def test_nan_consumer_signal_no_crash(self):
+        """NaN consumer_signal_score → deterministic HOLD_DEFAULT, no exception."""
+        config = ThesisFilterConfig(cascade_routing_enablement="live")
+        f = ThesisFilter(config)
+
+        fit = _make_fit(
+            score=0.1,
+            consumer_signal_score=float("nan"),
+            consumer_anchor_count=2,
+            b2b_soft_score=0.10,
+        )
+        routing, code = f._route_keyword_only(fit, cascade_enabled=True)
+        # NaN comparisons are False → rescue conditions fail → HOLD_DEFAULT
+        assert routing == RoutingDecision.HELD
+        assert code == DecisionPathCode.HOLD_DEFAULT
+
+    def test_inf_b2b_soft_score_no_crash(self):
+        """Inf b2b_soft_score → deterministic result, no exception."""
+        config = ThesisFilterConfig(cascade_routing_enablement="live")
+        f = ThesisFilter(config)
+
+        fit = _make_fit(
+            score=0.1,
+            consumer_signal_score=0.40,
+            consumer_anchor_count=2,
+            b2b_soft_score=float("inf"),
+        )
+        routing, code = f._route_keyword_only(fit, cascade_enabled=True)
+        # inf B2B → dominance margin negative, ratio near 0 → guard block
+        assert routing == RoutingDecision.HELD
+        assert code == DecisionPathCode.HOLD_B2B_GUARD_BLOCK
