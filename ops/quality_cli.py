@@ -48,7 +48,7 @@ def register_quality_commands(subparsers: argparse._SubParsersAction) -> None:
     # --------------------------------------------------------------------- label
     p_label = q.add_parser("label", help="Label a signal as TP/FP/UNSURE (manual)")
     p_label.add_argument("signal_id", type=int)
-    p_label.add_argument("label", choices=["TP", "FP", "UNSURE"])
+    p_label.add_argument("label", choices=["TP", "FP", "UNSURE", "ADJ"])
     p_label.add_argument("--by", dest="created_by", default=os.getenv("USER", "human"))
     p_label.add_argument("--reason", default=None)
     p_label.add_argument("--notes", default=None)
@@ -167,8 +167,17 @@ def register_quality_commands(subparsers: argparse._SubParsersAction) -> None:
     p_enr.add_argument("signal_ids", nargs="+", type=int)
     p_enr.set_defaults(func=_cmd_enrich)
 
+    # -------------------------------------------------------------- adj-review
+    p_adj = q.add_parser("adj-review", help="List ADJ-labeled signals for periodic review (re-label via 'quality label <id> TP|FP')")
+    p_adj.add_argument("--days", type=int, default=90)
+    p_adj.add_argument("--limit", type=int, default=50)
+    p_adj.add_argument("--format", choices=["table", "json"], default="table", dest="out_format")
+    p_adj.set_defaults(func=_cmd_adj_review)
+
 
 def _cmd_label(args: argparse.Namespace) -> None:
+    if args.label == "ADJ" and not args.reason:
+        print("Warning: ADJ labels benefit from a --reason explaining why (e.g. 'consumer hardware, interesting')")
     with quality_conn(args.db_path) as conn:
         feedback_id, upsert = label_signal_manual(
             conn,
@@ -190,7 +199,7 @@ def _cmd_stats(args: argparse.Namespace) -> None:
         print("")
         print("By source_api:")
         for s in by_src:
-            print(f"- {s.source_api:24s} labeled={s.labeled_signals:5d} fp={s.fp:4d} tp={s.tp:4d} unsure={s.unsure:4d} fp_rate={s.fp_rate:.2%}")
+            print(f"- {s.source_api:24s} labeled={s.labeled_signals:5d} fp={s.fp:4d} tp={s.tp:4d} unsure={s.unsure:4d} adj={s.adj:4d} fp_rate={s.fp_rate:.2%}")
 
 
 def _cmd_sync_status_events(args: argparse.Namespace) -> None:
@@ -351,3 +360,51 @@ def _cmd_enrich(args: argparse.Namespace) -> None:
     with quality_conn(args.db_path) as conn:
         results = enrich_signals_best_effort(conn, signal_ids=list(map(int, args.signal_ids)))
         print(json.dumps({"results": results}, indent=2))
+
+
+def _cmd_adj_review(args: argparse.Namespace) -> None:
+    from ops.quality.stats import _iso_days_ago
+
+    since = _iso_days_ago(args.days)
+    with quality_conn(args.db_path) as conn:
+        rows = conn.execute(
+            """
+            SELECT
+                sqm.signal_id,
+                s.company_name,
+                s.source_api,
+                s.confidence,
+                s.canonical_key,
+                sqm.labeled_at,
+                sqm.labeled_by,
+                sqm.notes,
+                json_extract(sqm.metadata, '$.reason') AS reason
+            FROM signal_quality_metrics sqm
+            JOIN signals s ON s.id = sqm.signal_id
+            WHERE sqm.human_label = 'ADJ'
+              AND sqm.labeled_at >= ?
+            ORDER BY sqm.labeled_at DESC
+            LIMIT ?
+            """,
+            (since, args.limit),
+        ).fetchall()
+
+        if args.out_format == "json":
+            data = [dict(r) for r in rows]
+            print(json.dumps(data, indent=2))
+        else:
+            if not rows:
+                print("No ADJ-labeled signals found in the last {} days.".format(args.days))
+                print("Tip: re-label with 'quality label <id> TP|FP' after review.")
+                return
+            print(f"{'ID':>6}  {'Company':30s}  {'Source':16s}  {'Conf':>5}  {'Labeled At':25s}  {'By':10s}  {'Reason'}")
+            print("-" * 120)
+            for r in rows:
+                reason = r["reason"] or r["notes"] or ""
+                print(
+                    f"{r['signal_id']:>6}  {(r['company_name'] or '')[:30]:30s}  "
+                    f"{r['source_api']:16s}  {r['confidence']:5.2f}  "
+                    f"{(r['labeled_at'] or '')[:25]:25s}  {(r['labeled_by'] or '')[:10]:10s}  "
+                    f"{reason[:50]}"
+                )
+            print(f"\n{len(rows)} ADJ signal(s). Re-label with: quality label <id> TP|FP")

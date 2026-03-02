@@ -48,6 +48,15 @@ class TestNormalizeLabel:
         assert normalize_label(" TP ") == "TP"
         assert normalize_label("  unsure  ") == "UNSURE"
 
+    def test_normalize_label_adj(self):
+        """'ADJ' is accepted and returned as-is."""
+        assert normalize_label("ADJ") == "ADJ"
+
+    def test_normalize_label_adj_case_insensitive(self):
+        """ADJ is case-insensitive."""
+        assert normalize_label("adj") == "ADJ"
+        assert normalize_label(" Adj ") == "ADJ"
+
     def test_normalize_label_invalid(self):
         """Invalid label strings must raise ValueError."""
         with pytest.raises(ValueError, match="label must be one of"):
