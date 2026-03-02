@@ -246,3 +246,4 @@ Then restart the API server and verify smoke suite passes.
 | `DELIVERY_MODE` | staging_only / manual_publish / batch_publish / auto_publish | staging_only | 3, 4 |
 | `BULK_TRIAGE_ENABLED` | disabled / active | disabled | 3 |
 | `HUNTER_PROMOTE_ENABLED` | disabled / active | disabled | 3 |
+| `CASCADE_ROUTING_ENABLEMENT` | disabled / shadow / live | disabled | — (own runbook) |
