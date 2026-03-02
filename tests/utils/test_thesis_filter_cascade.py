@@ -8,6 +8,7 @@ Tests:
 - Config fail-safe (Section C.3)
 """
 
+import json
 import logging
 import pytest
 from dataclasses import field
@@ -20,6 +21,10 @@ from utils.thesis_filter import (
     ThesisFilterResult,
     RoutingDecision,
     DecisionPathCode,
+    Web3ReasonCode,
+    DomainBlacklistReasonCode,
+    CascadeExceptionCode,
+    CascadeResolution,
 )
 from utils.thesis_matcher import (
     ThesisFit,
@@ -475,3 +480,256 @@ class TestNaNInfSafety:
         # inf B2B → dominance margin negative, ratio near 0 → guard block
         assert routing == RoutingDecision.HELD
         assert code == DecisionPathCode.HOLD_B2B_GUARD_BLOCK
+
+
+# ===========================================================================
+# Phase 6: Observability & trace contract hardening tests
+# ===========================================================================
+
+class TestPhase6Observability:
+    """Phase 6: Typed reason codes, counterfactual capture, config snapshots."""
+
+    # --- Core contract tests ---
+
+    @pytest.mark.asyncio
+    async def test_web3_clean_reason_on_non_crypto(self):
+        """#1: classify consumer text → web3_reason_code == CLEAN."""
+        config = ThesisFilterConfig(cascade_routing_enablement="disabled")
+        f = ThesisFilter(config)
+        result = await f.classify("organic meal kit delivery for families", skip_llm=True)
+        assert result.web3_reason_code == Web3ReasonCode.CLEAN
+
+    @pytest.mark.asyncio
+    async def test_web3_unambiguous_reason_on_crypto_veto(self):
+        """#2: classify unambiguous crypto → web3_reason_code == UNAMBIGUOUS_CRYPTO."""
+        config = ThesisFilterConfig(cascade_routing_enablement="disabled")
+        f = ThesisFilter(config)
+        result = await f.classify("blockchain nft marketplace", skip_llm=True)
+        assert result.web3_reason_code == Web3ReasonCode.UNAMBIGUOUS_CRYPTO
+        assert result.routing == RoutingDecision.REJECTED
+
+    @pytest.mark.asyncio
+    async def test_web3_ambiguous_with_context_reason(self):
+        """#3: classify ambiguous term with crypto context → AMBIGUOUS_WITH_CONTEXT.
+
+        "crypto" ∈ CRYPTO_CONTEXT (line 73 of web3_detector.py),
+        ∉ UNAMBIGUOUS_CRYPTO (lines 37-44);
+        "token" ∈ AMBIGUOUS_TERMS (line 48).
+
+        Detection path: no unambiguous hit → "token" found as ambiguous →
+        no rescue phrase match → "crypto" co-occurs within window → is_crypto=True.
+        """
+        config = ThesisFilterConfig(cascade_routing_enablement="disabled")
+        f = ThesisFilter(config)
+        result = await f.classify(
+            "token governance crypto rewards platform", skip_llm=True,
+        )
+        assert result.web3_reason_code == Web3ReasonCode.AMBIGUOUS_WITH_CONTEXT
+        assert result.routing == RoutingDecision.REJECTED
+
+    @pytest.mark.asyncio
+    async def test_domain_blacklist_reason_code_via_classify(self):
+        """#4: domain_blacklisted=True → DOMAIN_ON_BLACKLIST reason code."""
+        config = ThesisFilterConfig(cascade_routing_enablement="disabled")
+        f = ThesisFilter(config)
+
+        # Mock ThesisMatcher.score to return blacklisted fit
+        original_score = f._keyword_matcher.score
+
+        def mock_score(text, company_name=None, domain_name=None):
+            fit = original_score(text, company_name, domain_name=domain_name)
+            # Force domain_blacklisted
+            object.__setattr__(fit, "domain_blacklisted", True)
+            return fit
+
+        f._keyword_matcher.score = mock_score
+
+        result = await f.classify("some consumer startup text", skip_llm=True)
+        assert result.domain_blacklist_reason_code == DomainBlacklistReasonCode.DOMAIN_ON_BLACKLIST
+
+    @pytest.mark.asyncio
+    async def test_counterfactual_path_code_shadow_populated(self):
+        """#5: shadow mode → counterfactual_path_code is not None."""
+        config = ThesisFilterConfig(cascade_routing_enablement="shadow")
+        f = ThesisFilter(config)
+        result = await f.classify(
+            "direct to consumer subscription meal kit delivery brand",
+            skip_llm=True,
+        )
+        assert result.counterfactual_path_code is not None
+        assert isinstance(result.counterfactual_path_code, DecisionPathCode)
+
+    @pytest.mark.asyncio
+    async def test_counterfactual_path_code_disabled_none(self):
+        """#6: disabled mode → counterfactual_path_code is None."""
+        config = ThesisFilterConfig(cascade_routing_enablement="disabled")
+        f = ThesisFilter(config)
+        result = await f.classify("some random startup text", skip_llm=True)
+        assert result.counterfactual_path_code is None
+
+    @pytest.mark.asyncio
+    async def test_counterfactual_none_and_exception_code_on_shadow_failure(self):
+        """#7: shadow mode + cascade exception → exception code set, counterfactual None."""
+        config = ThesisFilterConfig(cascade_routing_enablement="shadow")
+        f = ThesisFilter(config)
+
+        original_route = f._route_keyword_only
+
+        def exploding_route(fit, *, cascade_enabled=False):
+            if cascade_enabled:
+                raise RuntimeError("cascade bug")
+            return original_route(fit, cascade_enabled=False)
+
+        f._route_keyword_only = exploding_route
+
+        result = await f.classify("random text for testing", skip_llm=True)
+        assert result.counterfactual_path_code is None
+        assert result.cascade_exception_code == CascadeExceptionCode.SHADOW_ROUTE_EXCEPTION
+
+    @pytest.mark.asyncio
+    async def test_config_snapshot_contains_required_keys(self):
+        """#8: snapshot has all 11 compact keys."""
+        config = ThesisFilterConfig(cascade_routing_enablement="disabled")
+        f = ThesisFilter(config)
+        result = await f.classify("organic meal kit delivery", skip_llm=True)
+
+        snapshot = result.cascade_config_snapshot
+        assert snapshot is not None
+        required_keys = {
+            "cascade_routing_enablement",
+            "cascade_mode_used",
+            "hold_threshold",
+            "skip_llm_if_keyword_below",
+            "consumer_rescue_threshold",
+            "consumer_anchor_min",
+            "consumer_dominance_margin",
+            "signal_ratio_min",
+            "consumer_lexicon_sha256",
+            "b2b_lexicon_sha256",
+            "negative_policy_sha256",
+        }
+        assert required_keys.issubset(set(snapshot.keys()))
+
+    def test_resolve_cascade_returns_dataclass(self):
+        """#9: _resolve_cascade_routing returns CascadeResolution dataclass."""
+        config = ThesisFilterConfig(cascade_routing_enablement="disabled")
+        f = ThesisFilter(config)
+        fit = _make_fit(score=0.1)
+        resolution = f._resolve_cascade_routing(fit)
+        assert isinstance(resolution, CascadeResolution)
+        assert hasattr(resolution, "decision")
+        assert hasattr(resolution, "path_code")
+        assert hasattr(resolution, "counterfactual_path_code")
+        assert hasattr(resolution, "cascade_exception_code")
+
+    # --- Invariant tests (P0) ---
+
+    @pytest.mark.asyncio
+    async def test_web3_reason_code_always_set_after_classify(self):
+        """#10: web3_reason_code is always non-None after classify."""
+        config = ThesisFilterConfig(cascade_routing_enablement="disabled")
+        f = ThesisFilter(config)
+
+        texts = [
+            "blockchain nft marketplace",       # crypto
+            "organic meal kit delivery",         # consumer
+            "generic text about nothing much",   # neutral
+        ]
+        for text in texts:
+            result = await f.classify(text, skip_llm=True)
+            assert result.web3_reason_code is not None, (
+                f"web3_reason_code was None for text: {text!r}"
+            )
+
+    @pytest.mark.asyncio
+    async def test_counterfactual_never_synthetic_error(self):
+        """#11: counterfactual_path_code is None or DecisionPathCode, never a bare string."""
+        for mode in ("disabled", "shadow", "live"):
+            config = ThesisFilterConfig(cascade_routing_enablement=mode)
+            f = ThesisFilter(config)
+            result = await f.classify("meal kit delivery startup", skip_llm=True)
+            cpc = result.counterfactual_path_code
+            assert cpc is None or isinstance(cpc, DecisionPathCode), (
+                f"mode={mode}: counterfactual_path_code={cpc!r} is not None or DecisionPathCode"
+            )
+
+    @pytest.mark.asyncio
+    async def test_snapshot_hashes_always_present(self):
+        """#12: snapshot contains all 3 sha256 keys and they are non-None strings."""
+        config = ThesisFilterConfig(cascade_routing_enablement="disabled")
+        f = ThesisFilter(config)
+        result = await f.classify("consumer brand startup", skip_llm=True)
+
+        snapshot = result.cascade_config_snapshot
+        assert snapshot is not None
+        for key in ("consumer_lexicon_sha256", "b2b_lexicon_sha256", "negative_policy_sha256"):
+            assert key in snapshot, f"Missing {key} in snapshot"
+            assert isinstance(snapshot[key], str), f"{key} is not a string"
+            assert len(snapshot[key]) > 0, f"{key} is empty"
+
+    @pytest.mark.asyncio
+    async def test_shadow_snapshot_has_extended_keys(self):
+        """#13: shadow mode snapshot has extended keys."""
+        config = ThesisFilterConfig(cascade_routing_enablement="shadow")
+        f = ThesisFilter(config)
+        result = await f.classify("consumer food delivery startup", skip_llm=True)
+
+        snapshot = result.cascade_config_snapshot
+        assert snapshot is not None
+        extended_keys = {
+            "keyword_high_threshold",
+            "keyword_low_threshold",
+            "high_boost",
+            "low_penalty",
+            "negative_keyword_penalty",
+        }
+        assert extended_keys.issubset(set(snapshot.keys())), (
+            f"Missing extended keys: {extended_keys - set(snapshot.keys())}"
+        )
+
+    # (#14 DROPPED per R2 — replaced by #9 structural assertion)
+
+    @pytest.mark.asyncio
+    async def test_domain_blacklist_reason_none_when_not_evaluated_early_web3_veto(self):
+        """#15: early web3 veto → domain_blacklist_reason_code is None (not evaluated)."""
+        config = ThesisFilterConfig(cascade_routing_enablement="disabled")
+        f = ThesisFilter(config)
+        result = await f.classify("blockchain nft marketplace", skip_llm=True)
+        assert result.routing == RoutingDecision.REJECTED
+        assert result.decision_path_code == DecisionPathCode.VETO_WEB3
+        assert result.domain_blacklist_reason_code is None
+
+    @pytest.mark.asyncio
+    async def test_to_dict_json_serializable(self):
+        """#16: to_dict() is JSON-serializable with all new enum fields populated."""
+        config = ThesisFilterConfig(cascade_routing_enablement="shadow")
+        f = ThesisFilter(config)
+        result = await f.classify(
+            "direct to consumer subscription meal kit delivery brand",
+            skip_llm=True,
+        )
+        d = result.to_dict()
+        # Must not raise
+        serialized = json.dumps(d)
+        assert isinstance(serialized, str)
+        # web3_reason_code always present in dict (R4)
+        assert "web3_reason_code" in d
+
+    # --- P1 tests ---
+
+    @pytest.mark.asyncio
+    async def test_snapshot_reproducible(self):
+        """#17: same text + config → identical snapshot dicts."""
+        config = ThesisFilterConfig(cascade_routing_enablement="disabled")
+        f = ThesisFilter(config)
+        r1 = await f.classify("organic meal kit delivery", skip_llm=True)
+        r2 = await f.classify("organic meal kit delivery", skip_llm=True)
+        assert r1.cascade_config_snapshot == r2.cascade_config_snapshot
+
+    @pytest.mark.asyncio
+    async def test_domain_blacklist_clean_when_not_blacklisted(self):
+        """#18: normal text → domain_blacklist_reason_code == CLEAN."""
+        config = ThesisFilterConfig(cascade_routing_enablement="disabled")
+        f = ThesisFilter(config)
+        result = await f.classify("organic meal kit delivery", skip_llm=True)
+        assert result.domain_blacklist_reason_code == DomainBlacklistReasonCode.CLEAN

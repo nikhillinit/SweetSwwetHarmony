@@ -248,7 +248,8 @@ def analyze(
         )
 
         # Production routing via ThesisFilter's cascade-aware router
-        routing, path_code = thesis_filter._resolve_cascade_routing(fit)
+        resolution = thesis_filter._resolve_cascade_routing(fit)
+        routing, path_code = resolution.decision, resolution.path_code
 
         # LLM eligibility: score >= skip_llm threshold
         llm_eligible = fit.score >= experiment["skip_llm_threshold_used"]
