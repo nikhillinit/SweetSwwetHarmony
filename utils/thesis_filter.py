@@ -261,7 +261,7 @@ class ThesisFilter:
     def _hash_dict(d: Any) -> str:
         """Compute SHA-256 of a dict for provenance tracking."""
         canonical = json.dumps(d, sort_keys=True, separators=(",", ":"), default=str)
-        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
     def _determine_path_code(
         self,
