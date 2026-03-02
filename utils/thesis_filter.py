@@ -65,6 +65,76 @@ class ThesisFilterConfig:
     high_boost: float = 0.08              # Confidence boost for high keyword fit
     low_penalty: float = -0.08            # Confidence penalty for low keyword fit
     negative_keyword_penalty: float = -0.12  # Extra penalty for negative keywords
+    # Phase 2 Cascade: routing parameters (Section C.2)
+    cascade_routing_enablement: str = "disabled"  # disabled / shadow / live
+    consumer_rescue_threshold: float = 0.25
+    consumer_anchor_min: int = 1
+    consumer_dominance_margin: float = 0.10
+    signal_ratio_min: float = 2.0
+
+    @classmethod
+    def from_env(cls) -> "ThesisFilterConfig":
+        """Create config from environment variables.
+
+        Reads env vars per Section C.2. Invalid values fall back to defaults
+        with warning (Section C.3 fail-safe).
+        """
+        import os
+
+        def _float_env(env_var: str, default: float) -> float:
+            val = os.environ.get(env_var)
+            if val is None:
+                return default
+            try:
+                return float(val.strip())
+            except (ValueError, TypeError):
+                logger.warning(
+                    "event=config_load_failed, invalid %s='%s', using default=%s",
+                    env_var, val, default,
+                )
+                return default
+
+        def _int_env(env_var: str, default: int) -> int:
+            val = os.environ.get(env_var)
+            if val is None:
+                return default
+            try:
+                return int(val.strip())
+            except (ValueError, TypeError):
+                logger.warning(
+                    "event=config_load_failed, invalid %s='%s', using default=%s",
+                    env_var, val, default,
+                )
+                return default
+
+        cascade_raw = os.environ.get(
+            "CASCADE_ROUTING_ENABLEMENT", "",
+        ).strip().lower()
+        if cascade_raw in ("disabled", "shadow", "live"):
+            cascade = cascade_raw
+        elif not cascade_raw:
+            cascade = "disabled"
+        else:
+            logger.warning(
+                "event=config_load_failed, applied=cascade_disabled, "
+                "reason=invalid_cascade_value, value='%s'",
+                cascade_raw,
+            )
+            cascade = "disabled"
+
+        return cls(
+            hold_threshold=_float_env("THESIS_HOLD_THRESHOLD", 0.3),
+            skip_llm_if_keyword_below=_float_env("THESIS_SKIP_LLM_BELOW", 0.2),
+            cascade_routing_enablement=cascade,
+            consumer_rescue_threshold=_float_env(
+                "THESIS_CONSUMER_RESCUE_THRESHOLD", 0.25,
+            ),
+            consumer_anchor_min=_int_env("THESIS_CONSUMER_ANCHOR_MIN", 1),
+            consumer_dominance_margin=_float_env(
+                "THESIS_CONSUMER_DOMINANCE_MARGIN", 0.10,
+            ),
+            signal_ratio_min=_float_env("THESIS_SIGNAL_RATIO_MIN", 2.0),
+        )
 
 
 @dataclass
@@ -227,6 +297,152 @@ class ThesisFilter:
 
         return DecisionPathCode.HOLD_DEFAULT
 
+    def _route_keyword_only(
+        self,
+        fit: Any,
+        *,
+        cascade_enabled: bool = False,
+    ) -> Tuple[RoutingDecision, DecisionPathCode]:
+        """Shared routing helper for keyword-only decisions (Section C.1).
+
+        Handles both legacy (cascade_enabled=False) and cascade
+        (cascade_enabled=True) routing paths in a single function.
+
+        Args:
+            fit: ThesisFit result from keyword matcher.
+            cascade_enabled: Whether cascade consumer rescue is active.
+
+        Returns:
+            (RoutingDecision, DecisionPathCode) tuple.
+        """
+        # Domain blacklist veto
+        if fit.domain_blacklisted:
+            return RoutingDecision.REJECTED, DecisionPathCode.VETO_DOMAIN_BLACKLIST
+
+        hard_reject = (
+            set(fit.trace.matched_hard_rejects) if fit.trace else set()
+        )
+        hard_hold = (
+            set(fit.trace.matched_hard_holds) if fit.trace else set()
+        )
+
+        # Hard reject = absolute veto (precedes LLM, no rescue)
+        if hard_reject:
+            return RoutingDecision.REJECTED, DecisionPathCode.VETO_HARD_REJECT
+
+        # Hard hold = never auto-qualify, route to HELD for human review
+        if hard_hold:
+            return RoutingDecision.HELD, DecisionPathCode.HOLD_HARD_HOLD
+
+        # Strong sector match
+        if fit.score >= self.config.hold_threshold:
+            return RoutingDecision.QUALIFIED, DecisionPathCode.QUALIFY_SECTOR
+
+        # Consumer rescue (ONLY when cascade enabled)
+        if not cascade_enabled:
+            # Legacy behavior
+            if fit.negative_keywords:
+                return RoutingDecision.REJECTED, DecisionPathCode.VETO_HARD_REJECT
+            return RoutingDecision.HELD, DecisionPathCode.HOLD_DEFAULT
+
+        # Cascade: consumer rescue attempt
+        has_anchor = (
+            fit.consumer_anchor_count >= self.config.consumer_anchor_min
+        )
+        dominance_ok = (
+            (fit.consumer_signal_score - fit.b2b_soft_score)
+            >= self.config.consumer_dominance_margin
+            or fit.consumer_signal_score
+            / max(fit.b2b_soft_score, 0.01)
+            >= self.config.signal_ratio_min
+        )
+
+        if (
+            fit.consumer_signal_score >= self.config.consumer_rescue_threshold
+            and has_anchor
+            and dominance_ok
+        ):
+            return (
+                RoutingDecision.QUALIFIED,
+                DecisionPathCode.QUALIFY_CONSUMER_RESCUE,
+            )
+
+        # Distinguishes "had consumer signal but B2B dominance blocked"
+        if (
+            fit.consumer_signal_score >= self.config.consumer_rescue_threshold
+            and has_anchor
+        ):
+            return RoutingDecision.HELD, DecisionPathCode.HOLD_B2B_GUARD_BLOCK
+
+        return RoutingDecision.HELD, DecisionPathCode.HOLD_DEFAULT
+
+    def _resolve_cascade_routing(
+        self,
+        keyword_fit: Any,
+    ) -> Tuple[RoutingDecision, DecisionPathCode]:
+        """Route keyword-only with cascade mode awareness.
+
+        Shadow: compute both, log counterfactual, return legacy.
+        Live: use cascade result; exception → inline legacy fallback.
+        Disabled: use legacy.
+        """
+        cascade_mode = self.config.cascade_routing_enablement
+
+        if cascade_mode == "live":
+            try:
+                return self._route_keyword_only(
+                    keyword_fit, cascade_enabled=True,
+                )
+            except Exception as e:
+                logger.warning(
+                    "event=cascade_exception, error=%s, applied=legacy_fallback",
+                    str(e),
+                )
+                # Inline legacy fallback (Section C.4)
+                if keyword_fit.negative_keywords:
+                    return (
+                        RoutingDecision.REJECTED,
+                        DecisionPathCode.HOLD_DEFAULT,
+                    )
+                if keyword_fit.score < self.config.hold_threshold:
+                    return (
+                        RoutingDecision.HELD,
+                        DecisionPathCode.HOLD_DEFAULT,
+                    )
+                return (
+                    RoutingDecision.QUALIFIED,
+                    DecisionPathCode.HOLD_DEFAULT,
+                )
+
+        if cascade_mode == "shadow":
+            legacy_routing, legacy_code = self._route_keyword_only(
+                keyword_fit, cascade_enabled=False,
+            )
+            try:
+                cascade_routing, cascade_code = self._route_keyword_only(
+                    keyword_fit, cascade_enabled=True,
+                )
+                cascade_error = False
+            except Exception:
+                cascade_routing, cascade_code = None, None
+                cascade_error = True
+
+            logger.info(
+                "cascade_counterfactual: legacy=%s/%s, cascade=%s/%s, "
+                "consumer_signal=%.4f, anchors=%d, b2b_soft=%.4f",
+                legacy_routing.value,
+                legacy_code.value,
+                cascade_routing.value if cascade_routing else "error",
+                cascade_code.value if cascade_code else "error",
+                keyword_fit.consumer_signal_score,
+                keyword_fit.consumer_anchor_count,
+                keyword_fit.b2b_soft_score,
+            )
+            return legacy_routing, legacy_code
+
+        # disabled
+        return self._route_keyword_only(keyword_fit, cascade_enabled=False)
+
     @property
     def llm_classifier(self):
         """Lazy-load LLM classifier."""
@@ -282,13 +498,8 @@ class ThesisFilter:
                 keyword_fit.negative_keywords,
             )
 
-            # Route based on keyword score alone
-            if keyword_fit.negative_keywords:
-                routing = RoutingDecision.REJECTED
-            elif keyword_fit.score < self.config.hold_threshold:
-                routing = RoutingDecision.HELD
-            else:
-                routing = RoutingDecision.QUALIFIED
+            # Phase 2: Cascade-aware routing via shared helper
+            routing, path_code = self._resolve_cascade_routing(keyword_fit)
 
             # Phase 0B-3: Extract v2_shadow from trace
             v2_shadow = None
@@ -299,8 +510,6 @@ class ThesisFilter:
             ml_shadow = None
             if keyword_fit.trace and keyword_fit.trace.ml_shadow:
                 ml_shadow = keyword_fit.trace.ml_shadow
-
-            path_code = self._determine_path_code(routing, keyword_fit)
 
             return ThesisFilterResult(
                 routing=routing,
@@ -366,14 +575,11 @@ class ThesisFilter:
                 routing = RoutingDecision.HELD
             else:
                 routing = RoutingDecision.QUALIFIED
+            # LLM determines routing; path_code reflects keyword-level context
+            path_code = self._determine_path_code(routing, keyword_fit)
         else:
-            # Fallback to keyword-only routing (LLM failed or skipped)
-            if keyword_fit.negative_keywords:
-                routing = RoutingDecision.REJECTED
-            elif keyword_fit.score < self.config.hold_threshold:
-                routing = RoutingDecision.HELD
-            else:
-                routing = RoutingDecision.QUALIFIED
+            # Fallback to cascade-aware keyword routing (LLM failed or skipped)
+            routing, path_code = self._resolve_cascade_routing(keyword_fit)
 
         # Phase 0B-3: Extract v2_shadow from trace
         v2_shadow = None
@@ -387,8 +593,6 @@ class ThesisFilter:
 
         # Phase 9: Determine if LLM was skipped (no result or None score = skipped/failed)
         llm_skipped = not llm_result or llm_result.thesis_fit_score is None
-
-        path_code = self._determine_path_code(routing, keyword_fit)
 
         return ThesisFilterResult(
             routing=routing,
