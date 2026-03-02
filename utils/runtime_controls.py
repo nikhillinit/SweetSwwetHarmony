@@ -1,13 +1,14 @@
 """
-Runtime Controls for Negative Keyword Policy v2 and ML Thesis Model.
+Runtime Controls for Negative Keyword Policy v2, ML Thesis Model, and Cascade Routing.
 
 Centralized parsing and normalization of environment variables and kwargs
-for v2 policy enablement and ML model integration. Handles:
+for v2 policy enablement, ML model integration, and cascade routing. Handles:
 - Normalization: empty/whitespace → unset, case normalization
 - Membership validation: loader_mode, enablement values
 - Invariant enforcement: shadow/live → strict, live → execution enabled
 - Legacy mapping: enable_v2_policy → v2_enablement
 - ML model enablement: disabled/shadow/live with model path
+- Cascade routing: disabled/shadow/live with phase gate enforcement (ADR-4)
 
 Bug hazards addressed:
 - #4: env var casing/whitespace/empty string pitfalls
@@ -28,6 +29,12 @@ Usage:
         ml_model_path="models/thesis_classifier.joblib",
     )
     print(controls.ml_enablement)  # "shadow"
+
+    # Cascade routing
+    controls = RuntimeControls.from_env(
+        cascade_routing_enablement="shadow",
+    )
+    print(controls.cascade_routing_enablement)  # "shadow"
 """
 
 from __future__ import annotations
@@ -35,6 +42,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -43,6 +51,10 @@ logger = logging.getLogger(__name__)
 VALID_LOADER_MODES = frozenset({"permissive", "strict"})
 VALID_ENABLEMENTS = frozenset({"disabled", "shadow", "live"})
 VALID_ML_ENABLEMENTS = frozenset({"disabled", "shadow", "live"})
+VALID_CASCADE_ENABLEMENTS = frozenset({"disabled", "shadow", "live"})
+
+# Default phase gates file path (relative to project root)
+_DEFAULT_PHASE_GATES_PATH = "config/phase_gates.yaml"
 
 # Boolean parsing values
 TRUTHY_VALUES = frozenset({"true", "1", "yes", "on"})
@@ -117,7 +129,7 @@ def _parse_bool_env(
 
 @dataclass
 class RuntimeControls:
-    """Runtime controls for v2 policy behavior and ML model integration.
+    """Runtime controls for v2 policy behavior, ML model, and cascade routing.
 
     Fields:
         policy_loader_mode: "permissive" or "strict"
@@ -125,10 +137,12 @@ class RuntimeControls:
         v2_execution_enabled: Whether v2 scoring is active
         ml_enablement: "disabled", "shadow", or "live" (ML thesis model)
         ml_model_path: Path to trained ML model file (joblib)
+        cascade_routing_enablement: "disabled", "shadow", or "live" (cascade routing)
 
     Invariants (enforced at construction):
         - enablement in {shadow, live} → loader_mode must be "strict"
         - enablement == live → v2_execution_enabled must be True
+        - cascade_routing_enablement in VALID_CASCADE_ENABLEMENTS
     """
 
     policy_loader_mode: str
@@ -136,6 +150,7 @@ class RuntimeControls:
     v2_execution_enabled: bool
     ml_enablement: str = "disabled"
     ml_model_path: Optional[str] = None
+    cascade_routing_enablement: str = "disabled"
 
     def __post_init__(self):
         """Validate membership after initialization."""
@@ -155,6 +170,11 @@ class RuntimeControls:
                 f"Invalid ml_enablement: '{self.ml_enablement}'. "
                 f"Must be one of: {sorted(VALID_ML_ENABLEMENTS)}"
             )
+        if self.cascade_routing_enablement not in VALID_CASCADE_ENABLEMENTS:
+            raise ValueError(
+                f"Invalid cascade_routing_enablement: '{self.cascade_routing_enablement}'. "
+                f"Must be one of: {sorted(VALID_CASCADE_ENABLEMENTS)}"
+            )
 
     @classmethod
     def from_env(
@@ -166,6 +186,8 @@ class RuntimeControls:
         enable_v2_policy: Optional[bool] = None,
         ml_enablement: Optional[str] = None,
         ml_model_path: Optional[str] = None,
+        cascade_routing_enablement: Optional[str] = None,
+        phase_gates_path: Optional[str] = None,
     ) -> "RuntimeControls":
         """Create RuntimeControls from kwargs and environment variables.
 
@@ -179,6 +201,12 @@ class RuntimeControls:
         1. Explicit kwargs (ml_enablement, ml_model_path)
         2. Environment variables (ML_ENABLEMENT, ML_MODEL_PATH)
         3. Defaults (disabled, None)
+
+        Cascade routing controls:
+        1. Explicit kwargs (cascade_routing_enablement)
+        2. Environment variables (CASCADE_ROUTING_ENABLEMENT)
+        3. Default: disabled
+        4. Phase gate enforcement: live requires web3_ambiguity_gate=passed
 
         Legacy mapping:
         - enable_v2_policy=True → v2_enablement="shadow"
@@ -220,15 +248,22 @@ class RuntimeControls:
         resolved_ml_enablement = cls._resolve_ml_enablement(ml_enablement)
         resolved_ml_model_path = cls._resolve_ml_model_path(ml_model_path)
 
+        # Step 6: Resolve cascade routing (with phase gate enforcement)
+        resolved_cascade = cls._resolve_cascade_routing(
+            cascade_routing_enablement=cascade_routing_enablement,
+            phase_gates_path=phase_gates_path,
+        )
+
         # Log resolved values at DEBUG level
         logger.debug(
             "RuntimeControls resolved: enablement=%s, loader_mode=%s, execution=%s, "
-            "ml_enablement=%s, ml_model_path=%s",
+            "ml_enablement=%s, ml_model_path=%s, cascade=%s",
             resolved_enablement,
             resolved_loader_mode,
             resolved_execution,
             resolved_ml_enablement,
             resolved_ml_model_path,
+            resolved_cascade,
         )
 
         return cls(
@@ -237,6 +272,7 @@ class RuntimeControls:
             v2_execution_enabled=resolved_execution,
             ml_enablement=resolved_ml_enablement,
             ml_model_path=resolved_ml_model_path,
+            cascade_routing_enablement=resolved_cascade,
         )
 
     @classmethod
@@ -457,6 +493,116 @@ class RuntimeControls:
 
         return None
 
+    @classmethod
+    def _resolve_cascade_routing(
+        cls,
+        cascade_routing_enablement: Optional[str],
+        phase_gates_path: Optional[str] = None,
+    ) -> str:
+        """Resolve cascade_routing_enablement from args, env, and phase gates.
+
+        Precedence:
+        1. Explicit kwarg
+        2. Env CASCADE_ROUTING_ENABLEMENT
+        3. Default "disabled"
+
+        Phase gate enforcement (ADR-4):
+        - If resolved to "live", check web3_ambiguity_gate in phase_gates.yaml
+        - If gate not "passed" → downgrade to "disabled" with warning
+        - Shadow mode is NOT blocked by gates (for instrumentation)
+        """
+        # 1. Explicit kwarg
+        resolved = None
+        if cascade_routing_enablement is not None:
+            normalized = _normalize_string(cascade_routing_enablement)
+            if normalized is None:
+                pass  # Fall through
+            elif normalized not in VALID_CASCADE_ENABLEMENTS:
+                raise ValueError(
+                    f"Invalid cascade_routing_enablement: '{cascade_routing_enablement}'. "
+                    f"Must be one of: {sorted(VALID_CASCADE_ENABLEMENTS)}"
+                )
+            else:
+                resolved = normalized
+
+        # 2. Env var
+        if resolved is None:
+            env_value = os.environ.get("CASCADE_ROUTING_ENABLEMENT")
+            normalized_env = _normalize_string(env_value)
+            if normalized_env is not None:
+                if normalized_env not in VALID_CASCADE_ENABLEMENTS:
+                    logger.warning(
+                        "Invalid CASCADE_ROUTING_ENABLEMENT env value: '%s'. "
+                        "Expected one of: %s. Using default 'disabled'.",
+                        env_value,
+                        sorted(VALID_CASCADE_ENABLEMENTS),
+                    )
+                else:
+                    resolved = normalized_env
+
+        # 3. Default
+        if resolved is None:
+            resolved = "disabled"
+
+        # Phase gate enforcement (only for live)
+        if resolved == "live":
+            resolved = cls._enforce_phase_gates(resolved, phase_gates_path)
+
+        return resolved
+
+    @classmethod
+    def _enforce_phase_gates(
+        cls,
+        cascade_mode: str,
+        phase_gates_path: Optional[str] = None,
+    ) -> str:
+        """Check phase gates; downgrade if gates not passed.
+
+        ADR-4: cascade=live requires web3_ambiguity_gate=passed.
+        """
+        import yaml
+
+        gates_path = phase_gates_path
+        if gates_path is None:
+            # Look for default path relative to project root
+            project_root = Path(__file__).resolve().parent.parent
+            gates_path = str(project_root / _DEFAULT_PHASE_GATES_PATH)
+
+        try:
+            gates_file = Path(gates_path)
+            if not gates_file.exists():
+                logger.warning(
+                    "event=config_load_failed, applied=cascade_disabled, "
+                    "reason=phase_gates_file_not_found, path=%s",
+                    gates_path,
+                )
+                return "disabled"
+
+            with open(gates_file) as f:
+                gates = yaml.safe_load(f) or {}
+
+            web3_gate = gates.get("web3_ambiguity_gate", {})
+            gate_status = web3_gate.get("status", "pending")
+
+            if gate_status != "passed":
+                logger.warning(
+                    "event=gate_blocked, applied=cascade_disabled, "
+                    "reason=web3_ambiguity_gate_%s, "
+                    "cascade_requested=live",
+                    gate_status,
+                )
+                return "disabled"
+
+            return cascade_mode
+
+        except Exception as e:
+            logger.warning(
+                "event=config_load_failed, applied=cascade_disabled, "
+                "reason=phase_gates_parse_error, error=%s",
+                str(e),
+            )
+            return "disabled"
+
     @property
     def is_ml_active(self) -> bool:
         """Check if ML model is active (not disabled)."""
@@ -486,3 +632,18 @@ class RuntimeControls:
     def is_live_mode(self) -> bool:
         """Check if running in live mode."""
         return self.v2_enablement == "live"
+
+    @property
+    def is_cascade_active(self) -> bool:
+        """Check if cascade routing is active (shadow or live)."""
+        return self.cascade_routing_enablement != "disabled"
+
+    @property
+    def is_cascade_shadow(self) -> bool:
+        """Check if cascade routing is in shadow mode."""
+        return self.cascade_routing_enablement == "shadow"
+
+    @property
+    def is_cascade_live(self) -> bool:
+        """Check if cascade routing is in live mode."""
+        return self.cascade_routing_enablement == "live"
