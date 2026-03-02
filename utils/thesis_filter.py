@@ -682,11 +682,16 @@ class ThesisFilter:
         # Determine routing
         # Phase 9: Handle LLM failures (thesis_fit_score=None means rate limit/error)
         resolution = None
-        if llm_result and llm_result.thesis_fit_score is not None:
+        llm_score = getattr(llm_result, "thesis_fit_score", None) if llm_result else None
+        try:
+            llm_score_f = float(llm_score) if llm_score is not None else None
+        except (TypeError, ValueError):
+            llm_score_f = None
+        if llm_result and llm_score_f is not None:
             # LLM succeeded - use LLM score for routing
-            if llm_result.category == "excluded":
+            if getattr(llm_result, "category", None) == "excluded":
                 routing = RoutingDecision.REJECTED
-            elif llm_result.thesis_fit_score < self.config.hold_threshold:
+            elif llm_score_f < self.config.hold_threshold:
                 routing = RoutingDecision.HELD
             else:
                 routing = RoutingDecision.QUALIFIED
@@ -708,7 +713,7 @@ class ThesisFilter:
             ml_shadow = keyword_fit.trace.ml_shadow
 
         # Phase 9: Determine if LLM was skipped (no result or None score = skipped/failed)
-        llm_skipped = not llm_result or llm_result.thesis_fit_score is None
+        llm_skipped = not llm_result or getattr(llm_result, "thesis_fit_score", None) is None
 
         return ThesisFilterResult(
             routing=routing,
@@ -716,9 +721,9 @@ class ThesisFilter:
             keyword_category=keyword_fit.thesis.value,
             keyword_matches=keyword_fit.matched_keywords,
             negative_keywords=keyword_fit.negative_keywords,
-            llm_score=llm_result.thesis_fit_score if llm_result else None,
-            llm_category=llm_result.category if llm_result else None,
-            llm_rationale=llm_result.rationale if llm_result else None,
+            llm_score=getattr(llm_result, "thesis_fit_score", None) if llm_result else None,
+            llm_category=getattr(llm_result, "category", None) if llm_result else None,
+            llm_rationale=getattr(llm_result, "rationale", None) if llm_result else None,
             llm_skipped=llm_skipped,
             confidence_adjustment=adjustment,
             # Phase B additions
@@ -801,7 +806,10 @@ class ThesisFilter:
         if score_value != 0.0:
             return False
 
-        rationale = (getattr(llm_result, "rationale", "") or "").lower()
+        raw_rationale = getattr(llm_result, "rationale", "") or ""
+        if not isinstance(raw_rationale, str):
+            return False
+        rationale = raw_rationale.lower()
         failure_markers = (
             "classification failed",
             "rate limit exceeded",
