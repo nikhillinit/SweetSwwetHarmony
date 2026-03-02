@@ -331,6 +331,24 @@ class TestConfidenceAdjustment:
         )
         assert adjustment == 0.0
 
+    def test_negative_keywords_override_high_boost(self, filter_instance):
+        """Negative keywords override positive boost — precedence rule."""
+        adjustment = filter_instance._calculate_adjustment(
+            keyword_score=0.8,
+            negative_keywords=["crypto"],
+        )
+        # High score would give +0.08, but negative keywords override to -0.12
+        assert adjustment == -0.12
+
+    def test_empty_negative_list_no_override(self, filter_instance):
+        """Empty negative list does NOT trigger override — same as None."""
+        adjustment = filter_instance._calculate_adjustment(
+            keyword_score=0.3,
+            negative_keywords=[],
+        )
+        # Low score without negatives → -0.08 (low_penalty), NOT -0.12
+        assert adjustment == -0.08
+
 
 class TestThesisFilterIntegration:
     """Integration tests with real keyword matcher."""
