@@ -22,7 +22,7 @@ def main() -> None:
     ap.add_argument("--reason", default=None)
     ap.add_argument("--notes", default=None)
     ap.add_argument("signal_id", type=int)
-    ap.add_argument("label", choices=["TP", "FP", "UNSURE"])
+    ap.add_argument("label", choices=["TP", "FP", "UNSURE", "ADJ"])
     args = ap.parse_args()
 
     with quality_conn(args.db) as conn:

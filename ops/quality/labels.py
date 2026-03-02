@@ -19,14 +19,14 @@ from typing import Any, Dict, Optional, Tuple
 from ops.quality.db import dumps_json, utc_now_iso
 
 
-Label = str  # 'TP'|'FP'|'UNSURE'
+Label = str  # 'TP'|'FP'|'UNSURE'|'ADJ'
 
 
 def normalize_label(label: str) -> Label:
     l = (label or "").strip().upper()
-    if l in {"TP", "FP", "UNSURE"}:
+    if l in {"TP", "FP", "UNSURE", "ADJ"}:
         return l
-    raise ValueError("label must be one of: TP, FP, UNSURE")
+    raise ValueError("label must be one of: TP, FP, UNSURE, ADJ")
 
 
 @dataclass(frozen=True)
@@ -183,15 +183,24 @@ def label_signal_manual(
     normalized = normalize_label(label)
     canonical_key = get_signal_canonical_key(conn, signal_id)
 
-    feedback_id = insert_feedback(
-        conn,
-        signal_id=signal_id,
-        label=normalized,
-        created_by=created_by,
-        reason=reason,
-        notes=notes,
-        metadata=metadata,
-    )
+    try:
+        feedback_id = insert_feedback(
+            conn,
+            signal_id=signal_id,
+            label=normalized,
+            created_by=created_by,
+            reason=reason,
+            notes=notes,
+            metadata=metadata,
+        )
+    except sqlite3.IntegrityError as exc:
+        if normalized == "ADJ" and "CHECK" in str(exc).upper():
+            raise RuntimeError(
+                "DB schema needs migration to v49 for ADJ label support. Run:\n"
+                '  python -c "import asyncio; from storage.signal_store import SignalStore; '
+                "asyncio.run(SignalStore('signals.db').initialize())\""
+            ) from exc
+        raise
 
     upsert = upsert_resolved_label(
         conn,

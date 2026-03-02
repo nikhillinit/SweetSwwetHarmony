@@ -37,7 +37,7 @@ CREATE INDEX IF NOT EXISTS idx_notion_status_events_page
 CREATE TABLE IF NOT EXISTS quality_feedback (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     signal_id INTEGER NOT NULL,
-    label TEXT CHECK(label IN ('TP', 'FP', 'UNSURE')) NOT NULL,
+    label TEXT CHECK(label IN ('TP', 'FP', 'UNSURE', 'ADJ')) NOT NULL,
     reason TEXT,
     notes TEXT,
     created_by TEXT,
@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS signal_quality_metrics (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     signal_id INTEGER NOT NULL UNIQUE,
     canonical_key TEXT NOT NULL,
-    human_label TEXT CHECK(human_label IN ('TP', 'FP', 'UNSURE')) NOT NULL,
+    human_label TEXT CHECK(human_label IN ('TP', 'FP', 'UNSURE', 'ADJ')) NOT NULL,
     label_source TEXT NOT NULL,  -- 'manual', 'notion_status_event', 'notion_snapshot', 'auto'
     labeled_by TEXT,
     labeled_at TEXT NOT NULL,    -- ISO 8601 (UTC)

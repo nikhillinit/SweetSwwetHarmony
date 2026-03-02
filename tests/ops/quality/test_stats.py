@@ -56,7 +56,7 @@ class TestOverallStats:
         conn.close()
 
     def test_overall_stats_with_labels(self, quality_db_with_signals):
-        """Stats must reflect the labels applied to signals."""
+        """Stats must reflect the labels applied to signals — fp_rate uses decided denominator."""
         db_path, _store, signal_ids = quality_db_with_signals
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
@@ -72,10 +72,38 @@ class TestOverallStats:
         stats = get_overall_stats(conn, days=30)
 
         assert stats["labeled"] == 5.0
+        assert stats["decided"] == 4.0
         assert stats["tp"] == 2.0
         assert stats["fp"] == 2.0
         assert stats["unsure"] == 1.0
-        assert stats["fp_rate"] == pytest.approx(2.0 / 5.0)
+        assert stats["adj"] == 0.0
+        assert stats["fp_rate"] == pytest.approx(2.0 / 4.0)  # fp / decided
+        assert stats["adj_rate"] == 0.0
+        assert stats["decision_rate"] == pytest.approx(4.0 / 5.0)
+        conn.close()
+
+    def test_overall_stats_adj_excluded_from_fp_rate(self, quality_db_with_signals):
+        """ADJ label must not change fp_rate; adj count and adj_rate must be correct."""
+        db_path, _store, signal_ids = quality_db_with_signals
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON;")
+
+        # Label: 2 TP, 1 FP, 1 UNSURE, 1 ADJ
+        _label_signal(conn, signal_ids[0], "domain:company0.com", "TP")
+        _label_signal(conn, signal_ids[1], "domain:company1.com", "TP")
+        _label_signal(conn, signal_ids[2], "domain:company2.com", "FP")
+        _label_signal(conn, signal_ids[3], "domain:company3.com", "UNSURE")
+        _label_signal(conn, signal_ids[4], "domain:company4.com", "ADJ")
+
+        stats = get_overall_stats(conn, days=30)
+
+        assert stats["labeled"] == 5.0
+        assert stats["decided"] == 3.0  # 2 TP + 1 FP
+        assert stats["adj"] == 1.0
+        assert stats["fp_rate"] == pytest.approx(1.0 / 3.0)  # 1 FP / 3 decided
+        assert stats["adj_rate"] == pytest.approx(1.0 / 4.0)  # 1 ADJ / (3 decided + 1 ADJ)
+        assert stats["decision_rate"] == pytest.approx(3.0 / 5.0)
         conn.close()
 
     def test_overall_stats_window_filtering(self, quality_db):
@@ -159,6 +187,8 @@ class TestStatsBySourceApi:
         assert cs.tp == 2
         assert cs.fp == 1
         assert cs.unsure == 0
+        assert cs.adj == 0
+        assert cs.decided == 3
         assert cs.fp_rate == pytest.approx(1.0 / 3.0)
         conn.close()
 
