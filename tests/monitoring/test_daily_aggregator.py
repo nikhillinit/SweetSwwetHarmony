@@ -48,7 +48,7 @@ def db():
         CREATE TABLE IF NOT EXISTS signal_quality_metrics (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             signal_id INTEGER NOT NULL UNIQUE,
-            human_label TEXT CHECK(human_label IN ('TP','FP','UNSURE')),
+            human_label TEXT CHECK(human_label IN ('TP','FP','UNSURE','ADJ')),
             labeled_at TEXT,
             label_source TEXT
         )
