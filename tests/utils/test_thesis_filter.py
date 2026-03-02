@@ -207,7 +207,8 @@ class TestThesisFilterRouting:
         )
         filter_instance._llm_classifier = mock_llm
 
-        result = await filter_instance.classify("Enterprise B2B SaaS platform")
+        # Use text with keyword score >= 0.2 so LLM is actually invoked
+        result = await filter_instance.classify("Healthy food delivery startup")
         assert result.routing == RoutingDecision.REJECTED
 
     @pytest.mark.asyncio
@@ -265,13 +266,13 @@ class TestThesisFilterRouting:
         assert result.llm_skipped is True
 
     @pytest.mark.asyncio
-    async def test_negative_keywords_with_skip_llm_rejected(self, filter_instance):
-        """Negative keywords with skip_llm should route to REJECTED."""
+    async def test_hard_hold_keywords_with_skip_llm_held(self, filter_instance):
+        """Hard-hold keywords (enterprise/b2b) route to HELD (ADR-1: 3-tier model)."""
         result = await filter_instance.classify(
             "Enterprise B2B SaaS platform for developers",
             skip_llm=True,
         )
-        assert result.routing == RoutingDecision.REJECTED
+        assert result.routing == RoutingDecision.HELD
         assert len(result.negative_keywords) > 0
 
 
@@ -360,13 +361,13 @@ class TestThesisFilterIntegration:
         assert result.keyword_category == "consumer_health_tech"
 
     @pytest.mark.asyncio
-    async def test_enterprise_saas_is_rejected_with_skip_llm(self, filter_instance):
-        """Enterprise B2B should be REJECTED."""
+    async def test_enterprise_saas_is_held_with_skip_llm(self, filter_instance):
+        """Enterprise B2B routes to HELD (ADR-1: hard_hold, not rejected)."""
         result = await filter_instance.classify(
             "Enterprise B2B SaaS platform for developers",
             skip_llm=True,
         )
-        assert result.routing == RoutingDecision.REJECTED
+        assert result.routing == RoutingDecision.HELD
         assert "enterprise" in result.negative_keywords or "b2b" in result.negative_keywords
 
     @pytest.mark.asyncio
