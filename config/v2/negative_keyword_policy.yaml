@@ -1,199 +1,281 @@
 # Negative Keyword Policy v2
 #
 # Phase 0A: Marker file (enables directory discovery)
-# Phase 0B-1: Populated with NEGATIVE_KEYWORDS (this version)
-# Phase 0B-2: ThesisMatcher scoring will read from this file
+# Phase 0B-1: Populated with NEGATIVE_KEYWORDS
+# Phase 0B-2: ThesisMatcher scoring reads from this file
+# Phase 1: 3-tier model with explicit tier field (hard_reject/hard_hold/soft)
 #
 # Schema contract:
 # - version: required (str|int|float, coerced to string)
 # - schema: required (format identifier for compatibility)
 # - negative_keywords: required (dict, can be empty)
-#   - <keyword>: dict with weight and category
+#   - <keyword>: dict with weight, category, and tier
 
-version: "1.0"
-schema: "negative_keyword_policy_v1"
-description: "Negative keyword policy (mirrors NEGATIVE_KEYWORDS until Phase 0B-2)"
+version: "2.0"
+schema: "negative_keyword_policy_v2"
+description: "Negative keyword policy with 3-tier severity model (ADR-1)"
 
 negative_keywords:
-  # B2B/Enterprise (12 keywords)
-  enterprise:
-    weight: 0.5
-    category: B2B_ENTERPRISE
-  b2b:
-    weight: 0.5
-    category: B2B_ENTERPRISE
-  saas platform:
-    weight: 0.4
-    category: B2B_ENTERPRISE
-  developer tool:
-    weight: 0.5
-    category: B2B_ENTERPRISE
-  api platform:
-    weight: 0.4
-    category: B2B_ENTERPRISE
-  api management:
-    weight: 0.5
-    category: B2B_ENTERPRISE
-  devops:
-    weight: 0.5
-    category: B2B_ENTERPRISE
-  infrastructure:
-    weight: 0.4
-    category: B2B_ENTERPRISE
-  logistics platform:
-    weight: 0.5
-    category: B2B_ENTERPRISE
-  logistics:
-    weight: 0.3
-    category: B2B_ENTERPRISE
-  data platform:
-    weight: 0.4
-    category: B2B_ENTERPRISE
-  sdk:
-    weight: 0.4
-    category: B2B_ENTERPRISE
+  # ===================================================================
+  # HARD REJECT — absolute veto, short-circuits before LLM (15 keywords)
+  # ===================================================================
 
-  # Crypto/Web3 (6 keywords)
+  # Crypto/Web3 (7 keywords — bare 'token' removed per ADR, context-qualified only)
   blockchain:
     weight: 0.5
     category: CRYPTO_WEB3
+    tier: hard_reject
   crypto:
     weight: 0.5
     category: CRYPTO_WEB3
+    tier: hard_reject
   web3:
     weight: 0.5
     category: CRYPTO_WEB3
+    tier: hard_reject
   nft:
     weight: 0.5
     category: CRYPTO_WEB3
+    tier: hard_reject
   defi:
     weight: 0.5
     category: CRYPTO_WEB3
-  token:
-    weight: 0.3
+    tier: hard_reject
+  crypto token:
+    weight: 0.5
     category: CRYPTO_WEB3
+    tier: hard_reject
+  nft token:
+    weight: 0.5
+    category: CRYPTO_WEB3
+    tier: hard_reject
 
-  # Services (3 keywords)
-  consulting:
-    weight: 0.4
-    category: SERVICES
-  agency:
-    weight: 0.4
-    category: SERVICES
-  services firm:
-    weight: 0.4
-    category: SERVICES
-
-  # Stages (4 keywords)
-  series b:
-    weight: 0.3
-    category: STAGES
+  # Late-stage — out of thesis
   series c:
     weight: 0.4
     category: STAGES
+    tier: hard_reject
   series d:
     weight: 0.5
     category: STAGES
-  aggregator:
-    weight: 0.2
-    category: STAGES
+    tier: hard_reject
 
-  # Educational (10 keywords)
+  # Template/Educational noise — not companies
   boilerplate:
     weight: 0.6
     category: EDUCATIONAL
-  starter:
-    weight: 0.5
-    category: EDUCATIONAL
+    tier: hard_reject
   template:
     weight: 0.5
     category: EDUCATIONAL
+    tier: hard_reject
   tutorial:
     weight: 0.5
     category: EDUCATIONAL
-  workshop:
-    weight: 0.4
-    category: EDUCATIONAL
-  course:
-    weight: 0.4
-    category: EDUCATIONAL
-  homework:
-    weight: 0.4
-    category: EDUCATIONAL
-  assignment:
-    weight: 0.4
-    category: EDUCATIONAL
-  example:
-    weight: 0.3
-    category: EDUCATIONAL
+    tier: hard_reject
   demo repo:
     weight: 0.5
     category: EDUCATIONAL
+    tier: hard_reject
+  homework:
+    weight: 0.4
+    category: EDUCATIONAL
+    tier: hard_reject
+  assignment:
+    weight: 0.4
+    category: EDUCATIONAL
+    tier: hard_reject
 
-  # DevTools (22 keywords)
-  cli:
-    weight: 0.4
-    category: DEVTOOLS
-  library:
-    weight: 0.4
-    category: DEVTOOLS
-  framework:
-    weight: 0.4
-    category: DEVTOOLS
-  plugin:
-    weight: 0.4
-    category: DEVTOOLS
-  linter:
+  # ===================================================================
+  # HARD HOLD — never auto-qualifies, routes to HELD (6 keywords)
+  # ===================================================================
+
+  # B2B/Enterprise — ambiguous, may have consumer overlap
+  enterprise:
     weight: 0.5
-    category: DEVTOOLS
-  log aggregation:
+    category: B2B_ENTERPRISE
+    tier: hard_hold
+  b2b:
     weight: 0.5
-    category: DEVTOOLS
-  mysql:
+    category: B2B_ENTERPRISE
+    tier: hard_hold
+  saas platform:
+    weight: 0.4
+    category: B2B_ENTERPRISE
+    tier: hard_hold
+  infrastructure:
+    weight: 0.4
+    category: B2B_ENTERPRISE
+    tier: hard_hold
+  logistics platform:
     weight: 0.5
-    category: DEVTOOLS
-  vector rendering:
-    weight: 0.4
-    category: DEVTOOLS
-  compression algorithm:
-    weight: 0.4
-    category: DEVTOOLS
-  embedded scheduler:
+    category: B2B_ENTERPRISE
+    tier: hard_hold
+
+  # Early-late overlap
+  series b:
+    weight: 0.3
+    category: STAGES
+    tier: hard_hold
+
+  # ===================================================================
+  # SOFT — score dampening only, no rejection (37 keywords)
+  # ===================================================================
+
+  # B2B/Enterprise (soft tier)
+  developer tool:
     weight: 0.5
-    category: DEVTOOLS
-  mcp server:
+    category: B2B_ENTERPRISE
+    tier: soft
+  api platform:
+    weight: 0.4
+    category: B2B_ENTERPRISE
+    tier: soft
+  api management:
     weight: 0.5
-    category: DEVTOOLS
-  password system:
-    weight: 0.4
-    category: DEVTOOLS
-  legal research:
-    weight: 0.4
-    category: DEVTOOLS
-  stock movements:
-    weight: 0.4
-    category: DEVTOOLS
-  benchmark for llms:
+    category: B2B_ENTERPRISE
+    tier: soft
+  devops:
     weight: 0.5
-    category: DEVTOOLS
-  ship python to aws:
-    weight: 0.5
-    category: DEVTOOLS
-  tabular data:
+    category: B2B_ENTERPRISE
+    tier: soft
+  logistics:
+    weight: 0.3
+    category: B2B_ENTERPRISE
+    tier: soft
+  data platform:
     weight: 0.4
-    category: DEVTOOLS
-  floor plans:
+    category: B2B_ENTERPRISE
+    tier: soft
+  sdk:
     weight: 0.4
-    category: DEVTOOLS
-  skills marketplace:
-    weight: 0.5
-    category: DEVTOOLS
-  data-centric ai:
-    weight: 0.4
-    category: DEVTOOLS
-  sentiment on ai:
-    weight: 0.4
-    category: DEVTOOLS
+    category: B2B_ENTERPRISE
+    tier: soft
   production management tool:
     weight: 0.4
     category: B2B_ENTERPRISE
+    tier: soft
+
+  # Services
+  consulting:
+    weight: 0.4
+    category: SERVICES
+    tier: soft
+  agency:
+    weight: 0.4
+    category: SERVICES
+    tier: soft
+  services firm:
+    weight: 0.4
+    category: SERVICES
+    tier: soft
+
+  # Stages (soft tier)
+  aggregator:
+    weight: 0.2
+    category: STAGES
+    tier: soft
+
+  # Educational (soft tier)
+  starter:
+    weight: 0.5
+    category: EDUCATIONAL
+    tier: soft
+  workshop:
+    weight: 0.4
+    category: EDUCATIONAL
+    tier: soft
+  course:
+    weight: 0.4
+    category: EDUCATIONAL
+    tier: soft
+  example:
+    weight: 0.3
+    category: EDUCATIONAL
+    tier: soft
+
+  # DevTools
+  cli:
+    weight: 0.4
+    category: DEVTOOLS
+    tier: soft
+  library:
+    weight: 0.4
+    category: DEVTOOLS
+    tier: soft
+  framework:
+    weight: 0.4
+    category: DEVTOOLS
+    tier: soft
+  plugin:
+    weight: 0.4
+    category: DEVTOOLS
+    tier: soft
+  linter:
+    weight: 0.5
+    category: DEVTOOLS
+    tier: soft
+  log aggregation:
+    weight: 0.5
+    category: DEVTOOLS
+    tier: soft
+  mysql:
+    weight: 0.5
+    category: DEVTOOLS
+    tier: soft
+  vector rendering:
+    weight: 0.4
+    category: DEVTOOLS
+    tier: soft
+  compression algorithm:
+    weight: 0.4
+    category: DEVTOOLS
+    tier: soft
+  embedded scheduler:
+    weight: 0.5
+    category: DEVTOOLS
+    tier: soft
+  mcp server:
+    weight: 0.5
+    category: DEVTOOLS
+    tier: soft
+  password system:
+    weight: 0.4
+    category: DEVTOOLS
+    tier: soft
+  legal research:
+    weight: 0.4
+    category: DEVTOOLS
+    tier: soft
+  stock movements:
+    weight: 0.4
+    category: DEVTOOLS
+    tier: soft
+  benchmark for llms:
+    weight: 0.5
+    category: DEVTOOLS
+    tier: soft
+  ship python to aws:
+    weight: 0.5
+    category: DEVTOOLS
+    tier: soft
+  tabular data:
+    weight: 0.4
+    category: DEVTOOLS
+    tier: soft
+  floor plans:
+    weight: 0.4
+    category: DEVTOOLS
+    tier: soft
+  skills marketplace:
+    weight: 0.5
+    category: DEVTOOLS
+    tier: soft
+  data-centric ai:
+    weight: 0.4
+    category: DEVTOOLS
+    tier: soft
+  sentiment on ai:
+    weight: 0.4
+    category: DEVTOOLS
+    tier: soft

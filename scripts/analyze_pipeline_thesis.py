@@ -1,22 +1,30 @@
 #!/usr/bin/env python3
 """
-Thesis Filter Calibration: Pipeline CSV vs Keyword Matcher.
+Thesis Filter Calibration: Pipeline CSV vs Production Routing.
 
 Runs all companies from the Notion-exported venture pipeline CSV through
-ThesisMatcher.score() (keyword-only, no LLM) to identify where the filter
-is too aggressive and would reject companies the team actually sourced.
+ThesisFilter's production routing (keyword-only, no LLM) to identify where
+the filter is too aggressive and would reject companies the team actually sourced.
+
+Phase 3: Uses ThesisFilter._resolve_cascade_routing() for parity with
+production. Includes hold-out split, expanded cascade metrics, and
+experiment mode toggle.
 
 Usage:
     python scripts/analyze_pipeline_thesis.py path/to/venture_pipeline.csv
     python scripts/analyze_pipeline_thesis.py pipeline.csv --out artifacts/thesis_calibration_report.json
+    python scripts/analyze_pipeline_thesis.py pipeline.csv --split-seed 42 --split train
+    CASCADE_ROUTING_ENABLEMENT=shadow python scripts/analyze_pipeline_thesis.py pipeline.csv
 """
 
 from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import logging
+import os
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -27,7 +35,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 import tldextract
 
-from utils.thesis_matcher import ThesisMatcher
+from utils.thesis_filter import (
+    DecisionPathCode,
+    ThesisFilter,
+    ThesisFilterConfig,
+)
+from utils.thesis_matcher import NEGATIVE_KEYWORDS, ThesisMatcher
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
@@ -38,8 +51,6 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-
-HOLD_THRESHOLD = 0.3  # Matches pipeline.py thesis_hold_threshold
 
 ACTIVE_STATUSES = {
     "Source",
@@ -68,6 +79,9 @@ _JUNK_DOMAINS = {
 
 # Offline tldextract — no network calls
 _tld_extract = tldextract.TLDExtract(suffix_list_urls=())
+
+# Hold-out split ratio (train fraction)
+_TRAIN_FRACTION = 0.70
 
 
 # ---------------------------------------------------------------------------
@@ -107,13 +121,58 @@ def _snippet(text: Optional[str], length: int = 80) -> str:
     return text[:length] + "..."
 
 
-def _classify_routing(score: float, has_negative_kw: bool) -> str:
-    """Classify a score into QUALIFIED / HELD / REJECTED."""
-    if has_negative_kw and score < HOLD_THRESHOLD:
-        return "REJECTED"
-    if score < HOLD_THRESHOLD:
-        return "HELD"
-    return "QUALIFIED"
+def _holdout_split(key: str, seed: int = 42) -> str:
+    """Deterministic hold-out split: hash key+seed → 'train' or 'eval'.
+
+    Uses SHA-256 of (seed, key) to produce a uniform [0,1) float.
+    Returns 'train' if < _TRAIN_FRACTION (0.70), else 'eval'.
+    """
+    h = hashlib.sha256(f"{seed}:{key}".encode("utf-8")).hexdigest()
+    # Use first 8 hex chars → 32-bit integer → normalise to [0,1)
+    frac = int(h[:8], 16) / 0x100000000
+    return "train" if frac < _TRAIN_FRACTION else "eval"
+
+
+def _resolve_experiment_mode() -> Dict[str, Any]:
+    """Resolve experiment mode and skip-LLM threshold.
+
+    Returns dict with experiment_mode and skip_llm_threshold_used.
+    """
+    experiment_mode = os.environ.get(
+        "THESIS_EXPERIMENT_MODE", "off"
+    ).strip().lower()
+    if experiment_mode not in ("off", "active"):
+        logger.warning(
+            "Invalid THESIS_EXPERIMENT_MODE='%s', defaulting to 'off'",
+            experiment_mode,
+        )
+        experiment_mode = "off"
+
+    # Default skip-LLM threshold
+    default_threshold = 0.2
+
+    if experiment_mode == "active":
+        raw = os.environ.get("THESIS_SKIP_LLM_EXPERIMENT_THRESHOLD")
+        if raw is not None:
+            try:
+                threshold = float(raw.strip())
+            except (ValueError, TypeError):
+                logger.warning(
+                    "Invalid THESIS_SKIP_LLM_EXPERIMENT_THRESHOLD='%s', "
+                    "using default=%s",
+                    raw,
+                    default_threshold,
+                )
+                threshold = default_threshold
+        else:
+            threshold = default_threshold
+    else:
+        threshold = default_threshold
+
+    return {
+        "experiment_mode": experiment_mode,
+        "skip_llm_threshold_used": threshold,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -140,12 +199,33 @@ def _read_csv(csv_path: Path) -> List[Dict[str, str]]:
 # ---------------------------------------------------------------------------
 
 
-def analyze(csv_path: Path) -> Dict[str, Any]:
-    """Run all CSV companies through ThesisMatcher and build the report."""
+def analyze(
+    csv_path: Path,
+    *,
+    split_seed: int = 42,
+    split: str = "all",
+) -> Dict[str, Any]:
+    """Run all CSV companies through production ThesisFilter routing.
+
+    Args:
+        csv_path: Path to the Notion-exported pipeline CSV.
+        split_seed: Seed for deterministic hold-out split.
+        split: 'all', 'train', or 'eval' — filter results to this split.
+
+    Returns:
+        Calibration report dict with summary, results, metrics, metadata.
+    """
     rows = _read_csv(csv_path)
     logger.info("Loaded %d rows from %s", len(rows), csv_path)
 
-    matcher = ThesisMatcher()
+    # Production routing: ThesisFilter with env-based config
+    config = ThesisFilterConfig.from_env()
+    thesis_filter = ThesisFilter(config=config)
+    matcher = thesis_filter._keyword_matcher
+
+    # Experiment mode
+    experiment = _resolve_experiment_mode()
+
     results: List[Dict[str, Any]] = []
 
     for row in rows:
@@ -157,13 +237,21 @@ def analyze(csv_path: Path) -> Dict[str, Any]:
         domain = _extract_domain(website)
         text = description if description else company_name
 
+        # Hold-out split assignment (uses company name as key)
+        split_label = _holdout_split(company_name, seed=split_seed)
+
+        # Keyword scoring (production matcher)
         fit = matcher.score(
             text=text,
             company_name=company_name if description else None,
             domain_name=domain,
         )
 
-        routing = _classify_routing(fit.score, bool(fit.negative_keywords))
+        # Production routing via ThesisFilter's cascade-aware router
+        routing, path_code = thesis_filter._resolve_cascade_routing(fit)
+
+        # LLM eligibility: score >= skip_llm threshold
+        llm_eligible = fit.score >= experiment["skip_llm_threshold_used"]
 
         results.append(
             {
@@ -174,19 +262,35 @@ def analyze(csv_path: Path) -> Dict[str, Any]:
                 "domain": domain,
                 "has_description": bool(description),
                 "keyword_score": round(fit.score, 4),
-                "routing": routing,
+                "routing": routing.value.upper(),
+                "decision_path_code": path_code.value,
                 "negative_keywords": list(fit.negative_keywords),
                 "matched_keywords": list(fit.matched_keywords),
                 "category": fit.thesis.value if fit.thesis else "unknown",
                 "confidence": fit.confidence,
                 "is_active": status in ACTIVE_STATUSES,
+                "consumer_signal_score": round(fit.consumer_signal_score, 4),
+                "consumer_anchor_count": fit.consumer_anchor_count,
+                "b2b_soft_score": round(fit.b2b_soft_score, 4),
+                "split": split_label,
+                "llm_eligible": llm_eligible,
             }
         )
 
-    return _build_report(results)
+    # Filter by split if requested
+    if split in ("train", "eval"):
+        results = [r for r in results if r["split"] == split]
+
+    return _build_report(results, experiment, split_seed=split_seed, split=split)
 
 
-def _build_report(results: List[Dict[str, Any]]) -> Dict[str, Any]:
+def _build_report(
+    results: List[Dict[str, Any]],
+    experiment: Dict[str, Any],
+    *,
+    split_seed: int = 42,
+    split: str = "all",
+) -> Dict[str, Any]:
     """Aggregate individual results into the calibration report."""
     total = len(results)
     has_desc = sum(1 for r in results if r["has_description"])
@@ -204,6 +308,52 @@ def _build_report(results: List[Dict[str, Any]]) -> Dict[str, Any]:
     active_held = [r for r in active if r["routing"] == "HELD"]
     active_qualified = [r for r in active if r["routing"] == "QUALIFIED"]
 
+    # Phase 3: Decision path code distribution
+    path_code_dist = Counter(r["decision_path_code"] for r in results)
+
+    # Phase 3: Cascade metrics
+    hard_veto_count = sum(
+        1 for r in results
+        if r["decision_path_code"] in (
+            DecisionPathCode.VETO_HARD_REJECT.value,
+            DecisionPathCode.VETO_WEB3.value,
+            DecisionPathCode.VETO_DOMAIN_BLACKLIST.value,
+        )
+    )
+    hard_hold_count = sum(
+        1 for r in results
+        if r["decision_path_code"] == DecisionPathCode.HOLD_HARD_HOLD.value
+    )
+    consumer_rescue_count = sum(
+        1 for r in results
+        if r["decision_path_code"] == DecisionPathCode.QUALIFY_CONSUMER_RESCUE.value
+    )
+    b2b_guard_block_count = sum(
+        1 for r in results
+        if r["decision_path_code"] == DecisionPathCode.HOLD_B2B_GUARD_BLOCK.value
+    )
+    llm_eligible_count = sum(1 for r in results if r["llm_eligible"])
+
+    # Consumer rescue dominance stats (for companies that attempted rescue)
+    rescue_attempted = [
+        r for r in results
+        if r["consumer_signal_score"] >= 0.25 and r["consumer_anchor_count"] >= 1
+    ]
+    dominance_stats = {}
+    if rescue_attempted:
+        margins = [
+            r["consumer_signal_score"] - r["b2b_soft_score"]
+            for r in rescue_attempted
+        ]
+        dominance_stats = {
+            "attempted": len(rescue_attempted),
+            "rescued": consumer_rescue_count,
+            "blocked": b2b_guard_block_count,
+            "margin_mean": round(sum(margins) / len(margins), 4),
+            "margin_min": round(min(margins), 4),
+            "margin_max": round(max(margins), 4),
+        }
+
     # Negative keyword hit aggregation
     neg_kw_hits: Dict[str, Dict[str, Any]] = defaultdict(
         lambda: {"count": 0, "companies": []}
@@ -218,9 +368,6 @@ def _build_report(results: List[Dict[str, Any]]) -> Dict[str, Any]:
                     "description_snippet": _snippet(r["description"]),
                 }
             )
-
-    # Import NEGATIVE_KEYWORDS for weights
-    from utils.thesis_matcher import NEGATIVE_KEYWORDS
 
     for kw in neg_kw_hits:
         neg_kw_hits[kw]["weight"] = NEGATIVE_KEYWORDS.get(kw, 0.0)
@@ -253,11 +400,20 @@ def _build_report(results: List[Dict[str, Any]]) -> Dict[str, Any]:
             "matched_keywords": r["matched_keywords"],
             "category": r["category"],
             "website": r["website"],
+            "decision_path_code": r["decision_path_code"],
         }
         for r in active_rejected
     ]
 
     report = {
+        "metadata": {
+            "split_seed": split_seed,
+            "split": split,
+            "cascade_routing_enablement": os.environ.get(
+                "CASCADE_ROUTING_ENABLEMENT", "disabled"
+            ),
+            **experiment,
+        },
         "summary": {
             "total": total,
             "has_description": has_desc,
@@ -275,11 +431,34 @@ def _build_report(results: List[Dict[str, Any]]) -> Dict[str, Any]:
             )
             if active
             else 0,
+            "qualified_rate_active": round(
+                len(active_qualified) / len(active) * 100, 1
+            )
+            if active
+            else 0,
+            "rejected_rate_active": round(
+                len(active_rejected) / len(active) * 100, 1
+            )
+            if active
+            else 0,
+            # Phase 3: Cascade metrics
+            "hard_veto_count": hard_veto_count,
+            "hard_hold_count": hard_hold_count,
+            "consumer_rescue_count": consumer_rescue_count,
+            "b2b_guard_block_count": b2b_guard_block_count,
+            "consumer_rescue_dominance_stats": dominance_stats,
+            "llm_call_eligible_rate": round(
+                llm_eligible_count / total * 100, 1
+            )
+            if total
+            else 0,
         },
+        "decision_path_code_distribution": dict(path_code_dist),
         "negative_keyword_hits": neg_kw_hits_sorted,
         "rejected_active_pipeline": rejected_active_list,
         "status_breakdown": dict(status_counter),
         "category_distribution": dict(category_dist),
+        "results": results,
     }
 
     return report
@@ -293,10 +472,16 @@ def _build_report(results: List[Dict[str, Any]]) -> Dict[str, Any]:
 def print_summary(report: Dict[str, Any]) -> None:
     """Print a human-readable summary to stdout."""
     s = report["summary"]
+    meta = report.get("metadata", {})
 
     print("\n" + "=" * 70)
     print("  THESIS FILTER CALIBRATION REPORT")
     print("=" * 70)
+
+    if meta:
+        print(f"\n  Cascade mode: {meta.get('cascade_routing_enablement', 'disabled')}")
+        print(f"  Experiment mode: {meta.get('experiment_mode', 'off')}")
+        print(f"  Split: {meta.get('split', 'all')} (seed={meta.get('split_seed', 42)})")
 
     print(f"\nTotal companies:           {s['total']}")
     print(f"  With description:        {s['has_description']}")
@@ -313,6 +498,27 @@ def print_summary(report: Dict[str, Any]) -> None:
     print(
         f"Rejection rate (active pipeline):  {s['rejection_rate_active_pipeline']}%"
     )
+
+    # Phase 3: Cascade metrics
+    print(f"\nCascade metrics:")
+    print(f"  Hard vetoes:              {s['hard_veto_count']}")
+    print(f"  Hard holds:               {s['hard_hold_count']}")
+    print(f"  Consumer rescues:         {s['consumer_rescue_count']}")
+    print(f"  B2B guard blocks:         {s['b2b_guard_block_count']}")
+    print(f"  LLM-eligible rate:        {s['llm_call_eligible_rate']}%")
+
+    dom_stats = s.get("consumer_rescue_dominance_stats", {})
+    if dom_stats:
+        print(f"\n  Rescue dominance stats:")
+        print(f"    Attempted: {dom_stats['attempted']}, Rescued: {dom_stats['rescued']}, Blocked: {dom_stats['blocked']}")
+        print(f"    Margin: mean={dom_stats['margin_mean']}, min={dom_stats['margin_min']}, max={dom_stats['margin_max']}")
+
+    # Decision path code distribution
+    dist = report.get("decision_path_code_distribution", {})
+    if dist:
+        print(f"\nDecision path code distribution:")
+        for code, count in sorted(dist.items(), key=lambda x: -x[1]):
+            print(f"  {code:<30} {count:>5}")
 
     # Status breakdown
     print(f"\n{'Status':<25} {'Total':>6} {'Qual':>6} {'Held':>6} {'Rej':>6}")
@@ -340,7 +546,7 @@ def print_summary(report: Dict[str, Any]) -> None:
         for r in rejected_active[:30]:
             neg = ", ".join(r["negative_keywords"]) if r["negative_keywords"] else "low score"
             print(f"  {r['company_name']:<30} [{r['status'] or '(empty)'}]")
-            print(f"    Score: {r['keyword_score']:.3f}  Neg: {neg}")
+            print(f"    Score: {r['keyword_score']:.3f}  Neg: {neg}  Path: {r['decision_path_code']}")
             if r["description"]:
                 print(f"    Desc:  {_snippet(r['description'], 60)}")
             print()
@@ -362,7 +568,7 @@ def print_summary(report: Dict[str, Any]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Thesis filter calibration: pipeline CSV vs keyword matcher"
+        description="Thesis filter calibration: pipeline CSV vs production routing"
     )
     parser.add_argument(
         "csv_path",
@@ -375,13 +581,29 @@ def main() -> None:
         default=Path("artifacts/thesis_calibration_report.json"),
         help="Output JSON report path (default: artifacts/thesis_calibration_report.json)",
     )
+    parser.add_argument(
+        "--split-seed",
+        type=int,
+        default=42,
+        help="Seed for deterministic hold-out split (default: 42)",
+    )
+    parser.add_argument(
+        "--split",
+        choices=["all", "train", "eval"],
+        default="all",
+        help="Filter results to train/eval split (default: all)",
+    )
     args = parser.parse_args()
 
     if not args.csv_path.exists():
         print(f"Error: CSV not found at {args.csv_path}", file=sys.stderr)
         sys.exit(1)
 
-    report = analyze(args.csv_path)
+    report = analyze(
+        args.csv_path,
+        split_seed=args.split_seed,
+        split=args.split,
+    )
 
     # Write JSON
     args.out.parent.mkdir(parents=True, exist_ok=True)

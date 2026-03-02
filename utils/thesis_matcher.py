@@ -35,8 +35,12 @@ Usage:
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import re
+import time
+import unicodedata
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, Dict, Iterable, List, Optional, Tuple
@@ -54,6 +58,10 @@ class ConsumerThesis(str, Enum):
     CONSUMER_HEALTH_TECH = "consumer_health_tech"
     TRAVEL_HOSPITALITY = "travel_hospitality"
     CONSUMER_MARKETPLACE = "consumer_marketplace"
+    # Phase 4a: Lexicon expansion — new consumer categories
+    CONSUMER_FINTECH = "consumer_fintech"
+    CONSUMER_SOCIAL = "consumer_social"
+    CONSUMER_GENERAL = "consumer_general"
     UNKNOWN = "unknown"
 
 
@@ -74,6 +82,12 @@ CONSUMER_KEYWORDS: Dict[ConsumerThesis, Dict[str, float]] = {
         "d2c": 0.7,
         "dtc": 0.7,
         "direct to consumer": 0.7,
+        # Phase 4a: expanded CPG keywords
+        "pet care": 0.7,
+        "pet food": 0.7,
+        "baby products": 0.7,
+        "home goods": 0.6,
+        "furniture": 0.5,
         # Medium weight - general terms
         "healthy": 0.4,
         "food": 0.4,
@@ -97,9 +111,19 @@ CONSUMER_KEYWORDS: Dict[ConsumerThesis, Dict[str, float]] = {
         "health tracker": 0.8,
         "meditation app": 0.8,
         "sleep app": 0.8,
-        "sleep tracking": 0.8,  # Added: "sleep tracking app" matches this
+        "sleep tracking": 0.8,
         "nutrition app": 0.7,
-        "personalized workout": 0.8,  # Added for fitness app specificity
+        "personalized workout": 0.8,
+        # Phase 4a: expanded health tech keywords
+        "telehealth": 0.7,
+        "telemedicine": 0.7,
+        "digital health": 0.7,
+        "health platform": 0.7,
+        "fertility": 0.5,
+        "womens health": 0.7,
+        "maternal health": 0.7,
+        "elder care": 0.6,
+        "pharmacy": 0.5,
         # Medium weight - general terms
         "fitness": 0.5,
         "workout": 0.5,
@@ -112,7 +136,9 @@ CONSUMER_KEYWORDS: Dict[ConsumerThesis, Dict[str, float]] = {
         "health app": 0.6,
         "mental health": 0.5,
         "therapy": 0.4,
-        "guided relaxation": 0.5,  # Added for meditation/sleep apps
+        "guided relaxation": 0.5,
+        "patient": 0.4,
+        "diagnostics": 0.4,
     },
     ConsumerThesis.TRAVEL_HOSPITALITY: {
         # High weight - specific travel terms
@@ -153,55 +179,132 @@ CONSUMER_KEYWORDS: Dict[ConsumerThesis, Dict[str, float]] = {
         "secondhand": 0.5,
         "rental": 0.4,
     },
+    # Phase 4a: new consumer categories
+    ConsumerThesis.CONSUMER_FINTECH: {
+        # High weight - specific consumer fintech terms
+        "budgeting app": 0.9,
+        "personal finance app": 0.9,
+        "personal finance": 0.7,
+        "payment app": 0.8,
+        "neobank": 0.8,
+        "consumer banking": 0.8,
+        "digital wallet": 0.7,
+        "money management": 0.7,
+        # Medium weight - general fintech terms
+        "fintech": 0.5,
+        "payments": 0.4,
+        "banking app": 0.6,
+        "savings app": 0.6,
+        "investing app": 0.6,
+        "insurance app": 0.6,
+        "lending platform": 0.5,
+        "credit score": 0.5,
+        "money transfer": 0.5,
+    },
+    ConsumerThesis.CONSUMER_SOCIAL: {
+        # High weight - specific consumer social terms
+        "dating app": 0.9,
+        "social network": 0.8,
+        "social media app": 0.9,
+        "messaging app": 0.8,
+        "community app": 0.8,
+        "content creator platform": 0.8,
+        # Medium weight - general social terms
+        "dating": 0.5,
+        "social media": 0.5,
+        "messaging": 0.4,
+        "social platform": 0.5,
+        "social app": 0.6,
+        "content sharing": 0.5,
+        "creator platform": 0.6,
+        "creator economy": 0.5,
+        "live streaming": 0.5,
+        "fan engagement": 0.5,
+    },
+    ConsumerThesis.CONSUMER_GENERAL: {
+        # High weight - specific consumer general terms
+        "consumer app": 0.8,
+        "consumer platform": 0.8,
+        "consumer brand": 0.8,
+        "consumer product": 0.7,
+        "lifestyle app": 0.7,
+        "family app": 0.7,
+        "parenting app": 0.7,
+        "kids app": 0.7,
+        # Medium weight - general consumer terms
+        "consumer": 0.3,
+        "mobile app": 0.3,
+        "home services": 0.5,
+        "on demand": 0.4,
+        "subscription service": 0.5,
+        "loyalty program": 0.5,
+        "rewards": 0.4,
+    },
 }
 
-# Negative signals - exclusions from thesis
-NEGATIVE_KEYWORDS: Dict[str, float] = {
-    # B2B/Enterprise
-    "enterprise": 0.5,
-    "b2b": 0.5,
-    "saas platform": 0.4,
-    "developer tool": 0.5,
-    "api platform": 0.4,
-    "api management": 0.5,
-    "devops": 0.5,
-    "infrastructure": 0.4,
-    "logistics platform": 0.5,
-    "logistics": 0.3,
-    "data platform": 0.4,
-    "sdk": 0.4,
-    # Crypto/Web3
+# =============================================================================
+# 3-TIER NEGATIVE KEYWORD MODEL (Phase 0: Cascade Instrumentation)
+# =============================================================================
+# ADR-1: hard_reject = absolute veto (crypto, template, late-stage)
+#         hard_hold = never auto-qualifies, routes to HELD (enterprise ambiguity)
+#         soft = score dampening only, no rejection
+# =============================================================================
+
+HARD_REJECT_KEYWORDS: Dict[str, float] = {
+    # Crypto/Web3 — absolute veto, short-circuits before LLM
     "blockchain": 0.5,
     "crypto": 0.5,
     "web3": 0.5,
     "nft": 0.5,
     "defi": 0.5,
-    "token": 0.3,
-    # Other exclusions
-    "consulting": 0.4,
-    "agency": 0.4,
-    "services firm": 0.4,
-    "series b": 0.3,
+    "crypto token": 0.5,
+    "nft token": 0.5,
+    # Late-stage — out of thesis
     "series c": 0.4,
     "series d": 0.5,
-    "aggregator": 0.2,
-    # Phase B: Template/Educational content (from founder_intel_canonical)
+    # Template/Educational — noise, not companies
     "boilerplate": 0.6,
-    "starter": 0.5,
     "template": 0.5,
     "tutorial": 0.5,
-    "workshop": 0.4,
-    "course": 0.4,
+    "demo repo": 0.5,
     "homework": 0.4,
     "assignment": 0.4,
-    "example": 0.3,
-    "demo repo": 0.5,
-    # Phase B: Developer tools (from founder_intel_canonical)
+}
+
+HARD_HOLD_KEYWORDS: Dict[str, float] = {
+    # B2B/Enterprise — ambiguous, may have consumer overlap; route to HELD for review
+    "enterprise": 0.5,
+    "b2b": 0.5,
+    "saas platform": 0.4,
+    "infrastructure": 0.4,
+    "logistics platform": 0.5,
+    "series b": 0.3,
+}
+
+SOFT_PENALTY_KEYWORDS: Dict[str, float] = {
+    # Developer tools — score dampening
+    "developer tool": 0.5,
+    "api platform": 0.4,
+    "api management": 0.5,
+    "devops": 0.5,
+    "logistics": 0.3,
+    "data platform": 0.4,
+    "sdk": 0.4,
     "cli": 0.4,
     "library": 0.4,
     "framework": 0.4,
     "plugin": 0.4,
     "linter": 0.5,
+    # Services/Agency
+    "consulting": 0.4,
+    "agency": 0.4,
+    "services firm": 0.4,
+    "aggregator": 0.2,
+    # Educational (softer)
+    "starter": 0.5,
+    "workshop": 0.4,
+    "course": 0.4,
+    "example": 0.3,
     # HN FP analysis (2026-03-01): B2B/dev tool patterns
     "log aggregation": 0.5,
     "mysql": 0.5,
@@ -221,6 +324,59 @@ NEGATIVE_KEYWORDS: Dict[str, float] = {
     "sentiment on ai": 0.4,
     "production management tool": 0.4,
 }
+
+# Union for backward compatibility — bare 'token' removed per ADR (context-qualified only)
+NEGATIVE_KEYWORDS: Dict[str, float] = {
+    **HARD_REJECT_KEYWORDS,
+    **HARD_HOLD_KEYWORDS,
+    **SOFT_PENALTY_KEYWORDS,
+}
+
+# =============================================================================
+# CONSUMER SIGNAL KEYWORDS — Tiered (A/M/N) with contribution caps
+# =============================================================================
+# ADR-2: Used for dominance-margin rescue in Phase 2.
+# Phase 0: Computed for instrumentation/counterfactual, no routing changes.
+# =============================================================================
+
+CONSUMER_SIGNAL_KEYWORDS: Dict[str, Dict[str, float]] = {
+    # A-tier (anchor): cap 0.70, weight 0.30-0.40
+    "A": {
+        "direct to consumer": 0.35,
+        "d2c": 0.35,
+        "dtc": 0.35,
+        "consumer app": 0.35,
+        "e-commerce": 0.30,
+        "ecommerce": 0.30,
+        "shopping": 0.30,
+        "checkout": 0.30,
+        "subscription box": 0.35,
+    },
+    # M-tier (medium): cap 0.40, weight 0.15-0.25
+    "M": {
+        "subscription": 0.20,
+        "brand": 0.15,
+        "retail": 0.20,
+        "delivery": 0.15,
+        "on-demand": 0.20,
+        "membership": 0.20,
+        "lifestyle": 0.15,
+        "waitlist": 0.15,
+    },
+    # N-tier (ambient): cap 0.15, weight 0.05-0.10
+    "N": {
+        "app": 0.08,
+        "users": 0.06,
+        "customers": 0.06,
+        "personalized": 0.08,
+        "social": 0.07,
+        "community": 0.06,
+        "download": 0.05,
+    },
+}
+
+# Tier contribution caps
+_TIER_CAPS: Dict[str, float] = {"A": 0.70, "M": 0.40, "N": 0.15}
 
 # Intent phrases that indicate commercial/consumer intent (Phase B)
 INTENT_PHRASES: Dict[str, float] = {
@@ -278,6 +434,9 @@ class ThesisFitTrace:
         'patient' (+0.35). Anti-rescue not triggered. Routed to QUALIFIED."
     """
     matched_hard_negatives: List[str] = field(default_factory=list)
+    # Phase 0 Cascade: 3-tier negative classification
+    matched_hard_rejects: List[str] = field(default_factory=list)
+    matched_hard_holds: List[str] = field(default_factory=list)
     soft_negatives: List[Tuple[str, float]] = field(default_factory=list)
     rescue_anchors_matched: Dict[str, List[str]] = field(default_factory=dict)
     rescue_blocked_by: Optional[str] = None
@@ -295,6 +454,8 @@ class ThesisFitTrace:
         """Convert trace to dictionary for serialization."""
         result = {
             "matched_hard_negatives": self.matched_hard_negatives,
+            "matched_hard_rejects": self.matched_hard_rejects,
+            "matched_hard_holds": self.matched_hard_holds,
             "soft_negatives": [{"keyword": kw, "penalty": penalty}
                               for kw, penalty in self.soft_negatives],
             "rescue_anchors_matched": self.rescue_anchors_matched,
@@ -329,6 +490,10 @@ class ThesisFit:
     domain_blacklisted: bool = False
     # Gap 9: Explainability trace
     trace: Optional[ThesisFitTrace] = None
+    # Phase 0 Cascade: Consumer signal scoring (instrumentation only)
+    consumer_signal_score: float = 0.0
+    consumer_anchor_count: int = 0
+    b2b_soft_score: float = 0.0
 
     @property
     def is_fit(self) -> bool:
@@ -348,6 +513,10 @@ class ThesisFit:
             "intent_phrases_matched": self.intent_phrases_matched,
             "domain_match": self.domain_match,
             "domain_blacklisted": self.domain_blacklisted,
+            # Phase 0 Cascade
+            "consumer_signal_score": round(self.consumer_signal_score, 4),
+            "consumer_anchor_count": self.consumer_anchor_count,
+            "b2b_soft_score": round(self.b2b_soft_score, 4),
         }
         # Gap 9: Include trace if available
         if self.trace:
@@ -589,6 +758,105 @@ class ThesisMatcher:
             domain_match=domain_match,
         )
 
+    @staticmethod
+    def _compute_consumer_signal(normalized: str) -> Tuple[float, int, List[Tuple[str, float]]]:
+        """Compute consumer signal score with tiered caps and per-keyword dedupe.
+
+        Phase 0 Cascade: Instrumentation only — does not affect routing.
+
+        Returns:
+            (consumer_signal_score, consumer_anchor_count, matched_keywords_topk)
+            where matched_keywords_topk is sorted by (weight desc, keyword asc).
+        """
+        tier_sums: Dict[str, float] = {"A": 0.0, "M": 0.0, "N": 0.0}
+        anchor_keywords: set = set()
+        all_matches: List[Tuple[str, float, str]] = []  # (keyword, weight, tier)
+
+        # Also create hyphen-normalized view for variant matching
+        hyphen_norm = normalized.replace("-", " ")
+
+        for tier_name, keywords in CONSUMER_SIGNAL_KEYWORDS.items():
+            for keyword, weight in keywords.items():
+                # Per-keyword dedupe: match at most once
+                pattern = r"\b" + re.escape(keyword) + r"\b"
+                matched = bool(re.search(pattern, normalized))
+                # Try hyphen-normalized view if not matched
+                if not matched and "-" in keyword:
+                    pattern_hn = r"\b" + re.escape(keyword.replace("-", " ")) + r"\b"
+                    matched = bool(re.search(pattern_hn, hyphen_norm))
+                if not matched:
+                    # Also try the hyphen-free form against hyphen_norm
+                    kw_no_hyphen = keyword.replace("-", " ")
+                    if kw_no_hyphen != keyword:
+                        pattern_nh = r"\b" + re.escape(kw_no_hyphen) + r"\b"
+                        matched = bool(re.search(pattern_nh, hyphen_norm))
+
+                if matched:
+                    tier_sums[tier_name] += weight
+                    all_matches.append((keyword, weight, tier_name))
+                    if tier_name == "A":
+                        anchor_keywords.add(keyword)
+
+        # Apply tier caps
+        score = min(
+            1.0,
+            min(tier_sums["A"], _TIER_CAPS["A"])
+            + min(tier_sums["M"], _TIER_CAPS["M"])
+            + min(tier_sums["N"], _TIER_CAPS["N"]),
+        )
+
+        # Top-k explainability: sort by (weight desc, keyword asc), limit 10
+        all_matches.sort(key=lambda x: (-x[1], x[0]))
+        topk = [(kw, w) for kw, w, _ in all_matches[:10]]
+
+        return score, len(anchor_keywords), topk
+
+    @staticmethod
+    def _compute_b2b_soft_score(normalized: str) -> Tuple[float, List[Tuple[str, float]]]:
+        """Compute B2B soft score — sum of matched SOFT_PENALTY_KEYWORDS weights.
+
+        Phase 0 Cascade: Instrumentation only — does not affect routing.
+
+        Returns:
+            (b2b_soft_score, matched_keywords_topk)
+        """
+        matches: List[Tuple[str, float]] = []
+        for keyword, weight in SOFT_PENALTY_KEYWORDS.items():
+            pattern = r"\b" + re.escape(keyword) + r"\b"
+            if re.search(pattern, normalized):
+                matches.append((keyword, weight))
+
+        total = sum((w for _, w in matches), 0.0)
+        # Sort by (weight desc, keyword asc) for explainability
+        matches.sort(key=lambda x: (-x[1], x[0]))
+        return total, matches[:10]
+
+    @staticmethod
+    def _classify_negative_tiers(
+        negative_matches: List[str],
+    ) -> Tuple[List[str], List[str], List[Tuple[str, float]]]:
+        """Classify matched negative keywords into hard_reject/hard_hold/soft tiers.
+
+        Returns:
+            (hard_rejects, hard_holds, soft_negatives_with_weights)
+        """
+        hard_rejects: List[str] = []
+        hard_holds: List[str] = []
+        soft_negatives: List[Tuple[str, float]] = []
+
+        for kw in negative_matches:
+            if kw in HARD_REJECT_KEYWORDS:
+                hard_rejects.append(kw)
+            elif kw in HARD_HOLD_KEYWORDS:
+                hard_holds.append(kw)
+            elif kw in SOFT_PENALTY_KEYWORDS:
+                soft_negatives.append((kw, SOFT_PENALTY_KEYWORDS[kw]))
+            else:
+                # Fallback: treat unknown negatives as soft
+                soft_negatives.append((kw, NEGATIVE_KEYWORDS.get(kw, 0.2)))
+
+        return hard_rejects, hard_holds, soft_negatives
+
     def score(
         self,
         text: str,
@@ -691,7 +959,9 @@ class ThesisMatcher:
         return self._maybe_apply_ml(fit_v2, text, company_name, domain_name)
 
     def _normalize(self, text: str) -> str:
-        normalized = re.sub(r"[-/_]", " ", text)
+        # Phase 0 Cascade: NFKC normalization for fullwidth/compatibility chars
+        normalized = unicodedata.normalize("NFKC", text)
+        normalized = re.sub(r"[-/_]", " ", normalized)
         normalized = re.sub(r"\s+", " ", normalized)
         return normalized.lower().strip()
 
@@ -883,7 +1153,18 @@ class ThesisMatcher:
         else:
             confidence = "LOW"
 
-        # Generate trace
+        # Phase 0 Cascade: Compute consumer signal and B2B soft scores
+        consumer_score, anchor_count, consumer_topk = self._compute_consumer_signal(
+            core.normalized,
+        )
+        b2b_soft, b2b_topk = self._compute_b2b_soft_score(core.normalized)
+
+        # Phase 0 Cascade: Classify negatives into tiers
+        hard_rejects, hard_holds, soft_negs = self._classify_negative_tiers(
+            penalty.matches,
+        )
+
+        # Generate trace (now with tier classification)
         trace = self._generate_trace(
             best_score=final_score,
             matched_keywords=core.matched_kws,
@@ -891,6 +1172,9 @@ class ThesisMatcher:
             intent_matches=core.intent_matches,
             domain_match=core.domain_match,
             negative_weights=negative_weights,
+            hard_rejects=hard_rejects,
+            hard_holds=hard_holds,
+            soft_negatives_classified=soft_negs,
         )
 
         return ThesisFit(
@@ -904,6 +1188,9 @@ class ThesisMatcher:
             domain_match=core.domain_match,
             domain_blacklisted=False,
             trace=trace,
+            consumer_signal_score=consumer_score,
+            consumer_anchor_count=anchor_count,
+            b2b_soft_score=b2b_soft,
         )
 
     def _attach_v2_shadow_diff(
@@ -1334,12 +1621,11 @@ class ThesisMatcher:
         domain_match: bool,
         *,
         negative_weights: Optional[Dict[str, float]] = None,
+        hard_rejects: Optional[List[str]] = None,
+        hard_holds: Optional[List[str]] = None,
+        soft_negatives_classified: Optional[List[Tuple[str, float]]] = None,
     ) -> ThesisFitTrace:
         """Generate explainability trace for thesis classification.
-
-        This is a stub implementation that captures current state.
-        Full scoring logic (rescue anchors, anti-rescue, aggregator exceptions)
-        will be implemented in Task #13.
 
         Args:
             best_score: Final thesis fit score
@@ -1348,7 +1634,9 @@ class ThesisMatcher:
             intent_matches: Intent phrases matched
             domain_match: Whether domain pattern matched
             negative_weights: Optional dict of negative keyword weights for trace.
-                If None, uses NEGATIVE_KEYWORDS (v1 behavior).
+            hard_rejects: Phase 0 Cascade: keywords classified as hard_reject
+            hard_holds: Phase 0 Cascade: keywords classified as hard_hold
+            soft_negatives_classified: Phase 0 Cascade: (keyword, weight) from soft tier
 
         Returns:
             ThesisFitTrace with explanation
@@ -1356,11 +1644,15 @@ class ThesisMatcher:
         # Use provided weights or fall back to NEGATIVE_KEYWORDS
         weights = negative_weights if negative_weights is not None else NEGATIVE_KEYWORDS
 
-        # Convert negative matches to soft negatives with penalties
-        soft_negatives = [
-            (kw, weights.get(kw, 0.2))
-            for kw in negative_matches
-        ]
+        # Phase 0 Cascade: use classified soft negatives if provided,
+        # otherwise fall back to old behavior
+        if soft_negatives_classified is not None:
+            soft_negatives = soft_negatives_classified
+        else:
+            soft_negatives = [
+                (kw, weights.get(kw, 0.2))
+                for kw in negative_matches
+            ]
 
         # Determine routing decision based on score
         if best_score >= 0.3:
@@ -1396,14 +1688,15 @@ class ThesisMatcher:
 
         explanation_parts.append(f"Routed to {routing_decision}.")
 
-        # Note: Full rescue logic will be added in Task #13
         return ThesisFitTrace(
-            matched_hard_negatives=[],  # Stub: no hard negatives yet
+            matched_hard_negatives=list(hard_rejects or []) + list(hard_holds or []),
+            matched_hard_rejects=list(hard_rejects or []),
+            matched_hard_holds=list(hard_holds or []),
             soft_negatives=soft_negatives,
-            rescue_anchors_matched={},  # Stub: rescue logic in Task #13
-            rescue_blocked_by=None,  # Stub: anti-rescue in Task #13
-            aggregator_exception_triggered=False,  # Stub: aggregator in Task #13
-            applied_ai_path=None,  # Stub: AI path detection in Task #13
+            rescue_anchors_matched={},
+            rescue_blocked_by=None,
+            aggregator_exception_triggered=False,
+            applied_ai_path=None,
             final_score=best_score,
             routing_decision=routing_decision,
             explanation=" ".join(explanation_parts),
