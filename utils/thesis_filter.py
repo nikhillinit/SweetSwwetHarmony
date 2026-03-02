@@ -55,6 +55,37 @@ class DecisionPathCode(str, Enum):
     HOLD_DEFAULT = "hold_default"
 
 
+class Web3ReasonCode(str, Enum):
+    """Typed reason code for web3/crypto detection outcome."""
+    UNAMBIGUOUS_CRYPTO = "unambiguous_crypto"
+    AMBIGUOUS_WITH_CONTEXT = "ambiguous_with_context"
+    CLEAN = "clean"
+
+
+class DomainBlacklistReasonCode(str, Enum):
+    """Typed reason code for domain blacklist evaluation."""
+    DOMAIN_ON_BLACKLIST = "domain_on_blacklist"
+    CLEAN = "clean"
+
+
+class CascadeExceptionCode(str, Enum):
+    """Exception codes for cascade routing failures."""
+    LIVE_ROUTE_EXCEPTION = "live_route_exception"
+    SHADOW_ROUTE_EXCEPTION = "shadow_route_exception"
+
+
+@dataclass(frozen=True)
+class CascadeResolution:
+    """Structured result from _resolve_cascade_routing().
+
+    Replaces Tuple[RoutingDecision, DecisionPathCode] for richer observability.
+    """
+    decision: RoutingDecision
+    path_code: DecisionPathCode
+    counterfactual_path_code: Optional[DecisionPathCode] = None
+    cascade_exception_code: Optional[CascadeExceptionCode] = None
+
+
 @dataclass
 class ThesisFilterConfig:
     """Configuration for thesis filter."""
@@ -173,6 +204,12 @@ class ThesisFilterResult:
     b2b_lexicon_sha256: Optional[str] = None
     negative_policy_sha256: Optional[str] = None
     matcher_ms: Optional[float] = None
+    # Phase 6: Observability & trace contract hardening
+    web3_reason_code: Optional[Web3ReasonCode] = None
+    domain_blacklist_reason_code: Optional[DomainBlacklistReasonCode] = None
+    counterfactual_path_code: Optional[DecisionPathCode] = None
+    cascade_exception_code: Optional[CascadeExceptionCode] = None
+    cascade_config_snapshot: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert result to dictionary."""
@@ -213,6 +250,17 @@ class ThesisFilterResult:
         # ML shadow: Only include if present
         if self.ml_shadow is not None:
             result["ml_shadow"] = self.ml_shadow
+        # Phase 6: Always emit web3_reason_code for analytics consistency
+        result["web3_reason_code"] = self.web3_reason_code.value if self.web3_reason_code else None
+        # Remaining Phase 6 fields conditional
+        if self.domain_blacklist_reason_code is not None:
+            result["domain_blacklist_reason_code"] = self.domain_blacklist_reason_code.value
+        if self.counterfactual_path_code is not None:
+            result["counterfactual_path_code"] = self.counterfactual_path_code.value
+        if self.cascade_exception_code is not None:
+            result["cascade_exception_code"] = self.cascade_exception_code.value
+        if self.cascade_config_snapshot is not None:
+            result["cascade_config_snapshot"] = self.cascade_config_snapshot
         return result
 
 
@@ -379,20 +427,24 @@ class ThesisFilter:
     def _resolve_cascade_routing(
         self,
         keyword_fit: Any,
-    ) -> Tuple[RoutingDecision, DecisionPathCode]:
+    ) -> CascadeResolution:
         """Route keyword-only with cascade mode awareness.
 
         Shadow: compute both, log counterfactual, return legacy.
         Live: use cascade result; exception → inline legacy fallback.
         Disabled: use legacy.
+
+        Returns CascadeResolution with decision, path_code, and optional
+        counterfactual_path_code / cascade_exception_code.
         """
         cascade_mode = self.config.cascade_routing_enablement
 
         if cascade_mode == "live":
             try:
-                return self._route_keyword_only(
+                decision, path_code = self._route_keyword_only(
                     keyword_fit, cascade_enabled=True,
                 )
+                return CascadeResolution(decision=decision, path_code=path_code)
             except Exception as e:
                 logger.warning(
                     "event=cascade_exception, error=%s, applied=legacy_fallback",
@@ -400,18 +452,15 @@ class ThesisFilter:
                 )
                 # Inline legacy fallback (Section C.4)
                 if keyword_fit.negative_keywords:
-                    return (
-                        RoutingDecision.REJECTED,
-                        DecisionPathCode.HOLD_DEFAULT,
-                    )
-                if keyword_fit.score < self.config.hold_threshold:
-                    return (
-                        RoutingDecision.HELD,
-                        DecisionPathCode.HOLD_DEFAULT,
-                    )
-                return (
-                    RoutingDecision.QUALIFIED,
-                    DecisionPathCode.HOLD_DEFAULT,
+                    decision = RoutingDecision.REJECTED
+                elif keyword_fit.score < self.config.hold_threshold:
+                    decision = RoutingDecision.HELD
+                else:
+                    decision = RoutingDecision.QUALIFIED
+                return CascadeResolution(
+                    decision=decision,
+                    path_code=DecisionPathCode.HOLD_DEFAULT,
+                    cascade_exception_code=CascadeExceptionCode.LIVE_ROUTE_EXCEPTION,
                 )
 
         if cascade_mode == "shadow":
@@ -419,29 +468,39 @@ class ThesisFilter:
                 keyword_fit, cascade_enabled=False,
             )
             try:
-                cascade_routing, cascade_code = self._route_keyword_only(
+                _cascade_routing, cascade_code = self._route_keyword_only(
                     keyword_fit, cascade_enabled=True,
                 )
-                cascade_error = False
+                counterfactual = cascade_code
+                exception_code = None
             except Exception:
-                cascade_routing, cascade_code = None, None
-                cascade_error = True
+                _cascade_routing, cascade_code = None, None
+                counterfactual = None
+                exception_code = CascadeExceptionCode.SHADOW_ROUTE_EXCEPTION
 
             logger.info(
                 "cascade_counterfactual: legacy=%s/%s, cascade=%s/%s, "
                 "consumer_signal=%.4f, anchors=%d, b2b_soft=%.4f",
                 legacy_routing.value,
                 legacy_code.value,
-                cascade_routing.value if cascade_routing else "error",
+                _cascade_routing.value if _cascade_routing else "error",
                 cascade_code.value if cascade_code else "error",
                 keyword_fit.consumer_signal_score,
                 keyword_fit.consumer_anchor_count,
                 keyword_fit.b2b_soft_score,
             )
-            return legacy_routing, legacy_code
+            return CascadeResolution(
+                decision=legacy_routing,
+                path_code=legacy_code,
+                counterfactual_path_code=counterfactual,
+                cascade_exception_code=exception_code,
+            )
 
         # disabled
-        return self._route_keyword_only(keyword_fit, cascade_enabled=False)
+        decision, path_code = self._route_keyword_only(
+            keyword_fit, cascade_enabled=False,
+        )
+        return CascadeResolution(decision=decision, path_code=path_code)
 
     @property
     def llm_classifier(self):
@@ -475,6 +534,43 @@ class ThesisFilter:
         """
         # Pre-check: Web3 co-occurrence detector (before keyword scoring)
         web3_result = self._web3_detector.detect(text)
+
+        # Phase 6: Compute web3_reason_code
+        if web3_result.is_crypto:
+            _w3rc = (
+                Web3ReasonCode.UNAMBIGUOUS_CRYPTO
+                if web3_result.matched_term
+                and web3_result.matched_term.lower() in Web3Detector.UNAMBIGUOUS_CRYPTO
+                else Web3ReasonCode.AMBIGUOUS_WITH_CONTEXT
+            )
+        else:
+            _w3rc = Web3ReasonCode.CLEAN
+
+        # Phase 6: Build config snapshot (once per classify call)
+        _snapshot: Dict[str, Any] = {
+            # cascade_mode_used: effective mode for THIS filter instance.
+            # Precondition: caller must pass post-gate resolved value via config.
+            # ThesisFilterConfig.from_env() reads raw env (no phase gate);
+            # pipeline.py constructs config with explicit kwarg (safe).
+            "cascade_routing_enablement": self.config.cascade_routing_enablement,
+            "cascade_mode_used": self.config.cascade_routing_enablement,
+            "hold_threshold": self.config.hold_threshold,
+            "skip_llm_if_keyword_below": self.config.skip_llm_if_keyword_below,
+            "consumer_rescue_threshold": self.config.consumer_rescue_threshold,
+            "consumer_anchor_min": self.config.consumer_anchor_min,
+            "consumer_dominance_margin": self.config.consumer_dominance_margin,
+            "signal_ratio_min": self.config.signal_ratio_min,
+            "consumer_lexicon_sha256": self._consumer_lexicon_sha256,
+            "b2b_lexicon_sha256": self._b2b_lexicon_sha256,
+            "negative_policy_sha256": self._negative_policy_sha256,
+        }
+        if self.config.cascade_routing_enablement == "shadow":
+            _snapshot["keyword_high_threshold"] = self.config.keyword_high_threshold
+            _snapshot["keyword_low_threshold"] = self.config.keyword_low_threshold
+            _snapshot["high_boost"] = self.config.high_boost
+            _snapshot["low_penalty"] = self.config.low_penalty
+            _snapshot["negative_keyword_penalty"] = self.config.negative_keyword_penalty
+
         if web3_result.is_crypto:
             return ThesisFilterResult(
                 routing=RoutingDecision.REJECTED,
@@ -484,12 +580,23 @@ class ThesisFilter:
                 consumer_lexicon_sha256=self._consumer_lexicon_sha256,
                 b2b_lexicon_sha256=self._b2b_lexicon_sha256,
                 negative_policy_sha256=self._negative_policy_sha256,
+                # Phase 6: early web3 veto
+                web3_reason_code=_w3rc,
+                domain_blacklist_reason_code=None,  # Not evaluated (early exit)
+                cascade_config_snapshot=_snapshot,
             )
 
         # Stage 1: Keyword matching (with Phase B domain support)
         t0 = time.monotonic()
         keyword_fit = self._keyword_matcher.score(text, company_name, domain_name=domain_name)
         matcher_ms = (time.monotonic() - t0) * 1000
+
+        # Phase 6: Compute domain_blacklist_reason_code
+        _dbl_rc = (
+            DomainBlacklistReasonCode.DOMAIN_ON_BLACKLIST
+            if keyword_fit.domain_blacklisted
+            else DomainBlacklistReasonCode.CLEAN
+        )
 
         # Check if we should skip LLM (obvious non-fit or explicit skip)
         if skip_llm or keyword_fit.score < self.config.skip_llm_if_keyword_below:
@@ -499,7 +606,8 @@ class ThesisFilter:
             )
 
             # Phase 2: Cascade-aware routing via shared helper
-            routing, path_code = self._resolve_cascade_routing(keyword_fit)
+            resolution = self._resolve_cascade_routing(keyword_fit)
+            routing, path_code = resolution.decision, resolution.path_code
 
             # Phase 0B-3: Extract v2_shadow from trace
             v2_shadow = None
@@ -536,6 +644,12 @@ class ThesisFilter:
                 b2b_lexicon_sha256=self._b2b_lexicon_sha256,
                 negative_policy_sha256=self._negative_policy_sha256,
                 matcher_ms=matcher_ms,
+                # Phase 6
+                web3_reason_code=_w3rc,
+                domain_blacklist_reason_code=_dbl_rc,
+                counterfactual_path_code=resolution.counterfactual_path_code,
+                cascade_exception_code=resolution.cascade_exception_code,
+                cascade_config_snapshot=_snapshot,
             )
 
         # Stage 2: LLM classification
@@ -567,6 +681,7 @@ class ThesisFilter:
 
         # Determine routing
         # Phase 9: Handle LLM failures (thesis_fit_score=None means rate limit/error)
+        resolution = None
         if llm_result and llm_result.thesis_fit_score is not None:
             # LLM succeeded - use LLM score for routing
             if llm_result.category == "excluded":
@@ -579,7 +694,8 @@ class ThesisFilter:
             path_code = self._determine_path_code(routing, keyword_fit)
         else:
             # Fallback to cascade-aware keyword routing (LLM failed or skipped)
-            routing, path_code = self._resolve_cascade_routing(keyword_fit)
+            resolution = self._resolve_cascade_routing(keyword_fit)
+            routing, path_code = resolution.decision, resolution.path_code
 
         # Phase 0B-3: Extract v2_shadow from trace
         v2_shadow = None
@@ -622,6 +738,12 @@ class ThesisFilter:
             b2b_lexicon_sha256=self._b2b_lexicon_sha256,
             negative_policy_sha256=self._negative_policy_sha256,
             matcher_ms=matcher_ms,
+            # Phase 6
+            web3_reason_code=_w3rc,
+            domain_blacklist_reason_code=_dbl_rc,
+            counterfactual_path_code=resolution.counterfactual_path_code if resolution else None,
+            cascade_exception_code=resolution.cascade_exception_code if resolution else None,
+            cascade_config_snapshot=_snapshot,
         )
 
     def _calculate_adjustment(
