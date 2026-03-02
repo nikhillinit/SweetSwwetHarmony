@@ -56,19 +56,34 @@ class ValidationResult:
     warnings: List[str] = field(default_factory=list)
 
 
+VALID_TIERS = frozenset({"hard_reject", "hard_hold", "soft"})
+
+# V1 category → tier inference mapping (approximate, v2 is authoritative)
+_V1_CATEGORY_TIER_MAP = {
+    NegativeKeywordCategory.CRYPTO_WEB3: "hard_reject",
+    NegativeKeywordCategory.STAGES: "hard_reject",
+    NegativeKeywordCategory.B2B_ENTERPRISE: "hard_hold",
+    NegativeKeywordCategory.SERVICES: "soft",
+    NegativeKeywordCategory.EDUCATIONAL: "soft",
+    NegativeKeywordCategory.DEVTOOLS: "soft",
+}
+
+
 @dataclass
 class NegativeKeywordEntry:
-    """Single keyword entry with weight and category.
+    """Single keyword entry with weight, category, and tier.
 
     Attributes:
         keyword: The negative keyword string
         weight: Penalty weight (0.0-1.0)
         category: Category grouping for the keyword
+        tier: Severity tier — hard_reject, hard_hold, or soft (default: soft)
     """
 
     keyword: str
     weight: float
     category: NegativeKeywordCategory
+    tier: str = "soft"
 
 
 @dataclass
@@ -93,6 +108,10 @@ class NegativeKeywordPolicy:
     def from_config(cls, config: dict) -> "NegativeKeywordPolicy":
         """Parse validated config dict into typed policy object.
 
+        Supports dual-read:
+        - v1 schema (negative_keyword_policy_v1): tier inferred from category
+        - v2 schema (negative_keyword_policy_v2): tier read from explicit field
+
         Args:
             config: Validated policy config dict
 
@@ -102,18 +121,31 @@ class NegativeKeywordPolicy:
         Note:
             Assumes config has been validated. Does not re-validate.
         """
+        schema = config.get("schema", "")
+        is_v2 = schema == "negative_keyword_policy_v2"
+
         keywords: Dict[str, NegativeKeywordEntry] = {}
 
         for kw, entry in config.get("negative_keywords", {}).items():
+            category = NegativeKeywordCategory(entry["category"])
+
+            if is_v2:
+                # v2: use explicit tier field
+                tier = entry.get("tier", "soft")
+            else:
+                # v1: infer tier from category
+                tier = _V1_CATEGORY_TIER_MAP.get(category, "soft")
+
             keywords[kw] = NegativeKeywordEntry(
                 keyword=kw,
                 weight=float(entry["weight"]),
-                category=NegativeKeywordCategory(entry["category"]),
+                category=category,
+                tier=tier,
             )
 
         return cls(
             version=str(config.get("version", "")),
-            schema=config.get("schema", ""),
+            schema=schema,
             keywords=keywords,
             description=config.get("description"),
         )
@@ -197,6 +229,20 @@ def validate_negative_keyword_policy(policy: dict) -> ValidationResult:
                     errors.append(
                         f"Keyword '{keyword}': invalid category '{category}'. "
                         f"Valid: {sorted(valid_categories)}"
+                    )
+
+            # Phase 1: Tier validation (v2 requires explicit tier)
+            is_v2 = policy.get("schema", "") == "negative_keyword_policy_v2"
+            if is_v2:
+                if "tier" not in entry:
+                    errors.append(
+                        f"Keyword '{keyword}': missing required field 'tier' "
+                        f"(required in v2 schema)"
+                    )
+                elif entry["tier"] not in VALID_TIERS:
+                    errors.append(
+                        f"Keyword '{keyword}': invalid tier '{entry['tier']}'. "
+                        f"Valid: {sorted(VALID_TIERS)}"
                     )
 
     return ValidationResult(

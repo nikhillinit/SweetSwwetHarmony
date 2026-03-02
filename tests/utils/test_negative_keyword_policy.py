@@ -12,8 +12,9 @@ import pytest
 from pathlib import Path
 
 
-# Expected category mapping - locks groupings for all 57 keywords
+# Expected category mapping - locks groupings for all 58 keywords
 # This is the source of truth for which category each keyword belongs to
+# Note: bare 'token' removed per ADR; context-qualified 'crypto token'/'nft token' added
 EXPECTED_CATEGORIES = {
     # B2B/Enterprise (13 keywords)
     "enterprise": "B2B_ENTERPRISE",
@@ -29,13 +30,14 @@ EXPECTED_CATEGORIES = {
     "data platform": "B2B_ENTERPRISE",
     "sdk": "B2B_ENTERPRISE",
     "production management tool": "B2B_ENTERPRISE",
-    # Crypto/Web3 (6 keywords)
+    # Crypto/Web3 (7 keywords — bare 'token' removed, context-qualified only)
     "blockchain": "CRYPTO_WEB3",
     "crypto": "CRYPTO_WEB3",
     "web3": "CRYPTO_WEB3",
     "nft": "CRYPTO_WEB3",
     "defi": "CRYPTO_WEB3",
-    "token": "CRYPTO_WEB3",
+    "crypto token": "CRYPTO_WEB3",
+    "nft token": "CRYPTO_WEB3",
     # Services (3 keywords)
     "consulting": "SERVICES",
     "agency": "SERVICES",
@@ -432,17 +434,20 @@ class TestYAMLContentCompleteness:
     def test_yaml_has_required_schema_fields(self, yaml_policy):
         """YAML must have version, schema, and negative_keywords."""
         assert yaml_policy.get("version") is not None, "Missing version"
-        assert yaml_policy.get("schema") == "negative_keyword_policy_v1", "Wrong or missing schema"
+        assert yaml_policy.get("schema") in (
+            "negative_keyword_policy_v1",
+            "negative_keyword_policy_v2",
+        ), "Wrong or missing schema"
         assert "negative_keywords" in yaml_policy, "Missing negative_keywords"
 
-    def test_keyword_count_is_57(self, yaml_policy):
-        """YAML should have exactly 57 keywords."""
+    def test_keyword_count_is_58(self, yaml_policy):
+        """YAML should have exactly 58 keywords (bare 'token' removed, crypto/nft token added)."""
         from utils.thesis_matcher import NEGATIVE_KEYWORDS
 
         yaml_count = len(yaml_policy.get("negative_keywords", {}))
         python_count = len(NEGATIVE_KEYWORDS)
 
-        assert yaml_count == 57, f"Expected 57 keywords, got {yaml_count}"
+        assert yaml_count == 58, f"Expected 58 keywords, got {yaml_count}"
         assert yaml_count == python_count, f"YAML ({yaml_count}) != Python ({python_count})"
 
 
@@ -465,9 +470,425 @@ class TestCategoryEnumCoverage:
             category_counts[category] = category_counts.get(category, 0) + 1
 
         assert category_counts["B2B_ENTERPRISE"] == 13
-        assert category_counts["CRYPTO_WEB3"] == 6
+        assert category_counts["CRYPTO_WEB3"] == 7
         assert category_counts["SERVICES"] == 3
         assert category_counts["STAGES"] == 4
         assert category_counts["EDUCATIONAL"] == 10
         assert category_counts["DEVTOOLS"] == 21
-        assert sum(category_counts.values()) == 57
+        assert sum(category_counts.values()) == 58
+
+
+# =========================================================================
+# Phase 1: 3-Tier Policy Tiering + Dual-Read (v1/v2)
+# =========================================================================
+
+# Expected tier mapping — source of truth for v2 YAML
+EXPECTED_TIERS = {
+    # hard_reject: crypto/web3, late-stage, template/educational noise
+    "blockchain": "hard_reject",
+    "crypto": "hard_reject",
+    "web3": "hard_reject",
+    "nft": "hard_reject",
+    "defi": "hard_reject",
+    "crypto token": "hard_reject",
+    "nft token": "hard_reject",
+    "series c": "hard_reject",
+    "series d": "hard_reject",
+    "boilerplate": "hard_reject",
+    "template": "hard_reject",
+    "tutorial": "hard_reject",
+    "demo repo": "hard_reject",
+    "homework": "hard_reject",
+    "assignment": "hard_reject",
+    # hard_hold: ambiguous B2B/enterprise + early-late overlap
+    "enterprise": "hard_hold",
+    "b2b": "hard_hold",
+    "saas platform": "hard_hold",
+    "infrastructure": "hard_hold",
+    "logistics platform": "hard_hold",
+    "series b": "hard_hold",
+    # soft: everything else
+    "developer tool": "soft",
+    "api platform": "soft",
+    "api management": "soft",
+    "devops": "soft",
+    "logistics": "soft",
+    "data platform": "soft",
+    "sdk": "soft",
+    "cli": "soft",
+    "library": "soft",
+    "framework": "soft",
+    "plugin": "soft",
+    "linter": "soft",
+    "consulting": "soft",
+    "agency": "soft",
+    "services firm": "soft",
+    "aggregator": "soft",
+    "starter": "soft",
+    "workshop": "soft",
+    "course": "soft",
+    "example": "soft",
+    "log aggregation": "soft",
+    "mysql": "soft",
+    "vector rendering": "soft",
+    "compression algorithm": "soft",
+    "embedded scheduler": "soft",
+    "mcp server": "soft",
+    "password system": "soft",
+    "legal research": "soft",
+    "stock movements": "soft",
+    "benchmark for llms": "soft",
+    "ship python to aws": "soft",
+    "tabular data": "soft",
+    "floor plans": "soft",
+    "skills marketplace": "soft",
+    "data-centric ai": "soft",
+    "sentiment on ai": "soft",
+    "production management tool": "soft",
+}
+
+
+class TestNegativeKeywordEntryTier:
+    """Phase 1: Test tier field on NegativeKeywordEntry."""
+
+    def test_entry_has_tier_field(self):
+        """NegativeKeywordEntry should have a tier field."""
+        from utils.negative_keyword_policy import NegativeKeywordEntry, NegativeKeywordCategory
+
+        entry = NegativeKeywordEntry(
+            keyword="blockchain",
+            weight=0.5,
+            category=NegativeKeywordCategory.CRYPTO_WEB3,
+            tier="hard_reject",
+        )
+        assert entry.tier == "hard_reject"
+
+    def test_tier_defaults_to_soft(self):
+        """Tier should default to 'soft' if not provided."""
+        from utils.negative_keyword_policy import NegativeKeywordEntry, NegativeKeywordCategory
+
+        entry = NegativeKeywordEntry(
+            keyword="cli",
+            weight=0.4,
+            category=NegativeKeywordCategory.DEVTOOLS,
+        )
+        assert entry.tier == "soft"
+
+    def test_valid_tier_values(self):
+        """Tier must be one of hard_reject, hard_hold, soft."""
+        from utils.negative_keyword_policy import NegativeKeywordEntry, NegativeKeywordCategory
+
+        for tier in ("hard_reject", "hard_hold", "soft"):
+            entry = NegativeKeywordEntry(
+                keyword="test",
+                weight=0.5,
+                category=NegativeKeywordCategory.B2B_ENTERPRISE,
+                tier=tier,
+            )
+            assert entry.tier == tier
+
+
+class TestV1TierInference:
+    """Phase 1: Test v1 schema → tier inference via from_config()."""
+
+    def test_crypto_web3_infers_hard_reject(self):
+        """CRYPTO_WEB3 category should infer tier=hard_reject in v1."""
+        from utils.negative_keyword_policy import NegativeKeywordPolicy
+
+        config = {
+            "version": "1.0",
+            "schema": "negative_keyword_policy_v1",
+            "negative_keywords": {
+                "blockchain": {"weight": 0.5, "category": "CRYPTO_WEB3"},
+            },
+        }
+        policy = NegativeKeywordPolicy.from_config(config)
+        assert policy.keywords["blockchain"].tier == "hard_reject"
+
+    def test_b2b_enterprise_infers_hard_hold(self):
+        """B2B_ENTERPRISE category should infer tier=hard_hold in v1."""
+        from utils.negative_keyword_policy import NegativeKeywordPolicy
+
+        config = {
+            "version": "1.0",
+            "schema": "negative_keyword_policy_v1",
+            "negative_keywords": {
+                "enterprise": {"weight": 0.5, "category": "B2B_ENTERPRISE"},
+            },
+        }
+        policy = NegativeKeywordPolicy.from_config(config)
+        assert policy.keywords["enterprise"].tier == "hard_hold"
+
+    def test_devtools_infers_soft(self):
+        """DEVTOOLS category should infer tier=soft in v1."""
+        from utils.negative_keyword_policy import NegativeKeywordPolicy
+
+        config = {
+            "version": "1.0",
+            "schema": "negative_keyword_policy_v1",
+            "negative_keywords": {
+                "cli": {"weight": 0.4, "category": "DEVTOOLS"},
+            },
+        }
+        policy = NegativeKeywordPolicy.from_config(config)
+        assert policy.keywords["cli"].tier == "soft"
+
+    def test_stages_infers_hard_reject(self):
+        """STAGES category should infer tier=hard_reject in v1."""
+        from utils.negative_keyword_policy import NegativeKeywordPolicy
+
+        config = {
+            "version": "1.0",
+            "schema": "negative_keyword_policy_v1",
+            "negative_keywords": {
+                "series c": {"weight": 0.4, "category": "STAGES"},
+            },
+        }
+        policy = NegativeKeywordPolicy.from_config(config)
+        assert policy.keywords["series c"].tier == "hard_reject"
+
+    def test_services_infers_soft(self):
+        """SERVICES category should infer tier=soft in v1."""
+        from utils.negative_keyword_policy import NegativeKeywordPolicy
+
+        config = {
+            "version": "1.0",
+            "schema": "negative_keyword_policy_v1",
+            "negative_keywords": {
+                "consulting": {"weight": 0.4, "category": "SERVICES"},
+            },
+        }
+        policy = NegativeKeywordPolicy.from_config(config)
+        assert policy.keywords["consulting"].tier == "soft"
+
+    def test_educational_infers_soft(self):
+        """EDUCATIONAL category should infer tier=soft in v1."""
+        from utils.negative_keyword_policy import NegativeKeywordPolicy
+
+        config = {
+            "version": "1.0",
+            "schema": "negative_keyword_policy_v1",
+            "negative_keywords": {
+                "workshop": {"weight": 0.4, "category": "EDUCATIONAL"},
+            },
+        }
+        policy = NegativeKeywordPolicy.from_config(config)
+        assert policy.keywords["workshop"].tier == "soft"
+
+
+class TestV2ExplicitTier:
+    """Phase 1: Test v2 schema requires explicit tier field."""
+
+    def test_v2_requires_explicit_tier(self):
+        """v2 schema: missing tier field should cause validation error."""
+        from utils.negative_keyword_policy import validate_negative_keyword_policy
+
+        config = {
+            "version": "2.0",
+            "schema": "negative_keyword_policy_v2",
+            "negative_keywords": {
+                "blockchain": {"weight": 0.5, "category": "CRYPTO_WEB3"},
+                # No tier field — should fail for v2
+            },
+        }
+        result = validate_negative_keyword_policy(config)
+        assert result.valid is False
+        assert any("tier" in err.lower() for err in result.errors)
+
+    def test_v2_with_explicit_tier_passes(self):
+        """v2 schema: keyword with explicit tier should pass."""
+        from utils.negative_keyword_policy import validate_negative_keyword_policy
+
+        config = {
+            "version": "2.0",
+            "schema": "negative_keyword_policy_v2",
+            "negative_keywords": {
+                "blockchain": {
+                    "weight": 0.5,
+                    "category": "CRYPTO_WEB3",
+                    "tier": "hard_reject",
+                },
+            },
+        }
+        result = validate_negative_keyword_policy(config)
+        assert result.valid is True
+
+    def test_v2_invalid_tier_value_fails(self):
+        """v2 schema: invalid tier value should fail."""
+        from utils.negative_keyword_policy import validate_negative_keyword_policy
+
+        config = {
+            "version": "2.0",
+            "schema": "negative_keyword_policy_v2",
+            "negative_keywords": {
+                "blockchain": {
+                    "weight": 0.5,
+                    "category": "CRYPTO_WEB3",
+                    "tier": "ultra_reject",  # invalid
+                },
+            },
+        }
+        result = validate_negative_keyword_policy(config)
+        assert result.valid is False
+        assert any("tier" in err.lower() for err in result.errors)
+
+    def test_v2_from_config_uses_explicit_tier(self):
+        """v2 from_config should use explicit tier, not inference."""
+        from utils.negative_keyword_policy import NegativeKeywordPolicy
+
+        config = {
+            "version": "2.0",
+            "schema": "negative_keyword_policy_v2",
+            "negative_keywords": {
+                "blockchain": {
+                    "weight": 0.5,
+                    "category": "CRYPTO_WEB3",
+                    "tier": "hard_reject",
+                },
+                "enterprise": {
+                    "weight": 0.5,
+                    "category": "B2B_ENTERPRISE",
+                    "tier": "hard_hold",
+                },
+                "cli": {
+                    "weight": 0.4,
+                    "category": "DEVTOOLS",
+                    "tier": "soft",
+                },
+            },
+        }
+        policy = NegativeKeywordPolicy.from_config(config)
+        assert policy.keywords["blockchain"].tier == "hard_reject"
+        assert policy.keywords["enterprise"].tier == "hard_hold"
+        assert policy.keywords["cli"].tier == "soft"
+
+
+class TestV1V2Roundtrip:
+    """Phase 1: v1→v2 tier inference follows category-level mapping."""
+
+    def test_v1_inferred_tiers_follow_category_map(self):
+        """Load v1 config, verify tiers follow _V1_CATEGORY_TIER_MAP.
+
+        V1 inference is category-level (approximate). V2 YAML has exact per-keyword
+        tiers tested in TestYAMLV2Tiers.
+        """
+        from utils.negative_keyword_policy import (
+            NegativeKeywordPolicy,
+            _V1_CATEGORY_TIER_MAP,
+            NegativeKeywordCategory,
+        )
+
+        config = {
+            "version": "1.0",
+            "schema": "negative_keyword_policy_v1",
+            "negative_keywords": {},
+        }
+        for keyword, category in EXPECTED_CATEGORIES.items():
+            config["negative_keywords"][keyword] = {
+                "weight": 0.5,
+                "category": category,
+            }
+
+        policy = NegativeKeywordPolicy.from_config(config)
+
+        for keyword, entry in policy.keywords.items():
+            expected_tier = _V1_CATEGORY_TIER_MAP.get(entry.category, "soft")
+            assert entry.tier == expected_tier, (
+                f"V1 inference mismatch for '{keyword}' (category={entry.category.value}): "
+                f"got '{entry.tier}', expected '{expected_tier}' from category map"
+            )
+
+    def test_v1_v2_divergence_documented(self):
+        """Document known divergences between v1 inference and v2 explicit tiers.
+
+        V1 inference is lossy: categories with mixed tiers (EDUCATIONAL, STAGES)
+        cannot be perfectly inferred. V2 YAML is authoritative.
+        """
+        from utils.negative_keyword_policy import (
+            _V1_CATEGORY_TIER_MAP,
+            NegativeKeywordCategory,
+        )
+
+        # These keywords have different tier in v2 vs what v1 would infer
+        known_divergences = {
+            # EDUCATIONAL → soft (v1), but some are hard_reject (v2)
+            "boilerplate": ("soft", "hard_reject"),
+            "template": ("soft", "hard_reject"),
+            "tutorial": ("soft", "hard_reject"),
+            "demo repo": ("soft", "hard_reject"),
+            "homework": ("soft", "hard_reject"),
+            "assignment": ("soft", "hard_reject"),
+            # STAGES → hard_reject (v1), but series b is hard_hold (v2)
+            "series b": ("hard_reject", "hard_hold"),
+        }
+
+        for keyword, (v1_inferred, v2_explicit) in known_divergences.items():
+            category = EXPECTED_CATEGORIES[keyword]
+            cat_enum = NegativeKeywordCategory(category)
+            assert _V1_CATEGORY_TIER_MAP[cat_enum] == v1_inferred
+            assert EXPECTED_TIERS[keyword] == v2_explicit
+            assert v1_inferred != v2_explicit  # Confirms divergence
+
+
+class TestYAMLV2Tiers:
+    """Phase 1: Test that v2 YAML has correct tiers for all keywords."""
+
+    @pytest.fixture
+    def yaml_policy(self):
+        """Load the actual YAML policy file."""
+        import yaml
+
+        policy_path = Path(__file__).parent.parent.parent / "config" / "v2" / "negative_keyword_policy.yaml"
+        with open(policy_path) as f:
+            return yaml.safe_load(f)
+
+    def test_yaml_is_v2(self, yaml_policy):
+        """YAML should be version 2.0 with v2 schema."""
+        assert yaml_policy.get("version") == "2.0"
+        assert yaml_policy.get("schema") == "negative_keyword_policy_v2"
+
+    def test_yaml_tiers_match_expected(self, yaml_policy):
+        """All YAML keywords should have correct tier values."""
+        yaml_keywords = yaml_policy.get("negative_keywords", {})
+
+        for keyword, expected_tier in EXPECTED_TIERS.items():
+            entry = yaml_keywords.get(keyword)
+            assert entry is not None, f"Missing keyword in YAML: {keyword}"
+            actual_tier = entry.get("tier")
+            assert actual_tier == expected_tier, (
+                f"Tier mismatch for '{keyword}': YAML has '{actual_tier}', expected '{expected_tier}'"
+            )
+
+    def test_yaml_tiers_match_python_dicts(self, yaml_policy):
+        """YAML tiers should agree with Python HARD_REJECT/HARD_HOLD/SOFT dicts."""
+        from utils.thesis_matcher import HARD_REJECT_KEYWORDS, HARD_HOLD_KEYWORDS, SOFT_PENALTY_KEYWORDS
+
+        yaml_keywords = yaml_policy.get("negative_keywords", {})
+
+        for keyword in HARD_REJECT_KEYWORDS:
+            entry = yaml_keywords.get(keyword)
+            assert entry is not None, f"Missing in YAML: {keyword}"
+            assert entry.get("tier") == "hard_reject", (
+                f"'{keyword}' is HARD_REJECT in Python but tier='{entry.get('tier')}' in YAML"
+            )
+
+        for keyword in HARD_HOLD_KEYWORDS:
+            entry = yaml_keywords.get(keyword)
+            assert entry is not None, f"Missing in YAML: {keyword}"
+            assert entry.get("tier") == "hard_hold", (
+                f"'{keyword}' is HARD_HOLD in Python but tier='{entry.get('tier')}' in YAML"
+            )
+
+        for keyword in SOFT_PENALTY_KEYWORDS:
+            entry = yaml_keywords.get(keyword)
+            assert entry is not None, f"Missing in YAML: {keyword}"
+            assert entry.get("tier") == "soft", (
+                f"'{keyword}' is SOFT_PENALTY in Python but tier='{entry.get('tier')}' in YAML"
+            )
+
+    def test_yaml_validates_as_v2(self, yaml_policy):
+        """YAML should pass v2 validation (including tier field check)."""
+        from utils.negative_keyword_policy import validate_negative_keyword_policy
+
+        result = validate_negative_keyword_policy(yaml_policy)
+        assert result.valid is True, f"Validation errors: {result.errors}"

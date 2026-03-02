@@ -1,0 +1,22 @@
+# Phase Gates — code-enforced prerequisites for feature activation.
+#
+# ADR-4: Prevents accidental CASCADE_ROUTING_ENABLEMENT=live before prerequisites
+# are validated. Gate status checked at config load time.
+#
+# Gate lifecycle:
+#   pending → passed (with timestamp)  or  pending → failed (manual, with reason)
+#
+# Rules:
+# - If a gate is "pending" or "failed", its blocking_for features are force-disabled.
+# - Only "passed" allows the feature to go live.
+
+web3_ambiguity_gate:
+  status: pending        # pending | passed | failed
+  passed_at: null
+  description: "Validate that context-qualified token handling doesn't create false vetoes"
+  blocking_for:
+    - "CASCADE_ROUTING_ENABLEMENT=live"
+  criteria:
+    - "Sample 200 recent signals with web3_precheck_fired=True"
+    - "False-veto rate <= 1% (<=2/200)"
+    - "Zero failures in synthetic BtC/B2C collision tests"
