@@ -182,7 +182,7 @@ class TestCheckConstraints:
     """CHECK constraints on label columns."""
 
     def test_label_check_constraint(self, tmp_path):
-        """quality_feedback.label must be one of TP, FP, UNSURE."""
+        """quality_feedback.label must be one of TP, FP, UNSURE, ADJ."""
         conn = _setup_db(str(tmp_path / "chk_label.db"))
         conn.executescript(QUALITY_TABLES_DDL)
         conn.commit()
@@ -199,7 +199,7 @@ class TestCheckConstraints:
             )
 
     def test_human_label_check_constraint(self, tmp_path):
-        """signal_quality_metrics.human_label must be one of TP, FP, UNSURE."""
+        """signal_quality_metrics.human_label must be one of TP, FP, UNSURE, ADJ."""
         conn = _setup_db(str(tmp_path / "chk_hl.db"))
         conn.executescript(QUALITY_TABLES_DDL)
         conn.commit()
@@ -215,6 +215,49 @@ class TestCheckConstraints:
                 """,
                 (sig_id, _utc_iso()),
             )
+
+
+    def test_adj_label_accepted(self, tmp_path):
+        """ADJ must be accepted by quality_feedback CHECK constraint."""
+        conn = _setup_db(str(tmp_path / "chk_adj.db"))
+        conn.executescript(QUALITY_TABLES_DDL)
+        conn.commit()
+
+        sig_id = _insert_signal(conn, canonical_key="domain:adj.com")
+
+        # Should not raise
+        conn.execute(
+            """
+            INSERT INTO quality_feedback (signal_id, label, created_at)
+            VALUES (?, 'ADJ', ?)
+            """,
+            (sig_id, _utc_iso()),
+        )
+        conn.commit()
+        row = conn.execute("SELECT label FROM quality_feedback WHERE signal_id = ?", (sig_id,)).fetchone()
+        assert row["label"] == "ADJ"
+        conn.close()
+
+    def test_adj_human_label_accepted(self, tmp_path):
+        """ADJ must be accepted by signal_quality_metrics CHECK constraint."""
+        conn = _setup_db(str(tmp_path / "chk_adj_hl.db"))
+        conn.executescript(QUALITY_TABLES_DDL)
+        conn.commit()
+
+        sig_id = _insert_signal(conn, canonical_key="domain:adj2.com")
+
+        conn.execute(
+            """
+            INSERT INTO signal_quality_metrics
+                (signal_id, canonical_key, human_label, label_source, labeled_at)
+            VALUES (?, 'domain:adj2.com', 'ADJ', 'manual', ?)
+            """,
+            (sig_id, _utc_iso()),
+        )
+        conn.commit()
+        row = conn.execute("SELECT human_label FROM signal_quality_metrics WHERE signal_id = ?", (sig_id,)).fetchone()
+        assert row["human_label"] == "ADJ"
+        conn.close()
 
 
 if __name__ == "__main__":
