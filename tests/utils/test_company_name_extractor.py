@@ -70,6 +70,12 @@ class TestExtractViaRegex:
         assert result is not None
         assert "Calm" in result
 
+    def test_startup_prefix_rejects_editorial_phrase(self):
+        result = extract_via_regex(
+            "5 Startup Lessons That Helped Wonderbelly Scale to 8 Figures"
+        )
+        assert result is None
+
     def test_brand_prefix_pattern(self):
         result = extract_via_regex("Beauty brand Glossier launches new skincare line")
         assert result is not None
@@ -270,6 +276,17 @@ class TestModeIsolation:
         assert result.company_name == "Acme"
         assert result.company_name_method == "regex"
         assert "acme.ai" in result.candidate_domains
+
+    @patch("utils.company_name_extractor.extract_via_ner", return_value="Wonderbelly")
+    def test_ner_active_falls_back_when_startup_prefix_rejected(self, mock_extract_ner):
+        result = extract_company_info(
+            title="5 Startup Lessons That Helped Wonderbelly Scale to 8 Figures",
+            description="",
+            mode="ner_active",
+        )
+        assert result.company_name == "Wonderbelly"
+        assert result.company_name_method == "ner"
+        mock_extract_ner.assert_called_once()
 
     def test_baseline_identical_to_pre_refactor(self, monkeypatch):
         """Baseline mode produces same result as just calling extract_via_regex."""

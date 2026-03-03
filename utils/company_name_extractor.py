@@ -131,6 +131,12 @@ _NON_ENTITY_PREFIXES = frozenset({
     "all", "many", "some", "few", "every",
 })
 
+# Startup-prefix-specific editorial tokens that are often headline fragments,
+# not company names (e.g., "startup Lessons That Helped ...").
+_STARTUP_PREFIX_EDITORIAL_TOKENS = frozenset({
+    "lessons", "trends", "tips",
+})
+
 
 def _is_valid_company_candidate(name: str) -> bool:
     """Reject regex matches that are structurally unlikely to be company names."""
@@ -143,6 +149,14 @@ def _is_valid_company_candidate(name: str) -> bool:
     if tokens[-1].lower() in {"for", "of", "and", "&"}:
         return False
     return True
+
+
+def _is_valid_startup_prefix_candidate(name: str) -> bool:
+    """Extra guard for Group 5 startup-prefix captures."""
+    tokens = name.split()
+    if not tokens:
+        return False
+    return tokens[0].lower() not in _STARTUP_PREFIX_EDITORIAL_TOKENS
 
 
 def extract_via_regex(title: str) -> Optional[str]:
@@ -196,18 +210,21 @@ def extract_via_regex(title: str) -> Optional[str]:
     ]
 
     # Try each group in priority order
-    for patterns in [
-        single_word_patterns,
-        multi_word_patterns,
-        mid_sentence_patterns,
-        quoted_patterns,
-        startup_prefix_patterns,
-        appositive_patterns,
-    ]:
+    pattern_groups = [
+        ("single_word", single_word_patterns),
+        ("multi_word", multi_word_patterns),
+        ("mid_sentence", mid_sentence_patterns),
+        ("quoted", quoted_patterns),
+        ("startup_prefix", startup_prefix_patterns),
+        ("appositive", appositive_patterns),
+    ]
+    for group_name, patterns in pattern_groups:
         for pattern in patterns:
             match = re.search(pattern, title)
             if match:
                 company = match.group(1).strip()
+                if group_name == "startup_prefix" and not _is_valid_startup_prefix_candidate(company):
+                    continue
                 if (company.lower() not in _COMMON_WORDS
                         and len(company) >= 2
                         and _is_valid_company_candidate(company)):
