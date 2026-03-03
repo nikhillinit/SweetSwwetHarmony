@@ -118,7 +118,7 @@ LEGAL_SUFFIXES: frozenset[str] = frozenset({
 _COMMON_WORDS = frozenset({"the", "a", "an", "this", "new", "how", "why", "what", "when"})
 
 # Verb alternation (case-insensitive via inline flag)
-_VERBS = r"(?i:raises|raised|announces|announced|launches|launched|unveils|unveil|secures|secured|closes|closed|wins|won|makes|debuts|expands|expanded|partners|partnered|reports|reported|acquires|acquired|introduces|introduced|enters|entered|appoints|appointed|files|filed|completes|completed|signs|signed|reveal|reveals|revealed)"
+_VERBS = r"(?i:raises|raised|announces|announced|launches|launched|unveils|unveil|secures|secured|closes|closed|wins|won|makes|debuts|expands|expanded|partners|partnered|reports|reported|acquires|acquired|introduces|introduced|enters|entered|appoints|appointed|files|filed|completes|completed|signs|signed|reveal|reveals|revealed|celebrates|celebrated|achieves|achieved|hits|reaches|reached|grows|grew|opens|opened|hires|hired|selects|selected|marks|marked|surpasses|surpassed)"
 
 # Strong token: starts uppercase, may contain apostrophe/ampersand
 _STRONG_TOKEN = r"[A-Z][a-zA-Z0-9'&]*"
@@ -174,7 +174,10 @@ def extract_via_regex(title: str) -> Optional[str]:
 
     # Group 3: "backs X" / "invests in X" patterns (company in middle)
     mid_sentence_patterns = [
+        # Original pattern (unchanged — backward compat)
         r"(?i:backs|invests\s+in)\s+([A-Z][a-zA-Z0-9]+(?:\s+[A-Z][a-zA-Z0-9]*){0,2}?)(?:\s+in\b|\s+with\b|\s*,|\s*$)",
+        # NEW: Allow 1-3 lowercase descriptor words before company name
+        r"(?i:backs|invests\s+in|funds|supports)\s+(?:[a-z][\w-]*\s+){1,3}([A-Z][a-zA-Z0-9/]+(?:\s+[A-Z][a-zA-Z0-9/]*)?)(?:\s+in\b|\s+with\b|\s*,|\s*$)",
     ]
 
     # Group 4: Quoted company names
@@ -187,6 +190,11 @@ def extract_via_regex(title: str) -> Optional[str]:
         rf"(?i:startup|company|brand|firm)\s+([A-Z][a-zA-Z0-9]+(?:\s+[A-Z][a-zA-Z0-9]*){{0,2}}?)\s+{_VERBS}",
     ]
 
+    # Group 6: Appositive "X, a/an/the [descriptor]" pattern
+    appositive_patterns = [
+        r"^([A-Z][a-zA-Z0-9'&]+(?:\s+[A-Z][a-zA-Z0-9]*){0,2}?),\s+(?:a|an|the)\s+",
+    ]
+
     # Try each group in priority order
     for patterns in [
         single_word_patterns,
@@ -194,6 +202,7 @@ def extract_via_regex(title: str) -> Optional[str]:
         mid_sentence_patterns,
         quoted_patterns,
         startup_prefix_patterns,
+        appositive_patterns,
     ]:
         for pattern in patterns:
             match = re.search(pattern, title)
@@ -369,6 +378,56 @@ def score_and_promote_domain(
 
 _nlp = None  # Lazy-loaded singleton
 
+# Stopwords for NER entity scoring — penalize entities containing editorial words
+_NER_STOPWORDS = frozenset({
+    "that", "of", "led", "based", "community", "growth", "team",
+    "group", "board", "committee", "project", "initiative", "report",
+    "lessons", "trends", "market", "industry",
+})
+
+
+def _score_ner_entity(ent_text: str, ent_start_char: int, text_length: int) -> float:
+    """Score an ORG entity for company-name likelihood (higher = better).
+
+    Factors:
+    - Position: earlier in text = higher (0.0-0.4)
+    - Length: 1-3 tokens = 0.3, 4 tokens = 0.15, 5+ = 0.0
+    - Stopwords: -0.5 penalty if entity contains editorial stopwords
+    - Title case: +0.2 bonus if all tokens start uppercase
+    """
+    score = 0.0
+    tokens = ent_text.split()
+
+    # Position score (earlier = better)
+    if text_length > 0:
+        relative_pos = ent_start_char / text_length
+        if relative_pos <= 0.2:
+            score += 0.4
+        elif relative_pos <= 0.5:
+            score += 0.2
+        elif relative_pos <= 0.8:
+            score += 0.1
+        # else: 0.0
+
+    # Length score (short names are more likely to be real company names)
+    n_tokens = len(tokens)
+    if 1 <= n_tokens <= 3:
+        score += 0.3
+    elif n_tokens == 4:
+        score += 0.15
+    # 5+ tokens: 0.0
+
+    # Stopword penalty
+    token_lowers = {t.lower() for t in tokens}
+    if token_lowers & _NER_STOPWORDS:
+        score -= 0.5
+
+    # Title case bonus
+    if all(t[0].isupper() for t in tokens if t):
+        score += 0.2
+
+    return score
+
 
 def warmup_ner() -> bool:
     """
@@ -402,8 +461,8 @@ def extract_via_ner(
     """
     Extract company name via spaCy NER (ORG entities).
 
-    Prioritizes title over description; returns earliest ORG in title
-    after filtering publishers and short names.
+    Prioritizes title over description. Collects all valid ORG entities
+    per text segment, scores them, and returns the highest-scored entity.
 
     Returns None if model not loaded or no valid ORG found.
     """
@@ -422,6 +481,9 @@ def extract_via_ner(
             logger.warning("spaCy processing error: %s", e)
             continue
 
+        # Collect all valid ORG entities with scores
+        candidates: list[tuple[float, str]] = []
+        text_len = len(text)
         for ent in doc.ents:
             if ent.label_ != "ORG":
                 continue
@@ -431,7 +493,13 @@ def extract_via_ner(
                 continue
             if name.lower() in NEWS_PUBLISHER_NAMES:
                 continue
-            return name
+            score = _score_ner_entity(name, ent.start_char, text_len)
+            candidates.append((score, name))
+
+        if candidates:
+            # Return highest-scored entity (stable sort: first wins on tie)
+            candidates.sort(key=lambda x: -x[0])
+            return candidates[0][1]
 
     return None
 
