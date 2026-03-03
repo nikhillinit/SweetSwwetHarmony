@@ -1,253 +1,292 @@
-"""
-Backfill script: re-process historical signals through the new company name extractor.
+"""Backfill company name extraction for news/RSS signals.
 
-Reads existing signals from the database, runs extract_company_info() on their
-title/description, and optionally updates canonical_key + raw_data.
+Re-runs the improved extraction pipeline (verb expansion, appositive,
+backs-with-descriptor, NER scoring) on existing news_api / rss_feeds
+signals, updating company_name, canonical_key, and raw_data JSON.
+
+Follows backfill_evidence_keys.py pattern (sync sqlite3, chunked).
 
 Usage:
-    # Dry-run (report only, no DB writes)
-    python scripts/backfill_company_extraction.py --db signals.db
-
-    # Apply changes
-    python scripts/backfill_company_extraction.py --db signals.db --apply
-
-    # Specific mode override
-    python scripts/backfill_company_extraction.py --db signals.db --mode ner_active
+    python scripts/backfill_company_extraction.py --db signals.db --preflight
+    python scripts/backfill_company_extraction.py --db signals.db --dry-run
+    python scripts/backfill_company_extraction.py --db signals.db --commit
 """
 
 from __future__ import annotations
 
 import argparse
-import asyncio
 import json
 import logging
 import os
+import sqlite3
 import sys
+from typing import Any, Dict, List, Optional
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import aiosqlite
-
-from utils.company_name_extractor import (
-    ExtractionMode,
-    extract_company_info,
-    warmup_ner,
-)
-from utils.canonical_keys import build_canonical_key_candidates
-
 logger = logging.getLogger(__name__)
 
+# Source APIs to re-extract
+_TARGET_SOURCES = ("news_api", "rss_feeds")
 
-async def run_backfill(
+
+def _parse_raw_data(raw_data_str: str) -> Optional[Dict[str, Any]]:
+    """Parse raw_data JSON string, returning None on failure."""
+    try:
+        return json.loads(raw_data_str)
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+
+def _rebuild_canonical_key(
+    company_name: Optional[str],
+    promoted_domain: Optional[str],
+) -> Optional[str]:
+    """Rebuild canonical_key from extraction result.
+
+    Priority: domain > name_loc > None (leave unchanged).
+    """
+    from utils.canonical_keys import build_canonical_key
+
+    if promoted_domain:
+        return build_canonical_key(domain_or_website=promoted_domain)
+    if company_name:
+        return build_canonical_key(fallback_company_name=company_name)
+    return None
+
+
+def preflight(db_path: str) -> Dict[str, Any]:
+    """Show summary statistics for news/RSS signals before backfill."""
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA journal_mode=WAL")
+
+    try:
+        total = conn.execute(
+            "SELECT COUNT(*) FROM signals WHERE source_api IN (?, ?)",
+            _TARGET_SOURCES,
+        ).fetchone()[0]
+
+        hash_keys = conn.execute(
+            "SELECT COUNT(*) FROM signals WHERE source_api IN (?, ?) "
+            "AND canonical_key LIKE 'rss_%'",
+            _TARGET_SOURCES,
+        ).fetchone()[0]
+
+        name_loc_keys = conn.execute(
+            "SELECT COUNT(*) FROM signals WHERE source_api IN (?, ?) "
+            "AND canonical_key LIKE 'name_loc:%'",
+            _TARGET_SOURCES,
+        ).fetchone()[0]
+
+        domain_keys = conn.execute(
+            "SELECT COUNT(*) FROM signals WHERE source_api IN (?, ?) "
+            "AND canonical_key LIKE 'domain:%'",
+            _TARGET_SOURCES,
+        ).fetchone()[0]
+
+        no_company = conn.execute(
+            "SELECT COUNT(*) FROM signals WHERE source_api IN (?, ?) "
+            "AND (company_name IS NULL OR company_name = '')",
+            _TARGET_SOURCES,
+        ).fetchone()[0]
+
+        return {
+            "total_news_rss_signals": total,
+            "hash_canonical_keys": hash_keys,
+            "name_loc_keys": name_loc_keys,
+            "domain_keys": domain_keys,
+            "missing_company_name": no_company,
+        }
+    finally:
+        conn.close()
+
+
+def run(
     db_path: str,
-    mode: ExtractionMode = "ner_active",
-    apply: bool = False,
-    limit: int = 0,
-) -> dict:
+    dry_run: bool = True,
+    chunk_size: int = 100,
+) -> Dict[str, Any]:
+    """Re-extract company names for news/RSS signals.
+
+    1. SELECT all news/RSS signals
+    2. Re-extract company name from raw_data title + description
+    3. Rebuild canonical_key if extraction improved
+    4. UPDATE company_name, canonical_key, and raw_data (with backfill flag)
+
+    Returns: {total, scanned, updated, unchanged, errors, dry_run, diffs}
     """
-    Re-process signals through the new extractor.
+    from utils.company_name_extractor import extract_company_info, warmup_ner
 
-    Args:
-        db_path: Path to signals.db
-        mode: Extraction mode to use
-        apply: If True, write changes to DB. If False, dry-run only.
-        limit: Max signals to process (0 = all)
+    # Warm up NER model once
+    warmup_ner()
 
-    Returns:
-        Summary dict with counts and examples
-    """
-    # Pre-load NER model if needed
-    if mode == "ner_active":
-        warmup_ner()
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
 
-    stats = {
-        "total_processed": 0,
-        "would_change_key": 0,
-        "would_add_domain": 0,
-        "collisions_skipped": 0,
-        "errors": 0,
-        "examples": [],
-    }
+    try:
+        total = conn.execute(
+            "SELECT COUNT(*) FROM signals WHERE source_api IN (?, ?)",
+            _TARGET_SOURCES,
+        ).fetchone()[0]
 
-    async with aiosqlite.connect(db_path) as db:
-        db.row_factory = aiosqlite.Row
+        scanned = 0
+        updated = 0
+        unchanged = 0
+        errors = 0
+        diffs: List[Dict[str, Any]] = []
 
-        # Get signals from news_api and rss_feeds collectors
-        query = """
-            SELECT id, canonical_key, raw_data, source_api
-            FROM signals
-            WHERE source_api IN ('news_api', 'rss_feeds')
-            ORDER BY created_at DESC
-        """
-        if limit > 0:
-            query += f" LIMIT {limit}"
+        offset = 0
+        while True:
+            rows = conn.execute(
+                "SELECT id, source_api, company_name, canonical_key, raw_data "
+                "FROM signals WHERE source_api IN (?, ?) "
+                "ORDER BY id LIMIT ? OFFSET ?",
+                (*_TARGET_SOURCES, chunk_size, offset),
+            ).fetchall()
+            if not rows:
+                break
 
-        async with db.execute(query) as cursor:
-            rows = await cursor.fetchall()
+            batch_updates: List[tuple] = []
 
-        logger.info("Processing %d signals (apply=%s, mode=%s)", len(rows), apply, mode)
-
-        # Build set of existing canonical keys for collision detection
-        existing_keys: set[str] = set()
-        async with db.execute("SELECT DISTINCT canonical_key FROM signals WHERE canonical_key IS NOT NULL") as cursor:
-            async for row in cursor:
-                existing_keys.add(row[0])
-
-        for row in rows:
-            signal_id = row["id"]
-            old_key = row["canonical_key"]
-            source_api = row["source_api"]
-
-            try:
-                raw_data = json.loads(row["raw_data"]) if isinstance(row["raw_data"], str) else row["raw_data"]
-            except (json.JSONDecodeError, TypeError):
-                stats["errors"] += 1
-                continue
-
-            title = raw_data.get("title", "")
-            description = raw_data.get("description", "")
-            url = raw_data.get("url", "")
-
-            if not title:
-                stats["total_processed"] += 1
-                continue
-
-            # Run extraction
-            try:
-                result = extract_company_info(
-                    title=title,
-                    description=description,
-                    url=url,
-                    mode=mode,
-                )
-            except Exception as e:
-                logger.warning("Extraction error for signal %s: %s", signal_id, e)
-                stats["errors"] += 1
-                continue
-
-            stats["total_processed"] += 1
-
-            # Build new canonical key
-            domain_for_key = result.promoted_domain or ""
-            new_candidates = build_canonical_key_candidates(
-                domain_or_website=domain_for_key,
-                fallback_company_name=result.company_name or "",
-            )
-            new_key = new_candidates[0] if new_candidates else old_key
-
-            # Track changes
-            key_changed = new_key != old_key and new_key and new_key != signal_id
-            has_new_domain = result.promoted_domain is not None
-
-            if has_new_domain:
-                stats["would_add_domain"] += 1
-
-            if key_changed:
-                # Collision detection
-                if new_key in existing_keys and new_key != old_key:
-                    stats["collisions_skipped"] += 1
-                    if len(stats["examples"]) < 20:
-                        stats["examples"].append({
-                            "signal_id": signal_id,
-                            "old_key": old_key,
-                            "new_key": new_key,
-                            "status": "COLLISION_SKIPPED",
-                            "company_name": result.company_name,
-                            "method": result.company_name_method,
-                            "promoted_domain": result.promoted_domain,
-                        })
+            for row_id, source_api, old_name, old_key, raw_data_str in rows:
+                scanned += 1
+                raw = _parse_raw_data(raw_data_str)
+                if raw is None:
+                    errors += 1
                     continue
 
-                stats["would_change_key"] += 1
+                title = raw.get("title", "")
+                description = raw.get("description", "")
 
-                if len(stats["examples"]) < 20:
-                    stats["examples"].append({
-                        "signal_id": signal_id,
-                        "old_key": old_key,
-                        "new_key": new_key,
-                        "status": "WOULD_CHANGE" if not apply else "CHANGED",
-                        "company_name": result.company_name,
-                        "method": result.company_name_method,
-                        "promoted_domain": result.promoted_domain,
-                    })
-
-                if apply:
-                    # Store old key for revert capability
-                    raw_data["old_canonical_key"] = old_key
-                    raw_data["company_name_method"] = result.company_name_method
-                    raw_data["candidate_domains"] = result.candidate_domains
-                    raw_data["promoted_domain"] = result.promoted_domain
-
-                    await db.execute(
-                        "UPDATE signals SET canonical_key = ?, raw_data = ? WHERE id = ?",
-                        (new_key, json.dumps(raw_data), signal_id),
+                # Re-extract with improved pipeline
+                try:
+                    result = extract_company_info(
+                        title=title,
+                        description=description,
+                        url=raw.get("url", ""),
+                        mode="ner_active",
                     )
-                    existing_keys.add(new_key)
+                except Exception as e:
+                    logger.warning("Extraction error for signal %d: %s", row_id, e)
+                    errors += 1
+                    continue
 
-        if apply:
-            await db.commit()
+                new_name = result.company_name
+                new_key = _rebuild_canonical_key(
+                    new_name, result.promoted_domain
+                )
 
-    return stats
+                # Only update if extraction actually improved
+                if not new_name:
+                    unchanged += 1
+                    continue
+                if new_name == old_name and (new_key is None or new_key == old_key):
+                    unchanged += 1
+                    continue
 
+                # Use old key if rebuild returned None
+                final_key = new_key if new_key else old_key
 
-def print_report(stats: dict, apply: bool) -> None:
-    """Print human-readable backfill report."""
-    prefix = "Applied" if apply else "Dry-run"
-    print(f"\n{'=' * 60}")
-    print(f"COMPANY EXTRACTION BACKFILL REPORT ({prefix})")
-    print(f"{'=' * 60}")
-    print(f"Total processed:     {stats['total_processed']}")
-    print(f"Would change key:    {stats['would_change_key']}")
-    print(f"Would add domain:    {stats['would_add_domain']}")
-    print(f"Collisions skipped:  {stats['collisions_skipped']}")
-    print(f"Errors:              {stats['errors']}")
-    print()
+                # Flag backfill in raw_data
+                raw["_backfill_extraction"] = True
+                if old_name and old_name != new_name:
+                    raw["_backfill_old_company_name"] = old_name
+                if old_key != final_key:
+                    raw["_backfill_old_canonical_key"] = old_key
 
-    if stats["examples"]:
-        print("Sample changes:")
-        print("-" * 60)
-        for ex in stats["examples"]:
-            print(f"  [{ex['status']}] {ex['signal_id']}")
-            print(f"    old: {ex['old_key']}")
-            print(f"    new: {ex['new_key']}")
-            print(f"    method: {ex['method']}, domain: {ex['promoted_domain']}")
-            print()
+                diff = {
+                    "id": row_id,
+                    "old_name": old_name,
+                    "new_name": new_name,
+                    "old_key": old_key,
+                    "new_key": final_key,
+                    "method": result.company_name_method,
+                }
+                diffs.append(diff)
 
-    if not apply and stats["would_change_key"] > 0:
-        print("To apply these changes, re-run with --apply")
+                batch_updates.append((
+                    new_name,
+                    final_key,
+                    json.dumps(raw, ensure_ascii=False),
+                    row_id,
+                ))
 
-    print(f"{'=' * 60}")
+            # Apply batch
+            if batch_updates and not dry_run:
+                conn.execute("BEGIN")
+                try:
+                    conn.executemany(
+                        "UPDATE signals SET company_name = ?, canonical_key = ?, "
+                        "raw_data = ? WHERE id = ?",
+                        batch_updates,
+                    )
+                    conn.commit()
+                except Exception:
+                    conn.rollback()
+                    raise
+
+            updated += len(batch_updates)
+            offset += chunk_size
+
+        return {
+            "total": total,
+            "scanned": scanned,
+            "updated": updated,
+            "unchanged": unchanged,
+            "errors": errors,
+            "dry_run": dry_run,
+            "diffs": diffs if dry_run else [],
+        }
+
+    finally:
+        conn.close()
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Backfill company extraction for historical signals")
+    parser = argparse.ArgumentParser(
+        description="Backfill company name extraction for news/RSS signals"
+    )
     parser.add_argument("--db", required=True, help="Path to signals.db")
-    parser.add_argument("--apply", action="store_true", help="Actually write changes (default: dry-run)")
-    parser.add_argument("--mode", choices=["baseline", "url_promote", "ner_active"],
-                        default="ner_active", help="Extraction mode (default: ner_active)")
-    parser.add_argument("--limit", type=int, default=0, help="Max signals to process (0 = all)")
-    parser.add_argument("--verbose", action="store_true", help="Enable debug logging")
-
+    parser.add_argument(
+        "--dry-run", action="store_true", default=False,
+        help="Preview without modifying"
+    )
+    parser.add_argument(
+        "--commit", action="store_true",
+        help="Actually apply changes"
+    )
+    parser.add_argument(
+        "--preflight", action="store_true",
+        help="Show summary statistics only"
+    )
+    parser.add_argument("--chunk-size", type=int, default=100)
     args = parser.parse_args()
 
-    logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-    )
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
 
     if not os.path.exists(args.db):
         print(f"ERROR: Database not found: {args.db}")
         sys.exit(1)
 
-    stats = asyncio.run(run_backfill(
-        db_path=args.db,
-        mode=args.mode,
-        apply=args.apply,
-        limit=args.limit,
-    ))
+    if args.preflight:
+        report = preflight(args.db)
+        print(json.dumps(report, indent=2))
+        sys.exit(0)
 
-    print_report(stats, args.apply)
+    dry_run = not args.commit
+    report = run(args.db, dry_run=dry_run, chunk_size=args.chunk_size)
+
+    if dry_run and report["diffs"]:
+        print(f"\n=== DRY RUN: {len(report['diffs'])} signals would be updated ===\n")
+        for d in report["diffs"]:
+            print(f"  Signal {d['id']}: {d['old_name']!r} -> {d['new_name']!r} "
+                  f"(method={d['method']}, key: {d['old_key']} -> {d['new_key']})")
+
+    summary = {k: v for k, v in report.items() if k != "diffs"}
+    print(f"\n{json.dumps(summary, indent=2)}")
+    sys.exit(0)
 
 
 if __name__ == "__main__":
