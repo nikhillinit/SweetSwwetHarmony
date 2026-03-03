@@ -534,6 +534,93 @@ class TestExtractViaNer:
         finally:
             mod._nlp = old_nlp
 
+    def test_long_entity_filtered(self):
+        """Entities with >4 tokens are rejected as likely headline fragments."""
+        import utils.company_name_extractor as mod
+        old_nlp = mod._nlp
+        try:
+            mod._nlp = self._make_mock_nlp([
+                ("Oklahoma Strengthens Food Processing Infrastructure", "ORG"),
+            ])
+            result = extract_via_ner("Oklahoma Strengthens Food Processing Infrastructure")
+            assert result is None
+        finally:
+            mod._nlp = old_nlp
+
+    def test_low_score_stopword_fragment_filtered(self):
+        """Editorial fragments with stopword penalty below threshold are rejected."""
+        import utils.company_name_extractor as mod
+        old_nlp = mod._nlp
+        try:
+            mod._nlp = self._make_mock_nlp([("American Greetings Earns", "ORG")])
+            result = extract_via_ner("American Greetings Earns Equality 100 Award")
+            assert result is None
+        finally:
+            mod._nlp = old_nlp
+
+    def test_hard_reject_token_filtered(self):
+        """Entities containing hard-reject headline tokens are discarded."""
+        import utils.company_name_extractor as mod
+        old_nlp = mod._nlp
+        try:
+            mod._nlp = self._make_mock_nlp([("Bellagio Welcomes World-Renowned Alinea", "ORG")])
+            result = extract_via_ner("Bellagio Welcomes World-Renowned Alinea")
+            assert result is None
+        finally:
+            mod._nlp = old_nlp
+
+    def test_comma_entity_filtered(self):
+        """Comma-separated fragments are rejected as company names."""
+        import utils.company_name_extractor as mod
+        old_nlp = mod._nlp
+        try:
+            mod._nlp = self._make_mock_nlp([("Budget, Convenience", "ORG")])
+            result = extract_via_ner("Budget, Convenience, and Healthier Eating")
+            assert result is None
+        finally:
+            mod._nlp = old_nlp
+
+    def test_domain_like_entity_filtered(self):
+        """Domain-like ORG entities should not be used as company names."""
+        import utils.company_name_extractor as mod
+        old_nlp = mod._nlp
+        try:
+            mod._nlp = self._make_mock_nlp([("halfpricesoft.com", "ORG")])
+            result = extract_via_ner("Learn more at halfpricesoft.com")
+            assert result is None
+        finally:
+            mod._nlp = old_nlp
+
+    def test_ticker_like_all_caps_filtered(self):
+        """Single-token all-caps short codes are rejected."""
+        import utils.company_name_extractor as mod
+        old_nlp = mod._nlp
+        try:
+            mod._nlp = self._make_mock_nlp([("ETSY", "ORG")])
+            result = extract_via_ner("ETSY to participate in upcoming investor conference")
+            assert result is None
+        finally:
+            mod._nlp = old_nlp
+
+    def test_object_position_context_filtered(self):
+        """Entity after object-position cue (e.g. 'over X') is rejected."""
+        import utils.company_name_extractor as mod
+        old_nlp = mod._nlp
+        try:
+            text = "AI Bartender Startup Faces Investor Lawsuit Over Microsoft Claims"
+            ent = MagicMock()
+            ent.text = "Microsoft"
+            ent.label_ = "ORG"
+            ent.start_char = text.index("Microsoft")
+            doc = MagicMock()
+            doc.ents = [ent]
+            mock_nlp = MagicMock(return_value=doc)
+            mod._nlp = mock_nlp
+            result = extract_via_ner(text)
+            assert result is None
+        finally:
+            mod._nlp = old_nlp
+
     def test_graceful_degradation_model_missing(self):
         """Returns None when model not found (OSError)."""
         import utils.company_name_extractor as mod
