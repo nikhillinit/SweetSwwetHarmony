@@ -97,7 +97,7 @@ NEWS_PUBLISHER_NAMES: frozenset[str] = frozenset({
     "cnbc", "bbc", "cnn", "wired", "axios", "fortune", "inc",
     "venturebeat", "the verge", "business insider", "the information",
     "wall street journal", "new york times", "washington post",
-    "the guardian", "associated press", "pr newswire", "globenewswire",
+    "the guardian", "associated press", "pr newswire", "globenewswire", "globe newswire",
     "product hunt", "crunchbase", "pitchbook",
 })
 
@@ -400,7 +400,36 @@ _NER_STOPWORDS = frozenset({
     "that", "of", "led", "based", "community", "growth", "team",
     "group", "board", "committee", "project", "initiative", "report",
     "lessons", "trends", "market", "industry",
+    "announces", "announced", "launches", "launched", "celebrates", "celebrated",
+    "reports", "reported", "release", "releases", "results", "finds", "earns",
+    "drive", "drives", "reach", "reaches", "warrant", "targeted",
+    "screening", "intervention", "infrastructure", "conference", "award",
+    "awards", "value", "behavior", "trade", "general", "quarter", "fiscal",
+    "dividend", "nyse", "nasdaq", "fmi", "usda",
 })
+
+# Strong non-company tokens for hard-rejecting headline fragments.
+_NER_HARD_REJECT_TOKENS = frozenset({
+    "announces", "announced", "launches", "launched", "celebrates", "celebrated",
+    "reports", "reported", "report", "results", "result", "finds",
+    "drive", "drives", "reach", "reaches", "warrant", "targeted",
+    "screening", "intervention", "infrastructure", "conference",
+    "award", "awards", "dividend", "quarter", "fiscal",
+    "delivery", "liquidity", "behavior", "value", "trade", "general",
+    "improvement", "improvements", "operations", "future", "delivers",
+    "welcomes", "strengthens", "brings", "processing", "comorbidities",
+})
+
+# Context cues that often indicate a bystander mention instead of the subject company.
+_NER_PRECEDING_REJECT_CUES = frozenset({
+    "over", "with", "at", "to", "via", "amid", "against",
+    "after", "before", "says",
+})
+
+# Hard cap for NER entities to reduce headline-fragment extractions.
+_NER_MAX_TOKENS = 4
+# Minimum quality threshold after scoring.
+_NER_MIN_SCORE = 0.45
 
 
 def _score_ner_entity(ent_text: str, ent_start_char: int, text_length: int) -> float:
@@ -444,6 +473,19 @@ def _score_ner_entity(ent_text: str, ent_start_char: int, text_length: int) -> f
         score += 0.2
 
     return score
+
+
+def _get_preceding_word(text: str, ent_start_char: int) -> str:
+    """Return the lowercase word immediately preceding an entity start."""
+    if ent_start_char <= 0:
+        return ""
+    prefix = text[:ent_start_char].rstrip()
+    if not prefix:
+        return ""
+    match = re.search(r"([A-Za-z]+)\W*$", prefix)
+    if not match:
+        return ""
+    return match.group(1).lower()
 
 
 def warmup_ner() -> bool:
@@ -510,7 +552,32 @@ def extract_via_ner(
                 continue
             if name.lower() in NEWS_PUBLISHER_NAMES:
                 continue
+            if "," in name:
+                continue
+            tokens = name.split()
+            if len(tokens) > _NER_MAX_TOKENS:
+                continue
+            token_lowers = {t.lower().strip(".,()") for t in tokens}
+            if token_lowers & _NER_HARD_REJECT_TOKENS:
+                continue
+            # Reject domain-like entities that are usually website mentions.
+            if re.search(r"\b[a-zA-Z0-9-]+\.[a-zA-Z]{2,}\b", name):
+                continue
+            # Reject ticker-like all-caps short codes (e.g., ETSY, YCBD, DRI).
+            if (
+                len(tokens) == 1
+                and tokens[0].isalpha()
+                and tokens[0].isupper()
+                and len(tokens[0]) <= 5
+            ):
+                continue
+            # Reject bystander mentions introduced by object-position cues.
+            preceding = _get_preceding_word(text, ent.start_char)
+            if preceding in _NER_PRECEDING_REJECT_CUES:
+                continue
             score = _score_ner_entity(name, ent.start_char, text_len)
+            if score < _NER_MIN_SCORE:
+                continue
             candidates.append((score, name))
 
         if candidates:
