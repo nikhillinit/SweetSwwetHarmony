@@ -26,6 +26,7 @@ from utils.company_name_extractor import (
     warmup_ner,
     NEWS_PUBLISHER_NAMES,
     _is_blocked_domain,
+    _score_ner_entity,
 )
 
 
@@ -464,14 +465,19 @@ class TestExtractViaNer:
     """Test NER extraction with mocked spaCy model."""
 
     def _make_mock_nlp(self, entities):
-        """Create a mock spaCy nlp callable returning given entities."""
+        """Create a mock spaCy nlp callable returning given entities.
+
+        entities: list of (text, label) tuples. start_char is auto-assigned
+        sequentially (0, 10, 20, ...) for scoring compatibility.
+        """
         mock_nlp = MagicMock()
         mock_doc = MagicMock()
         mock_ents = []
-        for text, label in entities:
+        for i, (text, label) in enumerate(entities):
             ent = MagicMock()
             ent.text = text
             ent.label_ = label
+            ent.start_char = i * 10
             mock_ents.append(ent)
         mock_doc.ents = mock_ents
         mock_nlp.return_value = mock_doc
@@ -1013,3 +1019,256 @@ class TestSanityGate:
             "with Values Aligned to Theirs, Acosta Group Finds"
         )
         assert result is None
+
+
+# =============================================================================
+# VERB EXPANSION TESTS (Phase 1 — signal 601 fix)
+# =============================================================================
+
+
+class TestVerbExpansion:
+    """Test newly added press-release verbs for regex extraction."""
+
+    def test_celebrates_erly_skincare(self):
+        """Signal 601 regression: 'ERLY Skincare Celebrates One Year...'"""
+        result = extract_via_regex(
+            "ERLY Skincare Celebrates One Year of Community-Led Growth"
+        )
+        assert result is not None
+        assert "ERLY" in result
+
+    def test_achieves_milestone(self):
+        result = extract_via_regex("FreshBowl Achieves $10M Revenue Milestone")
+        assert result is not None
+        assert "FreshBowl" in result
+
+    def test_hits_target(self):
+        result = extract_via_regex("GlowUp Hits 1 Million Users")
+        assert result is not None
+        assert "GlowUp" in result
+
+    def test_opens_location(self):
+        result = extract_via_regex("Sweetgreen Opens Flagship Location in NYC")
+        assert result is not None
+        assert "Sweetgreen" in result
+
+    def test_hires_ceo(self):
+        result = extract_via_regex("NomNom Hires Former Google VP as CEO")
+        assert result is not None
+        assert "NomNom" in result
+
+    def test_marks_anniversary(self):
+        result = extract_via_regex("Glossier Marks Five Years of Direct-to-Consumer Growth")
+        assert result is not None
+        assert "Glossier" in result
+
+
+# =============================================================================
+# APPOSITIVE PATTERN TESTS (Phase 2 — signal 476 fix)
+# =============================================================================
+
+
+class TestAppositivePattern:
+    """Test Group 6 appositive 'X, a/an [descriptor]' pattern."""
+
+    def test_jest_marketplace(self):
+        """Signal 476 regression: 'Jest, a marketplace for messaging games...'"""
+        result = extract_via_regex("Jest, a marketplace for messaging games, is challenging the industry")
+        assert result == "Jest"
+
+    def test_multiword_appositive(self):
+        result = extract_via_regex("Daily Harvest, a meal kit delivery service, expands nationwide")
+        assert result is not None
+        assert "Daily Harvest" in result
+
+    def test_rejects_non_appositive_comma(self):
+        """'In 2026, funding...' should NOT match appositive (lowercase start)."""
+        result = extract_via_regex("In 2026, funding increased significantly")
+        assert result is None
+
+    def test_rejects_lowercase_start(self):
+        """'the company, a startup...' should NOT match (lowercase first char)."""
+        result = extract_via_regex("the company, a startup focused on wellness")
+        assert result is None
+
+
+# =============================================================================
+# BACKS PATTERN ENHANCED TESTS (Phase 3 — signal 95 fix)
+# =============================================================================
+
+
+class TestBacksPatternEnhanced:
+    """Test enhanced 'backs/invests in' pattern with descriptor words."""
+
+    def test_backs_with_descriptor_ever(self):
+        """Signal 95 regression: 'Eclipse backs all-EV marketplace Ever in $31M...'"""
+        result = extract_via_regex("Eclipse backs all-EV marketplace Ever in $31M round")
+        assert result == "Ever"
+
+    def test_backs_with_multi_descriptor(self):
+        result = extract_via_regex("Sequoia backs direct-to-consumer health startup GlowUp in Series A")
+        assert result is not None
+        assert "GlowUp" in result
+
+    def test_original_backs_still_works(self):
+        """Regression guard: original 'backs X' pattern must still work."""
+        assert extract_via_regex("Eclipse backs Ever in $31M round") == "Ever"
+        assert extract_via_regex("Sequoia invests in Glossier with $100M") == "Glossier"
+
+    def test_invests_in_with_descriptor(self):
+        result = extract_via_regex("Tiger invests in fast-growing FreshMeals with $50M")
+        assert result is not None
+        assert "FreshMeals" in result
+
+
+# =============================================================================
+# NER ENTITY SCORING TESTS (Phase 4 — signals 41, 101 fix)
+# =============================================================================
+
+
+class TestNEREntityScoring:
+    """Test scored NER entity selection replacing first-match logic."""
+
+    def _make_mock_nlp_with_positions(self, entities):
+        """Create mock spaCy nlp with entities that have start_char.
+
+        entities: list of (text, label, start_char)
+        """
+        mock_nlp = MagicMock()
+        mock_doc = MagicMock()
+        mock_ents = []
+        for text, label, start_char in entities:
+            ent = MagicMock()
+            ent.text = text
+            ent.label_ = label
+            ent.start_char = start_char
+            mock_ents.append(ent)
+        mock_doc.ents = mock_ents
+        mock_nlp.return_value = mock_doc
+        return mock_nlp
+
+    def test_prefers_earlier_entity(self):
+        """Earlier entity with same quality scores higher."""
+        import utils.company_name_extractor as mod
+        old_nlp = mod._nlp
+        try:
+            mod._nlp = self._make_mock_nlp_with_positions([
+                ("AlphaFoods", "ORG", 0),
+                ("BetaCorp", "ORG", 40),
+            ])
+            result = extract_via_ner("AlphaFoods and BetaCorp partner on new venture")
+            assert result == "AlphaFoods"
+        finally:
+            mod._nlp = old_nlp
+
+    def test_penalizes_stopword_entities(self):
+        """Entities with editorial stopwords get penalized."""
+        import utils.company_name_extractor as mod
+        old_nlp = mod._nlp
+        try:
+            # "Community-Led Growth" has stopwords; "ERLY Skincare" does not
+            mod._nlp = self._make_mock_nlp_with_positions([
+                ("Community-Led Growth", "ORG", 45),
+                ("ERLY Skincare", "ORG", 0),
+            ])
+            result = extract_via_ner("ERLY Skincare Celebrates One Year of Community-Led Growth")
+            assert result == "ERLY Skincare"
+        finally:
+            mod._nlp = old_nlp
+
+    def test_signal_41_wonderbelly(self):
+        """Signal 41 regression: prefer 'Wonderbelly' over 'Lessons That Helped'."""
+        import utils.company_name_extractor as mod
+        old_nlp = mod._nlp
+        try:
+            mod._nlp = self._make_mock_nlp_with_positions([
+                ("Lessons That Helped", "ORG", 10),
+                ("Wonderbelly", "ORG", 35),
+            ])
+            result = extract_via_ner("5 Startup Lessons That Helped Wonderbelly Scale to 8 Figures")
+            assert result == "Wonderbelly"
+        finally:
+            mod._nlp = old_nlp
+
+    def test_prefers_shorter_entities(self):
+        """Shorter entities (1-3 tokens) score higher than long ones (5+)."""
+        import utils.company_name_extractor as mod
+        old_nlp = mod._nlp
+        try:
+            mod._nlp = self._make_mock_nlp_with_positions([
+                ("The International Board of Directors", "ORG", 0),
+                ("Glossier", "ORG", 45),
+            ])
+            result = extract_via_ner("The International Board of Directors met. Glossier expands globally.")
+            assert result == "Glossier"
+        finally:
+            mod._nlp = old_nlp
+
+    def test_title_case_bonus(self):
+        """Title-case entities score higher than lowercase at same position."""
+        import utils.company_name_extractor as mod
+        old_nlp = mod._nlp
+        try:
+            # Both at similar positions; title case bonus should differentiate
+            mod._nlp = self._make_mock_nlp_with_positions([
+                ("health tech", "ORG", 20),
+                ("NomNom", "ORG", 25),
+            ])
+            result = extract_via_ner("The leading health tech company NomNom raises $10M in funding")
+            assert result == "NomNom"
+        finally:
+            mod._nlp = old_nlp
+
+    def test_description_fallback(self):
+        """Signal 101 regression: company name found in description, not title."""
+        import utils.company_name_extractor as mod
+        old_nlp = mod._nlp
+        try:
+            # Title: no valid ORG; Description: has SOLLOS
+            def mock_nlp_fn(text):
+                doc = MagicMock()
+                if "SOLLOS" in text:
+                    ent = MagicMock()
+                    ent.text = "SOLLOS Yerba Mate Inc."
+                    ent.label_ = "ORG"
+                    ent.start_char = 0
+                    doc.ents = [ent]
+                else:
+                    doc.ents = []
+                return doc
+            mod._nlp = mock_nlp_fn
+            result = extract_via_ner(
+                "Barron Trump linked to beverage company",
+                "SOLLOS Yerba Mate Inc., a beverage startup, announced new funding"
+            )
+            assert result is not None
+            assert "SOLLOS" in result
+        finally:
+            mod._nlp = old_nlp
+
+    def test_single_entity_unchanged(self):
+        """Backward compat: single entity still returns it."""
+        import utils.company_name_extractor as mod
+        old_nlp = mod._nlp
+        try:
+            mod._nlp = self._make_mock_nlp_with_positions([
+                ("Acme Corp", "ORG", 0),
+            ])
+            result = extract_via_ner("Acme Corp launches new product")
+            assert result == "Acme Corp"
+        finally:
+            mod._nlp = old_nlp
+
+    def test_no_entities_returns_none(self):
+        """No ORG entities → None."""
+        import utils.company_name_extractor as mod
+        old_nlp = mod._nlp
+        try:
+            mod._nlp = self._make_mock_nlp_with_positions([
+                ("John", "PERSON", 0),
+                ("New York", "GPE", 10),
+            ])
+            result = extract_via_ner("John from New York visits")
+            assert result is None
+        finally:
+            mod._nlp = old_nlp
