@@ -20,7 +20,7 @@ import logging
 import os
 import sqlite3
 import sys
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -37,6 +37,32 @@ def _parse_raw_data(raw_data_str: str) -> Optional[Dict[str, Any]]:
         return json.loads(raw_data_str)
     except (json.JSONDecodeError, TypeError):
         return None
+
+
+def _parse_allowlist_ids(raw_ids: Optional[str]) -> Optional[Set[int]]:
+    """Parse comma-separated signal IDs, returning a set or None."""
+    if raw_ids is None:
+        return None
+
+    text = raw_ids.strip()
+    if not text:
+        return None
+
+    ids: Set[int] = set()
+    for part in text.split(","):
+        token = part.strip()
+        if not token:
+            continue
+        if not token.isdigit():
+            raise ValueError(f"Invalid signal id '{token}' in --allowlist-ids")
+        value = int(token)
+        if value <= 0:
+            raise ValueError(f"Signal id must be > 0, got {value}")
+        ids.add(value)
+
+    if not ids:
+        raise ValueError("No valid IDs provided in --allowlist-ids")
+    return ids
 
 
 def _rebuild_canonical_key(
@@ -106,10 +132,11 @@ def run(
     db_path: str,
     dry_run: bool = True,
     chunk_size: int = 100,
+    allowlist_ids: Optional[Set[int]] = None,
 ) -> Dict[str, Any]:
     """Re-extract company names for news/RSS signals.
 
-    1. SELECT all news/RSS signals
+    1. SELECT all news/RSS signals (or allowlisted IDs if provided)
     2. Re-extract company name from raw_data title + description
     3. Rebuild canonical_key if extraction improved
     4. UPDATE company_name, canonical_key, and raw_data (with backfill flag)
@@ -126,9 +153,16 @@ def run(
     conn.execute("PRAGMA busy_timeout=5000")
 
     try:
+        where_clause = "source_api IN (?, ?)"
+        where_params: List[Any] = [*_TARGET_SOURCES]
+        if allowlist_ids:
+            placeholders = ", ".join("?" for _ in allowlist_ids)
+            where_clause += f" AND id IN ({placeholders})"
+            where_params.extend(sorted(allowlist_ids))
+
         total = conn.execute(
-            "SELECT COUNT(*) FROM signals WHERE source_api IN (?, ?)",
-            _TARGET_SOURCES,
+            f"SELECT COUNT(*) FROM signals WHERE {where_clause}",
+            tuple(where_params),
         ).fetchone()[0]
 
         scanned = 0
@@ -141,9 +175,9 @@ def run(
         while True:
             rows = conn.execute(
                 "SELECT id, source_api, company_name, canonical_key, raw_data "
-                "FROM signals WHERE source_api IN (?, ?) "
+                f"FROM signals WHERE {where_clause} "
                 "ORDER BY id LIMIT ? OFFSET ?",
-                (*_TARGET_SOURCES, chunk_size, offset),
+                tuple(where_params + [chunk_size, offset]),
             ).fetchall()
             if not rows:
                 break
@@ -237,6 +271,7 @@ def run(
             "unchanged": unchanged,
             "errors": errors,
             "dry_run": dry_run,
+            "allowlist_count": len(allowlist_ids) if allowlist_ids else None,
             "diffs": diffs if dry_run else [],
         }
 
@@ -262,6 +297,11 @@ def main():
         help="Show summary statistics only"
     )
     parser.add_argument("--chunk-size", type=int, default=100)
+    parser.add_argument(
+        "--allowlist-ids",
+        default="",
+        help="Comma-separated signal IDs to process (e.g. 41,95,210)",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -275,8 +315,24 @@ def main():
         print(json.dumps(report, indent=2))
         sys.exit(0)
 
+    try:
+        allowlist_ids = _parse_allowlist_ids(args.allowlist_ids)
+    except ValueError as e:
+        print(f"ERROR: {e}")
+        sys.exit(2)
+
     dry_run = not args.commit
-    report = run(args.db, dry_run=dry_run, chunk_size=args.chunk_size)
+    report = run(
+        args.db,
+        dry_run=dry_run,
+        chunk_size=args.chunk_size,
+        allowlist_ids=allowlist_ids,
+    )
+
+    if allowlist_ids:
+        ids_csv = ",".join(str(i) for i in sorted(allowlist_ids))
+        print(f"\n=== ALLOWLIST MODE: {len(allowlist_ids)} IDs ===")
+        print(f"IDs: {ids_csv}")
 
     if dry_run and report["diffs"]:
         print(f"\n=== DRY RUN: {len(report['diffs'])} signals would be updated ===\n")
