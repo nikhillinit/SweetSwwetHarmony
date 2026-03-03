@@ -19,7 +19,7 @@ from unittest.mock import patch, MagicMock
 
 import pytest
 
-from scripts.backfill_company_extraction import run, preflight
+from scripts.backfill_company_extraction import _parse_allowlist_ids, preflight, run
 
 
 def _create_test_db(db_path: str) -> sqlite3.Connection:
@@ -103,6 +103,21 @@ class TestPreflight:
 
         report = preflight(db_path)
         assert report["total_news_rss_signals"] == 1
+
+
+class TestAllowlistParsing:
+    def test_none_or_empty_returns_none(self):
+        assert _parse_allowlist_ids(None) is None
+        assert _parse_allowlist_ids("") is None
+        assert _parse_allowlist_ids("   ") is None
+
+    def test_valid_csv_parses_to_set(self):
+        ids = _parse_allowlist_ids("41, 95,210,95")
+        assert ids == {41, 95, 210}
+
+    def test_invalid_token_raises(self):
+        with pytest.raises(ValueError):
+            _parse_allowlist_ids("41,abc,95")
 
 
 class TestBackfillRun:
@@ -212,3 +227,39 @@ class TestBackfillRun:
 
         # Second run should find the already-correct name and not update
         assert report["unchanged"] >= 1
+
+    def test_allowlist_limits_scope_dry_run(self, tmp_path: Path):
+        db_path = str(tmp_path / "test.db")
+        conn = _create_test_db(db_path)
+        _insert_signal(conn, "news_api", "FreshBowl raises $5M", canonical_key="rss_a")
+        _insert_signal(conn, "news_api", "Acme raises $10M", canonical_key="rss_b")
+        conn.close()
+
+        report = run(db_path, dry_run=True, allowlist_ids={1})
+
+        assert report["total"] == 1
+        assert report["scanned"] == 1
+        assert report["updated"] == 1
+        assert report["allowlist_count"] == 1
+        assert len(report["diffs"]) == 1
+        assert report["diffs"][0]["id"] == 1
+
+    def test_allowlist_commit_updates_only_selected_ids(self, tmp_path: Path):
+        db_path = str(tmp_path / "test.db")
+        conn = _create_test_db(db_path)
+        _insert_signal(conn, "news_api", "FreshBowl raises $5M", canonical_key="rss_a")
+        _insert_signal(conn, "news_api", "Acme raises $10M", canonical_key="rss_b")
+        conn.close()
+
+        report = run(db_path, dry_run=False, allowlist_ids={2})
+        assert report["total"] == 1
+        assert report["updated"] == 1
+
+        conn = sqlite3.connect(db_path)
+        rows = conn.execute(
+            "SELECT id, company_name FROM signals ORDER BY id"
+        ).fetchall()
+        conn.close()
+
+        # ID 1 untouched; ID 2 updated by allowlist-constrained run.
+        assert rows == [(1, None), (2, "Acme")]
