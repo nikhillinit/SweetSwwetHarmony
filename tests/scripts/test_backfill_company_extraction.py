@@ -165,6 +165,9 @@ class TestBackfillRun:
         assert row[1].startswith("name_loc:")
         raw = json.loads(row[2])
         assert raw.get("_backfill_extraction") is True
+        assert raw.get("_backfill_policy_id") == "COMPANY_NAME_WRITE_POLICY"
+        assert raw.get("_backfill_policy_version") == "1"
+        assert raw.get("_backfill_company_name_source") == "regex"
         conn.close()
 
     def test_unchanged_signal_not_updated(self, tmp_path: Path):
@@ -196,8 +199,8 @@ class TestBackfillRun:
 
         assert report["errors"] == 1
 
-    def test_backfill_old_values_preserved_in_raw_data(self, tmp_path: Path):
-        """When company_name changes, old value is saved in raw_data."""
+    def test_non_empty_company_name_is_never_overwritten(self, tmp_path: Path):
+        """Policy: automatic backfill must skip non-empty canonical names."""
         db_path = str(tmp_path / "test.db")
         conn = _create_test_db(db_path)
         _insert_signal(conn, "news_api", "FreshBowl raises $5M",
@@ -205,14 +208,70 @@ class TestBackfillRun:
         conn.close()
 
         report = run(db_path, dry_run=False)
+        assert report["updated"] == 0
+        assert report["skipped_non_empty"] >= 1
 
         conn = sqlite3.connect(db_path)
-        raw = json.loads(
-            conn.execute("SELECT raw_data FROM signals WHERE id = 1").fetchone()[0]
-        )
-        assert raw.get("_backfill_old_company_name") == "WrongName"
-        assert raw.get("_backfill_old_canonical_key") == "rss_oldhash"
+        row = conn.execute(
+            "SELECT company_name, canonical_key, raw_data FROM signals WHERE id = 1"
+        ).fetchone()
         conn.close()
+        assert row[0] == "WrongName"
+        assert row[1] == "rss_oldhash"
+        raw = json.loads(row[2])
+        assert raw.get("_backfill_extraction") is None
+
+    @patch("utils.company_name_extractor.warmup_ner", return_value=True)
+    @patch("utils.company_name_extractor.extract_company_info")
+    def test_include_ner_candidates_dry_run_shows_blocked_candidate(
+        self, mock_extract, _mock_warmup, tmp_path: Path
+    ):
+        db_path = str(tmp_path / "test.db")
+        conn = _create_test_db(db_path)
+        _insert_signal(conn, "news_api", "Unstructured title with no regex hit",
+                       canonical_key="rss_abc123", company_name=None)
+        conn.close()
+
+        mock_result = MagicMock()
+        mock_result.company_name = "Acme Candidate"
+        mock_result.promoted_domain = None
+        mock_result.company_name_method = "ner"
+        mock_extract.return_value = mock_result
+
+        report = run(db_path, dry_run=True, include_ner_candidates=True)
+        assert report["mode"] == "ner_active"
+        assert report["ner_candidates_seen"] == 1
+        assert report["updated"] == 0
+        assert len(report["diffs"]) == 1
+        assert report["diffs"][0]["blocked_by_policy"] is True
+
+    @patch("utils.company_name_extractor.warmup_ner", return_value=True)
+    @patch("utils.company_name_extractor.extract_company_info")
+    def test_include_ner_candidates_commit_blocks_write(
+        self, mock_extract, _mock_warmup, tmp_path: Path
+    ):
+        db_path = str(tmp_path / "test.db")
+        conn = _create_test_db(db_path)
+        _insert_signal(conn, "news_api", "Unstructured title with no regex hit",
+                       canonical_key="rss_abc123", company_name=None)
+        conn.close()
+
+        mock_result = MagicMock()
+        mock_result.company_name = "Acme Candidate"
+        mock_result.promoted_domain = None
+        mock_result.company_name_method = "ner"
+        mock_extract.return_value = mock_result
+
+        report = run(db_path, dry_run=False, include_ner_candidates=True)
+        assert report["updated"] == 0
+        assert report["ner_writes_blocked"] == 1
+
+        conn = sqlite3.connect(db_path)
+        row = conn.execute(
+            "SELECT company_name, canonical_key FROM signals WHERE id = 1"
+        ).fetchone()
+        conn.close()
+        assert row == (None, "rss_abc123")
 
     def test_idempotent_second_run(self, tmp_path: Path):
         """Second run on already-backfilled DB is safe."""
