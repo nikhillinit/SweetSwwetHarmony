@@ -21,6 +21,7 @@ from scripts.convergence_diagnostic import (
     _build_scope_filter,
     _determine_scope_mode,
     _format_scope_description,
+    _section_11_multi_family_convergence,
 )
 
 
@@ -40,7 +41,10 @@ def test_db(tmp_path):
             confidence REAL DEFAULT 0.5,
             source_url TEXT DEFAULT '',
             detected_at TEXT DEFAULT '',
-            raw_data TEXT DEFAULT '{}'
+            raw_data TEXT DEFAULT '{}',
+            evidence_family TEXT DEFAULT NULL,
+            company_name TEXT DEFAULT NULL,
+            canonical_key_v2 TEXT DEFAULT NULL
         );
 
         CREATE TABLE company_files (
@@ -102,14 +106,18 @@ def test_db(tmp_path):
     return db_path
 
 
-def _insert_signal(conn, canonical_key, source_api, created_at=None, raw_data=None):
+def _insert_signal(conn, canonical_key, source_api, created_at=None, raw_data=None,
+                   evidence_family=None, detected_at=None):
     if created_at is None:
         created_at = datetime.now(timezone.utc).isoformat()
+    if detected_at is None:
+        detected_at = created_at
     if raw_data is None:
         raw_data = "{}"
     conn.execute(
-        "INSERT INTO signals (canonical_key, source_api, created_at, raw_data) VALUES (?, ?, ?, ?)",
-        (canonical_key, source_api, created_at, raw_data),
+        "INSERT INTO signals (canonical_key, source_api, created_at, raw_data, evidence_family, detected_at) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (canonical_key, source_api, created_at, raw_data, evidence_family, detected_at),
     )
 
 
@@ -694,3 +702,146 @@ class TestScopedSectionBehavior:
         assert report["scoped_run_id"] == "explicit-run"
         assert report["active_scope"]["run_id"] == "explicit-run"
         assert report["active_scope"]["resolved_from_latest_run"] is False
+
+
+class TestSection11MultiFamilyConvergence:
+    """Section 11: Multi-family convergence gate tests."""
+
+    def _insert_multi_family_signals(self, conn, canonical_key, families, source_apis=None):
+        """Insert signals for a canonical_key across multiple evidence families."""
+        now = datetime.now(timezone.utc)
+        for i, family in enumerate(families):
+            source = source_apis[i] if source_apis else f"collector_{family}"
+            detected = (now - timedelta(days=5)).isoformat()
+            _insert_signal(
+                conn, canonical_key, source,
+                created_at=now.isoformat(),
+                evidence_family=family,
+                detected_at=detected,
+            )
+
+    def test_pass_10_entities_3_families(self, test_db):
+        """>=10 entities + >=3 total families -> PASS."""
+        conn = sqlite3.connect(test_db)
+        families = ["public_buzz", "corporate_filing", "startup_launch"]
+        for i in range(12):
+            # Each entity gets 2 of the 3 families (cycling)
+            chosen = [families[i % 3], families[(i + 1) % 3]]
+            self._insert_multi_family_signals(
+                conn, f"domain:company{i}.ai", chosen,
+                source_apis=[f"collector_{f}" for f in chosen],
+            )
+        conn.commit()
+        conn.close()
+
+        report = run_diagnostic(test_db)
+        s11 = report["sections"]["multi_family_convergence"]
+        assert s11["entities_with_2plus_families"] >= 10
+        assert s11["total_distinct_families"] >= 3
+        assert s11["mvp_gate_pass"] is True
+        assert s11["verdict"] == "PASS"
+
+    def test_fail_10_entities_2_families(self, test_db):
+        """>=10 entities + 2 families -> FAIL (need 3)."""
+        conn = sqlite3.connect(test_db)
+        for i in range(12):
+            self._insert_multi_family_signals(
+                conn, f"domain:company{i}.ai",
+                ["public_buzz", "corporate_filing"],
+                source_apis=["news_api", "sec_edgar"],
+            )
+        conn.commit()
+        conn.close()
+
+        report = run_diagnostic(test_db)
+        s11 = report["sections"]["multi_family_convergence"]
+        assert s11["entities_with_2plus_families"] >= 10
+        assert s11["total_distinct_families"] == 2
+        assert s11["mvp_gate_pass"] is False
+        assert s11["verdict"] == "FAIL"
+
+    def test_fail_few_entities_3_families(self, test_db):
+        """<10 entities + >=3 families -> FAIL."""
+        conn = sqlite3.connect(test_db)
+        families = ["public_buzz", "corporate_filing", "startup_launch"]
+        for i in range(5):
+            chosen = [families[i % 3], families[(i + 1) % 3]]
+            self._insert_multi_family_signals(
+                conn, f"domain:company{i}.ai", chosen,
+                source_apis=[f"collector_{f}" for f in chosen],
+            )
+        conn.commit()
+        conn.close()
+
+        report = run_diagnostic(test_db)
+        s11 = report["sections"]["multi_family_convergence"]
+        assert s11["entities_with_2plus_families"] < 10
+        assert s11["total_distinct_families"] >= 3
+        assert s11["mvp_gate_pass"] is False
+        assert s11["verdict"] == "FAIL"
+
+    def test_output_contains_total_distinct_families(self, test_db):
+        """Output dict contains total_distinct_families with type int."""
+        conn = sqlite3.connect(test_db)
+        _insert_signal(conn, "domain:a.ai", "news_api",
+                       evidence_family="public_buzz",
+                       detected_at=datetime.now(timezone.utc).isoformat())
+        conn.commit()
+        conn.close()
+
+        report = run_diagnostic(test_db)
+        s11 = report["sections"]["multi_family_convergence"]
+        assert "total_distinct_families" in s11
+        assert isinstance(s11["total_distinct_families"], int)
+
+    def test_output_contains_collector_diversity_warning(self, test_db):
+        """Output dict contains collector_diversity_warning with type str | None."""
+        report = run_diagnostic(test_db)
+        s11 = report["sections"]["multi_family_convergence"]
+        assert "collector_diversity_warning" in s11
+        assert s11["collector_diversity_warning"] is None or isinstance(s11["collector_diversity_warning"], str)
+
+    def test_legacy_keys_still_present(self, test_db):
+        """Legacy observability keys (collectors_with_2plus_families) still present."""
+        report = run_diagnostic(test_db)
+        s11 = report["sections"]["multi_family_convergence"]
+        assert "collectors_with_2plus_families" in s11
+        assert "families_per_collector" in s11
+
+    def test_single_collector_diversity_warning(self, test_db):
+        """Single active collector triggers diversity warning."""
+        conn = sqlite3.connect(test_db)
+        for i in range(3):
+            _insert_signal(conn, f"domain:co{i}.ai", "news_api",
+                           evidence_family="public_buzz",
+                           detected_at=datetime.now(timezone.utc).isoformat())
+        conn.commit()
+        conn.close()
+
+        report = run_diagnostic(test_db)
+        s11 = report["sections"]["multi_family_convergence"]
+        assert s11["collector_diversity_warning"] is not None
+        assert "1 active collector" in s11["collector_diversity_warning"]
+
+
+class TestSection11SchemaGuard:
+    """Section 11: Schema compatibility guard."""
+
+    def test_missing_evidence_family_raises(self, tmp_path):
+        """Missing evidence_family column produces actionable error."""
+        db_path = str(tmp_path / "minimal.db")
+        conn = sqlite3.connect(db_path)
+        conn.executescript("""
+            CREATE TABLE signals (
+                id INTEGER PRIMARY KEY,
+                canonical_key TEXT NOT NULL,
+                source_api TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                detected_at TEXT DEFAULT ''
+            );
+        """)
+        conn.commit()
+
+        with pytest.raises(RuntimeError, match="Missing columns.*evidence_family"):
+            _section_11_multi_family_convergence(conn)
+        conn.close()

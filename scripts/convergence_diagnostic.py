@@ -347,12 +347,27 @@ def _section_10_per_collector_domain_yield(conn: sqlite3.Connection) -> list[dic
 def _section_11_multi_family_convergence(conn: sqlite3.Connection, since_days: int = 30) -> dict:
     """Multi-evidence-family entity convergence (LOB v7 Phase 0 Gate).
 
+    Gate criteria (redesigned):
+    - >=10 entities with 2+ evidence families (30d)
+    - >=3 distinct evidence families collectively across all collectors
+
     Correctness:
     - Uses detected_at (not created_at) for temporal windowing
     - Filters out NULL/empty canonical_key
     - Excludes evidence_family='unknown'
-    - Collector criterion: >=2 families per collector (not >=1)
+    - Schema preflight: fails fast if required columns are missing
     """
+    # A2: Schema compatibility guard — fail fast if columns are missing
+    required_columns = {"evidence_family", "canonical_key", "detected_at", "source_api"}
+    col_info = conn.execute("PRAGMA table_info(signals)").fetchall()
+    existing_columns = {row[1] for row in col_info}
+    missing = required_columns - existing_columns
+    if missing:
+        raise RuntimeError(
+            f"Missing columns in signals table: {sorted(missing)}. "
+            "Run schema migrations to update."
+        )
+
     cutoff = (datetime.now(timezone.utc) - timedelta(days=since_days)).strftime("%Y-%m-%d")
 
     rows = conn.execute("""
@@ -373,6 +388,20 @@ def _section_11_multi_family_convergence(conn: sqlite3.Connection, since_days: i
 
     entity_count = len(rows)
 
+    # A1: Collective family diversity + active collector count
+    diversity_row = conn.execute("""
+        SELECT COUNT(DISTINCT evidence_family),
+               COUNT(DISTINCT source_api)
+        FROM signals
+        WHERE evidence_family IS NOT NULL
+          AND evidence_family != 'unknown'
+          AND canonical_key IS NOT NULL
+          AND canonical_key != ''
+          AND detected_at >= ?
+    """, (cutoff,)).fetchone()
+    total_distinct_families, active_collectors = diversity_row
+
+    # Legacy: per-collector family counts (kept for transitional observability)
     collector_families = conn.execute("""
         SELECT source_api, COUNT(DISTINCT evidence_family) AS families
         FROM signals
@@ -387,13 +416,25 @@ def _section_11_multi_family_convergence(conn: sqlite3.Connection, since_days: i
     collectors_with_2plus_families = len(collector_families)
     families_per_collector = {r[0]: r[1] for r in collector_families}
 
-    mvp_pass = entity_count >= 10 and collectors_with_2plus_families >= 3
+    # Redesigned gate: collective family diversity instead of per-collector
+    mvp_pass = entity_count >= 10 and total_distinct_families >= 3
+
+    # Forward-looking observability warning
+    collector_diversity_warning = None
+    if active_collectors < 2:
+        collector_diversity_warning = (
+            f"Only {active_collectors} active collector(s) in window — "
+            "diversity depends on single source"
+        )
 
     return {
         "window_days": since_days,
         "cutoff_date": cutoff,
         "entities_with_2plus_families": entity_count,
         "entities": [{"key": r[0], "families": r[2], "family_count": r[1]} for r in rows[:20]],
+        "total_distinct_families": total_distinct_families,
+        "active_collectors": active_collectors,
+        "collector_diversity_warning": collector_diversity_warning,
         "collectors_with_2plus_families": collectors_with_2plus_families,
         "families_per_collector": families_per_collector,
         "mvp_gate_pass": mvp_pass,
@@ -608,8 +649,17 @@ def run_diagnostic(
         f"(threshold >= 10)"
     )
     print(
-        f"  Collectors with 2+ families: {s11['collectors_with_2plus_families']} "
+        f"  Total distinct families: {s11['total_distinct_families']} "
         f"(threshold >= 3)"
+    )
+    print(
+        f"  Active collectors: {s11['active_collectors']}"
+    )
+    if s11.get("collector_diversity_warning"):
+        print(f"  WARNING: {s11['collector_diversity_warning']}")
+    print(
+        f"  Collectors with 2+ families: {s11['collectors_with_2plus_families']} "
+        f"(legacy, informational)"
     )
     if s11.get("families_per_collector"):
         for coll, fam_count in sorted(s11["families_per_collector"].items()):
