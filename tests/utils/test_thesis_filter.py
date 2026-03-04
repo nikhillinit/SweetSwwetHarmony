@@ -349,6 +349,30 @@ class TestConfidenceAdjustment:
         # Low score without negatives → -0.08 (low_penalty), NOT -0.12
         assert adjustment == -0.08
 
+    def test_score_just_below_high_threshold(self, filter_instance):
+        """Score 0.6999 is below 0.7 threshold (>= not >) -> 0.0 adjustment."""
+        adjustment = filter_instance._calculate_adjustment(
+            keyword_score=0.6999,
+            negative_keywords=[],
+        )
+        assert adjustment == pytest.approx(0.0)
+
+    def test_score_just_below_low_threshold(self, filter_instance):
+        """Score 0.3999 is below 0.4 threshold -> low_penalty."""
+        adjustment = filter_instance._calculate_adjustment(
+            keyword_score=0.3999,
+            negative_keywords=[],
+        )
+        assert adjustment == pytest.approx(filter_instance.config.low_penalty)
+
+    def test_low_score_with_negatives_override(self, filter_instance):
+        """Low score + negatives -> negative_keyword_penalty (overrides low_penalty)."""
+        adjustment = filter_instance._calculate_adjustment(
+            keyword_score=0.3,
+            negative_keywords=["b2b"],
+        )
+        assert adjustment == pytest.approx(filter_instance.config.negative_keyword_penalty)
+
 
 class TestThesisFilterIntegration:
     """Integration tests with real keyword matcher."""
