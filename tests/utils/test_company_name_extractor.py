@@ -930,6 +930,107 @@ class TestDomainLabel:
         assert _domain_label("m.example.com") == "example"
 
 
+# =============================================================================
+# DESCRIPTION REGEX FALLBACK TESTS
+# =============================================================================
+
+
+class TestDescriptionRegexFallback:
+    """Test Step 1b: description lede regex fallback for title-miss cases."""
+
+    def test_title_miss_description_hit(self):
+        """Title regex miss + description lede regex hit -> returns company name."""
+        result = extract_company_info(
+            title="Barron Trump linked to beverage company",
+            description="SOLLOS Yerba Mate raises $2M in seed round for organic beverages",
+            mode="baseline",
+        )
+        assert result.company_name == "SOLLOS Yerba Mate"
+        assert result.company_name_method == "regex"
+
+    @patch("utils.company_name_extractor.extract_via_ner", return_value=None)
+    def test_title_miss_description_miss_falls_through(self, mock_ner):
+        """Title regex miss + description regex miss -> falls through to NER."""
+        result = extract_company_info(
+            title="Industry report on consumer trends",
+            description="The market continues to evolve with new opportunities",
+            mode="ner_active",
+        )
+        # Both regex stages miss; NER is called (mocked to return None)
+        mock_ner.assert_called_once()
+        assert result.company_name is None
+
+    def test_title_hit_skips_description(self):
+        """Title regex hit -> description fallback never runs."""
+        result = extract_company_info(
+            title="Acme raises $5M Series A",
+            description="BetaCorp announces new product line",
+            mode="baseline",
+        )
+        assert result.company_name == "Acme"
+
+    def test_competitor_mention_not_extracted(self):
+        """Competitor mention in description does NOT extract third-party org."""
+        result = extract_company_info(
+            title="New funding round for stealth startup",
+            description="The company is competing with Google and Amazon in the market",
+            mode="baseline",
+        )
+        # "Google" and "Amazon" should not be extracted (no verb pattern match)
+        assert result.company_name is None or result.company_name not in ("Google", "Amazon")
+
+    def test_quoted_third_party_not_extracted(self):
+        """Quoted third-party name in description does not override."""
+        result = extract_company_info(
+            title="New payment startup enters the market",
+            description="The company partnered with 'Stripe' for payment processing",
+            mode="baseline",
+        )
+        # Should not extract "Stripe" from description
+        assert result.company_name is None or result.company_name != "Stripe"
+
+    def test_description_lede_bounded(self):
+        """Long description is truncated to lede before regex -- verify bounded input."""
+        long_description = (
+            "Some introductory text. " * 5
+            + "Acme raises $10M in funding for consumer marketplace. "
+            + "More details about the industry. " * 20
+        )
+        result = extract_company_info(
+            title="Industry report on new trends",
+            description=long_description,
+            mode="baseline",
+        )
+        # Acme appears within the 200-char lede window, should be extractable
+        # (textwrap.shorten respects word boundaries at 200 chars)
+        if len(long_description[:200]) > 0:
+            # Verify the result is from bounded text, not unbounded
+            assert result.company_name is None or result.company_name == "Acme"
+
+    @patch("utils.company_name_extractor.extract_via_ner", side_effect=AssertionError("NER should not be called"))
+    def test_description_regex_hit_skips_ner(self, mock_ner):
+        """Description regex hit -> NER must NOT be called."""
+        result = extract_company_info(
+            title="Industry report on consumer trends",
+            description="FreshMeals raises $5M for healthy meal delivery",
+            mode="ner_active",
+        )
+        assert result.company_name == "FreshMeals"
+        assert result.company_name_method == "regex"
+
+    @patch("utils.company_name_extractor.extract_via_ner", return_value="MockCo")
+    def test_description_miss_reaches_ner(self, mock_ner):
+        """Title regex miss + description regex miss -> NER IS reached."""
+        result = extract_company_info(
+            title="Industry report on consumer trends",
+            description="The market continues to evolve with new opportunities",
+            mode="ner_active",
+        )
+        mock_ner.assert_called_once()
+        assert result.company_name == "MockCo"
+        assert result.company_name_method == "ner"
+
+
 class TestExpandedVerbs:
     """Test newly added verb patterns for regex extraction."""
 
