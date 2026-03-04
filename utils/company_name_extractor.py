@@ -27,6 +27,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import textwrap
 from dataclasses import dataclass, field
 from typing import List, Literal, Optional
 
@@ -660,10 +661,22 @@ def extract_company_info(
     result = ExtractionResult()
 
     # Step 1: Regex extraction (always runs)
+    regex_source = None
     regex_name = extract_via_regex(title)
     if regex_name:
         result.company_name = regex_name
         result.company_name_method = "regex"
+        regex_source = "title"
+
+    # Step 1b: Description regex fallback (title regex missed, try description lede)
+    if result.company_name is None and description:
+        description_lede = textwrap.shorten(description, width=200, placeholder="")
+        if description_lede.strip():
+            desc_regex_name = extract_via_regex(description_lede)
+            if desc_regex_name:
+                result.company_name = desc_regex_name
+                result.company_name_method = "regex"
+                regex_source = "description"
 
     # Step 2: NER extraction (only if mode >= ner_active AND no name yet)
     if mode_level >= 2 and result.company_name is None:
@@ -702,6 +715,7 @@ def extract_company_info(
             "title": title[:80],
             "mode": mode,
             "company_name_method": result.company_name_method,
+            "regex_source": regex_source,
             "has_promoted_domain": result.promoted_domain is not None,
             "candidate_count": len(result.candidate_domains),
         },
