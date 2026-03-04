@@ -1,0 +1,101 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "policy_id",
+    "policy_version",
+    "default_deny",
+    "entities",
+    "sources",
+    "actors"
+  ],
+  "properties": {
+    "policy_id": {
+      "type": "string"
+    },
+    "policy_version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "default_deny": {
+      "type": "boolean"
+    },
+    "entities": {
+      "type": "object"
+    },
+    "sources": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "precedence",
+          "authoritative",
+          "auto_write_allowed",
+          "auto_overwrite_allowed"
+        ],
+        "properties": {
+          "precedence": {
+            "type": "integer"
+          },
+          "authoritative": {
+            "type": "boolean"
+          },
+          "auto_write_allowed": {
+            "type": "boolean"
+          },
+          "auto_overwrite_allowed": {
+            "type": "boolean"
+          },
+          "review_required_for_overwrite": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "auto_write_rules": {
+      "type": "object"
+    },
+    "candidate_rules": {
+      "type": "object"
+    },
+    "review_rules": {
+      "type": "object"
+    },
+    "actors": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "actor_id",
+          "type",
+          "allowed_actions",
+          "allowed_sources"
+        ],
+        "properties": {
+          "actor_id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "system",
+              "reviewer"
+            ]
+          },
+          "allowed_actions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "allowed_sources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}
