@@ -1,0 +1,210 @@
+policy_id: COMPANY_NAME_WRITE_POLICY
+policy_version: 1
+effective_date: "2026-03-03"
+default_deny: true
+
+entities:
+  company_name:
+    canonical_table: articles
+    canonical_fields:
+      name: company_name
+      normalized: company_name_normalized
+      source: company_name_source
+      source_version: company_name_source_version
+      confidence: company_name_confidence
+      locked: company_name_locked
+      updated_at: company_name_updated_at
+      updated_by: company_name_updated_by
+
+    candidate_table: company_name_candidates
+    candidate_fields:
+      name: candidate_name
+      normalized: candidate_name_normalized
+      source: candidate_source
+      source_version: candidate_source_version
+      confidence: candidate_confidence
+      evidence: candidate_evidence
+      status: candidate_status
+      reviewer_id: reviewer_id
+      review_reason: review_reason
+
+    audit_table: company_name_audit_log
+
+sources:
+  manual:
+    precedence: 100
+    authoritative: true
+    auto_write_allowed: false
+    auto_overwrite_allowed: false
+    review_required_for_overwrite: true
+
+  imported_authoritative:
+    precedence: 90
+    authoritative: true
+    auto_write_allowed: true
+    auto_overwrite_allowed: false
+    review_required_for_overwrite: true
+
+  regex:
+    precedence: 80
+    authoritative: true
+    auto_write_allowed: true
+    auto_overwrite_allowed: false
+    review_required_for_overwrite: true
+
+  url_derived:
+    precedence: 70
+    authoritative: true
+    auto_write_allowed: true
+    auto_overwrite_allowed: false
+    review_required_for_overwrite: true
+
+  ner_approved:
+    precedence: 60
+    authoritative: true
+    auto_write_allowed: false
+    auto_overwrite_allowed: false
+    review_required_for_overwrite: true
+
+  ner:
+    precedence: 10
+    authoritative: false
+    auto_write_allowed: false
+    auto_overwrite_allowed: false
+    review_required_for_overwrite: true
+
+normalization:
+  unicode_nfkc: true
+  lowercase: true
+  trim: true
+  collapse_whitespace: true
+  remove_url_fragments: true
+  strip_punctuation: true
+  keep_ampersand: true
+  suffix_standardization:
+    enabled: true
+    map:
+      incorporated: inc
+      corporation: corp
+      limited: ltd
+
+validation:
+  enabled: true
+  validators:
+    - id: length_range
+      type: length_range
+      min: 2
+      max: 120
+
+    - id: reject_url_tokens
+      type: contains_any
+      tokens: ["http", "https", "www.", "/", "?", "#"]
+
+    - id: reject_generic_terms_only
+      type: generic_terms_only
+      stoplist:
+        - culinary
+        - program
+        - practices
+        - residency
+        - change
+        - models
+        - installs
+
+    - id: reject_starts_with_verb_like
+      type: starts_with_any
+      tokens: ["installs", "announces", "reports", "declares", "launches"]
+
+    - id: non_alpha_ratio
+      type: non_alpha_ratio_max
+      max_ratio: 0.30
+
+auto_write_rules:
+  canonical:
+    fill_only_when_empty: true
+    never_overwrite_non_empty: true
+    equivalence_noop_on_normalized_match: true
+    allowed_sources_for_auto_fill:
+      - regex
+      - url_derived
+      - imported_authoritative
+
+    protected_existing_sources:
+      - manual
+      - imported_authoritative
+      - regex
+      - url_derived
+      - ner_approved
+
+    regression_guard:
+      reject_if_existing_source_in:
+        - regex
+        - url_derived
+
+candidate_rules:
+  store_candidates: true
+  dedupe_per_article_on_normalized: true
+  drop_invalid_candidates: true
+
+  ner:
+    enabled: true
+    text_scope: ["title", "subtitle", "lede"]
+    write_status: new
+
+review_rules:
+  promotion:
+    allowed_candidate_sources: ["ner", "regex", "url_derived"]
+    resulting_canonical_source_for_ner: "ner_approved"
+    require_reason: true
+    allow_override_when_existing_source_in:
+      - regex
+      - url_derived
+      - imported_authoritative
+      - manual
+    two_person_override: false
+
+actors:
+  - actor_id: "system:bulk_company_name_backfill_v1"
+    type: system
+    allowed_actions:
+      - canonical_auto_fill
+      - write_audit_log
+    allowed_sources:
+      - regex
+      - url_derived
+
+  - actor_id: "system:ingest_article_v1"
+    type: system
+    allowed_actions:
+      - canonical_auto_fill
+      - write_candidates
+      - write_audit_log
+    allowed_sources:
+      - regex
+      - url_derived
+
+  - actor_id: "system:ner_candidate_extraction_v1"
+    type: system
+    allowed_actions:
+      - write_candidates
+    allowed_sources:
+      - ner
+
+  - actor_id: "reviewer:*"
+    type: reviewer
+    allowed_actions:
+      - approve_candidate
+      - reject_candidate
+      - override_canonical
+      - write_audit_log
+    allowed_sources:
+      - ner
+      - regex
+      - url_derived
+      - imported_authoritative
+      - manual
+
+logging:
+  audit_required_for_canonical_writes: true
+  audit_required_for_overrides: true
+  include_policy_version_in_audit: true
