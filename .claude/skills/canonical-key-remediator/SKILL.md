@@ -2,7 +2,6 @@
 name: canonical-key-remediator
 description: Suggest stronger canonical keys for weak name_loc keys by extracting
   domains from raw_data (dry-run report).
-user-invocable: false
 allowed-tools:
 - Bash
 - Read

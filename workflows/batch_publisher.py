@@ -18,6 +18,7 @@ Item lifecycle:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -55,6 +56,11 @@ class BatchNotFoundError(BatchError):
 
 class BatchStateError(BatchError):
     """Raised when a batch operation is invalid for the current state."""
+    pass
+
+
+class ActivationGateError(Exception):
+    """Raised when commit is attempted with a non-ready activation gate and no override."""
     pass
 
 
@@ -291,6 +297,7 @@ async def commit_batch(
     pusher: Optional[NotionPusher] = None,
     dry_run: bool = False,
     actor: str = "operator",
+    override_reason: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Commit a batch: push items to Notion.
 
@@ -303,6 +310,7 @@ async def commit_batch(
         pusher: NotionPusher instance (required for real commits)
         dry_run: If True, report only — no mutations
         actor: Who initiated
+        override_reason: If provided, overrides a non-ready activation gate with audit trail
 
     Returns:
         Dict with batch_id, pushed_count, error_count, dry_run flag, items
@@ -311,6 +319,7 @@ async def commit_batch(
         BatchNotFoundError: If batch doesn't exist
         BatchStateError: If batch is not in draft status
         DeliveryPolicyError: If delivery mode blocks batch push
+        ActivationGateError: If gate is non-ready and no override_reason provided
     """
     db = store._db
     if not db:
@@ -365,6 +374,47 @@ async def commit_batch(
     # --- REAL COMMIT ---
     # Check delivery policy upfront
     assert_notion_write_allowed(DeliveryIntent.BATCH_PUSH)
+
+    # Hard activation gate (non-dry-run real commits only)
+    gate_metadata = None
+    if pusher is not None:
+        try:
+            from monitoring.activation_gate import check_activation_readiness
+
+            gate_result = await asyncio.wait_for(
+                check_activation_readiness(store, step=4),
+                timeout=2.0,
+            )
+            gate_metadata = gate_result.to_dict()
+        except asyncio.TimeoutError:
+            gate_metadata = {"verdict": "timeout"}
+        except Exception:
+            gate_metadata = {"verdict": "error"}
+
+        if gate_metadata.get("verdict") != "ready":
+            if not override_reason:
+                raise ActivationGateError(
+                    f"Activation gate verdict={gate_metadata['verdict']}. "
+                    f"Pass override_reason to proceed."
+                )
+            # Persist override to audit_events
+            try:
+                from storage.audit_events import record_event
+
+                await record_event(
+                    store,
+                    action_type="batch_commit_gate_override",
+                    entity_type="batch",
+                    entity_id=batch_id,
+                    actor_id=actor,
+                    reason=override_reason,
+                    metadata={
+                        "verdict": gate_metadata["verdict"],
+                        "gate_details": gate_metadata,
+                    },
+                )
+            except Exception:
+                logger.debug("Failed to record gate override audit event")
 
     if pusher is None:
         raise BatchError("NotionPusher required for real commits (not dry-run)")
@@ -507,7 +557,7 @@ async def commit_batch(
         batch_id, pushed_count, error_count, final_status,
     )
 
-    return {
+    result = {
         "batch_id": batch_id,
         "dry_run": False,
         "pushed_count": pushed_count,
@@ -515,6 +565,9 @@ async def commit_batch(
         "final_status": final_status,
         "items": results,
     }
+    if gate_metadata is not None:
+        result["activation_gate"] = gate_metadata
+    return result
 
 
 # =============================================================================

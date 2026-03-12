@@ -2,7 +2,6 @@
 name: fp-pattern-detector
 description: Detect recurring FP patterns (collector/category concentration, duplicate
   descriptions, temporal hotspots, weak keys).
-user-invocable: false
 allowed-tools:
 - Bash
 - Read

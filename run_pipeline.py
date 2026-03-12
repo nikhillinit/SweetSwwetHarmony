@@ -4100,6 +4100,10 @@ Examples:
         "--db-path", type=str, default=None,
         help="Path to SQLite database (overrides env var)",
     )
+    publish_commit_parser.add_argument(
+        "--override-reason", type=str, default=None,
+        help="Override a non-ready activation gate (logged to audit_events)",
+    )
 
     # publish abort
     publish_abort_parser = publish_sub.add_parser("abort", help="Abort a draft batch")
@@ -6441,7 +6445,8 @@ async def cmd_publish_commit(args):
 
     try:
         from workflows.batch_publisher import (
-            commit_batch, preview_batch, BatchError, BatchNotFoundError, BatchStateError,
+            ActivationGateError, commit_batch, preview_batch,
+            BatchError, BatchNotFoundError, BatchStateError,
         )
         from workflows.delivery_policy import DeliveryPolicyError
 
@@ -6476,11 +6481,18 @@ async def cmd_publish_commit(args):
             verification_gate=gate,
         )
 
-        result = await commit_batch(store, args.batch_id, pusher=pusher)
+        override_reason = getattr(args, "override_reason", None)
+        result = await commit_batch(
+            store, args.batch_id, pusher=pusher,
+            override_reason=override_reason,
+        )
         print(f"Batch committed: {result['batch_id']}")
         print(f"Status: {result['final_status']}")
         print(f"Pushed: {result['pushed_count']}  Errors: {result['error_count']}")
 
+    except ActivationGateError as e:
+        print(f"Activation gate blocked: {e}")
+        sys.exit(1)
     except (BatchError, BatchNotFoundError, BatchStateError) as e:
         print(f"Error: {e}")
         sys.exit(1)

@@ -2,7 +2,6 @@
 name: quality-label
 description: Apply manual TP/FP/UNSURE labels to signals and persist an audit trail
   for quality metrics and pattern mining.
-user-invocable: true
 allowed-tools:
 - Bash
 - Read

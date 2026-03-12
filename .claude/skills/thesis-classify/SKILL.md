@@ -2,7 +2,6 @@
 name: thesis-classify
 description: Run keyword + LLM thesis classification for a single signal and store
   it in thesis_classifications.
-user-invocable: true
 allowed-tools:
 - Bash
 - Read

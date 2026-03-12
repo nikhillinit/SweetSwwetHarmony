@@ -63,15 +63,20 @@ STEP_3_FLAGS = {
     **STEP_2_FLAGS,
     "MERGE_WRITES_ENABLED": "shadow",
     "DELIVERY_MODE": "manual_publish",
+    "BULK_TRIAGE_ENABLED": "active",
     "HUNTER_PROMOTE_ENABLED": "active",
 }
 
-# Step 4: Batch pair
-STEP_4_FLAGS = {
+# Step 4A: Batch publish (merges stay in shadow)
+STEP_4A_FLAGS = {
     **STEP_3_FLAGS,
-    "MERGE_WRITES_ENABLED": "active",
-    "BULK_TRIAGE_ENABLED": "active",
     "DELIVERY_MODE": "batch_publish",
+}
+
+# Step 4B: Live merges (full production)
+STEP_4B_FLAGS = {
+    **STEP_4A_FLAGS,
+    "MERGE_WRITES_ENABLED": "active",
 }
 
 # All active simultaneously
@@ -205,9 +210,16 @@ class TestFlagCombinations:
         assert resp.status_code == 200
 
     @pytest.mark.asyncio
-    async def test_step_4_batch_pair(self, monkeypatch, client):
+    async def test_step_4a_batch_publish(self, monkeypatch, client):
         _clear_known_flags(monkeypatch)
-        _set_flags(monkeypatch, STEP_4_FLAGS)
+        _set_flags(monkeypatch, STEP_4A_FLAGS)
+        resp = await client.get("/api/v1/health")
+        assert resp.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_step_4b_live_merges(self, monkeypatch, client):
+        _clear_known_flags(monkeypatch)
+        _set_flags(monkeypatch, STEP_4B_FLAGS)
         resp = await client.get("/api/v1/health")
         assert resp.status_code == 200
 

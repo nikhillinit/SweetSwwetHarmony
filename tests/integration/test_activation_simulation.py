@@ -70,9 +70,13 @@ def _set_step3_flags(monkeypatch):
     monkeypatch.setenv("HUNTER_PROMOTE_ENABLED", "active")
 
 
-def _set_step4_flags(monkeypatch):
-    """Step 4: Batch publish (full production)."""
+def _set_step4a_flags(monkeypatch):
+    """Step 4A: Batch publish (merges stay in shadow)."""
     monkeypatch.setenv("DELIVERY_MODE", "batch_publish")
+
+
+def _set_step4b_flags(monkeypatch):
+    """Step 4B: Live merges (full production)."""
     monkeypatch.setenv("MERGE_WRITES_ENABLED", "active")
 
 
@@ -264,26 +268,54 @@ class TestStep3ManualWrite:
 
 
 # ---------------------------------------------------------------------------
-# Test 5: Step 4 — Batch publish (full production)
+# Test 5a: Step 4A — Batch publish (merges stay shadow)
 # ---------------------------------------------------------------------------
 
-class TestStep4BatchPublish:
+class TestStep4ABatchPublish:
     def test_batch_publish_enabled(self, monkeypatch):
         _set_all_flags_off(monkeypatch)
         _set_step1_flags(monkeypatch)
         _set_step2_flags(monkeypatch)
         _set_step3_flags(monkeypatch)
-        _set_step4_flags(monkeypatch)
+        _set_step4a_flags(monkeypatch)
 
         import os
         assert os.environ.get("DELIVERY_MODE") == "batch_publish"
 
+    def test_merge_still_shadow(self, monkeypatch):
+        """Step 4A: merges remain in shadow mode (not yet active)."""
+        _set_all_flags_off(monkeypatch)
+        _set_step1_flags(monkeypatch)
+        _set_step2_flags(monkeypatch)
+        _set_step3_flags(monkeypatch)
+        _set_step4a_flags(monkeypatch)
+
+        assert get_write_mode(WriteFeature.MERGE_WRITES) == WriteMode.SHADOW
+
+    def test_triage_and_hunter_still_active(self, monkeypatch):
+        """Step 4A inherits step 3 write features."""
+        _set_all_flags_off(monkeypatch)
+        _set_step1_flags(monkeypatch)
+        _set_step2_flags(monkeypatch)
+        _set_step3_flags(monkeypatch)
+        _set_step4a_flags(monkeypatch)
+
+        assert get_write_mode(WriteFeature.BULK_TRIAGE) == WriteMode.ACTIVE
+        assert get_write_mode(WriteFeature.HUNTER_PROMOTE) == WriteMode.ACTIVE
+
+
+# ---------------------------------------------------------------------------
+# Test 5b: Step 4B — Live merges (full production)
+# ---------------------------------------------------------------------------
+
+class TestStep4BLiveMerges:
     def test_merge_writes_active(self, monkeypatch):
         _set_all_flags_off(monkeypatch)
         _set_step1_flags(monkeypatch)
         _set_step2_flags(monkeypatch)
         _set_step3_flags(monkeypatch)
-        _set_step4_flags(monkeypatch)
+        _set_step4a_flags(monkeypatch)
+        _set_step4b_flags(monkeypatch)
 
         assert get_write_mode(WriteFeature.MERGE_WRITES) == WriteMode.ACTIVE
         mode = assert_write_enabled(WriteFeature.MERGE_WRITES)
@@ -294,10 +326,23 @@ class TestStep4BatchPublish:
         _set_step1_flags(monkeypatch)
         _set_step2_flags(monkeypatch)
         _set_step3_flags(monkeypatch)
-        _set_step4_flags(monkeypatch)
+        _set_step4a_flags(monkeypatch)
+        _set_step4b_flags(monkeypatch)
 
         for feature in WriteFeature:
             assert is_feature_enabled(feature), f"{feature.value} should be enabled"
+
+    def test_batch_publish_still_enabled(self, monkeypatch):
+        """Step 4B inherits batch_publish from 4A."""
+        _set_all_flags_off(monkeypatch)
+        _set_step1_flags(monkeypatch)
+        _set_step2_flags(monkeypatch)
+        _set_step3_flags(monkeypatch)
+        _set_step4a_flags(monkeypatch)
+        _set_step4b_flags(monkeypatch)
+
+        import os
+        assert os.environ.get("DELIVERY_MODE") == "batch_publish"
 
 
 # ---------------------------------------------------------------------------
@@ -306,13 +351,14 @@ class TestStep4BatchPublish:
 
 class TestEmergencyRollback:
     def test_rollback_disables_all_features(self, monkeypatch):
-        """After setting all step 4 flags, rollback returns to baseline."""
-        # Start at full production
+        """After setting all step 4B flags, rollback returns to baseline."""
+        # Start at full production (4B)
         _set_all_flags_off(monkeypatch)
         _set_step1_flags(monkeypatch)
         _set_step2_flags(monkeypatch)
         _set_step3_flags(monkeypatch)
-        _set_step4_flags(monkeypatch)
+        _set_step4a_flags(monkeypatch)
+        _set_step4b_flags(monkeypatch)
 
         # Verify full production state
         assert get_write_mode(WriteFeature.MERGE_WRITES) == WriteMode.ACTIVE
@@ -327,12 +373,45 @@ class TestEmergencyRollback:
         import os
         assert os.environ.get("DELIVERY_MODE") == "staging_only"
 
+    def test_rollback_4b_to_4a(self, monkeypatch):
+        """Rollback from 4B to 4A: merges revert to shadow, batch stays."""
+        _set_all_flags_off(monkeypatch)
+        _set_step1_flags(monkeypatch)
+        _set_step2_flags(monkeypatch)
+        _set_step3_flags(monkeypatch)
+        _set_step4a_flags(monkeypatch)
+        _set_step4b_flags(monkeypatch)
+
+        # Rollback 4B only: merges back to shadow
+        monkeypatch.setenv("MERGE_WRITES_ENABLED", "shadow")
+
+        assert get_write_mode(WriteFeature.MERGE_WRITES) == WriteMode.SHADOW
+
+        import os
+        assert os.environ.get("DELIVERY_MODE") == "batch_publish"
+
+    def test_rollback_4a_to_step3(self, monkeypatch):
+        """Rollback from 4A to Step 3: delivery reverts to manual_publish."""
+        _set_all_flags_off(monkeypatch)
+        _set_step1_flags(monkeypatch)
+        _set_step2_flags(monkeypatch)
+        _set_step3_flags(monkeypatch)
+        _set_step4a_flags(monkeypatch)
+
+        # Rollback 4A: delivery back to manual
+        monkeypatch.setenv("DELIVERY_MODE", "manual_publish")
+
+        import os
+        assert os.environ.get("DELIVERY_MODE") == "manual_publish"
+        assert get_write_mode(WriteFeature.MERGE_WRITES) == WriteMode.SHADOW
+
     def test_rollback_config_validation_clean(self, monkeypatch):
         _set_all_flags_off(monkeypatch)
         _set_step1_flags(monkeypatch)
         _set_step2_flags(monkeypatch)
         _set_step3_flags(monkeypatch)
-        _set_step4_flags(monkeypatch)
+        _set_step4a_flags(monkeypatch)
+        _set_step4b_flags(monkeypatch)
 
         # Rollback
         _set_all_flags_off(monkeypatch)

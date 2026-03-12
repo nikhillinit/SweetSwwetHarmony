@@ -174,14 +174,15 @@ HUNTER_PROMOTE_ENABLED=disabled
 
 ---
 
-## Step 4: Batch Activation (after Step 3 clean)
+## Step 4A: Batch Publish (after Step 3 clean)
 
-**Duration:** Ongoing (production state).
+**Duration:** Run for 7 days minimum before advancing to 4B.
 
 **Before starting:**
 ```bash
 python scripts/preflight_check.py --json     # Must pass
 python scripts/backup_db.py                   # Pre-step backup
+python run_pipeline.py activation-check --step 4 --json > artifacts/activation/step4a_gate.json
 ```
 
 **Gate check:** `python run_pipeline.py activation-check --step 4`
@@ -190,25 +191,62 @@ python scripts/backup_db.py                   # Pre-step backup
 
 ```bash
 DELIVERY_MODE=batch_publish
-MERGE_WRITES_ENABLED=active
+MERGE_WRITES_ENABLED=shadow          # merges stay in shadow for 4A
 ```
 
 **What changes:** Batch commit creates Notion pages for approved signals. Entity
-merges are applied (not just logged). This is the full production state.
+merges remain in shadow mode (logged but not applied). The enforced gate in
+`commit_batch()` requires a `ready` verdict or an explicit `--override-reason`.
 
 **Monitoring checklist:**
 - [ ] Batch commit creates Notion pages (`/api/v1/batch/{id}/commit`)
 - [ ] `notion_page_id` persisted on committed review_items
-- [ ] Entity merges produce correct `entity_migrations` records
-- [ ] Drift fingerprints computed post-merge
 - [ ] No duplicate Notion pages (canonical key dedup working)
-- [ ] Canary stable at full production throughput
+- [ ] Canary stable at batch throughput
+- [ ] Batch push success rate > 95%
+- [ ] SPC coverage healthy (14+ valid days in rolling 30-day window)
 
 **Rollback:**
 
 ```bash
-DELIVERY_MODE=manual_publish
-MERGE_WRITES_ENABLED=shadow
+DELIVERY_MODE=manual_publish          # reverts to Step 3
+```
+
+---
+
+## Step 4B: Live Merges (after 7 clean days on 4A)
+
+**Duration:** Ongoing (full production state).
+
+**Before starting:**
+```bash
+python scripts/preflight_check.py --json     # Must pass
+python scripts/backup_db.py                   # Pre-step backup
+python run_pipeline.py activation-check --step 4 --json > artifacts/activation/step4b_gate.json
+```
+
+**Gate check:** `python run_pipeline.py activation-check --step 4`
+
+**Set these env vars:**
+
+```bash
+MERGE_WRITES_ENABLED=active           # merges now applied
+```
+
+**What changes:** Entity merges are applied (not just logged). This is the full
+production state.
+
+**Monitoring checklist:**
+- [ ] Entity merges produce correct `entity_migrations` records
+- [ ] Drift fingerprints computed post-merge
+- [ ] No duplicate Notion pages after merge cascade
+- [ ] Canary stable at full production throughput
+- [ ] Batch push success rate > 95%
+
+**Rollback:**
+
+```bash
+MERGE_WRITES_ENABLED=shadow           # reverts to Step 4A
 ```
 
 ---
@@ -243,7 +281,7 @@ Then restart the API server and verify smoke suite passes.
 | `DRIFT_MONITORING_ENABLED` | disabled / active | disabled | 2 |
 | `USE_THIN_FILES` | true / false | false | 2 |
 | `V2_ENABLEMENT` | shadow / live | shadow | 2 |
-| `DELIVERY_MODE` | staging_only / manual_publish / batch_publish / auto_publish | staging_only | 3, 4 |
+| `DELIVERY_MODE` | staging_only / manual_publish / batch_publish / auto_publish | staging_only | 3, 4A |
 | `BULK_TRIAGE_ENABLED` | disabled / active | disabled | 3 |
 | `HUNTER_PROMOTE_ENABLED` | disabled / active | disabled | 3 |
 | `CASCADE_ROUTING_ENABLEMENT` | disabled / shadow / live | disabled | — (own runbook) |

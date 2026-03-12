@@ -2,7 +2,6 @@
 name: thesis-classify-batch
 description: Batch classify recent signals missing thesis_classifications rows using
   the LLM classifier.
-user-invocable: false
 allowed-tools:
 - Bash
 - Read

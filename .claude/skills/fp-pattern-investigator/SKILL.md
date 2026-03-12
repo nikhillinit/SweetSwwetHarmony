@@ -2,7 +2,6 @@
 name: fp-pattern-investigator
 description: Investigate detected FP patterns by pulling example signals and summarizing
   likely root causes + next steps.
-user-invocable: false
 allowed-tools:
 - Bash
 - Read
