@@ -2,7 +2,6 @@
 name: tuning-proposal-apply
 description: 'Safely apply deterministic tuning proposal actions (currently: add/update
   v2 negative keywords).'
-user-invocable: false
 allowed-tools:
 - Bash
 - Read

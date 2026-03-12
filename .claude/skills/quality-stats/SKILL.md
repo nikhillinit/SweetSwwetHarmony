@@ -2,7 +2,6 @@
 name: quality-stats
 description: Compute FP/TP rates over a time window (overall and by source_api) from
   signal_quality_metrics.
-user-invocable: true
 allowed-tools:
 - Bash
 - Read

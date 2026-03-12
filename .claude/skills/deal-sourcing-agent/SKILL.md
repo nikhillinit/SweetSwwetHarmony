@@ -1,10 +1,12 @@
 ---
 name: deal-sourcing-agent
-description: Run the Discovery Engine pipeline to find new consumer companies. Use when the user asks to "find deals", "source companies", "run the pipeline", "discover startups", or "search for prospects" in CPG, health tech, travel, or marketplaces.
-user-invocable: true
-allowed-tools: [Bash, Read]
+description: Run the Discovery Engine pipeline to find new consumer companies. Use
+  when the user asks to "find deals", "source companies", "run the pipeline", "discover
+  startups", or "search for prospects" in CPG, health tech, travel, or marketplaces.
+allowed-tools:
+- Bash
+- Read
 license: MIT
-compatibility: claude-code >= 1.0.0
 metadata:
   version: 1.0.0
   category: workflow-automation
@@ -27,7 +29,7 @@ This skill activates when you want to:
 - "Help me find new deals"
 - "Run the discovery pipeline"
 - "Source companies in [sector]"
-- "What new prospects do we have?"
+- "What new prospects do we have*"
 - "Check for new SEC filings"
 
 ## Quick Start

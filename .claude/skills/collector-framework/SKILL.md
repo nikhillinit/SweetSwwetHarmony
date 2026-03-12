@@ -1,10 +1,15 @@
 ---
 name: collector-framework
-description: Universal workflow for building and running signal collectors in the Discovery Engine. Use when creating a new collector, running an existing collector, debugging collector failures, or understanding the collector architecture. Covers the 5-step workflow (Initialize, Fetch, Enrich, Convert, Persist) that all collectors follow.
-user-invocable: true
-allowed-tools: [Bash, Read, Grep]
+description: Universal workflow for building and running signal collectors in the
+  Discovery Engine. Use when creating a new collector, running an existing collector,
+  debugging collector failures, or understanding the collector architecture. Covers
+  the 5-step workflow (Initialize, Fetch, Enrich, Convert, Persist) that all collectors
+  follow.
+allowed-tools:
+- Bash
+- Read
+- Grep
 license: MIT
-compatibility: claude-code >= 1.0.0
 metadata:
   version: 1.0.0
   category: mcp-enhancement

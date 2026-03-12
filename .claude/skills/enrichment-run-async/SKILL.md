@@ -2,7 +2,6 @@
 name: enrichment-run-async
 description: Run placeholder async enrichments (brand sentiment, community metrics)
   for selected signals.
-user-invocable: false
 allowed-tools:
 - Bash
 - Read

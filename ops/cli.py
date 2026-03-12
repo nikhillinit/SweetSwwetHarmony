@@ -1257,13 +1257,15 @@ def schedule_add_quality_sync_cmd(args):
         enabled=not args.disabled,
     )
 
-    try:
-        sid = scheduler.create_schedule(config)
-    except Exception as e:
-        print(f"Error: {e}")
-        sys.exit(1)
-
-    print(f"✅ Quality sync schedule created: id={sid}")
+    sid, created, warnings = scheduler.ensure_schedule(config)
+    if created:
+        print(f"Schedule created: id={sid}")
+    else:
+        print(f"Schedule already exists: id={sid}")
+        if warnings:
+            for w in warnings:
+                print(f"  WARNING: {w}")
+            print("  Resolve with: schedule resume <id>, or update config manually.")
     print(f"   Name: {config.name}")
     print(f"   Cron: {config.cron_expression} (every 6 hours)")
     print(f"   Mode: {config.mode}")
@@ -1285,13 +1287,15 @@ def schedule_add_quality_classify_cmd(args):
         enabled=not args.disabled,
     )
 
-    try:
-        sid = scheduler.create_schedule(config)
-    except Exception as e:
-        print(f"Error: {e}")
-        sys.exit(1)
-
-    print(f"✅ Quality classify schedule created: id={sid}")
+    sid, created, warnings = scheduler.ensure_schedule(config)
+    if created:
+        print(f"Schedule created: id={sid}")
+    else:
+        print(f"Schedule already exists: id={sid}")
+        if warnings:
+            for w in warnings:
+                print(f"  WARNING: {w}")
+            print("  Resolve with: schedule resume <id>, or update config manually.")
     print(f"   Name: {config.name}")
     print(f"   Cron: {config.cron_expression} (daily at 2am UTC)")
     print(f"   Mode: {config.mode}")
@@ -1314,13 +1318,15 @@ def schedule_add_quality_patterns_cmd(args):
         enabled=not args.disabled,
     )
 
-    try:
-        sid = scheduler.create_schedule(config)
-    except Exception as e:
-        print(f"Error: {e}")
-        sys.exit(1)
-
-    print(f"✅ Quality patterns schedule created: id={sid}")
+    sid, created, warnings = scheduler.ensure_schedule(config)
+    if created:
+        print(f"Schedule created: id={sid}")
+    else:
+        print(f"Schedule already exists: id={sid}")
+        if warnings:
+            for w in warnings:
+                print(f"  WARNING: {w}")
+            print("  Resolve with: schedule resume <id>, or update config manually.")
     print(f"   Name: {config.name}")
     print(f"   Cron: {config.cron_expression} (Sundays at 3am UTC)")
     print(f"   Mode: {config.mode}")

@@ -2,7 +2,6 @@
 name: quality-backfill-notion-status-events
 description: Sync Notion suppression statuses and record diffs as notion_status_events
   (event log) for downstream outcome labeling.
-user-invocable: true
 allowed-tools:
 - Bash
 - Read
@@ -13,7 +12,7 @@ allowed-tools:
 ## When to use
 - You need a time-series of Notion status changes (Passed/Funded/etc).
 - You are bootstrapping the quality flywheel and want outcome labels derived from Notion.
-- A stakeholder asks: “When did this deal get marked Passed?” (approx via observed time).
+- A stakeholder asks: "When did this deal get marked Passed*" (approx via observed time).
 
 ## Inputs
 - Path to the signals SQLite DB (default: $DISCOVERY_DB_PATH or signals.db).
@@ -28,7 +27,7 @@ allowed-tools:
 - JSON summary including events_inserted, new_keys, changed_keys, observed_at.
 
 ## Guardrails
-- This captures *observed* transitions (based on sync cadence), not Notion’s true change timestamp.
+- This captures *observed* transitions (based on sync cadence), not Notion's true change timestamp.
 - If sync cadence is low, outcomes may be delayed; keep your SLA window conservative.
 
 ## References

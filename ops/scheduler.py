@@ -520,34 +520,71 @@ class PipelineScheduler:
         Execute quality sync workflow:
         1. Sync Notion status events
         2. Backfill TP/FP outcomes from events
+        3. Targeted recompute of affected daily metrics
 
         Implements complete feedback loop closure.
         """
+        import sqlite3 as _sqlite3
+        from ops.quality.status_events import sync_and_capture_status_events
+        from ops.quality.db import ensure_quality_tables
+        from ops.quality.outcomes import backfill_outcomes_from_events
+
         logger.info(f"Starting quality-sync (run_id={run_id})")
 
+        # Use the scheduler's actual DB, not DISCOVERY_DB_PATH fallback
+        db_path = self.storage.db_path
+        run_started_at = datetime.now(timezone.utc).isoformat()
+
+        # Step 1: Sync Notion -> local events (async — avoid nested asyncio.run)
+        sync_conn = _sqlite3.connect(db_path)
+        sync_conn.row_factory = _sqlite3.Row
         try:
-            import os
-            from ops.quality.status_events import sync_status_events
-            from ops.quality.outcomes import backfill_outcomes_from_events
+            ensure_quality_tables(sync_conn)
+            stats = await sync_and_capture_status_events(sync_conn, db_path=db_path)
+            events_synced = stats.events_inserted
+        finally:
+            sync_conn.close()
+        logger.info(f"Synced {events_synced} status events")
 
-            # Get signals DB path
-            db_path = os.getenv("DISCOVERY_DB_PATH", "signals.db")
+        # Step 2: Infer TP/FP outcomes (needs Connection, not path)
+        conn = _sqlite3.connect(db_path)
+        conn.row_factory = _sqlite3.Row
+        try:
+            result = backfill_outcomes_from_events(conn)
+            outcomes_updated = result.labeled
+        finally:
+            conn.close()
+        logger.info(f"Updated {outcomes_updated} outcomes")
 
-            # Step 1: Sync Notion → local events
-            events_synced = sync_status_events(db_path)
-            logger.info(f"Synced {events_synced} status events")
+        # Step 3: Targeted recompute of affected dates (fatal on failure)
+        recompute_conn = _sqlite3.connect(db_path, timeout=5)
+        recompute_conn.row_factory = _sqlite3.Row
+        try:
+            recompute_conn.execute("PRAGMA busy_timeout=5000")
+            from monitoring.daily_aggregator import aggregate_daily_metrics
 
-            # Step 2: Infer TP/FP outcomes
-            outcomes_updated = backfill_outcomes_from_events(db_path)
-            logger.info(f"Updated {outcomes_updated} outcomes")
+            affected_dates = recompute_conn.execute("""
+                SELECT DISTINCT substr(s.detected_at, 1, 10) AS d
+                FROM signals s
+                JOIN signal_quality_metrics sqm ON sqm.signal_id = s.id
+                WHERE sqm.human_label IN ('TP', 'FP')
+                  AND sqm.label_source = 'notion_status_event'
+                  AND sqm.labeled_at >= ?
+                ORDER BY d
+            """, (run_started_at,)).fetchall()
 
-            return {
-                "events_synced": events_synced,
-                "outcomes_updated": outcomes_updated
-            }
-        except Exception as e:
-            logger.error(f"Quality sync failed: {e}")
-            raise
+            for row in affected_dates:
+                aggregate_daily_metrics(recompute_conn, row[0])
+            recompute_conn.commit()
+            logger.info(f"Recomputed {len(affected_dates)} affected dates")
+        finally:
+            recompute_conn.close()
+
+        return {
+            "events_synced": events_synced,
+            "outcomes_updated": outcomes_updated,
+            "dates_recomputed": len(affected_dates),
+        }
 
     async def _execute_quality_classify(self, run_id: int, schedule: dict) -> dict:
         """

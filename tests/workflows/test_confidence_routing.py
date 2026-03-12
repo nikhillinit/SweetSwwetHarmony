@@ -694,10 +694,15 @@ async def test_batch_commit_passes_override_hold():
     )
     mock_pusher.process_single_prospect = AsyncMock(return_value=mock_push_result)
 
-    # Patch delivery policy to allow writes
+    # Patch delivery policy and activation gate to allow writes
+    mock_gate_result = MagicMock()
+    mock_gate_result.verdict = "ready"
+    mock_gate_result.to_dict.return_value = {"verdict": "ready"}
+
     with patch("workflows.batch_publisher.assert_notion_write_allowed"):
         with patch("workflows.batch_publisher.update_review_status", new_callable=AsyncMock):
-            await commit_batch(mock_store, "batch-test-001", pusher=mock_pusher)
+            with patch("monitoring.activation_gate.check_activation_readiness", new_callable=AsyncMock, return_value=mock_gate_result):
+                await commit_batch(mock_store, "batch-test-001", pusher=mock_pusher)
 
     # Assert process_single_prospect was called with override_hold=True
     mock_pusher.process_single_prospect.assert_called_once_with(

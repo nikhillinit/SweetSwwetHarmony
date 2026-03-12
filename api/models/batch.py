@@ -69,6 +69,10 @@ class BatchCommitRequest(BaseModel):
         default=False,
         description="If true, validate without executing",
     )
+    override_reason: Optional[str] = Field(
+        default=None,
+        description="If provided, overrides a non-ready activation gate with audit trail",
+    )
 
 
 class BatchCreateResponse(BaseModel):

@@ -132,3 +132,47 @@ Working:            9 collectors (56%)
 ```
 
 ---
+
+## Babysitter
+
+### Overview
+Babysitter is configured for this project with semi-autonomous mode. It orchestrates complex multi-step workflows with event-sourced state management and human-in-the-loop approval at key decision points.
+
+### Quick Commands
+```bash
+# Run babysitter project setup (re-run to update profile)
+/babysitter:project-install
+
+# Orchestrate a development task
+/babysitter:babysit
+
+# Plan a babysitter run
+/babysitter:plan
+
+# Resume a paused run
+/babysitter:resume
+```
+
+### Installed Processes
+- `cradle/project-install` — Project onboarding and profile setup
+- `gsd/execute` — Execute implementation tasks with quality gates
+- `gsd/verify` — Verification before marking work complete
+- `gsd/plan` — Plan-driven development workflow
+- `gsd/iterative-convergence` — Iterative refinement loops
+
+### Methodology
+**TDD with Evolutionary Architecture** — Enforces test-first discipline while allowing schema and module structure to evolve incrementally. Matches the project's migration-heavy development pattern.
+
+### CI/CD Integration
+Babysitter is configured to trigger on **PR events** via GitHub Actions. Workflow file creation deferred — activate by creating `.github/workflows/babysitter.yml` when ready.
+
+### Project Profile
+- Location: `.a5c/project-profile.json`
+- Readable version: `.a5c/project-profile.md`
+- Quality gates: `.a5c/quality-gates.json`
+
+### Conventions Enforced
+- Conventional commit format (feat/fix/docs/test/ci/chore)
+- Auto-delete merged branches (branch cleanup)
+- Minimum test coverage thresholds on new code
+- Existing governance lint ratchets preserved
