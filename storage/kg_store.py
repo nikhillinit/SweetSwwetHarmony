@@ -12,7 +12,6 @@ Key design decisions:
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
 import uuid
@@ -129,8 +128,18 @@ class ValidationResult:
 # ---------------------------------------------------------------------------
 
 def kg_node_id(prefix: str, seed: str) -> str:
-    """Deterministic node ID: sha256('<prefix>:<seed>')[:16]."""
-    return hashlib.sha256(f"{prefix}:{seed}".encode("utf-8")).hexdigest()[:16]
+    """Return a deterministic, non-hashed node ID for KG materialization.
+
+    Company nodes reuse the Phase G entity_id directly. Other node types use a
+    readable prefixed natural key so callers do not mint ad hoc hash IDs.
+    """
+    node_type = prefix.strip()
+    stable_key = seed.strip()
+    if not node_type or not stable_key:
+        raise ValueError("kg_node_id requires non-empty prefix and seed")
+    if node_type == "company":
+        return stable_key
+    return f"{node_type}:{stable_key}"
 
 
 def kg_edge_id() -> str:
