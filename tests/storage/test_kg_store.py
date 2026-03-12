@@ -73,12 +73,22 @@ class TestIDGeneration:
         a = kg_node_id("company", "abc")
         b = kg_node_id("company", "abc")
         assert a == b
-        assert len(a) == 16
+        assert a == "abc"
 
     def test_kg_node_id_different_seeds(self):
         a = kg_node_id("company", "abc")
         b = kg_node_id("company", "xyz")
         assert a != b
+
+    def test_kg_node_id_prefixes_non_company_nodes(self):
+        assert kg_node_id("signal", "s1") == "signal:s1"
+        assert kg_node_id("sector", "consumer_cpg") == "sector:consumer_cpg"
+
+    def test_kg_node_id_rejects_empty_parts(self):
+        with pytest.raises(ValueError):
+            kg_node_id("", "abc")
+        with pytest.raises(ValueError):
+            kg_node_id("company", "")
 
     def test_kg_edge_id_unique(self):
         ids = {kg_edge_id() for _ in range(100)}
