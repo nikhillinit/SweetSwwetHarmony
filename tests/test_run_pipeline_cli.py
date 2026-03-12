@@ -432,3 +432,24 @@ class TestCollectCommandOutput:
         assert "[OK] news_api" in output
         assert "[FAIL] broken_collector" in output
         assert "Skipped collectors: 1" in output
+
+
+class TestPublishCommitOverrideReason:
+    """Tests for publish commit --override-reason CLI flag."""
+
+    def test_override_reason_recognized(self):
+        """publish commit should accept --override-reason."""
+        parser = create_parser()
+        args = parser.parse_args([
+            "publish", "commit", "batch-test-123", "--yes",
+            "--override-reason", "manual check passed",
+        ])
+        assert args.override_reason == "manual check passed"
+
+    def test_override_reason_defaults_none(self):
+        """--override-reason should default to None."""
+        parser = create_parser()
+        args = parser.parse_args([
+            "publish", "commit", "batch-test-123", "--yes",
+        ])
+        assert args.override_reason is None

@@ -77,6 +77,13 @@ def _make_push_result(canonical_key):
     )
 
 
+def _make_ready_gate_result():
+    gate = MagicMock()
+    gate.verdict = "ready"
+    gate.to_dict.return_value = {"verdict": "ready"}
+    return gate
+
+
 # =============================================================================
 # FIXTURES
 # =============================================================================
@@ -106,6 +113,17 @@ async def client(store):
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def ready_activation_gate():
+    # Delivery-mode tests should isolate policy precedence from gate readiness.
+    with patch(
+        "monitoring.activation_gate.check_activation_readiness",
+        new_callable=AsyncMock,
+        return_value=_make_ready_gate_result(),
+    ):
+        yield
 
 
 async def _create_batch(client):

@@ -1,12 +1,20 @@
 """
-Tests for batch commit soft gate (M4.3).
+Tests for batch commit hard gate (Step 8).
 
-The activation gate is SOFT: it logs/audits the verdict but never blocks the commit.
-4 tests:
-- Real commit includes gate metadata in response
-- Canary fail proceeds with blocked verdict + audit event
-- No canary proceeds with blocked verdict (step 4 policy) + audit event
+The activation gate is HARD: non-ready verdicts raise ActivationGateError (HTTP 423)
+unless override_reason is provided.
+
+Tests:
+- Real commit with ready gate includes gate metadata in response
+- Canary fail without override returns 423 ACTIVATION_GATE_BLOCKED
+- Canary fail with override_reason proceeds (200) + audit event
+- No canary without override returns 423
+- No canary with override proceeds (200)
+- Timeout without override returns 423 (fail-closed)
 - Dry-run skips gate entirely
+- Gate runs after delivery policy check (error priority preserved)
+- Override audit event contains verdict + gate_details
+- HTTP 423 envelope matches error_response shape
 """
 
 import asyncio
@@ -166,27 +174,32 @@ def _mock_pusher():
 
 class TestBatchActivationGate:
     @pytest.mark.asyncio
-    async def test_real_commit_includes_gate_metadata(self, seeded):
-        """Real commit includes activation_gate key in response."""
+    async def test_ready_gate_includes_metadata(self, seeded):
+        """Real commit with ready gate includes activation_gate in response."""
+        from monitoring.activation_gate import ActivationGateResult
+
         client, store = seeded
-        await _insert_canary_run(store, verdict="pass", pass_rate=1.0)
         batch_id, items_hash = await _create_batch(client)
+
+        mock_gate = ActivationGateResult(verdict="ready", step=4, checked_at="now")
 
         with patch("workflows.notion_pusher.NotionPusher", return_value=_mock_pusher()):
             with patch("verification.verification_gate_v2.VerificationGate"):
                 with patch.dict(os.environ, {"DELIVERY_MODE": "batch_publish"}):
-                    resp = await client.post(
-                        f"/api/v1/batches/{batch_id}/commit",
-                        json={"expected_items_hash": items_hash, "dry_run": False},
-                        headers=_auth_header(),
-                    )
+                    with patch("monitoring.activation_gate.check_activation_readiness", new_callable=AsyncMock, return_value=mock_gate):
+                        resp = await client.post(
+                            f"/api/v1/batches/{batch_id}/commit",
+                            json={"expected_items_hash": items_hash, "dry_run": False},
+                            headers=_auth_header(),
+                        )
         assert resp.status_code == 200
         data = resp.json()["data"]
         assert "activation_gate" in data
+        assert data["activation_gate"]["verdict"] == "ready"
 
     @pytest.mark.asyncio
-    async def test_canary_fail_proceeds_with_blocked_verdict(self, seeded):
-        """Commit succeeds despite canary fail; gate verdict=blocked; audit event recorded."""
+    async def test_canary_fail_blocks_without_override(self, seeded):
+        """Canary fail without override_reason returns 423 ACTIVATION_GATE_BLOCKED."""
         client, store = seeded
         await _insert_canary_run(store, verdict="fail", pass_rate=0.3)
         batch_id, items_hash = await _create_batch(client)
@@ -199,6 +212,30 @@ class TestBatchActivationGate:
                         json={"expected_items_hash": items_hash, "dry_run": False},
                         headers=_auth_header(),
                     )
+        assert resp.status_code == 423
+        detail = resp.json()["detail"]
+        assert detail["code"] == "ACTIVATION_GATE_BLOCKED"
+        assert detail["error"] == "locked"
+
+    @pytest.mark.asyncio
+    async def test_canary_fail_proceeds_with_override(self, seeded):
+        """Canary fail with override_reason proceeds (200) + audit event recorded."""
+        client, store = seeded
+        await _insert_canary_run(store, verdict="fail", pass_rate=0.3)
+        batch_id, items_hash = await _create_batch(client)
+
+        with patch("workflows.notion_pusher.NotionPusher", return_value=_mock_pusher()):
+            with patch("verification.verification_gate_v2.VerificationGate"):
+                with patch.dict(os.environ, {"DELIVERY_MODE": "batch_publish"}):
+                    resp = await client.post(
+                        f"/api/v1/batches/{batch_id}/commit",
+                        json={
+                            "expected_items_hash": items_hash,
+                            "dry_run": False,
+                            "override_reason": "manual check passed, canary test flaky",
+                        },
+                        headers=_auth_header(),
+                    )
         assert resp.status_code == 200
         data = resp.json()["data"]
         assert data["activation_gate"]["verdict"] == "blocked"
@@ -206,16 +243,19 @@ class TestBatchActivationGate:
         # Verify audit event
         db = store._db
         cursor = await db.execute(
-            "SELECT action_type FROM audit_events WHERE action_type = 'batch_commit_gate_override'"
+            "SELECT reason, metadata FROM audit_events WHERE action_type = 'batch_commit_gate_override'"
         )
         row = await cursor.fetchone()
         assert row is not None, "audit event for gate override should exist"
+        assert row[0] == "manual check passed, canary test flaky"
+        meta = json.loads(row[1])
+        assert meta["verdict"] == "blocked"
+        assert "gate_details" in meta
 
     @pytest.mark.asyncio
-    async def test_no_canary_proceeds_with_blocked_verdict(self, seeded):
-        """No canary data + step 4 policy -> blocked verdict; commit still succeeds."""
+    async def test_no_canary_blocks_without_override(self, seeded):
+        """No canary data + step 4 policy -> 423 without override."""
         client, store = seeded
-        # No canary run inserted -> step 4 blocks on missing canary
         batch_id, items_hash = await _create_batch(client)
 
         with patch("workflows.notion_pusher.NotionPusher", return_value=_mock_pusher()):
@@ -226,17 +266,79 @@ class TestBatchActivationGate:
                         json={"expected_items_hash": items_hash, "dry_run": False},
                         headers=_auth_header(),
                     )
+        assert resp.status_code == 423
+        detail = resp.json()["detail"]
+        assert detail["code"] == "ACTIVATION_GATE_BLOCKED"
+
+    @pytest.mark.asyncio
+    async def test_no_canary_proceeds_with_override(self, seeded):
+        """No canary data + override_reason -> 200."""
+        client, store = seeded
+        batch_id, items_hash = await _create_batch(client)
+
+        with patch("workflows.notion_pusher.NotionPusher", return_value=_mock_pusher()):
+            with patch("verification.verification_gate_v2.VerificationGate"):
+                with patch.dict(os.environ, {"DELIVERY_MODE": "batch_publish"}):
+                    resp = await client.post(
+                        f"/api/v1/batches/{batch_id}/commit",
+                        json={
+                            "expected_items_hash": items_hash,
+                            "dry_run": False,
+                            "override_reason": "bootstrapping batch publish",
+                        },
+                        headers=_auth_header(),
+                    )
         assert resp.status_code == 200
         data = resp.json()["data"]
         assert data["activation_gate"]["verdict"] == "blocked"
 
-        # Verify audit event
-        db = store._db
-        cursor = await db.execute(
-            "SELECT action_type FROM audit_events WHERE action_type = 'batch_commit_gate_override'"
-        )
-        row = await cursor.fetchone()
-        assert row is not None
+    @pytest.mark.asyncio
+    async def test_timeout_blocks_without_override(self, seeded):
+        """Gate timeout returns 423 (fail-closed) without override."""
+        client, store = seeded
+        batch_id, items_hash = await _create_batch(client)
+
+        async def _slow_gate(*args, **kwargs):
+            await asyncio.sleep(10)  # will be cancelled by 2s timeout
+
+        with patch("workflows.notion_pusher.NotionPusher", return_value=_mock_pusher()):
+            with patch("verification.verification_gate_v2.VerificationGate"):
+                with patch.dict(os.environ, {"DELIVERY_MODE": "batch_publish"}):
+                    with patch("monitoring.activation_gate.check_activation_readiness", side_effect=_slow_gate):
+                        resp = await client.post(
+                            f"/api/v1/batches/{batch_id}/commit",
+                            json={"expected_items_hash": items_hash, "dry_run": False},
+                            headers=_auth_header(),
+                        )
+        assert resp.status_code == 423
+        detail = resp.json()["detail"]
+        assert detail["code"] == "ACTIVATION_GATE_BLOCKED"
+
+    @pytest.mark.asyncio
+    async def test_timeout_proceeds_with_override(self, seeded):
+        """Gate timeout with override proceeds (200)."""
+        client, store = seeded
+        batch_id, items_hash = await _create_batch(client)
+
+        async def _slow_gate(*args, **kwargs):
+            await asyncio.sleep(10)
+
+        with patch("workflows.notion_pusher.NotionPusher", return_value=_mock_pusher()):
+            with patch("verification.verification_gate_v2.VerificationGate"):
+                with patch.dict(os.environ, {"DELIVERY_MODE": "batch_publish"}):
+                    with patch("monitoring.activation_gate.check_activation_readiness", side_effect=_slow_gate):
+                        resp = await client.post(
+                            f"/api/v1/batches/{batch_id}/commit",
+                            json={
+                                "expected_items_hash": items_hash,
+                                "dry_run": False,
+                                "override_reason": "gate timed out, manual check passed",
+                            },
+                            headers=_auth_header(),
+                        )
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["activation_gate"]["verdict"] == "timeout"
 
     @pytest.mark.asyncio
     async def test_dry_run_skips_gate(self, seeded):
@@ -252,3 +354,21 @@ class TestBatchActivationGate:
         assert resp.status_code == 200
         data = resp.json()["data"]
         assert "activation_gate" not in data
+
+    @pytest.mark.asyncio
+    async def test_delivery_policy_error_takes_precedence(self, seeded):
+        """DeliveryPolicyError (staging_only) fires before gate check."""
+        client, store = seeded
+        batch_id, items_hash = await _create_batch(client)
+
+        with patch("workflows.notion_pusher.NotionPusher", return_value=_mock_pusher()):
+            with patch("verification.verification_gate_v2.VerificationGate"):
+                with patch.dict(os.environ, {"DELIVERY_MODE": "staging_only"}):
+                    resp = await client.post(
+                        f"/api/v1/batches/{batch_id}/commit",
+                        json={"expected_items_hash": items_hash, "dry_run": False},
+                        headers=_auth_header(),
+                    )
+        assert resp.status_code == 423
+        detail = resp.json()["detail"]
+        assert detail["code"] == "FEATURE_DISABLED"

@@ -137,7 +137,7 @@ If rejection rate exceeds 10%, investigate and tune before proceeding.
 USE_PHASE_G_IDENTITY_RESOLUTION=true
 # Keep shadow resolution on as well:
 USE_SHADOW_ENTITY_RESOLUTION=true
-# Ensure merge writes are active (Step 4 of feature-activation.md):
+# Ensure merge writes are active (Step 4B of feature-activation.md):
 MERGE_WRITES_ENABLED=active
 ```
 

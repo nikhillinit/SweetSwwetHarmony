@@ -159,7 +159,11 @@ class TestBatchCommitPartialFailure:
 
         pusher.process_single_prospect = mock_push
 
-        result = await commit_batch(store, batch["batch_id"], pusher=pusher)
+        mock_gate_result = MagicMock()
+        mock_gate_result.verdict = "ready"
+        mock_gate_result.to_dict.return_value = {"verdict": "ready"}
+        with patch("monitoring.activation_gate.check_activation_readiness", new_callable=AsyncMock, return_value=mock_gate_result):
+            result = await commit_batch(store, batch["batch_id"], pusher=pusher)
 
         assert result["final_status"] == "committed_with_errors"
         assert result["pushed_count"] == 1
@@ -355,9 +359,13 @@ class TestBatchIdempotency:
         result_mock.notion_page_id = "notion-idem"
         pusher.process_single_prospect = AsyncMock(return_value=result_mock)
 
-        await commit_batch(store, batch["batch_id"], pusher=pusher)
+        mock_gate_result = MagicMock()
+        mock_gate_result.verdict = "ready"
+        mock_gate_result.to_dict.return_value = {"verdict": "ready"}
+        with patch("monitoring.activation_gate.check_activation_readiness", new_callable=AsyncMock, return_value=mock_gate_result):
+            await commit_batch(store, batch["batch_id"], pusher=pusher)
 
-        # Second commit should raise
+        # Second commit should raise (batch no longer in draft)
         with pytest.raises(BatchStateError):
             await commit_batch(store, batch["batch_id"], pusher=pusher)
 

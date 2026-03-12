@@ -2,7 +2,6 @@
 name: quality-export-dataset
 description: Export labeled signals (and optional thesis metadata) to CSV/JSONL for
   offline evaluation and analysis.
-user-invocable: true
 allowed-tools:
 - Bash
 - Read

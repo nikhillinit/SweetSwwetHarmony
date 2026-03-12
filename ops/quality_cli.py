@@ -77,6 +77,8 @@ def register_quality_commands(subparsers: argparse._SubParsersAction) -> None:
     p_snap = q.add_parser("backfill-snapshot", help="Bootstrapping labels from suppression_cache snapshot statuses")
     p_snap.add_argument("--since-days", type=int, default=None)
     p_snap.add_argument("--override-manual", action="store_true", default=False)
+    p_snap.add_argument("--conservative", action="store_true", default=False,
+                        help="Conservative mode: only Passed->FP, Funded->TP (excludes Source/Sourced->TP)")
     p_snap.set_defaults(func=_cmd_backfill_snapshot)
 
     # --------------------------------------------------------------------- export
@@ -226,13 +228,19 @@ def _cmd_backfill_outcomes(args: argparse.Namespace) -> None:
 
 
 def _cmd_backfill_snapshot(args: argparse.Namespace) -> None:
-    mapping = {
-        # Bootstrapping defaults (aligned with task_plan.md):
-        "Passed": "FP",
-        "Funded": "TP",
-        "Sourced": "TP",
-        "Source": "TP",
-    }
+    if getattr(args, "conservative", False):
+        mapping = {
+            "Passed": "FP",
+            "Funded": "TP",
+        }
+    else:
+        mapping = {
+            # Bootstrapping defaults (aligned with task_plan.md):
+            "Passed": "FP",
+            "Funded": "TP",
+            "Sourced": "TP",
+            "Source": "TP",
+        }
     with quality_conn(args.db_path) as conn:
         labeled = backfill_from_snapshot_status(
             conn,
