@@ -1659,6 +1659,15 @@ Tip:
     except Exception as e:
         print(f"Warning: Governance CLI registration failed: {e}", file=sys.stderr)
 
+    # ── knowledge graph commands ───────────────────────────────────
+    try:
+        from ops.graph_cli import register_graph_commands
+        register_graph_commands(subparsers)
+    except ImportError:
+        pass  # Graph module not installed
+    except Exception as e:
+        print(f"Warning: Graph CLI registration failed: {e}", file=sys.stderr)
+
     args = parser.parse_args()
 
     try:
