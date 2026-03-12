@@ -2,7 +2,6 @@
 name: thesis-disagreement-report
 description: Generate a report of keyword-vs-LLM disagreements to guide improvements
   to keyword heuristics.
-user-invocable: false
 allowed-tools:
 - Bash
 - Read

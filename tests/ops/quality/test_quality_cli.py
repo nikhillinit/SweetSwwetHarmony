@@ -219,6 +219,66 @@ class TestDefaultDbPath:
         assert _default_db_path() == "/custom/path/mydb.db"
 
 
+class TestBackfillSnapshotArgsParsing:
+    """Tests for the 'backfill-snapshot' subcommand argument parsing."""
+
+    def test_conservative_defaults_false(self):
+        """--conservative defaults to False."""
+        parser = _make_parser()
+        args = parser.parse_args([
+            "quality", "--db", "test.db", "backfill-snapshot",
+        ])
+        assert args.conservative is False
+
+    def test_conservative_sets_true(self):
+        """--conservative flag sets conservative=True."""
+        parser = _make_parser()
+        args = parser.parse_args([
+            "quality", "--db", "test.db", "backfill-snapshot", "--conservative",
+        ])
+        assert args.conservative is True
+
+    def test_conservative_mapping_excludes_source(self):
+        """Conservative mode only maps Passed->FP, Funded->TP."""
+        from unittest.mock import patch, MagicMock
+        parser = _make_parser()
+        args = parser.parse_args([
+            "quality", "--db", "test.db", "backfill-snapshot",
+            "--conservative", "--since-days", "90",
+        ])
+        with patch("ops.quality_cli.quality_conn") as mock_conn_ctx, \
+             patch("ops.quality_cli.backfill_from_snapshot_status") as mock_backfill:
+            mock_conn = MagicMock()
+            mock_conn_ctx.return_value.__enter__ = MagicMock(return_value=mock_conn)
+            mock_conn_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_backfill.return_value = 0
+            args.func(args)
+            call_kwargs = mock_backfill.call_args
+            mapping = call_kwargs[1]["mapping"]
+            assert "Source" not in mapping
+            assert "Sourced" not in mapping
+            assert mapping == {"Passed": "FP", "Funded": "TP"}
+
+    def test_default_mapping_includes_source(self):
+        """Default mode maps Source->TP, Sourced->TP as well."""
+        from unittest.mock import patch, MagicMock
+        parser = _make_parser()
+        args = parser.parse_args([
+            "quality", "--db", "test.db", "backfill-snapshot",
+        ])
+        with patch("ops.quality_cli.quality_conn") as mock_conn_ctx, \
+             patch("ops.quality_cli.backfill_from_snapshot_status") as mock_backfill:
+            mock_conn = MagicMock()
+            mock_conn_ctx.return_value.__enter__ = MagicMock(return_value=mock_conn)
+            mock_conn_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_backfill.return_value = 0
+            args.func(args)
+            call_kwargs = mock_backfill.call_args
+            mapping = call_kwargs[1]["mapping"]
+            assert "Source" in mapping
+            assert "Sourced" in mapping
+
+
 class TestCliIntegrationHelp:
     """Integration test for CLI help output."""
 

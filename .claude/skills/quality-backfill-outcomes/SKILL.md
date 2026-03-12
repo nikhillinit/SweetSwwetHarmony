@@ -2,7 +2,6 @@
 name: quality-backfill-outcomes
 description: Infer TP/FP labels for pushed signals from notion_status_events and store
   them in signal_quality_metrics.
-user-invocable: true
 allowed-tools:
 - Bash
 - Read

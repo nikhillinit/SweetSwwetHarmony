@@ -2,7 +2,6 @@
 name: fp-pattern-finder-signals
 description: 'End-to-end workflow: detect FP patterns from labels, investigate examples,
   and generate a tuning proposal.'
-user-invocable: true
 allowed-tools:
 - Bash
 - Read

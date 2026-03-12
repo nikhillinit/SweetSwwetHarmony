@@ -73,6 +73,10 @@ def _find_first_status_event_after(
 ) -> Optional[sqlite3.Row]:
     # Prefer notion_page_id if available, but canonical_key is required anyway.
     # Use both when possible.
+    baseline_filter = (
+        "AND (metadata IS NULL OR NOT json_valid(metadata) "
+        "OR json_extract(metadata, '$.baseline') IS NOT 1)"
+    )
     if notion_page_id:
         row = conn.execute(
             """
@@ -81,9 +85,10 @@ def _find_first_status_event_after(
             WHERE (canonical_key = ? OR notion_page_id = ?)
               AND observed_at >= ?
               AND new_status IN ({})
+              {}
             ORDER BY observed_at ASC, id ASC
             LIMIT 1
-            """.format(",".join(["?"] * len(statuses))),
+            """.format(",".join(["?"] * len(statuses)), baseline_filter),
             (canonical_key, notion_page_id, after_iso, *statuses),
         ).fetchone()
     else:
@@ -94,9 +99,10 @@ def _find_first_status_event_after(
             WHERE canonical_key = ?
               AND observed_at >= ?
               AND new_status IN ({})
+              {}
             ORDER BY observed_at ASC, id ASC
             LIMIT 1
-            """.format(",".join(["?"] * len(statuses))),
+            """.format(",".join(["?"] * len(statuses)), baseline_filter),
             (canonical_key, after_iso, *statuses),
         ).fetchone()
     return row

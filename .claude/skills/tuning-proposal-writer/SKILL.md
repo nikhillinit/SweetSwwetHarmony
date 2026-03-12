@@ -2,7 +2,6 @@
 name: tuning-proposal-writer
 description: Convert FP pattern reports into a structured tuning proposal YAML (safe
   auto-actions + human suggestions).
-user-invocable: false
 allowed-tools:
 - Bash
 - Read

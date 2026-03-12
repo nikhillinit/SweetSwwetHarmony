@@ -26,12 +26,12 @@ def _insert_processing(conn, signal_id, notion_page_id="page_1", status="pushed"
     conn.commit()
 
 
-def _insert_status_event(conn, canonical_key, notion_page_id, old_status, new_status, observed_at, source="sync_suppression"):
+def _insert_status_event(conn, canonical_key, notion_page_id, old_status, new_status, observed_at, source="sync_suppression", metadata=None):
     """Insert a notion_status_events row."""
     conn.execute(
-        """INSERT INTO notion_status_events (canonical_key, notion_page_id, old_status, new_status, observed_at, source)
-        VALUES (?, ?, ?, ?, ?, ?)""",
-        (canonical_key, notion_page_id, old_status, new_status, observed_at, source),
+        """INSERT INTO notion_status_events (canonical_key, notion_page_id, old_status, new_status, observed_at, source, metadata)
+        VALUES (?, ?, ?, ?, ?, ?, ?)""",
+        (canonical_key, notion_page_id, old_status, new_status, observed_at, source, metadata),
     )
     conn.commit()
 
@@ -157,6 +157,93 @@ class TestBackfillOutcomesFromEvents:
                 "SELECT human_label FROM signal_quality_metrics WHERE signal_id = ?", (sid,)
             ).fetchone()
             assert row["human_label"] == "FP"
+
+
+    def test_baseline_true_event_skipped(self, quality_db):
+        """Event with metadata='{"baseline": true}' is skipped by backfill."""
+        db_path, _ = quality_db
+        with quality_conn(db_path) as conn:
+            sid = _insert_signal(conn, canonical_key="domain:base1.com")
+            pushed_at = _utc_iso(5)
+            _insert_processing(conn, sid, notion_page_id="page_base1", processed_at=pushed_at)
+            event_at = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+            _insert_status_event(
+                conn, "domain:base1.com", "page_base1", "Source", "Passed", event_at,
+                metadata='{"baseline": true}',
+            )
+
+            stats = backfill_outcomes_from_events(conn, days_to_count=30)
+            assert stats.scanned == 1
+            assert stats.labeled == 0
+            assert stats.skipped_no_events == 1
+
+    def test_baseline_false_event_labeled(self, quality_db):
+        """Event with metadata='{"baseline": false}' is still labeled correctly."""
+        db_path, _ = quality_db
+        with quality_conn(db_path) as conn:
+            sid = _insert_signal(conn, canonical_key="domain:base2.com")
+            pushed_at = _utc_iso(5)
+            _insert_processing(conn, sid, notion_page_id="page_base2", processed_at=pushed_at)
+            event_at = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+            _insert_status_event(
+                conn, "domain:base2.com", "page_base2", "Source", "Passed", event_at,
+                metadata='{"baseline": false}',
+            )
+
+            stats = backfill_outcomes_from_events(conn, days_to_count=30)
+            assert stats.labeled == 1
+            assert stats.fp == 1
+
+    def test_empty_metadata_event_labeled(self, quality_db):
+        """Event with metadata='{}' is still labeled correctly."""
+        db_path, _ = quality_db
+        with quality_conn(db_path) as conn:
+            sid = _insert_signal(conn, canonical_key="domain:base3.com")
+            pushed_at = _utc_iso(5)
+            _insert_processing(conn, sid, notion_page_id="page_base3", processed_at=pushed_at)
+            event_at = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+            _insert_status_event(
+                conn, "domain:base3.com", "page_base3", "Source", "Funded", event_at,
+                metadata='{}',
+            )
+
+            stats = backfill_outcomes_from_events(conn, days_to_count=30)
+            assert stats.labeled == 1
+            assert stats.tp == 1
+
+    def test_null_metadata_event_labeled(self, quality_db):
+        """Event with metadata IS NULL is still labeled correctly."""
+        db_path, _ = quality_db
+        with quality_conn(db_path) as conn:
+            sid = _insert_signal(conn, canonical_key="domain:base4.com")
+            pushed_at = _utc_iso(5)
+            _insert_processing(conn, sid, notion_page_id="page_base4", processed_at=pushed_at)
+            event_at = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+            _insert_status_event(
+                conn, "domain:base4.com", "page_base4", "Source", "Passed", event_at,
+                metadata=None,
+            )
+
+            stats = backfill_outcomes_from_events(conn, days_to_count=30)
+            assert stats.labeled == 1
+            assert stats.fp == 1
+
+    def test_malformed_metadata_event_labeled(self, quality_db):
+        """Event with malformed metadata (e.g. 'not-json') is still labeled correctly."""
+        db_path, _ = quality_db
+        with quality_conn(db_path) as conn:
+            sid = _insert_signal(conn, canonical_key="domain:base5.com")
+            pushed_at = _utc_iso(5)
+            _insert_processing(conn, sid, notion_page_id="page_base5", processed_at=pushed_at)
+            event_at = (datetime.now(timezone.utc) - timedelta(days=3)).isoformat()
+            _insert_status_event(
+                conn, "domain:base5.com", "page_base5", "Source", "Funded", event_at,
+                metadata='not-json',
+            )
+
+            stats = backfill_outcomes_from_events(conn, days_to_count=30)
+            assert stats.labeled == 1
+            assert stats.tp == 1
 
 
 class TestBackfillFromSnapshotStatus:
