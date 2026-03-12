@@ -105,6 +105,13 @@ def _make_error_push_result(canonical_key="domain:acme.com", error="API timeout"
     )
 
 
+def _make_ready_gate_result():
+    gate = MagicMock()
+    gate.verdict = "ready"
+    gate.to_dict.return_value = {"verdict": "ready"}
+    return gate
+
+
 # =============================================================================
 # FIXTURES
 # =============================================================================
@@ -159,6 +166,17 @@ async def client_with_notion(app_with_notion):
     transport = httpx.ASGITransport(app=app_with_notion)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def ready_activation_gate():
+    # These tests exercise real-commit behavior, not gate policy.
+    with patch(
+        "monitoring.activation_gate.check_activation_readiness",
+        new_callable=AsyncMock,
+        return_value=_make_ready_gate_result(),
+    ):
+        yield
 
 
 @pytest_asyncio.fixture
