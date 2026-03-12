@@ -76,6 +76,7 @@ from storage.migrations.v46_evidence_key_unique import V46_EVIDENCE_KEY_UNIQUE_D
 from storage.migrations.v47_governance_triggers import V47_GOVERNANCE_TRIGGERS_DDL
 from storage.migrations.v48_shadow_log_metrics import V48_SHADOW_LOG_METRICS_DDL
 from storage.migrations.v49_adjacent_label import V49_ADJACENT_LABEL_DDL
+from storage.migrations.v50_knowledge_graph import V50_KNOWLEDGE_GRAPH_DDL
 
 if TYPE_CHECKING:
     from workflows.pipeline import PipelineStats, CollectorMetrics
@@ -89,7 +90,7 @@ logger = logging.getLogger(__name__)
 # SCHEMA VERSION
 # =============================================================================
 
-CURRENT_SCHEMA_VERSION = 49
+CURRENT_SCHEMA_VERSION = 50
 
 # SQL for creating tables (migrations applied in order)
 MIGRATIONS = {
@@ -1746,6 +1747,7 @@ MIGRATIONS = {
     47: V47_GOVERNANCE_TRIGGERS_DDL,
     48: V48_SHADOW_LOG_METRICS_DDL,
     49: V49_ADJACENT_LABEL_DDL,
+    50: V50_KNOWLEDGE_GRAPH_DDL,
 }
 
 
