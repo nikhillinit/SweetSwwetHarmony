@@ -32,7 +32,13 @@ async def store():
 
 
 async def _insert_signal(store, signal_id, confidence, canonical_key="domain:test.com"):
-    """Insert a test signal with given ID and confidence."""
+    """Insert a test signal with given ID and confidence.
+
+    Also inserts a thesis_classifications row with the same confidence as
+    thesis_fit_score so the canary scorer can evaluate it (S3 strategy:
+    canary uses COALESCE(thesis_fit_score, keyword_score), not raw
+    signals.confidence).
+    """
     db = store._db
     await db.execute(
         """
@@ -43,6 +49,14 @@ async def _insert_signal(store, signal_id, confidence, canonical_key="domain:tes
                 datetime('now'), datetime('now'))
         """,
         (signal_id, canonical_key, confidence),
+    )
+    await db.execute(
+        """
+        INSERT OR REPLACE INTO thesis_classifications
+            (signal_id, canonical_key, thesis_fit_score, keyword_score, classified_at)
+        VALUES (?, ?, ?, ?, datetime('now'))
+        """,
+        (signal_id, canonical_key, confidence, confidence),
     )
     await db.commit()
 
