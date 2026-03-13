@@ -111,6 +111,12 @@ from workflows.pipeline import (
     PipelineStats,
 )
 from utils.signal_health import SignalHealthMonitor
+from utils.cli_format import (
+    BANNER_SEP, SECTION_SEP,
+    STATUS_MAP, STATUS_OK, STATUS_FAIL, STATUS_WARN, STATUS_SKIP, STATUS_UNKNOWN,
+    print_banner, print_section, print_phase, print_progress_item,
+    format_verdict, explain,
+)
 from connectors.notion_connector_v2 import NotionConnector
 from storage.signal_store import SignalStore, CURRENT_SCHEMA_VERSION
 
@@ -271,9 +277,7 @@ async def check_gemini_api(api_key: str, timeout: float = 5.0) -> tuple[bool, st
 
 async def cmd_full(args):
     """Run full pipeline: collect → process → push"""
-    print("=" * 70)
-    print("DISCOVERY ENGINE - FULL PIPELINE")
-    print("=" * 70)
+    print_banner("DISCOVERY ENGINE - FULL PIPELINE")
 
     config = PipelineConfig.from_env()
 
@@ -308,22 +312,33 @@ async def cmd_full(args):
         print(f"\nCollectors: {', '.join(collectors) if collectors else 'None specified'}")
         print(f"Dry run: {args.dry_run}")
         print(f"Database: {config.db_path}")
-        print(f"Use gating: {config.use_gating}")
-        print(f"Use entities: {config.use_entities}")
-        print(f"Use asset store: {config.use_asset_store}")
         print()
 
-        # Run pipeline
+        # Run pipeline with progress output
+        def _on_progress(phase: int, total: int, msg: str):
+            print_phase(phase, total, msg)
+
         stats = await pipeline.run_full_pipeline(
             collectors=collectors,
             dry_run=args.dry_run,
+            progress_callback=_on_progress,
         )
 
-        # Print results
+        # Print results with top-line verdict
         print()
-        print("=" * 70)
-        print("PIPELINE RESULTS")
-        print("=" * 70)
+        error_count = len(stats.errors) if stats.errors else 0
+        verdict = format_verdict(
+            "PIPELINE RESULTS",
+            ok=error_count == 0,
+            summary_parts=[
+                f"{stats.signals_collected} collected",
+                f"{stats.signals_stored} new",
+                f"{error_count} errors",
+                f"{stats.duration_seconds:.1f}s" if stats.duration_seconds else "0s",
+            ],
+            error_count=error_count,
+        )
+        print_banner(verdict)
         print()
 
         _print_stats(stats)
@@ -340,9 +355,7 @@ async def cmd_full(args):
 
 async def cmd_collect(args):
     """Run collectors only"""
-    print("=" * 70)
-    print("DISCOVERY ENGINE - COLLECT SIGNALS")
-    print("=" * 70)
+    print_banner("DISCOVERY ENGINE - COLLECT SIGNALS")
 
     config = PipelineConfig.from_env()
 
@@ -384,32 +397,17 @@ async def cmd_collect(args):
             dry_run=args.dry_run,
         )
 
-        # Print results
+        # Print results — compact single-line per collector (F4.1, F6.6)
         print()
-        print("=" * 70)
-        print("COLLECTOR RESULTS")
-        print("=" * 70)
+        print_banner("COLLECTOR RESULTS")
         print()
-
-        status_symbols = {
-            "success": "[OK]",
-            "skipped": "[SKIP]",
-            "partial_success": "[WARN]",
-            "dry_run": "[DRY]",
-            "error": "[FAIL]",
-            "not_found": "[FAIL]",
-        }
 
         for result in results:
-            status_symbol = status_symbols.get(result.status.value, "[WARN]")
-            print(f"{status_symbol} {result.collector}")
-            print(f"  Status: {result.status.value}")
-            print(f"  Signals found: {result.signals_found}")
-            print(f"  Signals new: {result.signals_new}")
-            print(f"  Signals suppressed: {result.signals_suppressed}")
+            status_symbol = STATUS_MAP.get(result.status.value, STATUS_WARN)
+            detail = f"{result.signals_found} found, {result.signals_new} new, {result.signals_suppressed} suppressed"
             if result.error_message:
-                print(f"  Error: {result.error_message}")
-            print()
+                detail = result.error_message
+            print_progress_item(status_symbol, result.collector, detail)
 
         # Summary
         total_signals = sum(r.signals_found for r in results)
@@ -425,9 +423,9 @@ async def cmd_collect(args):
 
 async def cmd_process(args):
     """Process pending signals"""
-    print("=" * 70)
+    print(BANNER_SEP)
     print("DISCOVERY ENGINE - PROCESS PENDING SIGNALS")
-    print("=" * 70)
+    print(BANNER_SEP)
 
     config = PipelineConfig.from_env()
 
@@ -462,9 +460,9 @@ async def cmd_process(args):
 
         # Print results
         print()
-        print("=" * 70)
+        print(BANNER_SEP)
         print("PROCESSING RESULTS")
-        print("=" * 70)
+        print(BANNER_SEP)
         print()
 
         print(f"Signals processed: {result['processed']}")
@@ -486,9 +484,9 @@ async def cmd_process(args):
 
 async def cmd_sync(args):
     """Sync suppression cache from Notion"""
-    print("=" * 70)
+    print(BANNER_SEP)
     print("DISCOVERY ENGINE - SYNC SUPPRESSION CACHE")
-    print("=" * 70)
+    print(BANNER_SEP)
 
     config = PipelineConfig.from_env()
 
@@ -509,9 +507,9 @@ async def cmd_sync(args):
 
         # Print results
         print()
-        print("=" * 70)
+        print(BANNER_SEP)
         print("SYNC COMPLETE")
-        print("=" * 70)
+        print(BANNER_SEP)
         print()
         print(f"Entries synced: {count}")
         print()
@@ -523,9 +521,9 @@ async def cmd_sync(args):
 
 async def cmd_stats(args):
     """Show pipeline statistics"""
-    print("=" * 70)
+    print(BANNER_SEP)
     print("DISCOVERY ENGINE - STATISTICS")
-    print("=" * 70)
+    print(BANNER_SEP)
 
     config = PipelineConfig.from_env()
 
@@ -543,7 +541,7 @@ async def cmd_stats(args):
         # Print stats
         print()
         print("STORAGE")
-        print("-" * 70)
+        print(SECTION_SEP)
         storage = stats.get("storage", {})
         print(f"Database: {storage.get('database_path', 'Unknown')}")
         print(f"Total signals: {storage.get('total_signals', 0)}")
@@ -555,20 +553,20 @@ async def cmd_stats(args):
         print()
 
         print("PROCESSING STATUS")
-        print("-" * 70)
+        print(SECTION_SEP)
         processing = stats.get("processing", {})
         for status, count in processing.items():
             print(f"  {status}: {count}")
         print()
 
         print("SUPPRESSION CACHE")
-        print("-" * 70)
+        print(SECTION_SEP)
         print(f"Active entries: {storage.get('active_suppression_entries', 0)}")
         print()
 
         # Phase G: Entity Resolution & Claims
         print("PHASE G: ENTITY RESOLUTION & CLAIMS")
-        print("-" * 70)
+        print(SECTION_SEP)
         try:
             cursor = await pipeline._store._db.execute("SELECT COUNT(*) FROM entity_aliases")
             strong_keys = (await cursor.fetchone())[0]
@@ -600,7 +598,7 @@ async def cmd_stats(args):
         print()
 
         print("CONFIGURATION")
-        print("-" * 70)
+        print(SECTION_SEP)
         cfg = stats.get("config", {})
         print(f"Parallel collectors: {cfg.get('parallel_collectors', False)}")
         print(f"Batch size: {cfg.get('batch_size', 0)}")
@@ -642,10 +640,11 @@ async def cmd_health(args):
     core_only = _bool_arg("core_only", False)
     allow_external_failures = _bool_arg("allow_external_failures", False)
 
+    total_checks = 5  # DB, Config, APIs, Suppression, Signal Health
+    check_num = 0
+
     if not output_json:
-        print("=" * 70)
-        print("DISCOVERY ENGINE - HEALTH CHECK")
-        print("=" * 70)
+        print_banner("DISCOVERY ENGINE - HEALTH CHECK")
         print()
 
     config = PipelineConfig.from_env()
@@ -662,29 +661,31 @@ async def cmd_health(args):
         # ------------------------------------------------------------------
         # 1) Core: pipeline init / DB connectivity
         # ------------------------------------------------------------------
+        check_num += 1
         if not output_json:
-            print("Checking database connectivity...")
+            print(f"[{check_num}/{total_checks}] Database connectivity...", end=" ", flush=True)
         try:
             await pipeline.initialize()
             db_ok = bool(getattr(getattr(pipeline, "_store", None), "_db", None))
             if db_ok:
                 if not output_json:
-                    print("  Database: HEALTHY")
+                    print(STATUS_OK)
                 checks.append(CheckResult("Database", CheckScope.CORE, CheckStatus.PASS, None))
             else:
                 if not output_json:
-                    print("  Database: FAILED (no connection)")
+                    print(f"{STATUS_FAIL} (no connection)")
                 checks.append(CheckResult("Database", CheckScope.CORE, CheckStatus.FAIL, "No database connection"))
         except Exception as e:
             if not output_json:
-                print(f"  Database: FAILED ({e})")
+                print(f"{STATUS_FAIL} ({e})")
             checks.append(CheckResult("Database", CheckScope.CORE, CheckStatus.FAIL, str(e)))
 
         # ------------------------------------------------------------------
         # 2) Core: configuration validation (non-fatal)
         # ------------------------------------------------------------------
+        check_num += 1
         if not output_json:
-            print("Checking configuration...")
+            print(f"[{check_num}/{total_checks}] Configuration...", end=" ", flush=True)
         try:
             cfg = getattr(pipeline, "config", config)
             config_issues = []
@@ -695,29 +696,30 @@ async def cmd_health(args):
 
             if config_issues:
                 if not output_json:
-                    print(f"  Configuration: WARNING ({', '.join(config_issues)})")
+                    print(f"{STATUS_WARN} ({', '.join(config_issues)})")
                 # Backward-compatible: this is informational, not a hard fail.
                 checks.append(CheckResult("Configuration", CheckScope.CORE, CheckStatus.PASS, ", ".join(config_issues)))
             else:
                 if not output_json:
-                    print("  Configuration: HEALTHY")
+                    print(STATUS_OK)
                 checks.append(CheckResult("Configuration", CheckScope.CORE, CheckStatus.PASS, None))
         except Exception as e:
             if not output_json:
-                print(f"  Configuration: FAILED ({e})")
+                print(f"{STATUS_FAIL} ({e})")
             checks.append(CheckResult("Configuration", CheckScope.CORE, CheckStatus.WARN, str(e)))
 
         # ------------------------------------------------------------------
         # 3) External integrations
         # ------------------------------------------------------------------
+        check_num += 1
         if not output_json:
-            print("Checking API connectivity...")
+            print(f"[{check_num}/{total_checks}] API connectivity...")
 
         async def _run_external(name: str, fn):
             """Run a single external check with strict/lenient semantics."""
             if core_only:
                 if not output_json:
-                    print(f"  {name}: SKIPPED (--core-only)")
+                    print(f"  {STATUS_SKIP:6s} {name} (--core-only)")
                 checks.append(CheckResult(name, CheckScope.EXTERNAL, CheckStatus.SKIP, "--core-only"))
                 return
 
@@ -728,13 +730,13 @@ async def cmd_health(args):
 
             if ok:
                 if not output_json:
-                    print(f"  {name}: OK")
+                    print(f"  {STATUS_OK:6s} {name}")
                 checks.append(CheckResult(name, CheckScope.EXTERNAL, CheckStatus.PASS, None))
             else:
                 status = CheckStatus.WARN if allow_external_failures else CheckStatus.FAIL
-                label = "WARNING" if allow_external_failures else "FAILED"
+                symbol = STATUS_WARN if allow_external_failures else STATUS_FAIL
                 if not output_json:
-                    print(f"  {name}: {label} ({msg})")
+                    print(f"  {symbol:6s} {name} ({msg})")
                 checks.append(CheckResult(name, CheckScope.EXTERNAL, status, msg))
 
         await _run_external("GitHub API", lambda: check_github_api())
@@ -745,33 +747,34 @@ async def cmd_health(args):
         notion_key = getattr(cfg, "notion_api_key", None)
         if core_only:
             if not output_json:
-                print("  Notion API: SKIPPED (--core-only)")
+                print(f"  {STATUS_SKIP:6s} Notion API (--core-only)")
             checks.append(CheckResult("Notion API", CheckScope.EXTERNAL, CheckStatus.SKIP, "--core-only"))
         elif notion_key:
             await _run_external("Notion API", lambda: check_notion_api(notion_key))
         else:
             if not output_json:
-                print("  Notion API: SKIPPED (not configured)")
+                print(f"  {STATUS_SKIP:6s} Notion API (not configured)")
             checks.append(CheckResult("Notion API", CheckScope.EXTERNAL, CheckStatus.SKIP, "Not configured"))
 
         # Gemini API (only if configured)
         gemini_key = os.getenv("GOOGLE_API_KEY", "")
         if core_only:
             if not output_json:
-                print("  Gemini API: SKIPPED (--core-only)")
+                print(f"  {STATUS_SKIP:6s} Gemini API (--core-only)")
             checks.append(CheckResult("Gemini API", CheckScope.EXTERNAL, CheckStatus.SKIP, "--core-only"))
         elif gemini_key:
             await _run_external("Gemini API", lambda: check_gemini_api(gemini_key))
         else:
             if not output_json:
-                print("  Gemini API: SKIPPED (not configured)")
+                print(f"  {STATUS_SKIP:6s} Gemini API (not configured)")
             checks.append(CheckResult("Gemini API", CheckScope.EXTERNAL, CheckStatus.SKIP, "Not configured"))
 
         # ------------------------------------------------------------------
         # 4) Core: suppression cache
         # ------------------------------------------------------------------
+        check_num += 1
         if not output_json:
-            print("Checking suppression cache...")
+            print(f"[{check_num}/{total_checks}] Suppression cache...", end=" ", flush=True)
         try:
             if getattr(getattr(pipeline, "_store", None), "_db", None):
                 stats = await pipeline.get_stats()
@@ -784,33 +787,35 @@ async def cmd_health(args):
 
                 if cache_entries > 0:
                     if not output_json:
-                        print(f"  Suppression Cache: HEALTHY ({cache_entries} entries)")
+                        print(f"{STATUS_OK} ({cache_entries} entries)")
                     checks.append(CheckResult("Suppression Cache", CheckScope.CORE, CheckStatus.PASS, f"{cache_entries} entries"))
                 else:
                     if not output_json:
-                        print("  Suppression Cache: WARNING (empty - run 'sync' command)")
+                        print(f"{STATUS_WARN} (empty - run 'sync' command)")
                     checks.append(CheckResult("Suppression Cache", CheckScope.CORE, CheckStatus.WARN, "Empty - run 'sync' to populate"))
             else:
                 if not output_json:
-                    print("  Suppression Cache: SKIPPED (no database)")
+                    print(f"{STATUS_SKIP} (no database)")
                 checks.append(CheckResult("Suppression Cache", CheckScope.CORE, CheckStatus.SKIP, "Database unavailable"))
         except Exception as e:
             if not output_json:
-                print(f"  Suppression Cache: WARNING ({e})")
+                print(f"{STATUS_WARN} ({e})")
             checks.append(CheckResult("Suppression Cache", CheckScope.CORE, CheckStatus.WARN, str(e)))
 
         # ------------------------------------------------------------------
         # 5) Core: signal health
         # ------------------------------------------------------------------
+        check_num += 1
         if not output_json:
-            print(f"Checking signal health (last {lookback_days} days)...")
+            print(f"[{check_num}/{total_checks}] Signal health (last {lookback_days} days)...", end=" ", flush=True)
         try:
             if getattr(getattr(pipeline, "_store", None), "_db", None):
                 monitor = SignalHealthMonitor(pipeline._store)
                 report = await monitor.generate_report(lookback_days=lookback_days)
 
                 if not output_json:
-                    print(f"  Signal Health: {report.overall_status}")
+                    status_sym = STATUS_OK if report.overall_status == "HEALTHY" else STATUS_WARN if report.overall_status == "DEGRADED" else STATUS_FAIL
+                    print(f"{status_sym} ({report.overall_status})")
 
                 health_report_dict = report.to_dict()
 
@@ -826,11 +831,11 @@ async def cmd_health(args):
                     checks.append(CheckResult("Signal Health", CheckScope.CORE, CheckStatus.FAIL, "System critical"))
             else:
                 if not output_json:
-                    print("  Signal Health: SKIPPED (no database)")
+                    print(f"{STATUS_SKIP} (no database)")
                 checks.append(CheckResult("Signal Health", CheckScope.CORE, CheckStatus.SKIP, "Database unavailable"))
         except Exception as e:
             if not output_json:
-                print(f"  Signal Health: WARNING ({e})")
+                print(f"{STATUS_WARN} ({e})")
             checks.append(CheckResult("Signal Health", CheckScope.CORE, CheckStatus.WARN, str(e)))
 
         # ------------------------------------------------------------------
@@ -861,20 +866,36 @@ async def cmd_health(args):
             }
             print(json.dumps(result, indent=2, default=str))
         else:
-            # Print summary
+            # Print summary with pass/fail/warn/skip counts
+            passed = sum(1 for c in checks if c.status.upper() in ("PASS", "OK"))
+            failed = sum(1 for c in checks if c.status.upper() == "FAIL")
+            warned = sum(1 for c in checks if c.status.upper() in ("WARN", "CRIT"))
+            skipped = sum(1 for c in checks if c.status.upper() == "SKIP")
+            total = len(checks)
             print()
-            print("=" * 70)
-            print("HEALTH CHECK SUMMARY")
-            print("=" * 70)
+            overall_ok = failed == 0
+            parts = [f"{passed}/{total} passed"]
+            if warned:
+                parts.append(f"{warned} warning{'s' if warned != 1 else ''}")
+            if skipped:
+                parts.append(f"{skipped} skipped")
+            verdict = format_verdict(
+                "HEALTH CHECK SUMMARY",
+                ok=overall_ok and failed == 0,
+                summary_parts=parts,
+                error_count=failed,
+            )
+            print_banner(verdict)
             print()
 
             for c in checks:
-                print(f"  [{c.status.upper()}] {c.name}")
+                sym = STATUS_MAP.get(c.status.lower(), STATUS_UNKNOWN)
+                print(f"  {sym:6s} {c.name}")
                 if c.message:
-                    print(f"       {c.message}")
+                    print(f"         {c.message}")
 
             print()
-            print(f"Overall Status: {readiness.overall_status}")
+            print(f"Overall: {readiness.overall_status}")
             print()
 
         return readiness.exit_code()
@@ -947,9 +968,7 @@ async def cmd_step3b_readiness(args):
 
 async def cmd_metrics(args):
     """Show pipeline run metrics with per-collector breakdown."""
-    print("=" * 70)
-    print("DISCOVERY ENGINE - PIPELINE METRICS")
-    print("=" * 70)
+    print_banner("DISCOVERY ENGINE - PIPELINE METRICS")
 
     config = PipelineConfig.from_env()
     if args.db_path:
@@ -994,8 +1013,8 @@ async def cmd_metrics(args):
                     retries = cm.get("retries", 0)
                     rate_limits = cm.get("rate_limit_hits", 0)
 
-                    # Status indicator
-                    status_icon = "+" if status == "success" else "x" if status == "error" else "o"
+                    # Status indicator — unified symbol system
+                    status_icon = STATUS_MAP.get(status, STATUS_UNKNOWN)
 
                     # Format API metrics
                     api_parts = [f"{api_calls} calls"]
@@ -1005,7 +1024,7 @@ async def cmd_metrics(args):
                         api_parts.append(f"{rate_limits} rate limits")
                     api_str = ", ".join(api_parts)
 
-                    print(f"  {name:<16} {dur:>6.1f}s   {status_icon}   {signals:>3} signals   |  API: {api_str}")
+                    print(f"  {status_icon:6s} {name:<16} {dur:>6.1f}s  {signals:>3} signals  |  API: {api_str}")
 
             print()
 
@@ -1081,9 +1100,9 @@ async def cmd_import_emails(args):
     db_path = getattr(args, "db_path", None) or "private_graph.db"
     dry_run = getattr(args, "dry_run", False)
 
-    print("=" * 70)
+    print(BANNER_SEP)
     print("DISCOVERY ENGINE - IMPORT EMAILS")
-    print("=" * 70)
+    print(BANNER_SEP)
     print()
     print(f"MBOX file: {mbox_path}")
     print(f"My email: {my_email}")
@@ -1107,7 +1126,7 @@ async def cmd_import_emails(args):
 
     if dry_run:
         print("DRY RUN - Would store the following relationships:")
-        print("-" * 70)
+        print(SECTION_SEP)
         for domain, contact in sorted(contacts.items(), key=lambda x: -x[1]['total_messages'])[:20]:
             print(f"  {domain:<30} {contact['total_messages']:>4} msgs, {contact['intro_count']:>2} intros, {contact['reply_count']:>2} replies")
         if len(contacts) > 20:
@@ -1134,14 +1153,14 @@ async def cmd_import_emails(args):
             stored += 1
 
         print()
-        print("=" * 70)
+        print(BANNER_SEP)
         print("IMPORT COMPLETE")
-        print("=" * 70)
+        print(BANNER_SEP)
         print()
         print(f"Relationships stored: {stored}")
         print()
         print("Top 10 relationships by message count:")
-        print("-" * 70)
+        print(SECTION_SEP)
         for domain, contact in sorted(contacts.items(), key=lambda x: -x[1]['total_messages'])[:10]:
             strength = await store.get_domain_strength(my_email, domain)
             score = strength.strength_score if strength else 0.0
@@ -1174,9 +1193,9 @@ async def cmd_sync_lps(args):
         print("       Or provide --database-id argument")
         sys.exit(1)
 
-    print("=" * 70)
+    print(BANNER_SEP)
     print("DISCOVERY ENGINE - SYNC LP RELATIONSHIPS")
-    print("=" * 70)
+    print(BANNER_SEP)
     print()
     print(f"LP Database ID: {database_id[:8]}...")
     print(f"Dry run: {dry_run}")
@@ -1197,7 +1216,7 @@ async def cmd_sync_lps(args):
 
     if dry_run:
         print("DRY RUN - Would store the following relationships:")
-        print("-" * 70)
+        print(SECTION_SEP)
         for rel in sorted(relationships, key=lambda r: -r.score)[:20]:
             print(f"  {rel.domain:<30} {rel.score:.2f}  {rel.badge}")
             print(f"    {rel.attribution}")
@@ -1235,15 +1254,15 @@ async def cmd_sync_lps(args):
     finally:
         await rel_store.close()
 
-    print("=" * 70)
+    print(BANNER_SEP)
     print("SYNC COMPLETE")
-    print("=" * 70)
+    print(BANNER_SEP)
     print()
     print(f"Firm relationships synced: {stored}")
     print(f"Database: {db_path}")
     print()
     print("Top 10 relationships by score:")
-    print("-" * 70)
+    print(SECTION_SEP)
     for rel in sorted(relationships, key=lambda r: -r.score)[:10]:
         print(f"  {rel.domain:<30} {rel.score:.2f}  {rel.badge}")
 
@@ -1281,15 +1300,15 @@ async def cmd_relationship_health(args):
             print(json.dumps(report.to_dict(), indent=2))
         else:
             print()
-            print("=" * 70)
+            print(BANNER_SEP)
             print("RELATIONSHIP HEALTH REPORT")
-            print("=" * 70)
+            print(BANNER_SEP)
             print()
             print(f"Overall Status: {report.overall_status}")
             print()
 
             print("Relationship Counts:")
-            print("-" * 40)
+            print(SECTION_SEP)
             print(f"  Total:    {report.relationship_count}")
             print(f"  Gmail:    {report.gmail_relationship_count}")
             print(f"  LP:       {report.lp_relationship_count}")
@@ -1297,7 +1316,7 @@ async def cmd_relationship_health(args):
             print()
 
             print("Email Scan Health:")
-            print("-" * 40)
+            print(SECTION_SEP)
             eh = report.email_health
             print(f"  Status:      {eh.status}")
             if eh.days_since_scan is not None:
@@ -1306,7 +1325,7 @@ async def cmd_relationship_health(args):
             print()
 
             print("LP Sync Health:")
-            print("-" * 40)
+            print(SECTION_SEP)
             lh = report.lp_health
             print(f"  Status:      {lh.status}")
             if lh.days_since_sync is not None:
@@ -1316,7 +1335,7 @@ async def cmd_relationship_health(args):
 
             if report.alerts:
                 print("Alerts:")
-                print("-" * 40)
+                print(SECTION_SEP)
                 for alert in report.alerts:
                     print(f"  [{alert.severity}] {alert.description}")
                 print()
@@ -1378,7 +1397,7 @@ async def cmd_warm_intros(args):
             else:
                 if candidate:
                     print(f"\nWarm Intro Data for {domain}:")
-                    print("-" * 40)
+                    print(SECTION_SEP)
                     print(f"  Score:       {candidate.score:.2f}")
                     print(f"  Badge:       {candidate.badge}")
                     if verbose:
@@ -1427,15 +1446,15 @@ async def cmd_warm_intros(args):
                 ], indent=2))
             else:
                 print(f"\nWarm Intro Data ({len(results)} domains):")
-                print("-" * 60)
+                print(SECTION_SEP)
                 if verbose:
                     print(f"{'Domain':<30} {'Score':>6} {'Badge':<15} {'Source':<10}")
-                    print("-" * 60)
+                    print(SECTION_SEP)
                     for c in results:
                         print(f"{c.investor_domain:<30} {c.score:>6.2f} {c.badge:<15} {c.source.value:<10}")
                 else:
                     print(f"{'Domain':<30} {'Score':>6} {'Badge':<15}")
-                    print("-" * 60)
+                    print(SECTION_SEP)
                     for c in results:
                         print(f"{c.investor_domain:<30} {c.score:>6.2f} {c.badge:<15}")
                 print()
@@ -1551,60 +1570,44 @@ async def cmd_pipeline_push(
 # =============================================================================
 
 def _print_stats(stats: PipelineStats):
-    """Pretty-print pipeline statistics"""
+    """Pretty-print pipeline statistics."""
 
     # Collectors
-    print("COLLECTORS")
-    print("-" * 70)
-    print(f"Collectors run: {stats.collectors_run}")
-    print(f"Succeeded: {stats.collectors_succeeded}")
-    print(f"Failed: {stats.collectors_failed}")
-    print(f"Signals collected: {stats.signals_collected}")
+    print_section("COLLECTORS")
+    print(f"  Run: {stats.collectors_run}  |  OK: {stats.collectors_succeeded}  |  Failed: {stats.collectors_failed}  |  Collected: {stats.signals_collected}")
     print()
 
     # Storage
     if stats.signals_stored or stats.signals_deduplicated:
-        print("STORAGE")
-        print("-" * 70)
-        print(f"Signals stored: {stats.signals_stored}")
-        print(f"Signals deduplicated: {stats.signals_deduplicated}")
+        print_section("STORAGE")
+        print(f"  Stored: {stats.signals_stored}  |  Deduplicated: {stats.signals_deduplicated}")
         print()
 
     # Verification
     if stats.signals_processed:
-        print("VERIFICATION")
-        print("-" * 70)
-        print(f"Signals processed: {stats.signals_processed}")
-        print(f"Auto-push: {stats.signals_auto_push}")
-        print(f"Needs review: {stats.signals_needs_review}")
-        print(f"Held: {stats.signals_held}")
-        print(f"Rejected: {stats.signals_rejected}")
+        print_section("VERIFICATION")
+        print(f"  Processed: {stats.signals_processed}  |  Auto-push: {stats.signals_auto_push}  |  Review: {stats.signals_needs_review}  |  Held: {stats.signals_held}  |  Rejected: {stats.signals_rejected}")
         print()
 
     # Notion
     if stats.prospects_created or stats.prospects_updated or stats.prospects_skipped:
-        print("NOTION CRM")
-        print("-" * 70)
-        print(f"Prospects created: {stats.prospects_created}")
-        print(f"Prospects updated: {stats.prospects_updated}")
-        print(f"Prospects skipped: {stats.prospects_skipped}")
+        print_section("NOTION CRM")
+        print(f"  Created: {stats.prospects_created}  |  Updated: {stats.prospects_updated}  |  Skipped: {stats.prospects_skipped}")
         print()
 
-    # Errors
+    # Errors (elevated visual weight)
     if stats.errors:
-        print("ERRORS")
-        print("-" * 70)
+        print_section("ERRORS")
         for error in stats.errors:
-            print(f"  • {error}")
+            print(f"  {STATUS_FAIL} {error}")
         print()
 
     # Timing
-    print("TIMING")
-    print("-" * 70)
-    print(f"Started: {stats.started_at.strftime('%Y-%m-%d %H:%M:%S UTC')}")
     if stats.completed_at:
-        print(f"Completed: {stats.completed_at.strftime('%Y-%m-%d %H:%M:%S UTC')}")
-        print(f"Duration: {stats.duration_seconds:.2f}s")
+        print_section("TIMING")
+        print(f"  Started: {stats.started_at.strftime('%Y-%m-%d %H:%M:%S UTC')}  |  Duration: {stats.duration_seconds:.2f}s")
+    print()
+    print("Done.")
 
 
 async def cmd_pipeline_claims(
@@ -1714,7 +1717,7 @@ async def cmd_pipeline_entities(
         active_claims = (await cursor.fetchone())[0]
 
         print("IDENTITY RESOLUTION")
-        print("-" * 40)
+        print(SECTION_SEP)
         print(f"  Strong key bindings:   {strong_keys:>6}")
         print(f"  Weak alias bindings:   {alias_keys:>6}")
         print(f"  Blocking tokens:       {blocking_tokens:>6}")
@@ -1722,7 +1725,7 @@ async def cmd_pipeline_entities(
         print()
 
         print("BI-TEMPORAL CLAIMS")
-        print("-" * 40)
+        print(SECTION_SEP)
         print(f"  Total claim facts:     {claim_facts:>6}")
         print(f"  Active (current):      {active_claims:>6}")
         print(f"  Historical:            {claim_facts - active_claims:>6}")
@@ -1740,7 +1743,7 @@ async def cmd_pipeline_entities(
 
         if rows:
             print(f"RECENT ENTITIES (top {limit})")
-            print("-" * 40)
+            print(SECTION_SEP)
             for entity_id, count, last_updated in rows:
                 print(f"  {entity_id[:16]}  | {count} facts | {last_updated[:10]}")
             print()
@@ -1763,9 +1766,9 @@ async def cmd_eval_export(args):
     min_examples = getattr(args, "min_examples", 100)
     dry_run = getattr(args, "dry_run", False)
 
-    print("=" * 70)
+    print(BANNER_SEP)
     print("THESIS EVALUATION - EXPORT GROUND TRUTH")
-    print("=" * 70)
+    print(BANNER_SEP)
     print(f"Output: {output_path}")
     print(f"Min examples: {min_examples}")
     print()
@@ -1823,9 +1826,9 @@ async def cmd_eval_run(args):
     db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
     save_results = getattr(args, "save", True)
 
-    print("=" * 70)
+    print(BANNER_SEP)
     print("THESIS CLASSIFICATION EVALUATION")
-    print("=" * 70)
+    print(BANNER_SEP)
     print(f"Type: {eval_type}")
     print(f"Dataset: {dataset_path}")
     print()
@@ -1942,9 +1945,9 @@ async def cmd_eval_results(args):
     limit = getattr(args, "limit", 10)
     eval_type = getattr(args, "type", None)
 
-    print("=" * 70)
+    print(BANNER_SEP)
     print("THESIS EVALUATION HISTORY")
-    print("=" * 70)
+    print(BANNER_SEP)
 
     store = SignalStore(db_path)
     await store.initialize()
@@ -1963,7 +1966,7 @@ async def cmd_eval_results(args):
         print(f"\nShowing {len(results)} most recent runs:")
         print()
         print(f"{'Run ID':<16} {'Type':<10} {'Accuracy':>10} {'Dataset':<30} {'Date':<20}")
-        print("-" * 90)
+        print(SECTION_SEP)
 
         for r in results:
             run_id = r["run_id"][:14] + ".." if len(r["run_id"]) > 16 else r["run_id"]
@@ -2147,8 +2150,8 @@ async def cmd_activation_check(args) -> int:
         if getattr(args, "json_output", False):
             print(json.dumps(result.to_dict(), indent=2))
         else:
-            symbol = {"ready": "+", "warn": "!", "blocked": "X"}.get(result.verdict, "?")
-            print(f"[{symbol}] Activation Step {result.step}: {result.verdict.upper()}")
+            symbol = STATUS_MAP.get(result.verdict, STATUS_UNKNOWN)
+            print(f"{symbol} Activation Step {result.step}: {result.verdict.upper()}")
             if result.canary_verdict:
                 age = f" ({result.canary_run_age_hours}h old)" if result.canary_run_age_hours else ""
                 print(f"    Canary: {result.canary_verdict} (pass_rate={result.canary_pass_rate}){age}")
@@ -2159,6 +2162,9 @@ async def cmd_activation_check(args) -> int:
             if result.reasons:
                 for reason in result.reasons:
                     print(f"    - {reason}")
+            # Inline jargon hint if SPC terms appear in reasons
+            if any("drift monitor" in r or "SPC" in r for r in (result.reasons or [])):
+                print(f"    Note: {explain('SPC')} — drift monitors track metric stability over time")
             print(f"    Can proceed: {result.can_proceed}")
 
         return 0 if result.can_proceed else 1
@@ -2183,8 +2189,8 @@ async def cmd_phase_g_check(args) -> int:
         if getattr(args, "json_output", False):
             print(json.dumps(result.to_dict(), indent=2))
         else:
-            symbol = {"ready": "+", "warn": "!", "blocked": "X"}.get(result.verdict, "?")
-            print(f"[{symbol}] Phase G Readiness: {result.verdict.upper()}")
+            symbol = STATUS_MAP.get(result.verdict, STATUS_UNKNOWN)
+            print(f"{symbol} {explain('Phase G')} Readiness: {result.verdict.upper()}")
             for reason in result.reasons:
                 print(f"    - {reason}")
             if result.metrics:
@@ -4479,7 +4485,7 @@ async def cmd_import_csv(args):
             print(f"Sectors:  {', '.join(sector_filter)}")
         if stage_filter:
             print(f"Stages:   {', '.join(stage_filter)}")
-        print("-" * 60)
+        print(SECTION_SEP)
         print(f"Imported: {result['imported']}")
         print(f"Skipped:  {result['skipped']}")
         print(f"Errors:   {result['errors']}")
@@ -4526,13 +4532,13 @@ async def cmd_corroborate(args):
         cursor = await store._db.execute(query, params)
         rows = await cursor.fetchall()
 
-        print("\n" + "=" * 70)
+        print("\n" + BANNER_SEP)
         print("CORROBORATE - OpenCorporates Lookup")
-        print("=" * 70)
+        print(BANNER_SEP)
         print(f"Companies to look up: {len(rows)}")
         print(f"Source filter: {args.source or 'all'}")
         print(f"Dry run: {args.dry_run}")
-        print("-" * 70)
+        print(SECTION_SEP)
 
         if args.dry_run:
             print("\nCompanies that would be looked up:")
@@ -4576,9 +4582,9 @@ async def cmd_corroborate(args):
                 print(f"  [ERROR] {name[:35]:<35} | {str(e)[:30]}")
                 errors += 1
 
-        print("-" * 70)
+        print(SECTION_SEP)
         print(f"Found: {found} | Not found: {not_found} | Errors: {errors}")
-        print("=" * 70)
+        print(BANNER_SEP)
 
         # Close collector
         await collector.close()
@@ -4601,18 +4607,18 @@ async def cmd_goldset_list(args):
             limit=getattr(args, "limit", 50),
         )
 
-        print("\n" + "=" * 70)
+        print("\n" + BANNER_SEP)
         print("GOLD SET COMPANIES")
-        print("=" * 70)
+        print(BANNER_SEP)
         print(f"{'Canonical Key':<40} | {'Name':<20} | Category")
-        print("-" * 70)
+        print(SECTION_SEP)
 
         for company in companies:
             print(f"{company.canonical_key:<40} | {company.company_name[:20]:<20} | {company.category}")
 
-        print("-" * 70)
+        print(SECTION_SEP)
         print(f"Total: {len(companies)} companies")
-        print("=" * 70)
+        print(BANNER_SEP)
 
     finally:
         await store.close()
@@ -4629,19 +4635,19 @@ async def cmd_goldset_stats(args):
         manager = GoldSetManager(store)
         stats = await manager.get_stats()
 
-        print("\n" + "=" * 70)
+        print("\n" + BANNER_SEP)
         print("GOLD SET STATISTICS")
-        print("=" * 70)
+        print(BANNER_SEP)
         print(f"Total companies:  {stats.total_companies}")
         print(f"Total labels:     {stats.total_labels}")
         print(f"Investor labels:  {stats.total_investor_labels}")
-        print("-" * 70)
+        print(SECTION_SEP)
         print("By category:")
         for cat, count in sorted(stats.by_category.items()):
             print(f"  {cat:<20}: {count}")
-        print("-" * 70)
+        print(SECTION_SEP)
         print(f"Annotators: {', '.join(stats.annotators) if stats.annotators else 'None'}")
-        print("=" * 70)
+        print(BANNER_SEP)
 
     finally:
         await store.close()
@@ -4706,12 +4712,12 @@ async def cmd_evaluate(args):
         gold_set = GoldSetManager(store)
         runner = EvaluationRunner(store, gold_set)
 
-        print("\n" + "=" * 70)
+        print("\n" + BANNER_SEP)
         print(f"EVALUATION - {args.type.upper()}")
-        print("=" * 70)
+        print(BANNER_SEP)
         print(f"Gold set version: {args.gold_set_version}")
         print(f"Check drift: {args.check_drift}")
-        print("-" * 70)
+        print(SECTION_SEP)
 
         results = {}
 
@@ -4733,7 +4739,7 @@ async def cmd_evaluate(args):
         # Print results
         for run_type, result in results.items():
             print(f"\n{run_type.upper()} METRICS:")
-            print("-" * 40)
+            print(SECTION_SEP)
 
             if result.extraction_metrics:
                 m = result.extraction_metrics
@@ -4761,7 +4767,7 @@ async def cmd_evaluate(args):
         if args.check_drift and results:
             print("\n" + "-" * 70)
             print("DRIFT DETECTION")
-            print("-" * 40)
+            print(SECTION_SEP)
 
             slack_notifier = None
             if args.notify_slack:
@@ -4790,9 +4796,9 @@ async def cmd_evaluate(args):
 
             print(f"\nTotal alerts: {sum(r.red_count + r.yellow_count for r in [drift_result])}")
 
-        print("\n" + "=" * 70)
+        print("\n" + BANNER_SEP)
         print("Evaluation complete")
-        print("=" * 70)
+        print(BANNER_SEP)
 
     finally:
         await store.close()
@@ -4975,7 +4981,7 @@ async def cmd_monitor_list(args):
         watches = await monitor_store.get_due_watches(limit=args.limit)
 
         print(f"\nActive watches ({len(watches)}):")
-        print("-" * 80)
+        print(SECTION_SEP)
 
         for w in watches:
             last_check = w.last_checked_at.isoformat()[:16] if w.last_checked_at else "never"
