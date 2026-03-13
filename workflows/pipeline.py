@@ -2300,6 +2300,36 @@ class DiscoveryPipeline:
             f"{verification.decision.value} (confidence: {verification.confidence_score:.2f})"
         )
 
+        # Persist confidence ledger (non-fatal, like exit_prediction below)
+        try:
+            ledger_id = await self._store.save_confidence_ledger(
+                canonical_key=canonical_key,
+                verification_result=verification,
+                signal_ids=[s.id for s in signals],
+                execution_id=self._execution_id or None,
+                company_id=signals[0].company_id if signals else None,
+                is_dry_run=dry_run,
+                evaluation_origin="pipeline",
+                policy_version=self._gate.POLICY_VERSION,
+                routing_config={
+                    "high_threshold": self._gate.HIGH_CONFIDENCE_THRESHOLD,
+                    "medium_threshold": self._gate.MEDIUM_CONFIDENCE_THRESHOLD,
+                    "score_scale": self._gate.score_recalibration_factor,
+                    "strict_mode": self._gate.strict_mode,
+                },
+            )
+            logger.info(
+                "confidence_ledger_saved canonical_key=%s decision=%s gate_score=%.3f signals=%d ledger_id=%d",
+                canonical_key, verification.decision.value,
+                verification.confidence_breakdown.get("overall", 0.0),
+                len(signals), ledger_id,
+            )
+        except Exception as e:
+            logger.warning(
+                "confidence_ledger_save_failed canonical_key=%s error=%s",
+                canonical_key, e,
+            )
+
         # Compute exit prediction (if enabled and passes gate)
         exit_prediction = None
         if (
