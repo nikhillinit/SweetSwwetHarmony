@@ -997,3 +997,21 @@ class KGStore:
         })
         if conn is None:
             await self._db.commit()
+
+    # -- architecture layer helpers -------------------------------------------
+
+    async def list_live_node_ids_by_source(self, source_table: str) -> set[str]:
+        """Return IDs of live (non-tombstoned) nodes with given source_table."""
+        cursor = await self._db.execute(
+            "SELECT id FROM kg_nodes WHERE source_table = ? AND is_tombstone = 0",
+            (source_table,),
+        )
+        return {row[0] for row in await cursor.fetchall()}
+
+    async def list_live_edge_ids_by_layer(self, layer: str) -> set[str]:
+        """Return IDs of live edges (valid_until IS NULL) with given properties.layer."""
+        cursor = await self._db.execute(
+            "SELECT id FROM kg_edges WHERE valid_until IS NULL AND json_extract(properties, '$.layer') = ?",
+            (layer,),
+        )
+        return {row[0] for row in await cursor.fetchall()}

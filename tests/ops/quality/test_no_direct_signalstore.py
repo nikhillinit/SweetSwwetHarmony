@@ -97,6 +97,9 @@ ALLOWLIST = {
     # --- Monitoring (standalone entrypoints) ---
     "monitoring/canary_checker.py",
 
+    # --- Knowledge Graph CLI (build command uses SignalStore for DB init) ---
+    "ops/graph_cli.py",
+
     # --- Standalone utility / backfill scripts ---
     "scripts/backfill_company_files.py",
     "scripts/backfill_functional_schemas.py",
