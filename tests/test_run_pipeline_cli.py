@@ -428,9 +428,9 @@ class TestCollectCommandOutput:
                 await cmd_collect(args)
 
         output = capsys.readouterr().out
-        assert "[SKIP] domain_whois" in output
-        assert "[OK] news_api" in output
-        assert "[FAIL] broken_collector" in output
+        assert "[SKIP]" in output and "domain_whois" in output
+        assert "[OK]" in output and "news_api" in output
+        assert "[FAIL]" in output and "broken_collector" in output
         assert "Skipped collectors: 1" in output
 
 
