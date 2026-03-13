@@ -406,7 +406,7 @@ def _cmd_adj_review(args: argparse.Namespace) -> None:
                 print("Tip: re-label with 'quality label <id> TP|FP' after review.")
                 return
             print(f"{'ID':>6}  {'Company':30s}  {'Source':16s}  {'Conf':>5}  {'Labeled At':25s}  {'By':10s}  {'Reason'}")
-            print("-" * 120)
+            print("-" * 120)  # table-width separator
             for r in rows:
                 reason = r["reason"] or r["notes"] or ""
                 print(

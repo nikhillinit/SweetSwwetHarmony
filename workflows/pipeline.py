@@ -951,6 +951,7 @@ class DiscoveryPipeline:
         self,
         collectors: Optional[List[str]] = None,
         dry_run: bool = True,
+        progress_callback=None,
     ) -> PipelineStats:
         """
         Run the complete discovery pipeline.
@@ -965,10 +966,15 @@ class DiscoveryPipeline:
         Args:
             collectors: List of collector names to run (None = all available)
             dry_run: If True, don't actually queue or push to Notion
+            progress_callback: Optional callable(phase: int, total: int, msg: str)
+                for reporting progress to the caller.
 
         Returns:
             PipelineStats with detailed metrics
         """
+        def _progress(phase: int, total: int, msg: str):
+            if progress_callback:
+                progress_callback(phase, total, msg)
         await self.initialize()
 
         # Per-run tracking (with config pinning)
@@ -995,6 +1001,7 @@ class DiscoveryPipeline:
             )
 
             # Stage 1: Collect signals
+            _progress(1, 3, f"Collecting signals... ({len(collectors or [])} collectors)")
             collector_results = await self._run_collectors_stage(collectors or [], dry_run)
             stats.collectors_run = len(collector_results)
             stats.collectors_succeeded = sum(
@@ -1025,6 +1032,7 @@ class DiscoveryPipeline:
                 await self._run_promotion_sweep(stats)
 
             # Stage 2: Process pending signals
+            _progress(2, 3, "Processing signals...")
             process_stats = await self._process_signals_stage(dry_run)
             stats.signals_processed = process_stats["processed"]
             stats.signals_auto_push = process_stats["auto_push"]
@@ -1042,6 +1050,9 @@ class DiscoveryPipeline:
                     stats.prospects_created = outbox_stats["created"]
                     stats.prospects_updated = outbox_stats["updated"]
                     stats.prospects_skipped = outbox_stats["skipped"]
+
+            # Stage 3: Finalize
+            _progress(3, 3, "Finalizing...")
 
             # Generate final health report
             if self._health_monitor:
