@@ -77,6 +77,7 @@ from storage.migrations.v47_governance_triggers import V47_GOVERNANCE_TRIGGERS_D
 from storage.migrations.v48_shadow_log_metrics import V48_SHADOW_LOG_METRICS_DDL
 from storage.migrations.v49_adjacent_label import V49_ADJACENT_LABEL_DDL
 from storage.migrations.v50_knowledge_graph import V50_KNOWLEDGE_GRAPH_DDL
+from storage.migrations.v51_confidence_ledger import V51_CONFIDENCE_LEDGER_DDL
 
 if TYPE_CHECKING:
     from workflows.pipeline import PipelineStats, CollectorMetrics
@@ -90,7 +91,7 @@ logger = logging.getLogger(__name__)
 # SCHEMA VERSION
 # =============================================================================
 
-CURRENT_SCHEMA_VERSION = 50
+CURRENT_SCHEMA_VERSION = 51
 
 # SQL for creating tables (migrations applied in order)
 MIGRATIONS = {
@@ -1748,6 +1749,7 @@ MIGRATIONS = {
     48: V48_SHADOW_LOG_METRICS_DDL,
     49: V49_ADJACENT_LABEL_DDL,
     50: V50_KNOWLEDGE_GRAPH_DDL,
+    51: V51_CONFIDENCE_LEDGER_DDL,
 }
 
 
@@ -6557,6 +6559,223 @@ class SignalStore:
             }
             for row in rows
         ]
+
+    # =========================================================================
+    # CONFIDENCE LEDGER
+    # =========================================================================
+
+    async def save_confidence_ledger(
+        self,
+        canonical_key: str,
+        verification_result: Any,
+        signal_ids: List[int],
+        policy_version: str,
+        execution_id: Optional[str] = None,
+        company_id: Optional[str] = None,
+        is_dry_run: bool = False,
+        evaluation_origin: str = "pipeline",
+        routing_config: Optional[Dict[str, Any]] = None,
+    ) -> int:
+        """Persist a verification gate decision to the confidence_ledger table.
+
+        Args:
+            canonical_key: Company canonical key.
+            verification_result: VerificationResult from gate.evaluate().
+            signal_ids: List of signal IDs that were evaluated.
+            policy_version: Gate's POLICY_VERSION constant.
+            execution_id: Pipeline execution ID (from _begin_run_tracking).
+            company_id: Entity identity store company ID (nullable).
+            is_dry_run: Whether this was a --dry-run pipeline execution.
+            evaluation_origin: 'pipeline' or 'pusher'.
+            routing_config: Runtime gate config snapshot (required for pipeline rows).
+
+        Returns:
+            Row ID of the inserted ledger entry.
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        if evaluation_origin == "pipeline" and routing_config is None:
+            raise ValueError("routing_config is required for pipeline evaluations")
+
+        now = datetime.now(timezone.utc).isoformat()
+        breakdown = verification_result.confidence_breakdown
+
+        # Detect breakdown shape (by structure, not value — overall=0.0 is valid on normal path)
+        if not breakdown:
+            breakdown_kind = "empty_signals"
+        elif breakdown.get("hard_kill") is True:
+            breakdown_kind = "hard_kill"
+        else:
+            breakdown_kind = "normal"
+
+        if breakdown_kind == "normal":
+            # Core fields — fail-fast (KeyError propagates to caller's non-fatal catch)
+            gate_score = breakdown["overall"]
+            base_score = breakdown["base_score"]
+            signals_contributing = breakdown["signals_contributing"]
+            sources_checked = breakdown["sources_checked"]
+            # Optional boost fields — safe defaults
+            multi_source_boost = breakdown.get("multi_source_boost", 1.0)
+            convergence_boost = breakdown.get("convergence_boost", 1.0)
+            founder_boost = breakdown.get("founder_boost", 0.0)
+            velocity_boost = breakdown.get("velocity_boost", 0.0)
+            enrichment_boost = breakdown.get("enrichment_boost", 0.0)
+            community_sentiment_boost = breakdown.get("community_sentiment_boost", 0.0)
+            recalibration_factor = breakdown.get("score_recalibration_factor", 1.0)
+            # Policy version consistency check
+            bd_policy = breakdown.get("policy_version")
+            if bd_policy and bd_policy != policy_version:
+                logger.warning(
+                    "policy_version_mismatch breakdown=%s gate=%s canonical_key=%s",
+                    bd_policy, policy_version, canonical_key,
+                )
+        else:
+            # Hard-kill or empty-signals: use sentinel defaults
+            gate_score = 0.0
+            base_score = 0.0
+            signals_contributing = 0
+            sources_checked = 0
+            multi_source_boost = 1.0
+            convergence_boost = 1.0
+            founder_boost = 0.0
+            velocity_boost = 0.0
+            enrichment_boost = 0.0
+            community_sentiment_boost = 0.0
+            recalibration_factor = 1.0
+
+        reported_score = verification_result.confidence_score
+        decision = verification_result.decision.value
+        verification_status = verification_result.verification_status.value
+        reason = verification_result.reason
+
+        async with self.transaction() as conn:
+            cursor = await conn.execute(
+                """
+                INSERT INTO confidence_ledger (
+                    execution_id, canonical_key, company_id,
+                    evaluation_origin, is_dry_run, breakdown_kind,
+                    gate_score, reported_score,
+                    base_score, multi_source_boost, convergence_boost,
+                    founder_boost, velocity_boost, enrichment_boost,
+                    community_sentiment_boost, recalibration_factor,
+                    policy_version, breakdown_schema_version,
+                    signals_contributing, sources_checked,
+                    decision, verification_status, reason,
+                    breakdown_json, details_json, signal_ids_json,
+                    routing_config_json,
+                    evaluated_at, created_at
+                )
+                VALUES (
+                    ?, ?, ?,
+                    ?, ?, ?,
+                    ?, ?,
+                    ?, ?, ?,
+                    ?, ?, ?,
+                    ?, ?,
+                    ?, ?,
+                    ?, ?,
+                    ?, ?, ?,
+                    ?, ?, ?,
+                    ?,
+                    ?, ?
+                )
+                """,
+                (
+                    execution_id, canonical_key, company_id,
+                    evaluation_origin, 1 if is_dry_run else 0, breakdown_kind,
+                    gate_score, reported_score,
+                    base_score, multi_source_boost, convergence_boost,
+                    founder_boost, velocity_boost, enrichment_boost,
+                    community_sentiment_boost, recalibration_factor,
+                    policy_version, "1.0",
+                    signals_contributing, sources_checked,
+                    decision, verification_status, reason,
+                    json.dumps(breakdown), json.dumps(verification_result.verification_details),
+                    json.dumps(signal_ids),
+                    json.dumps(routing_config) if routing_config is not None else None,
+                    now, now,
+                ),
+            )
+            return cursor.lastrowid
+
+    async def get_confidence_ledger(
+        self,
+        canonical_key: Optional[str] = None,
+        company_id: Optional[str] = None,
+        limit: int = 10,
+        include_dry_runs: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """Retrieve confidence ledger history for a company.
+
+        Exactly one of canonical_key or company_id must be provided.
+
+        Returns raw DB row dicts. JSON columns (breakdown_json, details_json,
+        signal_ids_json, routing_config_json) are returned as raw strings —
+        the caller owns json.loads().
+        """
+        if not self._db:
+            raise RuntimeError("Database not initialized")
+
+        if canonical_key and company_id:
+            raise ValueError("Provide exactly one of canonical_key or company_id, not both")
+        if not canonical_key and not company_id:
+            raise ValueError("Provide exactly one of canonical_key or company_id")
+
+        conditions = []
+        params: List[Any] = []
+
+        if canonical_key:
+            conditions.append("canonical_key = ?")
+            params.append(canonical_key)
+        else:
+            conditions.append("company_id = ?")
+            params.append(company_id)
+
+        if not include_dry_runs:
+            conditions.append("is_dry_run = 0")
+
+        where_clause = " AND ".join(conditions)
+
+        query = f"""
+            SELECT
+                id, execution_id, canonical_key, company_id,
+                evaluation_origin, is_dry_run, breakdown_kind,
+                gate_score, reported_score,
+                base_score, multi_source_boost, convergence_boost,
+                founder_boost, velocity_boost, enrichment_boost,
+                community_sentiment_boost, recalibration_factor,
+                policy_version, breakdown_schema_version,
+                signals_contributing, sources_checked,
+                decision, verification_status, reason,
+                breakdown_json, details_json, signal_ids_json,
+                routing_config_json,
+                evaluated_at, created_at
+            FROM confidence_ledger
+            WHERE {where_clause}
+            ORDER BY evaluated_at DESC, id DESC
+            LIMIT ?
+        """
+        params.append(limit)
+
+        cursor = await self._db.execute(query, params)
+        rows = await cursor.fetchall()
+
+        columns = [
+            "id", "execution_id", "canonical_key", "company_id",
+            "evaluation_origin", "is_dry_run", "breakdown_kind",
+            "gate_score", "reported_score",
+            "base_score", "multi_source_boost", "convergence_boost",
+            "founder_boost", "velocity_boost", "enrichment_boost",
+            "community_sentiment_boost", "recalibration_factor",
+            "policy_version", "breakdown_schema_version",
+            "signals_contributing", "sources_checked",
+            "decision", "verification_status", "reason",
+            "breakdown_json", "details_json", "signal_ids_json",
+            "routing_config_json",
+            "evaluated_at", "created_at",
+        ]
+        return [dict(zip(columns, row)) for row in rows]
 
 
 # =============================================================================

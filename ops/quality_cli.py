@@ -176,6 +176,14 @@ def register_quality_commands(subparsers: argparse._SubParsersAction) -> None:
     p_adj.add_argument("--format", choices=["table", "json"], default="table", dest="out_format")
     p_adj.set_defaults(func=_cmd_adj_review)
 
+    # --------------------------------------------------------- explain-score
+    p_es = q.add_parser("explain-score", help="Explain confidence score breakdown for a company")
+    p_es.add_argument("identifier", help="Canonical key (e.g. domain:acme.ai) or numeric signal ID")
+    p_es.add_argument("--history", type=int, default=1, help="Number of historical evaluations to show")
+    p_es.add_argument("--json", action="store_true", default=False, dest="json_output")
+    p_es.add_argument("--include-dry-runs", action="store_true", default=False)
+    p_es.set_defaults(func=_cmd_explain_score)
+
 
 def _cmd_label(args: argparse.Namespace) -> None:
     if args.label == "ADJ" and not args.reason:
@@ -416,3 +424,217 @@ def _cmd_adj_review(args: argparse.Namespace) -> None:
                     f"{reason[:50]}"
                 )
             print(f"\n{len(rows)} ADJ signal(s). Re-label with: quality label <id> TP|FP")
+
+
+def _cmd_explain_score(args: argparse.Namespace) -> None:
+    import re
+
+    identifier = args.identifier
+    with quality_conn(args.db_path) as conn:
+        canonical_key = None
+        company_id = None
+        resolution_note = None
+
+        # Auto-detect numeric signal ID vs canonical key
+        if re.match(r"^\d+$", identifier):
+            sig_id = int(identifier)
+            row = conn.execute(
+                "SELECT canonical_key, company_id FROM signals WHERE id = ? LIMIT 1",
+                (sig_id,),
+            ).fetchone()
+            if not row:
+                print(f"Signal ID {sig_id} not found")
+                return
+            if row["company_id"]:
+                company_id = row["company_id"]
+                resolution_note = f"Resolved signal {sig_id} -> company {company_id} (showing entity history)"
+            else:
+                canonical_key = row["canonical_key"]
+                resolution_note = f"Resolved signal {sig_id} -> {canonical_key} (showing entity history, no company_id)"
+        else:
+            canonical_key = identifier
+
+        # Query ledger
+        conditions = []
+        params: list = []
+        if canonical_key:
+            conditions.append("canonical_key = ?")
+            params.append(canonical_key)
+        else:
+            conditions.append("company_id = ?")
+            params.append(company_id)
+
+        if not args.include_dry_runs:
+            conditions.append("is_dry_run = 0")
+
+        where = " AND ".join(conditions)
+        params.append(args.history)
+
+        rows = conn.execute(
+            f"""
+            SELECT
+                id, execution_id, canonical_key, company_id,
+                evaluation_origin, is_dry_run, breakdown_kind,
+                gate_score, reported_score,
+                base_score, multi_source_boost, convergence_boost,
+                founder_boost, velocity_boost, enrichment_boost,
+                community_sentiment_boost, recalibration_factor,
+                policy_version, breakdown_schema_version,
+                signals_contributing, sources_checked,
+                decision, verification_status, reason,
+                breakdown_json, details_json, signal_ids_json,
+                routing_config_json,
+                evaluated_at, created_at
+            FROM confidence_ledger
+            WHERE {where}
+            ORDER BY evaluated_at DESC, id DESC
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+
+        if not rows:
+            label = canonical_key or f"company_id={company_id}"
+            print(f"No evaluations recorded for {label}")
+            print("Note: this company may pre-date the confidence ledger (v51 migration)")
+            return
+
+        if resolution_note:
+            print(resolution_note)
+            print()
+
+        if args.json_output:
+            data = []
+            for r in rows:
+                entry = dict(r)
+                # Parse JSON fields for clean output
+                for jf in ("breakdown_json", "details_json", "signal_ids_json", "routing_config_json"):
+                    if entry[jf]:
+                        entry[jf] = json.loads(entry[jf])
+                data.append(entry)
+            print(json.dumps(data, indent=2))
+            return
+
+        # Table (waterfall) rendering
+        for r in rows:
+            _render_evaluation(r)
+            print()
+
+        print("  [pipeline-only: pusher re-evaluation and operator overrides not captured]")
+
+
+def _render_evaluation(r: dict) -> None:
+    """Render a single ledger row as a waterfall table."""
+    row_id = r["id"]
+    evaluated_at = r["evaluated_at"]
+    decision = r["decision"]
+    breakdown_kind = r["breakdown_kind"]
+    verification_status = r["verification_status"]
+    reason = r["reason"]
+    gate_score = r["gate_score"]
+    reported_score = r["reported_score"]
+    canonical_key = r["canonical_key"]
+    company_id = r["company_id"]
+    policy_version = r["policy_version"]
+    schema_version = r["breakdown_schema_version"]
+    signals_contributing = r["signals_contributing"]
+    sources_checked = r["sources_checked"]
+
+    print(f"Evaluation #{row_id} ({evaluated_at})")
+    print("=" * 50)
+
+    if breakdown_kind == "hard_kill":
+        print(f"  Decision:        reject (hard_kill)")
+    else:
+        print(f"  Decision:        {decision} ({verification_status})")
+    print(f"  Reason:          {reason}")
+
+    if breakdown_kind == "hard_kill":
+        print(f"  Gate Score:      {gate_score:.3f}")
+        company_line = f"  Company:         {canonical_key}"
+        if company_id:
+            company_line += f" (company_id: {company_id})"
+        print(company_line)
+        print()
+        print("  [No scoring waterfall -- hard kill bypasses confidence calculation]")
+        bd = json.loads(r["breakdown_json"])
+        kill_signal = bd.get("kill_signal", "unknown")
+        print(f"  Kill Signal:     {kill_signal}")
+    elif breakdown_kind == "empty_signals":
+        print(f"  Gate Score:      {gate_score:.3f}")
+        print()
+        print("  [No signals provided -- empty evaluation]")
+    else:
+        # Normal path — show gate_score and reported_score
+        if abs(gate_score - reported_score) > 0.001:
+            diff = reported_score - gate_score
+            sign = "+" if diff >= 0 else ""
+            print(f"  Gate Score:      {gate_score:.3f}  <- decision based on this")
+            print(f"  Reported Score:  {reported_score:.3f}  <- sent to Notion (LLM adj: {sign}{diff:.3f})")
+        else:
+            print(f"  Gate Score:      {gate_score:.3f}  <- decision based on this")
+            print(f"  Reported Score:  {reported_score:.3f}  <- sent to Notion (post-LLM)")
+
+        company_line = f"  Company:         {canonical_key}"
+        if company_id:
+            company_line += f" (company_id: {company_id})"
+        print(company_line)
+        print()
+
+        # Waterfall
+        base = r["base_score"]
+        msb = r["multi_source_boost"]
+        cb = r["convergence_boost"]
+        fb = r["founder_boost"]
+        vb = r["velocity_boost"]
+        eb = r["enrichment_boost"]
+        csb = r["community_sentiment_boost"]
+        recal = r["recalibration_factor"]
+
+        running = base
+        print("  -- Waterfall ------------------------------------")
+        print(f"  Base Score:      {base:.3f}")
+        running *= msb
+        print(f"  Multi-Source:    x{msb:.2f}   -> {running:.3f}")
+        running *= cb
+        print(f"  Convergence:     x{cb:.2f}   -> {running:.3f}")
+        running += fb
+        print(f"  Founder Boost:   +{fb:.3f}  -> {running:.3f}")
+        running += vb
+        print(f"  Velocity Boost:  +{vb:.3f}  -> {running:.3f}")
+        running += eb
+        print(f"  Enrichment:      +{eb:.3f}  -> {running:.3f}")
+        running += csb
+        print(f"  Community:       +{csb:.3f}  -> {running:.3f}")
+        print(f"  Raw Overall:     {running:.3f}")
+        recalibrated = running * recal
+        print(f"  Recalibration:   x{recal:.2f}   -> {recalibrated:.3f}")
+        capped = min(recalibrated, 1.0)
+        if capped < recalibrated:
+            print(f"  Cap (1.0):       applied -> {capped:.3f}")
+        else:
+            print("  Cap (1.0):       not applied")
+        print("  -------------------------------------------------")
+        print()
+
+        print(f"  Policy Version:  {policy_version}")
+
+        if schema_version != "1.0":
+            print(f"  [Schema v{schema_version} evaluation -- current schema is v1.0]")
+
+        print(f"  Signals:         {signals_contributing} types, {sources_checked} sources")
+
+        signal_ids = json.loads(r["signal_ids_json"])
+        print(f"  Input Signal IDs: {signal_ids}")
+
+        # Signal details from breakdown_json
+        bd = json.loads(r["breakdown_json"])
+        sig_details = bd.get("signal_details", [])
+        if sig_details:
+            print()
+            print("  Signal Details:")
+            for sd in sig_details:
+                stype = sd.get("type", "unknown")
+                contrib = sd.get("contribution", 0)
+                src = sd.get("source", "unknown")
+                print(f"    {stype:24s} contribution={contrib:.4f} (source={src})")
