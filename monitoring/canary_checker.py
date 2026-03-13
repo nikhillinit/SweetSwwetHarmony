@@ -211,7 +211,7 @@ class CanaryChecker:
         for golden in self.golden_set.signals:
             cursor = await db.execute(
                 """
-                SELECT tc.thesis_fit_score, s.confidence
+                SELECT tc.thesis_fit_score, tc.keyword_score, s.confidence
                 FROM signals s
                 LEFT JOIN thesis_classifications tc ON tc.signal_id = s.id
                 WHERE s.id = ?
@@ -237,9 +237,12 @@ class CanaryChecker:
                 )
                 continue
 
-            # Prefer thesis_fit_score when available; otherwise fall back to raw
-            # collector confidence for backward compatibility.
-            actual = row[0] if row[0] is not None else row[1]
+            # S3: Use thesis_fit_score first, then keyword_score. Skip signals
+            # with neither score to avoid conflating collector traction
+            # confidence with thesis fit ranges.
+            thesis_fit = row[0]
+            keyword = row[1]
+            actual = thesis_fit if thesis_fit is not None else keyword
             if actual is None:
                 results.append(
                     CanaryResult(
@@ -250,7 +253,7 @@ class CanaryChecker:
                         expected_confidence_min=golden.expected_confidence_min,
                         expected_confidence_max=golden.expected_confidence_max,
                         passed=False,
-                        reason="no_confidence_score",
+                        reason="no_thesis_score",
                     )
                 )
                 continue
