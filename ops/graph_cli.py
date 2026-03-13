@@ -3,9 +3,10 @@ Knowledge Graph CLI registration for ops/cli.py
 
 Usage:
     python -m ops.cli graph --help
-    python -m ops.cli graph stats --db signals.db
-    python -m ops.cli graph validate --db signals.db [--fail-fast] [--json]
-    python -m ops.cli graph runs --db signals.db [--limit 20]
+    python -m ops.cli graph --db signals.db build [--json]
+    python -m ops.cli graph --db signals.db stats
+    python -m ops.cli graph --db signals.db validate [--fail-fast] [--json]
+    python -m ops.cli graph --db signals.db runs [--limit 20]
 """
 from __future__ import annotations
 
@@ -14,6 +15,7 @@ import asyncio
 import json
 import os
 import sys
+from pathlib import Path
 from typing import Any, Dict, List
 
 
@@ -29,6 +31,21 @@ def register_graph_commands(subparsers: argparse._SubParsersAction) -> None:
         help="Path to signals SQLite DB",
     )
     q = p.add_subparsers(dest="graph_cmd")
+
+    # ------------------------------------------------------------------ build
+    p_build = q.add_parser("build", help="Build or refresh the architecture KG layer")
+    p_build.add_argument(
+        "--repo-root",
+        default=None,
+        help=(
+            "Optional checkout root for AST file reads. Must resolve to the running "
+            "checkout; alternate roots are rejected to avoid mixed-repo graphs."
+        ),
+    )
+    p_build.add_argument("--json", dest="json_output", action="store_true")
+    p_build.add_argument("--strict-warnings", action="store_true",
+                         help="Exit non-zero if the build completes with warnings")
+    p_build.set_defaults(func=_cmd_build)
 
     # ----------------------------------------------------------------- stats
     p_stats = q.add_parser("stats", help="Show graph statistics")
@@ -76,6 +93,59 @@ def _run_async(coro):
 # ---------------------------------------------------------------------------
 # Command implementations
 # ---------------------------------------------------------------------------
+
+def _cmd_build(args: argparse.Namespace) -> None:
+    """Build or refresh the v50-compatible architecture graph layer."""
+    async def _run():
+        from storage.kg_builder import KGArchitectureBuilder
+        from storage.signal_store import SignalStore
+
+        store = SignalStore(args.db_path)
+        await store.initialize()
+        try:
+            repo_root = Path(args.repo_root).resolve() if getattr(args, "repo_root", None) else None
+            try:
+                builder = KGArchitectureBuilder(store._db, repo_root=repo_root)
+            except ValueError as exc:
+                print(str(exc), file=sys.stderr)
+                sys.exit(2)
+            report = await builder.build()
+
+            if getattr(args, "json_output", False):
+                print(json.dumps(report.to_dict(), indent=2))
+            else:
+                print("Knowledge Graph Build")
+                print("=" * 40)
+                print(f"Run ID: {report.run_id}")
+                print(f"Status: {report.status}")
+                print(f"Nodes upserted: {report.nodes_upserted}")
+                print(f"Edges upserted: {report.edges_upserted}")
+                print(f"Nodes tombstoned: {report.nodes_tombstoned}")
+                print(f"Edges expired: {report.edges_expired}")
+                if report.details:
+                    print("\nBuild details:")
+                    for key, value in sorted(report.details.items()):
+                        print(f"  {key}: {value}")
+                if report.source_rows:
+                    print("\nSources:")
+                    for source_name, stats in sorted(report.source_rows.items()):
+                        print(
+                            f"  {source_name}: "
+                            f"{stats['nodes']} nodes, {stats['edges']} edges, "
+                            f"{stats['evidence_rows']} evidence rows"
+                        )
+                if report.warnings:
+                    print("\nWarnings:")
+                    for warning in report.warnings:
+                        print(f"  - {warning}")
+
+            if getattr(args, "strict_warnings", False) and report.warnings:
+                sys.exit(2)
+        finally:
+            await store.close()
+
+    _run_async(_run())
+
 
 def _cmd_stats(args: argparse.Namespace) -> None:
     """Display graph statistics."""
