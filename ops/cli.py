@@ -32,6 +32,11 @@ except ImportError:
     pass
 
 from ops.storage import OpsStorage
+from utils.cli_format import (
+    BANNER_SEP, SECTION_SEP,
+    STATUS_OK, STATUS_WARN, STATUS_CRIT, STATUS_INFO,
+    STATUS_MAP,
+)
 
 
 def get_storage(args) -> OpsStorage:
@@ -97,7 +102,7 @@ def list_facts(args):
         facts = cursor.fetchall()
 
     print(f"\n📋 Found {len(facts)} facts:")
-    print("=" * 80)
+    print(BANNER_SEP)
 
     for fact in facts:
         fid, ftype, content, confidence, status, created, used_count = fact
@@ -258,7 +263,7 @@ def list_actions(args):
         actions = cursor.fetchall()
 
     print(f"\n📝 Found {len(actions)} action states:")
-    print("=" * 80)
+    print(BANNER_SEP)
 
     for action in actions:
         aid, status, attempts, last_attempt, error, reason = action
@@ -354,7 +359,7 @@ def audit_unused(args):
         facts = cursor.fetchall()
 
     print(f"\n🔍 Found {len(facts)} potentially unused facts:")
-    print("=" * 80)
+    print(BANNER_SEP)
 
     now = datetime.now(timezone.utc)
 
@@ -389,7 +394,7 @@ def stats(args):
         )
 
         print("\n📊 FACT STATISTICS")
-        print("-" * 40)
+        print(SECTION_SEP)
 
         total = 0
         for status, count in cursor.fetchall():
@@ -412,7 +417,7 @@ def stats(args):
         row = cursor.fetchone()
 
         print("\n📈 USAGE STATISTICS")
-        print("-" * 40)
+        print(SECTION_SEP)
         print(f"  Active facts:    {row[0] or 0:4d}")
         print(f"  Total uses:      {row[1] or 0:4d}")
         print(f"  Avg uses/fact:   {row[2] or 0:4.1f}")
@@ -427,7 +432,7 @@ def stats(args):
         )
 
         print("\n🔄 ACTION STATE STATISTICS")
-        print("-" * 40)
+        print(SECTION_SEP)
 
         for status, count in cursor.fetchall():
             print(f"  {status.upper():15s}: {count:4d}")
@@ -449,7 +454,7 @@ def stats(args):
         )
 
         print("\n📊 LAST 7 DAYS EXTRACTION")
-        print("-" * 40)
+        print(SECTION_SEP)
 
         runs = cursor.fetchall()
         if runs:
@@ -464,7 +469,7 @@ def stats(args):
     health = storage.get_health_summary(hours=24)
     if health:
         print("\n🏥 SYSTEM HEALTH (Last 24h)")
-        print("-" * 40)
+        print(SECTION_SEP)
 
         for component, metrics in health.items():
             status_icon = (
@@ -495,7 +500,7 @@ def run_extraction(args):
     results = extractor.run(max_items=args.limit)
 
     print("\n🎯 EXTRACTION RESULTS")
-    print("-" * 40)
+    print(SECTION_SEP)
     print(f"Decisions processed: {results['decisions_processed']}")
     print(f"Facts created:       {results['facts_created']}")
     print(f"LLM failures:        {results['llm_failures']}")
@@ -644,7 +649,7 @@ def list_incidents_cmd(args):
         return
 
     print(f"\n{'ID':<40s} {'Status':<14s} {'Component':<20s} {'Error'}")
-    print("=" * 100)
+    print(BANNER_SEP)
     for inc in incidents:
         err_short = inc.error_message[:50] + "..." if len(inc.error_message) > 50 else inc.error_message
         print(f"{inc.incident_id:<40s} {inc.status:<14s} {inc.component:<20s} {err_short}")
@@ -724,7 +729,7 @@ def monitor_status(args):
     snap = collector.collect()
 
     print("\nOPS MONITOR STATUS")
-    print("=" * 60)
+    print(BANNER_SEP)
     print(f"  Overall Health: {snap.overall_health_pct:.1f}%")
     print(f"  Extractions (24h): {snap.extractions_24h}")
     print(f"  Total Cost (24h): ${snap.total_cost_24h}")
@@ -734,15 +739,15 @@ def monitor_status(args):
 
     if snap.health_summary:
         print("\nComponents:")
-        print("-" * 60)
+        print(SECTION_SEP)
         for comp, metrics in snap.health_summary.items():
             pct = metrics["health_percent"]
             if pct >= 90:
-                tag = "[OK]"
+                tag = STATUS_OK
             elif pct >= 70:
-                tag = "[WARN]"
+                tag = STATUS_WARN
             else:
-                tag = "[CRIT]"
+                tag = STATUS_CRIT
             latency = metrics.get("avg_latency_ms", 0)
             print(f"  {tag:6s} {comp:20s} {pct:5.1f}% healthy  ({latency:.1f}ms avg)")
     else:
@@ -772,15 +777,9 @@ def monitor_alerts(args):
         print("\nNo alerts fired. All systems nominal.")
     else:
         print(f"\n{len(alerts)} alert(s) fired:")
-        print("-" * 60)
+        print(SECTION_SEP)
         for alert in alerts:
-            sev = alert.severity.upper()
-            if sev == "CRITICAL":
-                tag = "[CRIT]"
-            elif sev == "WARNING":
-                tag = "[WARN]"
-            else:
-                tag = "[INFO]"
+            tag = STATUS_MAP.get(alert.severity.lower(), STATUS_INFO)
             print(f"  {tag:6s} {alert.rule_name}: {alert.message}")
 
     if getattr(args, "send", False) and alerts:
@@ -806,7 +805,7 @@ def monitor_history(args):
     history = collector.get_daily_history(days=args.days)
 
     print(f"\nEXTRACTION HISTORY (last {args.days} days)")
-    print("=" * 60)
+    print(BANNER_SEP)
 
     if not history:
         print("  No extraction runs recorded.")
@@ -828,7 +827,7 @@ def rules_list_cmd(args):
     rules = storage.list_alert_rules()
 
     print("\nALERT RULES")
-    print("=" * 78)
+    print(BANNER_SEP)
 
     if not rules:
         print("  No rules configured.")
@@ -969,7 +968,7 @@ def monitor_snapshots_cmd(args):
     snapshots = storage.get_metric_snapshots(hours=hours)
 
     print(f"\nMETRIC SNAPSHOTS (last {hours} hours)")
-    print("=" * 70)
+    print(BANNER_SEP)
 
     if not snapshots:
         print("  No snapshots recorded.")
@@ -1016,7 +1015,7 @@ def docker_status_cmd(args):
         return
 
     print(f"\n{'Name':<30s} {'Status':<20s} {'Image'}")
-    print("=" * 80)
+    print(BANNER_SEP)
     for c in containers:
         print(f"{c.get('Names', 'N/A'):<30s} {c.get('Status', 'N/A'):<20s} {c.get('Image', 'N/A')}")
 
@@ -1100,7 +1099,7 @@ def schedule_list_cmd(args):
         return
 
     print(f"\nPIPELINE SCHEDULES ({len(schedules)})")
-    print("=" * 70)
+    print(BANNER_SEP)
     print(f"  {'ID':<5s} {'Name':<20s} {'Cron':<16s} {'Mode':<10s} {'Enabled':<8s}")
     print(f"  {'-'*5} {'-'*20} {'-'*16} {'-'*10} {'-'*8}")
 
@@ -1127,7 +1126,7 @@ def schedule_status_cmd(args):
         sys.exit(1)
 
     print(f"\nSCHEDULE STATUS: {status['name']}")
-    print("=" * 60)
+    print(BANNER_SEP)
     print(f"  ID:              {status['id']}")
     print(f"  Cron:            {status['cron_expression']}")
     print(f"  Enabled:         {'Yes' if status['enabled'] else 'No'}")
@@ -1207,7 +1206,7 @@ def schedule_history_cmd(args):
     history = scheduler.get_run_history(args.schedule_id, limit=args.limit)
 
     print(f"\nRUN HISTORY: {schedule['name']} (id={args.schedule_id})")
-    print("=" * 70)
+    print(BANNER_SEP)
 
     if not history:
         print("  No run history recorded.")
