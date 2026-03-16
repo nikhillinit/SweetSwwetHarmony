@@ -26,9 +26,18 @@ from storage.claim_fact_store import count_claim_facts_in_range_sync
 
 logger = logging.getLogger(__name__)
 
-# Configurable constants
-SPC_RECOMPUTE_WINDOW_DAYS = int(os.environ.get("SPC_RECOMPUTE_WINDOW_DAYS", "7"))
-SPC_MIN_LABELED_PER_DAY = int(os.environ.get("SPC_MIN_LABELED_PER_DAY", "10"))
+# Configurable defaults
+DEFAULT_SPC_RECOMPUTE_WINDOW_DAYS = 7
+DEFAULT_SPC_MIN_LABELED_PER_DAY = 10
+DEFAULT_PUBLISH_FP_RATE_MIN_LABELED_PER_DAY = 5
+
+
+def _get_spc_recompute_window_days() -> int:
+    return int(os.environ.get("SPC_RECOMPUTE_WINDOW_DAYS", str(DEFAULT_SPC_RECOMPUTE_WINDOW_DAYS)))
+
+
+def _get_spc_min_labeled_per_day(default_value: int = DEFAULT_SPC_MIN_LABELED_PER_DAY) -> int:
+    return int(os.environ.get("SPC_MIN_LABELED_PER_DAY", str(default_value)))
 
 
 def _utc_today() -> str:
@@ -81,7 +90,8 @@ def _compute_fp_rate(conn, date: str) -> None:
     labeled = row[0] or 0
     fp = row[1] or 0
 
-    if labeled < SPC_MIN_LABELED_PER_DAY:
+    min_labeled = _get_spc_min_labeled_per_day()
+    if labeled < min_labeled:
         _upsert_metric(conn, date, "overall_fp_rate", None, labeled)
     else:
         _upsert_metric(conn, date, "overall_fp_rate", fp / labeled, labeled)
@@ -101,7 +111,7 @@ def _compute_publish_fp_rate(conn, date: str) -> None:
     if not has_table:
         return
 
-    min_labeled = int(os.environ.get("SPC_MIN_LABELED_PER_DAY", "5"))
+    min_labeled = _get_spc_min_labeled_per_day(DEFAULT_PUBLISH_FP_RATE_MIN_LABELED_PER_DAY)
     row = conn.execute(
         """SELECT
             COUNT(*) AS labeled,
@@ -338,7 +348,7 @@ def backfill_daily_metrics(conn, days: int = 90) -> dict:
     dates = _date_range(yesterday, min(days, 365))
 
     recompute_cutoff = (
-        datetime.now(timezone.utc) - timedelta(days=SPC_RECOMPUTE_WINDOW_DAYS)
+        datetime.now(timezone.utc) - timedelta(days=_get_spc_recompute_window_days())
     ).strftime("%Y-%m-%d")
 
     computed = 0

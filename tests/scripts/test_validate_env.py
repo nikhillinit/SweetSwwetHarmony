@@ -55,6 +55,8 @@ def _clean_env(monkeypatch):
         "MERGE_WRITES_ENABLED", "BULK_TRIAGE_ENABLED",
         "HUNTER_PROMOTE_ENABLED", "DRIFT_MONITORING_ENABLED",
         "LLM_THESIS_MODE", "ML_ENABLEMENT", "V2_ENABLEMENT",
+        "SPC_MIN_BASELINE_DAYS", "SPC_MIN_TOTAL_SAMPLES",
+        "SPC_MIN_LABELED_PER_DAY", "SPC_RECOMPUTE_WINDOW_DAYS",
     ]:
         monkeypatch.delenv(key, raising=False)
 
@@ -111,3 +113,18 @@ class TestValidateEnv:
         ))
         result = validate_env(env_file)
         assert result == 0
+
+    def test_non_default_spc_overrides_warn_but_do_not_error(self, tmp_path, capsys):
+        env_file = _write_env(tmp_path, (
+            "DELIVERY_MODE=staging_only\n"
+            "SPC_MIN_BASELINE_DAYS=7\n"
+            "SPC_MIN_LABELED_PER_DAY=3\n"
+        ))
+
+        result = validate_env(env_file)
+
+        captured = capsys.readouterr()
+        assert result == 0
+        assert "[WARN] SPC_MIN_BASELINE_DAYS" in captured.out
+        assert "[WARN] SPC_MIN_LABELED_PER_DAY" in captured.out
+        assert "Non-default SPC bootstrap override active" in captured.out
