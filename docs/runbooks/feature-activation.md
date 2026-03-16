@@ -141,9 +141,17 @@ V2_ENABLEMENT=shadow
 ```bash
 python scripts/preflight_check.py --json     # Must pass
 python scripts/backup_db.py                   # Pre-step backup
+python scripts/spc_override_decision.py --db signals.db --json > artifacts/activation/step3_spc_override_decision.json
 ```
 
 **Gate check:** `python run_pipeline.py activation-check --step 3`
+
+If non-default SPC bootstrap overrides are active, compare the current env against
+defaults on the same DB snapshot before relying on Step 3/4 SPC coverage. Proceed
+only if the comparison shows either:
+- defaults also pass (`proceed_without_exception`), or
+- the temporary overrides are the only reason `overall_fp_rate` coverage remains
+  green and the exception is documented for this activation pass (`proceed_with_exception`)
 
 **Set these env vars:**
 
@@ -182,6 +190,7 @@ HUNTER_PROMOTE_ENABLED=disabled
 ```bash
 python scripts/preflight_check.py --json     # Must pass
 python scripts/backup_db.py                   # Pre-step backup
+python scripts/spc_override_decision.py --db signals.db --json > artifacts/activation/step4a_spc_override_decision.json
 python run_pipeline.py activation-check --step 4 --json > artifacts/activation/step4a_gate.json
 ```
 
