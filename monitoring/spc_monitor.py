@@ -27,6 +27,7 @@ SIGMA_ZERO_FALLBACK = 0.05  # ±5% absolute when sigma=0
 
 VALID_SPC_METRICS = frozenset({
     "overall_fp_rate",
+    "publish_fp_rate",
     "collector_volume",
     "quarantine_regret",
     "confidence_calibration_ece",
@@ -35,12 +36,13 @@ VALID_SPC_METRICS = frozenset({
 # Ratio metrics get clamped to [0,1]
 RATIO_METRICS = frozenset({
     "overall_fp_rate",
+    "publish_fp_rate",
     "quarantine_regret",
     "confidence_calibration_ece",
 })
 
 # Metrics that only alert on increase (decrease is good)
-ONE_SIDED_INCREASE_METRICS = frozenset({"overall_fp_rate"})
+ONE_SIDED_INCREASE_METRICS = frozenset({"overall_fp_rate", "publish_fp_rate"})
 
 
 @dataclass

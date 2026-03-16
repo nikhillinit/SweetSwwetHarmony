@@ -87,6 +87,43 @@ def _compute_fp_rate(conn, date: str) -> None:
         _upsert_metric(conn, date, "overall_fp_rate", fp / labeled, labeled)
 
 
+def _compute_publish_fp_rate(conn, date: str) -> None:
+    """Compute publish_fp_rate for a given UTC date.
+
+    FP rate among signals pushed to Notion = fp_count / labeled_pushed_count.
+    If labeled_count < SPC_MIN_LABELED_PER_DAY, store NULL value.
+    Gracefully skips if signal_processing table does not exist.
+    """
+    # Guard: signal_processing may not exist in partial-schema DBs or older test fixtures
+    has_table = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='signal_processing'"
+    ).fetchone()
+    if not has_table:
+        return
+
+    min_labeled = int(os.environ.get("SPC_MIN_LABELED_PER_DAY", "5"))
+    row = conn.execute(
+        """SELECT
+            COUNT(*) AS labeled,
+            SUM(CASE WHEN sqm.human_label = 'FP' THEN 1 ELSE 0 END) AS fp
+        FROM signals s
+        JOIN signal_processing sp ON sp.signal_id = s.id
+        JOIN signal_quality_metrics sqm ON sqm.signal_id = s.id
+        WHERE sp.status = 'pushed' AND sp.notion_page_id IS NOT NULL
+          AND sqm.human_label IN ('TP', 'FP')
+          AND s.detected_at >= ? AND s.detected_at < ?""",
+        (date + "T00:00:00", _next_day(date) + "T00:00:00"),
+    ).fetchone()
+
+    labeled = row[0] or 0
+    fp = row[1] or 0
+
+    if labeled < min_labeled:
+        _upsert_metric(conn, date, "publish_fp_rate", None, labeled)
+    else:
+        _upsert_metric(conn, date, "publish_fp_rate", fp / labeled, labeled)
+
+
 def _compute_collector_volume(conn, date: str) -> None:
     """Compute collector_volume per collector for a given UTC date (D12).
 
@@ -260,6 +297,7 @@ def aggregate_daily_metrics(conn, date: str) -> dict:
     results = {}
 
     _compute_fp_rate(conn, date)
+    _compute_publish_fp_rate(conn, date)
     _compute_collector_volume(conn, date)
     _compute_quarantine_regret(conn, date)
     _compute_calibration(conn, date)

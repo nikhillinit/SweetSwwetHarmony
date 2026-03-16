@@ -58,7 +58,7 @@ STEP_POLICY = {
         "block_on_warning_alerts": True,
         "warn_on_warning_alerts": False,
         "required_spc_metrics": ["collector_volume", "overall_fp_rate"],
-        "optional_spc_metrics": ["confidence_calibration_ece", "quarantine_regret"],
+        "optional_spc_metrics": ["confidence_calibration_ece", "quarantine_regret", "publish_fp_rate"],
     },
 }
 
