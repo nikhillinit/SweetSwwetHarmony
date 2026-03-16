@@ -21,8 +21,8 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 # Configuration
-MIN_BASELINE_DAYS = int(os.environ.get("SPC_MIN_BASELINE_DAYS", "14"))
-MIN_TOTAL_SAMPLES_FOR_SPC = int(os.environ.get("SPC_MIN_TOTAL_SAMPLES", "100"))
+DEFAULT_MIN_BASELINE_DAYS = 14
+DEFAULT_MIN_TOTAL_SAMPLES_FOR_SPC = 100
 SIGMA_ZERO_FALLBACK = 0.05  # ±5% absolute when sigma=0
 
 VALID_SPC_METRICS = frozenset({
@@ -43,6 +43,14 @@ RATIO_METRICS = frozenset({
 
 # Metrics that only alert on increase (decrease is good)
 ONE_SIDED_INCREASE_METRICS = frozenset({"overall_fp_rate", "publish_fp_rate"})
+
+
+def _get_min_baseline_days() -> int:
+    return int(os.environ.get("SPC_MIN_BASELINE_DAYS", str(DEFAULT_MIN_BASELINE_DAYS)))
+
+
+def _get_min_total_samples_for_spc() -> int:
+    return int(os.environ.get("SPC_MIN_TOTAL_SAMPLES", str(DEFAULT_MIN_TOTAL_SAMPLES_FOR_SPC)))
 
 
 @dataclass
@@ -136,7 +144,9 @@ class SPCMonitor:
         total_samples = sum(r[1] for r in rows)
 
         # Dual min-N gating (D19)
-        if n_valid_days < MIN_BASELINE_DAYS or total_samples < MIN_TOTAL_SAMPLES_FOR_SPC:
+        min_baseline_days = _get_min_baseline_days()
+        min_total_samples = _get_min_total_samples_for_spc()
+        if n_valid_days < min_baseline_days or total_samples < min_total_samples:
             return None
 
         values = [r[0] for r in rows]

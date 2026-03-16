@@ -74,6 +74,13 @@ THRESHOLD_ENV_VARS = {
     "WORKFLOW_LLM_AUTO_APPROVE_THRESHOLD": "Workflow LLM auto-approve threshold",
 }
 
+SPC_BOOTSTRAP_DEFAULTS = {
+    "SPC_MIN_BASELINE_DAYS": ("14", "SPC minimum baseline days"),
+    "SPC_MIN_TOTAL_SAMPLES": ("100", "SPC minimum total samples"),
+    "SPC_MIN_LABELED_PER_DAY": ("10", "SPC minimum labeled signals per day"),
+    "SPC_RECOMPUTE_WINDOW_DAYS": ("7", "SPC recompute window (days)"),
+}
+
 
 # =============================================================================
 # DATA CLASS
@@ -262,6 +269,55 @@ def _validate_notion_keys() -> List[ConfigIssue]:
     return issues
 
 
+def _validate_spc_bootstrap_overrides() -> List[ConfigIssue]:
+    """Flag temporary SPC overrides so promotion decisions stay explicit."""
+    issues: List[ConfigIssue] = []
+
+    for env_var, (default_raw, description) in SPC_BOOTSTRAP_DEFAULTS.items():
+        raw = os.environ.get(env_var)
+        if raw is None:
+            continue
+
+        value = raw.strip()
+        try:
+            parsed = int(value)
+        except ValueError:
+            issues.append(ConfigIssue(
+                level="error",
+                key=env_var,
+                message=f"'{raw}' is not a valid integer ({description})",
+            ))
+            continue
+
+        if parsed <= 0:
+            issues.append(ConfigIssue(
+                level="error",
+                key=env_var,
+                message=f"{parsed} must be > 0 ({description})",
+            ))
+            continue
+
+        default_value = int(default_raw)
+        if parsed == default_value:
+            issues.append(ConfigIssue(
+                level="info",
+                key=env_var,
+                message=f"Set to default {default_value} ({description})",
+            ))
+        else:
+            issues.append(ConfigIssue(
+                level="warning",
+                key=env_var,
+                message=(
+                    f"Non-default SPC bootstrap override active: {parsed} "
+                    f"(default {default_value}, {description}). "
+                    "Document an explicit Step 3/4 promotion decision before relying on it."
+                ),
+            ))
+
+    return issues
+
+
 # =============================================================================
 # PUBLIC API
 # =============================================================================
@@ -280,6 +336,7 @@ def validate_config() -> List[ConfigIssue]:
     issues.extend(_validate_thresholds())
     issues.extend(_validate_write_features())
     issues.extend(_validate_notion_keys())
+    issues.extend(_validate_spc_bootstrap_overrides())
     return issues
 
 
