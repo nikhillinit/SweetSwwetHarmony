@@ -146,6 +146,7 @@ python scripts/restore_db.py backups/signals-YYYYMMDD-HHMMSS.db --db signals.db
 | `python run_pipeline.py full --dry-run` | Dry-run pipeline |
 | `python run_pipeline.py health --json` | Health check |
 | `python run_pipeline.py activation-check --step N` | Gate check |
+| `python scripts/spc_override_decision.py --db signals.db --json` | Compare Step 3/4 SPC coverage with active vs default SPC settings |
 | `python scripts/preflight_check.py --json` | Pre-flight |
 | `python scripts/backup_db.py` | Create backup |
 | `python scripts/restore_db.py <file>` | Restore backup |
