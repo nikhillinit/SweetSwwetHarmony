@@ -28,6 +28,10 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from monitoring.activation_gate import STEP_POLICY, check_activation_readiness
 from monitoring.daily_aggregator import backfill_daily_metrics
 from storage.signal_store import SignalStore
