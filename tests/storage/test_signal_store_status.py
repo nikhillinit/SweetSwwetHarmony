@@ -377,3 +377,94 @@ class TestStatusEdgeCases:
         actual_total = (await cursor.fetchone())[0]
 
         assert total == actual_total
+
+
+# =============================================================================
+# MARK HELD TESTS
+# =============================================================================
+
+class TestMarkHeld:
+    """Tests for mark_held method with deterministic timestamps."""
+
+    FIXED_ISO = "2026-03-19T12:00:00+00:00"
+
+    @pytest.fixture(autouse=True)
+    def _freeze_time(self, monkeypatch):
+        """Monkeypatch storage.signal_store.datetime so now() returns a fixed instant."""
+        import importlib
+        _mod = importlib.import_module("storage.signal_store")
+
+        class _FakeDatetime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return datetime.fromisoformat(self.FIXED_ISO)
+
+        monkeypatch.setattr(_mod, "datetime", _FakeDatetime)
+
+    @pytest.mark.asyncio
+    async def test_mark_held_sets_status(self, store_with_signals: SignalStore):
+        """mark_held should update status to 'held'."""
+        await store_with_signals.mark_held(1, "delivery_mode=staging_only")
+
+        signal = await store_with_signals.get_signal(1)
+        assert signal.processing_status == "held"
+
+    @pytest.mark.asyncio
+    async def test_mark_held_stores_reason_as_error_message(self, store_with_signals: SignalStore):
+        """Reason is persisted in the error_message column."""
+        reason = "delivery_mode=staging_only"
+        await store_with_signals.mark_held(1, reason)
+
+        signal = await store_with_signals.get_signal(1)
+        assert signal.error_message == reason
+
+    @pytest.mark.asyncio
+    async def test_mark_held_timestamps_match_frozen_clock(self, store_with_signals: SignalStore):
+        """processed_at and updated_at must equal the monkeypatched instant exactly."""
+        await store_with_signals.mark_held(1, "blocked")
+
+        cursor = await store_with_signals._db.execute(
+            "SELECT processed_at, updated_at FROM signal_processing WHERE signal_id = ?",
+            (1,),
+        )
+        row = await cursor.fetchone()
+        assert row[0] == self.FIXED_ISO
+        assert row[1] == self.FIXED_ISO
+
+    @pytest.mark.asyncio
+    async def test_mark_held_with_truthy_metadata(self, store_with_signals: SignalStore):
+        """Non-empty metadata dict must be round-tripped as JSON."""
+        metadata = {"gate": "batch_publish", "config_hash": "abc123"}
+        await store_with_signals.mark_held(1, "gate blocked", metadata=metadata)
+
+        cursor = await store_with_signals._db.execute(
+            "SELECT metadata FROM signal_processing WHERE signal_id = ?", (1,)
+        )
+        row = await cursor.fetchone()
+        assert json.loads(row[0]) == metadata
+
+    @pytest.mark.asyncio
+    async def test_mark_held_with_none_metadata_stores_null(self, store_with_signals: SignalStore):
+        """Omitting metadata (falsey) stores NULL, not '{}' or 'null'."""
+        await store_with_signals.mark_held(1, "held")
+
+        cursor = await store_with_signals._db.execute(
+            "SELECT metadata FROM signal_processing WHERE signal_id = ?", (1,)
+        )
+        row = await cursor.fetchone()
+        assert row[0] is None
+
+    @pytest.mark.asyncio
+    async def test_mark_held_repeated_overwrites_fields(self, store_with_signals: SignalStore):
+        """Calling mark_held twice overwrites reason, metadata, and timestamps exactly."""
+        await store_with_signals.mark_held(1, "first reason", metadata={"v": 1})
+        await store_with_signals.mark_held(1, "second reason", metadata={"v": 2})
+
+        cursor = await store_with_signals._db.execute(
+            "SELECT error_message, metadata, processed_at FROM signal_processing WHERE signal_id = ?",
+            (1,),
+        )
+        row = await cursor.fetchone()
+        assert row[0] == "second reason"
+        assert json.loads(row[1]) == {"v": 2}
+        assert row[2] == self.FIXED_ISO

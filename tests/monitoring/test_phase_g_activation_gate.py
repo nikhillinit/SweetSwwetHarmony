@@ -330,5 +330,67 @@ class TestPhaseGReadinessGate:
         assert not any("rejection rate" in r.lower() for r in result.reasons)
 
 
+class TestPhaseGEdgeCoverage:
+    """Edge tests for Phase G readiness gate."""
+
+    @pytest.mark.asyncio
+    async def test_multiple_missing_tables_early_return(self, store):
+        """Drop 2 required tables: blocked, both names listed, downstream metrics absent."""
+        db = store._db
+        await db.execute("DROP TABLE IF EXISTS entity_aliases")
+        await db.execute("DROP TABLE IF EXISTS entity_key_aliases")
+        await db.commit()
+
+        result = await check_phase_g_readiness(store)
+
+        assert result.verdict == "blocked"
+        assert result.can_proceed is False
+        # Both table names should appear in the reason
+        reasons_text = " ".join(result.reasons)
+        assert "entity_aliases" in reasons_text
+        assert "entity_key_aliases" in reasons_text
+        # Early return means downstream metrics are absent
+        assert "blocking_index_rows" not in result.metrics
+        assert "merge_suggestions_total" not in result.metrics
+        assert "orphaned_entity_ids" not in result.metrics
+
+    @pytest.mark.asyncio
+    async def test_rejection_rate_exactly_at_threshold_does_not_block(self, store):
+        """Exactly MAX_REJECTION_RATE does NOT block because code uses > not >=."""
+        await _populate_blocking_index(store, n=1)
+
+        # 10 suggestions, 1 rejected => rejection_rate = 0.10 = MAX_REJECTION_RATE exactly
+        for i in range(9):
+            await _insert_merge_suggestion(store, suggestion_id=f"ok_{i}", status="pending")
+        await _insert_merge_suggestion(store, suggestion_id="rej_0", status="rejected")
+
+        result = await check_phase_g_readiness(store)
+
+        assert result.metrics["merge_rejection_rate"] == MAX_REJECTION_RATE
+        # Exactly at threshold should NOT block (> not >=)
+        assert result.verdict != "blocked"
+        assert not any("rejection rate" in r.lower() for r in result.reasons)
+
+    @pytest.mark.asyncio
+    async def test_claim_facts_enabled_but_table_missing(self, store, monkeypatch):
+        """USE_CLAIM_FACTS=true but claim_facts table missing: nonfatal, claim_facts_checked=False."""
+        monkeypatch.setenv("USE_CLAIM_FACTS", "true")
+        await _populate_blocking_index(store, n=1)
+
+        # Drop the claim_facts table
+        db = store._db
+        await db.execute("DROP TABLE IF EXISTS claim_facts")
+        await db.commit()
+
+        result = await check_phase_g_readiness(store)
+
+        # Should not block or error
+        assert result.can_proceed is True
+        # claim_facts_checked should be False (enabled but skipped because table missing)
+        assert result.metrics["claim_facts_checked"] is False
+        # Contradiction metrics should be absent (not checked)
+        assert "claim_fact_contradictions" not in result.metrics
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v", "--tb=short"])
