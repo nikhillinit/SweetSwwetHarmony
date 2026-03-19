@@ -15,14 +15,21 @@ from typing import Any, Dict, Literal, Optional, Union
 
 from pydantic import BaseModel, Field, field_validator
 
+from governance.state_policies import ALL_GOVERNANCE_STATES
+
 
 class FeaturePromoteMetadata(BaseModel):
-    """Metadata contract for feature_promote audit events."""
+    """Metadata contract for feature_promote audit events.
+
+    State validation is syntax-only (membership in ALL_GOVERNANCE_STATES).
+    Semantic validation (directionality, skip-level) is in state_policies.py,
+    enforced by writer.py and the API router.
+    """
 
     action_type: Literal["feature_promote"] = "feature_promote"
     feature_name: str = Field(..., min_length=1)
-    from_state: str = Field(..., description="Previous state (e.g. 'shadow')")
-    to_state: str = Field(..., description="New state (e.g. 'active')")
+    from_state: str = Field(..., description="Previous state")
+    to_state: str = Field(..., description="New state")
     regret_due_at: str = Field(
         ..., description="ISO 8601 date when regret check is due"
     )
@@ -32,9 +39,10 @@ class FeaturePromoteMetadata(BaseModel):
     @field_validator("from_state", "to_state")
     @classmethod
     def validate_states(cls, v: str) -> str:
-        valid = {"off", "shadow", "active"}
-        if v not in valid:
-            raise ValueError(f"State must be one of {valid}, got '{v}'")
+        if v not in ALL_GOVERNANCE_STATES:
+            raise ValueError(
+                f"State must be one of {sorted(ALL_GOVERNANCE_STATES)}, got '{v}'"
+            )
         return v
 
 
@@ -49,22 +57,24 @@ class RegretCheckMetadata(BaseModel):
 
 
 class FeatureDemoteMetadata(BaseModel):
-    """Metadata contract for feature_demote audit events."""
+    """Metadata contract for feature_demote audit events.
+
+    State validation is syntax-only. Semantic validation in state_policies.py.
+    """
 
     action_type: Literal["feature_demote"] = "feature_demote"
-    from_state: str = Field(..., description="Previous state (e.g. 'active')")
-    to_state: str = Field(
-        ..., description="New state (e.g. 'shadow' or 'off')"
-    )
+    from_state: str = Field(..., description="Previous state")
+    to_state: str = Field(..., description="New state")
     rollback_ticket: Optional[str] = None
     incident_id: Optional[str] = None
 
     @field_validator("from_state", "to_state")
     @classmethod
     def validate_states(cls, v: str) -> str:
-        valid = {"off", "shadow", "active"}
-        if v not in valid:
-            raise ValueError(f"State must be one of {valid}, got '{v}'")
+        if v not in ALL_GOVERNANCE_STATES:
+            raise ValueError(
+                f"State must be one of {sorted(ALL_GOVERNANCE_STATES)}, got '{v}'"
+            )
         return v
 
 

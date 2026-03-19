@@ -53,6 +53,17 @@ class TestFeaturePromoteMetadata:
                 config_snapshot_hash="abc",
             )
 
+    def test_env_backed_states_accepted(self):
+        """Contracts accept env-backed states (syntax-only, no directional check)."""
+        m = FeaturePromoteMetadata(
+            feature_name="DELIVERY_MODE",
+            from_state="manual_publish",
+            to_state="batch_publish",
+            regret_due_at="2026-04-01",
+            config_snapshot_hash="h",
+        )
+        assert m.from_state == "manual_publish"
+
     def test_missing_regret_due_at_raises(self):
         with pytest.raises(ValidationError):
             FeaturePromoteMetadata(
@@ -138,6 +149,21 @@ class TestFeatureDemoteMetadata:
         with pytest.raises(ValidationError, match="State must be"):
             FeatureDemoteMetadata(
                 from_state="running",
+                to_state="shadow",
+            )
+
+    def test_env_backed_states_accepted(self):
+        """Demote contracts accept env-backed states."""
+        m = FeatureDemoteMetadata(
+            from_state="batch_publish",
+            to_state="manual_publish",
+        )
+        assert m.from_state == "batch_publish"
+
+    def test_garbage_state_rejected(self):
+        with pytest.raises(ValidationError, match="State must be"):
+            FeatureDemoteMetadata(
+                from_state="yolo",
                 to_state="shadow",
             )
 
