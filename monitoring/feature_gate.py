@@ -37,8 +37,14 @@ _CONFIG_KEYS = [
 REGRET_CHECK_WINDOW_DAYS = 14
 
 
-def compute_config_snapshot() -> Dict[str, Any]:
+def compute_config_snapshot(
+    overrides: Dict[str, str] | None = None,
+) -> Dict[str, Any]:
     """Capture current feature flag env vars as a deterministic snapshot.
+
+    Args:
+        overrides: Optional dict of key→value to apply on top of env.
+            Only keys present in _CONFIG_KEYS are applied.
 
     Returns dict with 'flags' (sorted env values) and 'hash' (SHA256[:16]).
     """
@@ -47,6 +53,10 @@ def compute_config_snapshot() -> Dict[str, Any]:
         val = os.getenv(key)
         if val is not None:
             flags[key] = val
+    if overrides:
+        for key, val in overrides.items():
+            if key in _CONFIG_KEYS:
+                flags[key] = val
     raw = json.dumps(flags, sort_keys=True)
     # Reuse shared deterministic short-hash helper (lint-safe Rule2).
     content_hash = derive_company_id(raw)
