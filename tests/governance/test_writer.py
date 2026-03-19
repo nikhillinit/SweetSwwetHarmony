@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from api.auth.jwt_auth import Role
 from api.auth.rbac import OperatorContext
+from governance.state_policies import GovernanceStatePolicyError
 from governance.writer import (
     record_feature_demote,
     record_feature_promote,
@@ -84,10 +85,10 @@ class TestRecordFeaturePromote:
 
     @pytest.mark.asyncio
     async def test_invalid_state_raises_validation_error(self, store, operator):
-        with pytest.raises(ValidationError):
+        with pytest.raises((ValidationError, GovernanceStatePolicyError)):
             await record_feature_promote(
                 store, operator,
-                feature_name="x",
+                feature_name="boilerplate_defense",
                 from_state="invalid",
                 to_state="active",
                 regret_due_at="2026-03-14",
@@ -97,6 +98,50 @@ class TestRecordFeaturePromote:
         # No event should have been written
         events = await get_events(store, action_type="feature_promote")
         assert len(events) == 0
+
+    @pytest.mark.asyncio
+    async def test_delivery_mode_promote(self, store, operator):
+        """DELIVERY_MODE env-backed promote works through writer."""
+        event_id = await record_feature_promote(
+            store, operator,
+            feature_name="DELIVERY_MODE",
+            from_state="manual_publish",
+            to_state="batch_publish",
+            regret_due_at="2026-04-01",
+            reason="Step 4A promotion",
+            config_snapshot_hash="snap123",
+        )
+        assert event_id > 0
+        events = await get_events(store, action_type="feature_promote")
+        assert events[0].entity_id == "DELIVERY_MODE"
+
+    @pytest.mark.asyncio
+    async def test_wrong_direction_raises(self, store, operator):
+        """Promoting downward raises GovernanceStatePolicyError."""
+        with pytest.raises(GovernanceStatePolicyError, match="wrong direction"):
+            await record_feature_promote(
+                store, operator,
+                feature_name="DELIVERY_MODE",
+                from_state="batch_publish",
+                to_state="manual_publish",
+                regret_due_at="2026-04-01",
+                reason="test",
+                config_snapshot_hash="abc",
+            )
+
+    @pytest.mark.asyncio
+    async def test_cross_family_state_raises(self, store, operator):
+        """Using env-backed states on feature-registry flag raises."""
+        with pytest.raises(GovernanceStatePolicyError, match="Invalid"):
+            await record_feature_promote(
+                store, operator,
+                feature_name="boilerplate_defense",
+                from_state="manual_publish",
+                to_state="batch_publish",
+                regret_due_at="2026-04-01",
+                reason="test",
+                config_snapshot_hash="abc",
+            )
 
     @pytest.mark.asyncio
     async def test_tx_aware_path(self, store, operator):
@@ -153,7 +198,7 @@ class TestRecordRegretCheck:
         with pytest.raises(ValidationError):
             await record_regret_check(
                 store, operator,
-                feature_name="x",
+                feature_name="boilerplate_defense",
                 verdict="maybe",
                 canary_verdict="pass",
                 drift_status="in_control",

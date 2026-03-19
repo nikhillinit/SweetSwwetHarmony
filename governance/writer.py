@@ -27,6 +27,7 @@ from governance.contracts import (
     FeaturePromoteMetadata,
     RegretCheckMetadata,
 )
+from governance.state_policies import ensure_registered_flag, validate_transition
 from storage.audit_events import insert_event, record_event
 
 if TYPE_CHECKING:
@@ -51,8 +52,10 @@ async def record_feature_promote(
     """Record a feature promotion event.
 
     Validates metadata via FeaturePromoteMetadata contract before insert.
-    Raises pydantic.ValidationError if metadata is invalid (no DB write).
+    Validates transition semantics via state_policies.validate_transition.
+    Raises pydantic.ValidationError or GovernanceStatePolicyError on invalid input.
     """
+    validate_transition("feature_promote", feature_name, from_state, to_state)
     contract = FeaturePromoteMetadata(
         feature_name=feature_name,
         from_state=from_state,
@@ -86,7 +89,9 @@ async def record_regret_check(
     """Record a regret check event.
 
     Validates metadata via RegretCheckMetadata contract before insert.
+    Validates feature_name is a registered governance flag.
     """
+    ensure_registered_flag(feature_name)
     contract = RegretCheckMetadata(
         verdict=verdict,
         canary_verdict=canary_verdict,
@@ -118,7 +123,9 @@ async def record_feature_demote(
     """Record a feature demotion event.
 
     Validates metadata via FeatureDemoteMetadata contract before insert.
+    Validates transition semantics via state_policies.validate_transition.
     """
+    validate_transition("feature_demote", feature_name, from_state, to_state)
     contract = FeatureDemoteMetadata(
         from_state=from_state,
         to_state=to_state,

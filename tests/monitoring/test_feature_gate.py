@@ -89,6 +89,26 @@ class TestComputeConfigSnapshot:
         result = compute_config_snapshot()
         assert "LLM_THESIS_MODE" not in result["flags"]
 
+    def test_overrides_applied(self, monkeypatch):
+        monkeypatch.setenv("DELIVERY_MODE", "manual_publish")
+        result = compute_config_snapshot(
+            overrides={"DELIVERY_MODE": "batch_publish"},
+        )
+        assert result["flags"]["DELIVERY_MODE"] == "batch_publish"
+
+    def test_overrides_only_config_keys(self, monkeypatch):
+        """Overrides for non-CONFIG_KEYS are silently ignored."""
+        result = compute_config_snapshot(
+            overrides={"NOT_A_REAL_KEY": "value"},
+        )
+        assert "NOT_A_REAL_KEY" not in result["flags"]
+
+    def test_overrides_change_hash(self, monkeypatch):
+        monkeypatch.setenv("DELIVERY_MODE", "manual_publish")
+        s1 = compute_config_snapshot()
+        s2 = compute_config_snapshot(overrides={"DELIVERY_MODE": "batch_publish"})
+        assert s1["hash"] != s2["hash"]
+
 
 # ---------------------------------------------------------------------------
 # _parse_due_at — timestamp Z suffix handling

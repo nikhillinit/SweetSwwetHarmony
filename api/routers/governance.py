@@ -22,6 +22,11 @@ from governance.contracts import (
     FeaturePromoteMetadata,
     RegretCheckMetadata,
 )
+from governance.state_policies import (
+    GovernanceStatePolicyError,
+    ensure_registered_flag,
+    validate_transition,
+)
 from governance.writer import (
     record_feature_demote,
     record_feature_promote,
@@ -45,13 +50,28 @@ class GovernanceEventRequest(BaseModel):
 
     @model_validator(mode="after")
     def enforce_feature_name_consistency(self) -> "GovernanceEventRequest":
-        """Enforce that feature_name matches metadata.feature_name for promote."""
+        """Enforce feature_name consistency and semantic transition validation."""
         if isinstance(self.metadata, FeaturePromoteMetadata):
             if self.metadata.feature_name != self.feature_name:
                 raise ValueError(
                     f"feature_name mismatch: body says '{self.feature_name}' "
                     f"but metadata says '{self.metadata.feature_name}'"
                 )
+
+        # Semantic transition validation for promote/demote
+        if isinstance(self.metadata, FeaturePromoteMetadata):
+            validate_transition(
+                "feature_promote", self.feature_name,
+                self.metadata.from_state, self.metadata.to_state,
+            )
+        elif isinstance(self.metadata, FeatureDemoteMetadata):
+            validate_transition(
+                "feature_demote", self.feature_name,
+                self.metadata.from_state, self.metadata.to_state,
+            )
+        elif isinstance(self.metadata, RegretCheckMetadata):
+            ensure_registered_flag(self.feature_name)
+
         return self
 
 
