@@ -1,0 +1,153 @@
+{
+  "checked_at": "2026-03-19T03:59:47.376864+00:00",
+  "db_path": "signals.db",
+  "steps": [
+    3,
+    4
+  ],
+  "outcome": "proceed_with_exception",
+  "rationale": [
+    "Active SPC settings keep the selected activation steps green.",
+    "Default SPC settings lose required overall_fp_rate coverage and do not change non-SPC gate inputs.",
+    "Document the bootstrap overrides as a temporary promotion exception, not permanent policy."
+  ],
+  "active_overrides": {
+    "SPC_MIN_BASELINE_DAYS": 7,
+    "SPC_MIN_LABELED_PER_DAY": 3
+  },
+  "required_metric_losses": {
+    "3": [
+      "overall_fp_rate"
+    ],
+    "4": [
+      "overall_fp_rate"
+    ]
+  },
+  "non_spc_differences": [],
+  "profiles": {
+    "active": {
+      "settings": {
+        "SPC_MIN_BASELINE_DAYS": 7,
+        "SPC_MIN_TOTAL_SAMPLES": 100,
+        "SPC_MIN_LABELED_PER_DAY": 3,
+        "SPC_RECOMPUTE_WINDOW_DAYS": 7
+      },
+      "backfill_days": 90,
+      "backfill_result": {
+        "computed": 90,
+        "skipped": 0
+      },
+      "steps": {
+        "3": {
+          "verdict": "ready",
+          "step": 3,
+          "reasons": [],
+          "can_proceed": true,
+          "canary": {
+            "verdict": "pass",
+            "pass_rate": 0.9314,
+            "run_age_hours": 0.0
+          },
+          "alerts": {
+            "open_critical": 0,
+            "open_warning": 0
+          },
+          "drift_coverage": {
+            "collector_volume": "ok",
+            "overall_fp_rate": "ok",
+            "confidence_calibration_ece": "ok",
+            "quarantine_regret": "insufficient_data"
+          },
+          "checked_at": "2026-03-19T03:59:46.451426+00:00"
+        },
+        "4": {
+          "verdict": "ready",
+          "step": 4,
+          "reasons": [],
+          "can_proceed": true,
+          "canary": {
+            "verdict": "pass",
+            "pass_rate": 0.9314,
+            "run_age_hours": 0.0
+          },
+          "alerts": {
+            "open_critical": 0,
+            "open_warning": 0
+          },
+          "drift_coverage": {
+            "collector_volume": "ok",
+            "overall_fp_rate": "ok",
+            "confidence_calibration_ece": "ok",
+            "quarantine_regret": "insufficient_data",
+            "publish_fp_rate": "insufficient_data"
+          },
+          "checked_at": "2026-03-19T03:59:46.497954+00:00"
+        }
+      }
+    },
+    "defaults": {
+      "settings": {
+        "SPC_MIN_BASELINE_DAYS": 14,
+        "SPC_MIN_TOTAL_SAMPLES": 100,
+        "SPC_MIN_LABELED_PER_DAY": 10,
+        "SPC_RECOMPUTE_WINDOW_DAYS": 7
+      },
+      "backfill_days": 90,
+      "backfill_result": {
+        "computed": 90,
+        "skipped": 0
+      },
+      "steps": {
+        "3": {
+          "verdict": "warn",
+          "step": 3,
+          "reasons": [
+            "1 required drift monitor(s) not ready: overall_fp_rate"
+          ],
+          "can_proceed": true,
+          "canary": {
+            "verdict": "pass",
+            "pass_rate": 0.9314,
+            "run_age_hours": 0.0
+          },
+          "alerts": {
+            "open_critical": 0,
+            "open_warning": 0
+          },
+          "drift_coverage": {
+            "collector_volume": "ok",
+            "overall_fp_rate": "insufficient_data",
+            "confidence_calibration_ece": "ok",
+            "quarantine_regret": "insufficient_data"
+          },
+          "checked_at": "2026-03-19T03:59:47.303416+00:00"
+        },
+        "4": {
+          "verdict": "blocked",
+          "step": 4,
+          "reasons": [
+            "1 required drift monitor(s) not ready: overall_fp_rate (blocked at step 4)"
+          ],
+          "can_proceed": false,
+          "canary": {
+            "verdict": "pass",
+            "pass_rate": 0.9314,
+            "run_age_hours": 0.0
+          },
+          "alerts": {
+            "open_critical": 0,
+            "open_warning": 0
+          },
+          "drift_coverage": {
+            "collector_volume": "ok",
+            "overall_fp_rate": "insufficient_data",
+            "confidence_calibration_ece": "ok",
+            "quarantine_regret": "insufficient_data",
+            "publish_fp_rate": "insufficient_data"
+          },
+          "checked_at": "2026-03-19T03:59:47.342494+00:00"
+        }
+      }
+    }
+  }
+}
