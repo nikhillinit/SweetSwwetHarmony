@@ -149,8 +149,8 @@ If promotion proceeds:
 ## Sustained Observation Log (days 3-7, daily)
 | # | Date | Canary | Gate | Drift | Batch | Notes |
 |---|------|--------|------|-------|-------|-------|
-| 9 | 2026-03-19 | | | | | |
-| 10 | 2026-03-20 | | | | | |
+| 9 | 2026-03-19 | pass 93.14% (#48) | ready | in_control | — | Conditional pass; SPC proceed_with_exception (see checkpoint-2026-03-19-summary.md) |
+| 10 | 2026-03-20 | pass 93.14% (#51) | ready | in_control | — | No variance from #48; SPC proceed_with_exception |
 | 11 | 2026-03-21 | | | | | |
 | 12 | 2026-03-22 | | | | | |
 | 13 | 2026-03-23 | | | | 7-day review | |
