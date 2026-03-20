@@ -32,11 +32,11 @@ This is a deliberate, documented promotion exception (see `promotion-summary.md`
 
 The collector_volume drift monitor has a lower control limit (LCL) of -76.1617. Because a negative lower bound is meaningless for a count metric, a collector producing zero signals would remain "in_control" and would not trigger a drift alert. This blind spot should be addressed post-window by either tightening control limits or adding a separate zero-volume alert.
 
-### 3. March 30 regret check is the real next Step 4B gate
+### 3. Step 4B uses a two-layer gate
 
-The 7-day observation window (March 16-23) is the minimum dwell period, anchored to the SPC override value. The regret check on March 30, 2026 (14 days from promotion) is the real next decision gate for Step 4B eligibility (MERGE_WRITES_ENABLED promotion). The Day 5 closing summary on March 23 should recommend continuing monitoring through the regret check, not immediate Step 4B promotion.
+The 7-day observation window (March 16-23) is the repo-enforced minimum dwell period for Step 4B eligibility. The default local policy is to wait for the March 30, 2026 regret check (14 days from promotion). Earlier Step 4B promotion before March 30 requires explicit written sign-off in the Step 4B checklist. The Day 5 closing summary on March 23 should therefore either recommend continued monitoring through the regret check or explicitly document approved early-execution sign-off.
 
-Step 4B eligibility criteria are tracked in `2026-03-19-step4b-promotion-checklist.md`. The monitoring schedule is defined in `monitoring-checklist.md`.
+Step 4B eligibility criteria are tracked in `2026-03-19-step4b-promotion-checklist.md`. The monitoring schedule is defined in `monitoring-checklist.md`. The rollback procedure in the monitoring checklist is now CLI-based (canonical) after commit 89259c5 added DELIVERY_MODE contract support to the governance CLI.
 
 ## Premature March 20, 2026 Artifact Cleanup
 
