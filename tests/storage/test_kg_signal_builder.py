@@ -1082,6 +1082,52 @@ class TestEdgeWeights:
 
 class TestRunSourceLifecycle:
 
+    async def test_greenhouse_jobs_populates_kg_via_etl(self, db):
+        """A previously uncovered source (greenhouse_jobs) now populates KG output
+        through the full ETL path with company_domain extraction."""
+        await _insert_company(
+            db, "co-gh", "GreenCo", "domain:greenco.com",
+            source_apis=["greenhouse_jobs"],
+        )
+        await _insert_signal(
+            db, "new_job_posting", "greenhouse_jobs", "domain:greenco.com",
+            company_name="GreenCo",
+            raw_data={
+                "company_name": "GreenCo",
+                "company_domain": "https://greenco.com/careers",
+                "locations": ["NY"],
+            },
+        )
+
+        builder = KGSignalBuilder(db)
+        report = await builder.build(mode="full")
+
+        assert report.status == "completed"
+        assert report.signal_nodes >= 1
+        assert report.detected_by_edges >= 1
+
+        # Signal node exists
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM kg_nodes WHERE node_type = 'signal' AND is_tombstone = 0"
+        )
+        assert (await cursor.fetchone())[0] >= 1
+
+        # Company node has extracted domain in properties
+        cursor = await db.execute(
+            "SELECT json_extract(properties, '$.domain') FROM kg_nodes WHERE id = 'co-gh'"
+        )
+        row = await cursor.fetchone()
+        assert row is not None
+        assert row[0] == "greenco.com"
+
+        # detected_by edge exists
+        cursor = await db.execute(
+            "SELECT COUNT(*) FROM kg_edges "
+            "WHERE edge_type = 'detected_by' AND source_node_id = 'co-gh' "
+            "AND valid_until IS NULL"
+        )
+        assert (await cursor.fetchone())[0] >= 1
+
     async def test_build_creates_run_source_record(self, db):
         """A build creates a kg_run_sources row for signal_etl."""
         await _insert_company(db, "co-1", "SrcCo", "domain:src.io")

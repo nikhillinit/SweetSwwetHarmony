@@ -62,6 +62,13 @@ The plan said `in_sector` edges come from `thesis_classifications` or `raw_data`
 
 The DB currently has 612 signals and 503 live company_files, not 657/~380. Expected node/edge counts from the plan (~790 nodes, ~1700 edges) should **not** be used as acceptance gates. Post-window validation should capture actual counts from a dry-run.
 
+### 9. Four of 10 live source_api values missing from extractor registry; job domain extraction broken
+
+- **Issue**: 4 of 10 live `source_api` values (`greenhouse_jobs`, `ashby_jobs`, `lever_jobs`, `manual_seed_buzz`) not in `EXTRACTOR_REGISTRY`. Additionally, `extract_job_postings` read `raw_data["domain"]` but the `job_postings.py` collector writes `company_domain` (`job_postings.py:180,307`), silently breaking domain extraction for all ATS signals.
+- **Root cause**: `extract_job_postings` read `domain` but collector writes `company_domain`. ATS variants (`greenhouse_jobs`, `ashby_jobs`, `lever_jobs`) and synthetic source (`manual_seed_buzz`) were never added to the registry. Fixture-based tests used the `domain` field, masking the mismatch.
+- **Fix**: Normalize both `domain` and `company_domain` candidates, prefer `domain` over `company_domain`. Add ATS aliases to registry pointing to `extract_job_postings`. Add `extract_manual_seed` extractor for `manual_seed_buzz`. Coverage: 6/10 → 10/10 live sources.
+- **Commit**: (same commit as this errata update)
+
 ---
 
 ## Observation window impact assessment

@@ -35,6 +35,7 @@ from storage.kg_signal_extractors import (
     extract_hacker_news,
     extract_job_postings,
     extract_linkedin,
+    extract_manual_seed,
     extract_news,
     extract_product_hunt,
     extract_sec_edgar,
@@ -429,6 +430,111 @@ class TestExtractLinkedin:
 
 
 # ---------------------------------------------------------------------------
+# Job postings: company_domain fallback + ATS aliases
+# ---------------------------------------------------------------------------
+
+
+class TestJobPostingsCompanyDomainFallback:
+    def test_job_postings_company_domain_fallback(self):
+        """Only company_domain present — domain extracted and normalized."""
+        raw = {"company_name": "FitTrack", "company_domain": "https://fittrack.io/careers"}
+        attrs = extract_job_postings(raw, "job_postings")
+        assert attrs.domain == "fittrack.io"
+
+    def test_job_postings_domain_takes_precedence(self):
+        """Both present and valid — normalized domain wins."""
+        raw = {
+            "company_name": "FitTrack",
+            "domain": "fittrack.io",
+            "company_domain": "other.io",
+        }
+        attrs = extract_job_postings(raw, "job_postings")
+        assert attrs.domain == "fittrack.io"
+
+    def test_job_postings_invalid_domain_falls_back_to_company_domain(self):
+        """domain is URL-shaped junk, company_domain is valid: fallback works."""
+        raw = {
+            "company_name": "FitTrack",
+            "domain": "",
+            "company_domain": "fittrack.io",
+        }
+        attrs = extract_job_postings(raw, "job_postings")
+        assert attrs.domain == "fittrack.io"
+
+    def test_job_postings_neither_domain_field(self):
+        """Both absent — domain is None."""
+        raw = {"company_name": "FitTrack"}
+        attrs = extract_job_postings(raw, "job_postings")
+        assert attrs.domain is None
+
+    def test_greenhouse_jobs_dispatches_and_extracts_domain(self):
+        """Registry dispatch + company_domain extraction for greenhouse_jobs."""
+        raw = {"company_name": "GreenCo", "company_domain": "https://greenco.com/jobs"}
+        attrs = extract_signal("greenhouse_jobs", raw)
+        assert attrs.source_api == "greenhouse_jobs"
+        assert attrs.domain == "greenco.com"
+        assert attrs.priority == SOURCE_PRIORITY["greenhouse_jobs"]
+
+    def test_ashby_jobs_dispatches(self):
+        """Registry dispatch for ashby_jobs."""
+        raw = {"company_name": "AshbyCo", "company_domain": "ashby.co"}
+        attrs = extract_signal("ashby_jobs", raw)
+        assert attrs.source_api == "ashby_jobs"
+        assert attrs.domain == "ashby.co"
+
+    def test_lever_jobs_dispatches(self):
+        """Registry dispatch for lever_jobs."""
+        raw = {"company_name": "LeverCo", "company_domain": "lever.co"}
+        attrs = extract_signal("lever_jobs", raw)
+        assert attrs.source_api == "lever_jobs"
+        assert attrs.domain == "lever.co"
+
+
+# ---------------------------------------------------------------------------
+# Manual seed extractor
+# ---------------------------------------------------------------------------
+
+
+class TestExtractManualSeed:
+    def test_manual_seed_extracts_name_and_domain(self):
+        """company_name + normalized company_url."""
+        raw = {"company_name": "SeedCo", "company_url": "https://www.seedco.io/about"}
+        attrs = extract_manual_seed(raw, "manual_seed_buzz")
+        assert attrs.company_name == "SeedCo"
+        assert attrs.domain == "seedco.io"
+        assert attrs.priority == SOURCE_PRIORITY["manual_seed_buzz"]
+
+    def test_manual_seed_synthetic_claim(self):
+        """claims['synthetic'] = True always."""
+        raw = {"company_name": "SeedCo"}
+        attrs = extract_manual_seed(raw, "manual_seed_buzz")
+        assert attrs.claims["synthetic"] is True
+
+    def test_manual_seed_note_only_when_present(self):
+        """note present → in claims; absent → not in claims."""
+        raw_with_note = {"company_name": "Co", "note": "Interesting lead"}
+        attrs = extract_manual_seed(raw_with_note, "manual_seed_buzz")
+        assert attrs.claims["note"] == "Interesting lead"
+
+        raw_no_note = {"company_name": "Co"}
+        attrs2 = extract_manual_seed(raw_no_note, "manual_seed_buzz")
+        assert "note" not in attrs2.claims
+
+    def test_manual_seed_malformed_url(self):
+        """empty/invalid company_url → domain is None."""
+        raw = {"company_name": "Co", "company_url": ""}
+        attrs = extract_manual_seed(raw, "manual_seed_buzz")
+        assert attrs.domain is None
+
+    def test_manual_seed_dispatches_via_registry(self):
+        """manual_seed_buzz dispatches through extract_signal."""
+        raw = {"company_name": "RegCo", "company_url": "https://regco.ai"}
+        attrs = extract_signal("manual_seed_buzz", raw)
+        assert attrs.source_api == "manual_seed_buzz"
+        assert attrs.claims["synthetic"] is True
+
+
+# ---------------------------------------------------------------------------
 # extract_signal (dispatch + JSON parsing)
 # ---------------------------------------------------------------------------
 
@@ -455,6 +561,45 @@ class TestExtractSignal:
         attrs = extract_signal("github", None)
         assert attrs.company_name is None
         assert attrs.sectors == []
+
+    def test_unknown_source_logs_warning(self, caplog):
+        """Verify warning log emitted for unregistered source_api."""
+        import logging
+        with caplog.at_level(logging.WARNING, logger="storage.kg_signal_extractors"):
+            extract_signal("totally_unknown_source", {"company_name": "X"})
+        assert any("No extractor registered" in m for m in caplog.messages)
+
+
+# ---------------------------------------------------------------------------
+# Live source_api coverage regression guard (snapshot 2026-03-20)
+# ---------------------------------------------------------------------------
+
+
+class TestLiveSourceApiCoverage:
+    """Regression guard: all source_api values observed in the live DB
+    as of 2026-03-20 must be in the extractor registry."""
+
+    OBSERVED_LIVE_SOURCES_2026_03_20 = [
+        "arxiv",
+        "hacker_news",
+        "rss_feeds",
+        "manual_seed_buzz",
+        "news_api",
+        "greenhouse_jobs",
+        "ashby_jobs",
+        "lever_jobs",
+        "product_hunt",
+        "github",
+    ]
+
+    def test_all_live_source_apis_covered(self):
+        missing = [
+            s for s in self.OBSERVED_LIVE_SOURCES_2026_03_20
+            if s not in EXTRACTOR_REGISTRY
+        ]
+        assert missing == [], (
+            f"Live source_api values not in EXTRACTOR_REGISTRY: {missing}"
+        )
 
 
 # ---------------------------------------------------------------------------
