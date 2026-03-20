@@ -383,6 +383,57 @@ class TestStatusEdgeCases:
 # MARK HELD TESTS
 # =============================================================================
 
+# =============================================================================
+# HELD EXCLUDED FROM PENDING TESTS
+# =============================================================================
+
+class TestHeldExcludedFromPending:
+    """Prove that held rows are NOT returned by get_pending_signals().
+
+    This is a critical property for the HN replay trial queue isolation:
+    non-manifest rows are moved to 'held' to prevent them from being
+    drained by the process command.
+    """
+
+    @pytest.mark.asyncio
+    async def test_held_not_in_pending_signals(self, store_with_signals: SignalStore):
+        """mark_held row must NOT appear in get_pending_signals() results."""
+        # Verify both signals start as pending
+        pending_before = await store_with_signals.get_pending_signals()
+        assert len(pending_before) == 2
+
+        # Hold one signal
+        await store_with_signals.mark_held(1, "queue_isolation: parked for replay trial")
+
+        # Only the non-held signal should be returned
+        pending_after = await store_with_signals.get_pending_signals()
+        assert len(pending_after) == 1
+        assert pending_after[0].id == 2
+
+    @pytest.mark.asyncio
+    async def test_held_not_in_pending_with_signal_type_filter(self, store_with_signals: SignalStore):
+        """Held exclusion must also work when signal_type filter is applied."""
+        await store_with_signals.mark_held(1, "queue_isolation")
+
+        # Even when filtering by signal_type, held rows must not appear
+        pending = await store_with_signals.get_pending_signals(signal_type="funding")
+        held_ids = [s.id for s in pending if s.id == 1]
+        assert held_ids == [], "Held signal must not appear in filtered pending results"
+
+    @pytest.mark.asyncio
+    async def test_all_held_means_no_pending(self, store_with_signals: SignalStore):
+        """If all signals are held, get_pending_signals() returns empty list."""
+        await store_with_signals.mark_held(1, "held 1")
+        await store_with_signals.mark_held(2, "held 2")
+
+        pending = await store_with_signals.get_pending_signals()
+        assert pending == []
+
+
+# =============================================================================
+# MARK HELD TESTS
+# =============================================================================
+
 class TestMarkHeld:
     """Tests for mark_held method with deterministic timestamps."""
 
