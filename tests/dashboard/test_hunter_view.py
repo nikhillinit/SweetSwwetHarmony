@@ -378,3 +378,73 @@ class TestFeedbackActions:
 
         # Should render one "Promote" button
         assert mock_st.button.call_count >= 1
+
+    @patch('dashboard.views.hunter.APIClient')
+    def test_relevant_feedback_error_shows_message(self, mock_client_cls):
+        from dashboard.views.hunter import _render_result_actions
+
+        client = MagicMock()
+        client.post.return_value = {"error": True, "message": "server down"}
+
+        def button_fn(label, **kwargs):
+            return kwargs.get("key") == "rel_101"
+        mock_st.button.side_effect = button_fn
+
+        _render_result_actions(client, 101, "pending", "2026-02-09T00:00:00Z")
+
+        mock_st.error.assert_called_once()
+        assert "server down" in mock_st.error.call_args[0][0]
+
+    @patch('dashboard.views.hunter.APIClient')
+    def test_not_relevant_feedback_error_shows_message(self, mock_client_cls):
+        from dashboard.views.hunter import _render_result_actions
+
+        client = MagicMock()
+        client.post.return_value = {"error": True, "message": "timeout"}
+
+        def button_fn(label, **kwargs):
+            return kwargs.get("key") == "rej_101"
+        mock_st.button.side_effect = button_fn
+
+        _render_result_actions(client, 101, "pending", "2026-02-09T00:00:00Z")
+
+        mock_st.error.assert_called_once()
+        assert "timeout" in mock_st.error.call_args[0][0]
+
+
+class TestPromoteFlow:
+    def setup_method(self):
+        _reset_st()
+
+    @patch('dashboard.views.hunter.APIClient')
+    def test_promote_click_opens_confirmation(self, mock_client_cls):
+        from dashboard.views.hunter import _render_result_actions
+
+        client = MagicMock()
+
+        def button_fn(label, **kwargs):
+            return kwargs.get("key") == "promote_101"
+        mock_st.button.side_effect = button_fn
+
+        _render_result_actions(client, 101, "relevant", "2026-02-09T00:00:00Z")
+
+        assert mock_st.session_state.get("confirm_promote_101") is True
+
+    @patch('dashboard.views.hunter.APIClient')
+    def test_promote_error_shows_message_after_confirmation(self, mock_client_cls):
+        from dashboard.views.hunter import _render_result_actions
+
+        client = MagicMock()
+        client.post.return_value = {"error": True, "message": "promote rejected"}
+
+        # Pre-set confirmation state
+        mock_st.session_state["confirm_promote_101"] = True
+
+        def button_fn(label, **kwargs):
+            return kwargs.get("key") == "confirm_yes_101"
+        mock_st.button.side_effect = button_fn
+
+        _render_result_actions(client, 101, "relevant", "2026-02-09T00:00:00Z")
+
+        mock_st.error.assert_called_once()
+        assert "promote rejected" in mock_st.error.call_args[0][0]
