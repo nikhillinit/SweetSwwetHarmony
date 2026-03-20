@@ -15,6 +15,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional
 
+from utils.canonical_keys import normalize_domain as _normalize_domain_from_url
+
 logger = logging.getLogger(__name__)
 
 
@@ -25,6 +27,9 @@ SOURCE_PRIORITY: Dict[str, int] = {
     "companies_house": 80,
     "linkedin": 75,
     "job_postings": 70,
+    "greenhouse_jobs": 70,
+    "ashby_jobs": 70,
+    "lever_jobs": 70,
     "product_hunt": 65,
     "news_api": 60,
     "rss_feeds": 55,
@@ -33,6 +38,7 @@ SOURCE_PRIORITY: Dict[str, int] = {
     "github": 30,
     "github_activity": 25,
     "arxiv": 20,
+    "manual_seed_buzz": 10,
 }
 
 
@@ -327,10 +333,20 @@ def extract_hacker_news(raw_data: Dict[str, Any], source_api: str) -> ExtractedA
     return attrs
 
 
+def _normalize_domain(value: str) -> str:
+    """Normalize a domain/URL to a clean root domain, returning '' on failure."""
+    return _normalize_domain_from_url(value) if value else ""
+
+
 def extract_job_postings(raw_data: Dict[str, Any], source_api: str) -> ExtractedAttrs:
     attrs = ExtractedAttrs(source_api=source_api, priority=SOURCE_PRIORITY.get(source_api, 0))
     attrs.company_name = raw_data.get("company_name") or raw_data.get("company")
-    attrs.domain = raw_data.get("domain")
+    domain = _normalize_domain(raw_data.get("domain") or "")
+    company_domain = _normalize_domain(raw_data.get("company_domain") or "")
+    if domain:
+        attrs.domain = domain
+    elif company_domain:
+        attrs.domain = company_domain
     locations = raw_data.get("locations", [])
     if isinstance(locations, list):
         for loc_raw in locations:
@@ -404,6 +420,19 @@ def extract_linkedin(raw_data: Dict[str, Any], source_api: str) -> ExtractedAttr
     return attrs
 
 
+def extract_manual_seed(raw_data: Dict[str, Any], source_api: str) -> ExtractedAttrs:
+    attrs = ExtractedAttrs(source_api=source_api, priority=SOURCE_PRIORITY.get(source_api, 10))
+    attrs.company_name = raw_data.get("company_name")
+    url = raw_data.get("company_url", "")
+    if url:
+        attrs.domain = _normalize_domain(url) or None
+    attrs.claims = {"synthetic": True}
+    note = raw_data.get("note")
+    if note:
+        attrs.claims["note"] = note
+    return attrs
+
+
 # ---------------------------------------------------------------------------
 # Extractor registry
 # ---------------------------------------------------------------------------
@@ -416,6 +445,10 @@ EXTRACTOR_REGISTRY: Dict[str, Callable[[Dict[str, Any], str], ExtractedAttrs]] =
     "crunchbase": extract_crunchbase,
     "hacker_news": extract_hacker_news,
     "job_postings": extract_job_postings,
+    "greenhouse_jobs": extract_job_postings,
+    "ashby_jobs": extract_job_postings,
+    "lever_jobs": extract_job_postings,
+    "manual_seed_buzz": extract_manual_seed,
     "news_api": extract_news,
     "rss_feeds": extract_news,
     "domain_whois": extract_domain_whois,

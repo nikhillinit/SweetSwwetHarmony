@@ -21,6 +21,34 @@ cp signals.db signals.db.kg-validation-snapshot
 
 ---
 
+## Phase 0: Preflight — Source Coverage Check (hard stop)
+
+Before any ETL execution, verify that every live `source_api` value has a registered extractor. **Unsupported source_api values are a hard stop**, not a warning. Do not proceed to Phase A if any are missing.
+
+```bash
+mkdir -p artifacts/kg-validation
+
+python -c "
+import asyncio, aiosqlite
+from storage.kg_signal_extractors import EXTRACTOR_REGISTRY
+async def check():
+    db = await aiosqlite.connect('signals.db.kg-validation-snapshot')
+    cursor = await db.execute('SELECT DISTINCT source_api FROM signals')
+    live = [r[0] for r in await cursor.fetchall()]
+    await db.close()
+    missing = [s for s in live if s not in EXTRACTOR_REGISTRY]
+    if missing:
+        print(f'STOP: {len(missing)} uncovered source_api values: {missing}')
+        exit(1)
+    print(f'OK: all {len(live)} live source_api values covered')
+asyncio.run(check())
+"
+```
+
+**If this fails:** Add missing extractors to `storage/kg_signal_extractors.py` before continuing.
+
+---
+
 ## Phase A: Dry-Run Acceptance (read-only)
 
 ### A1. ETL dry-run
