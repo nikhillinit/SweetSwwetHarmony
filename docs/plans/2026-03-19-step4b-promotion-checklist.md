@@ -131,10 +131,9 @@ MERGE_WRITES_ENABLED=active   # was: shadow
 ### Step 3: Governance Audit Event
 
 ```bash
-python -m governance.cli promote MERGE_WRITES_ENABLED active \
-  --from-state shadow \
-  --regret-due-days 14 \
-  --db signals.db
+DISCOVERY_DB_PATH=signals.db python -m governance feature promote MERGE_WRITES_ENABLED \
+  --from shadow --to active \
+  --reason "Step 4B: enable live merge writes per approved checklist/sign-off"
 ```
 
 - [ ] Audit event recorded
@@ -203,10 +202,9 @@ If any monitoring check fails critically:
 MERGE_WRITES_ENABLED=shadow   # active → shadow
 
 # Step 2: Record rollback event
-python -m governance.cli demote MERGE_WRITES_ENABLED shadow \
-  --from-state active \
-  --reason "Step 4B rollback: <describe issue>" \
-  --db signals.db
+DISCOVERY_DB_PATH=signals.db python -m governance feature demote MERGE_WRITES_ENABLED \
+  --from active --to shadow \
+  --reason "Step 4B rollback: <describe issue>"
 
 # Step 3: Verify
 python run_pipeline.py health --json
