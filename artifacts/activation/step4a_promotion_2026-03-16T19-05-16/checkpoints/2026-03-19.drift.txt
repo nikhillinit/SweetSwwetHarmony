@@ -1,0 +1,17 @@
+Config Validation:
+  [OK] DELIVERY_MODE: Set to batch_publish
+  [OK] thresholds: All thresholds using defaults (valid)
+  [OK] MERGE_WRITES_ENABLED: Set to shadow (Entity merge write operations)
+  [OK] BULK_TRIAGE_ENABLED: Set to active (Bulk triage actions)
+  [OK] HUNTER_PROMOTE_ENABLED: Set to active (Hunter result promotion)
+  [OK] DRIFT_MONITORING_ENABLED: Set to active (Drift monitoring and alert mutations)
+  [OK] NOTION_API_KEY: Configured
+  [OK] NOTION_DATABASE_ID: Configured
+  [WARN] SPC_MIN_BASELINE_DAYS: Non-default SPC bootstrap override active: 7 (default 14, SPC minimum baseline days). Document an explicit Step 3/4 promotion decision before relying on it.
+  [WARN] SPC_MIN_LABELED_PER_DAY: Non-default SPC bootstrap override active: 3 (default 10, SPC minimum labeled signals per day). Document an explicit Step 3/4 promotion decision before relying on it.
+  All checks passed.
+  confidence_calibration_ece: in_control (mean=0.5868, UCL=0.9197, LCL=0.1498, method=wilson)
+  quarantine_regret: insufficient data
+  overall_fp_rate: in_control (mean=0.9269, UCL=0.9962, LCL=0.3773, method=wilson)
+  collector_volume: in_control (mean=17.1667, UCL=110.4951, LCL=-76.1617, method=3sigma)
+  publish_fp_rate: insufficient data

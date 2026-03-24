@@ -123,6 +123,7 @@ class TestBooleanParsing:
     @pytest.mark.parametrize("value", ["false", "0", "no", "off"])
     def test_falsy_values_parse_to_false(self, monkeypatch, value):
         """V2_EXECUTION_ENABLED falsy values (false/0/no/off) parse to False."""
+        monkeypatch.delenv("V2_ENABLEMENT", raising=False)
         monkeypatch.setenv("V2_EXECUTION_ENABLED", value)
 
         controls = RuntimeControls.from_env()
@@ -132,6 +133,7 @@ class TestBooleanParsing:
     @pytest.mark.parametrize("value", ["FALSE", "False", "NO", "No", "OFF", "Off"])
     def test_falsy_values_case_insensitive(self, monkeypatch, value):
         """Falsy values are case-insensitive."""
+        monkeypatch.delenv("V2_ENABLEMENT", raising=False)
         monkeypatch.setenv("V2_EXECUTION_ENABLED", value)
 
         controls = RuntimeControls.from_env()
