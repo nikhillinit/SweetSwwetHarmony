@@ -153,4 +153,4 @@ If promotion proceeds:
 | 10 | 2026-03-20 | pass 93.14% (#51) | ready | in_control | — | No variance from #48; SPC proceed_with_exception |
 | 11 | 2026-03-21 | pass 93.14% (#52) | ready | in_control | — | No variance from #48/#51; SPC proceed_with_exception |
 | 12 | 2026-03-22 | pass 93.14% (#53) | ready | in_control | — | No variance from #48/#51/#52; SPC proceed_with_exception |
-| 13 | 2026-03-23 | | | | 7-day review | |
+| 13 | 2026-03-23 | pass 93.14% (#54) | ready | in_control | — | No variance; full pytest 9402/9548 pass (98.4%); window closed |
