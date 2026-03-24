@@ -98,6 +98,35 @@ class TestEnvBackedFlags:
                 "staging_only", "nonexistent",
             )
 
+    # ── LLM_THESIS_MODE governance registration ──
+
+    def test_llm_thesis_mode_registered(self):
+        assert is_registered_flag("LLM_THESIS_MODE")
+
+    def test_llm_thesis_mode_states_ordered(self):
+        assert allowed_states_for_flag("LLM_THESIS_MODE") == (
+            "off", "shadow", "active",
+        )
+
+    def test_llm_thesis_mode_promote_shadow_to_active(self):
+        validate_transition(
+            "feature_promote", "LLM_THESIS_MODE",
+            "shadow", "active",
+        )
+
+    def test_llm_thesis_mode_skip_level_rejected(self):
+        with pytest.raises(GovernanceStatePolicyError, match="Skip-level"):
+            validate_transition(
+                "feature_promote", "LLM_THESIS_MODE",
+                "off", "active",
+            )
+
+    def test_llm_thesis_mode_demote_active_to_shadow(self):
+        validate_transition(
+            "feature_demote", "LLM_THESIS_MODE",
+            "active", "shadow",
+        )
+
 
 # ── Lane 2: feature-registry experiments ─────────────────────────────────
 
