@@ -36,6 +36,7 @@ _ENV_BACKED_FLAGS: dict[str, tuple[str, ...]] = {
     "BULK_TRIAGE_ENABLED": ("disabled", "active"),
     "HUNTER_PROMOTE_ENABLED": ("disabled", "active"),
     "DRIFT_MONITORING_ENABLED": ("disabled", "active"),
+    "LLM_THESIS_MODE": ("off", "shadow", "active"),
 }
 
 # ── Lane 2: feature-registry experiments ─────────────────────────────────
