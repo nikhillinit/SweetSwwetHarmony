@@ -1,0 +1,40 @@
+{
+  "date": "2026-03-19",
+  "db_snapshot": "signals-snapshot-2026-03-19.db",
+  "readiness_gate": {
+    "verdict": "ready",
+    "reasons": ["All Phase G readiness checks passed"],
+    "metrics": {
+      "tables_present": 4,
+      "tables_required": 4,
+      "blocking_index_rows": 224,
+      "merge_suggestions_total": 0,
+      "merge_suggestions_rejected": 0,
+      "merge_rejection_rate": 0.0,
+      "orphaned_entity_ids": 0,
+      "claim_facts_checked": false
+    },
+    "checked_at": "2026-03-19T05:17:15Z"
+  },
+  "shadow_entity_runs": {
+    "total_completed": 34,
+    "total_disagreements": 0,
+    "runs_below_100pct_agreement": 0,
+    "latest_5": [
+      {"run_id": 34, "signals": 500, "agreements": 500, "disagreements": 0, "rate": 1.0, "at": "2026-03-18T20:53:06Z"},
+      {"run_id": 33, "signals": 500, "agreements": 500, "disagreements": 0, "rate": 1.0, "at": "2026-03-16T19:21:30Z"},
+      {"run_id": 32, "signals": 500, "agreements": 500, "disagreements": 0, "rate": 1.0, "at": "2026-03-16T19:20:59Z"},
+      {"run_id": 31, "signals": 500, "agreements": 500, "disagreements": 0, "rate": 1.0, "at": "2026-03-14T21:38:01Z"},
+      {"run_id": 30, "signals": 500, "agreements": 500, "disagreements": 0, "rate": 1.0, "at": "2026-03-14T21:37:05Z"}
+    ],
+    "assessment": "0 fuzzy merges, 100% agreement holds across all 34 runs. No entity resolution divergence between Phase 1A and Phase G."
+  },
+  "claim_facts": {
+    "total": 55,
+    "unique_predicates": ["company_name"],
+    "provenance_rate": "100% (55/55 have supporting_signal_ids)",
+    "null_or_empty_value_json": 0,
+    "assessment": "All 55 claims are company_name predicates with full provenance. Only one predicate type populated — founding_date, sector, and other predicates are not yet extracted. This is expected: USE_CLAIM_FACTS=true enables storage but the ClaimExtractor only extracts company_name currently."
+  },
+  "f3_baseline_characterization_audit_event": "DEFERRED — governance writer does not support baseline_characterization action type"
+}

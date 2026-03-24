@@ -7,6 +7,15 @@ Usage:
     python -m ops.cli graph --db signals.db stats
     python -m ops.cli graph --db signals.db validate [--fail-fast] [--json]
     python -m ops.cli graph --db signals.db runs [--limit 20]
+    python -m ops.cli graph --db signals.db etl --mode full [--dry-run] [--json]
+    python -m ops.cli graph --db signals.db etl-status [--json]
+    python -m ops.cli graph --db signals.db evidence <company_id> [--json]
+    python -m ops.cli graph --db signals.db gaps --min-evidence 2 [--json]
+    python -m ops.cli graph --db signals.db conflicts [--json]
+    python -m ops.cli graph --db signals.db sector <sector_id> [--json]
+    python -m ops.cli graph --db signals.db duplicates [--json]
+    python -m ops.cli graph --db signals.db rank --min-sources 2 [--json]
+    python -m ops.cli graph --db signals.db ego <node_id> --depth 2 [--out ego.json]
 """
 from __future__ import annotations
 
@@ -64,6 +73,68 @@ def register_graph_commands(subparsers: argparse._SubParsersAction) -> None:
     p_runs.add_argument("--limit", type=int, default=20)
     p_runs.add_argument("--json", dest="json_output", action="store_true")
     p_runs.set_defaults(func=_cmd_runs)
+
+    # ------------------------------------------------------------------- etl
+    p_etl = q.add_parser("etl", help="Run signal ETL to populate KG from signals/company_files")
+    p_etl.add_argument("--mode", choices=["full", "incremental"], default="full",
+                        help="ETL mode: full (backfill + tombstone) or incremental")
+    p_etl.add_argument("--dry-run", action="store_true",
+                        help="Compute counts without writing")
+    p_etl.add_argument("--json", dest="json_output", action="store_true")
+    p_etl.set_defaults(func=_cmd_etl)
+
+    # -------------------------------------------------------------- etl-status
+    p_etl_status = q.add_parser("etl-status", help="Show signal ETL status")
+    p_etl_status.add_argument("--json", dest="json_output", action="store_true")
+    p_etl_status.set_defaults(func=_cmd_etl_status)
+
+    # -------------------------------------------------------------- evidence
+    p_evidence = q.add_parser("evidence", help="Evidence chain for a company")
+    p_evidence.add_argument("company_id", help="Company node ID")
+    p_evidence.add_argument("--json", dest="json_output", action="store_true")
+    p_evidence.set_defaults(func=_cmd_evidence)
+
+    # ------------------------------------------------------------------ gaps
+    p_gaps = q.add_parser("gaps", help="Find companies with thin evidence")
+    p_gaps.add_argument("--min-evidence", type=int, default=2,
+                         help="Minimum source count (default 2)")
+    p_gaps.add_argument("--limit", type=int, default=100)
+    p_gaps.add_argument("--json", dest="json_output", action="store_true")
+    p_gaps.set_defaults(func=_cmd_gaps)
+
+    # --------------------------------------------------------------- conflicts
+    p_conflicts = q.add_parser("conflicts", help="Detect source disagreements")
+    p_conflicts.add_argument("--limit", type=int, default=100)
+    p_conflicts.add_argument("--json", dest="json_output", action="store_true")
+    p_conflicts.set_defaults(func=_cmd_conflicts)
+
+    # ---------------------------------------------------------------- sector
+    p_sector = q.add_parser("sector", help="Companies in a sector cluster")
+    p_sector.add_argument("sector_id", help="Sector node ID (e.g., sector:cpg)")
+    p_sector.add_argument("--limit", type=int, default=100)
+    p_sector.add_argument("--json", dest="json_output", action="store_true")
+    p_sector.set_defaults(func=_cmd_sector)
+
+    # ------------------------------------------------------------- duplicates
+    p_dups = q.add_parser("duplicates", help="Find duplicate company candidates")
+    p_dups.add_argument("--limit", type=int, default=100)
+    p_dups.add_argument("--json", dest="json_output", action="store_true")
+    p_dups.set_defaults(func=_cmd_duplicates)
+
+    # ------------------------------------------------------------------ rank
+    p_rank = q.add_parser("rank", help="Rank companies by evidence strength")
+    p_rank.add_argument("--min-sources", type=int, default=1)
+    p_rank.add_argument("--limit", type=int, default=100)
+    p_rank.add_argument("--json", dest="json_output", action="store_true")
+    p_rank.set_defaults(func=_cmd_rank)
+
+    # ------------------------------------------------------------------- ego
+    p_ego = q.add_parser("ego", help="Generate ego graph around a node")
+    p_ego.add_argument("node_id", help="Center node ID")
+    p_ego.add_argument("--depth", type=int, default=2)
+    p_ego.add_argument("--out", dest="out_file", help="Write JSON to file")
+    p_ego.add_argument("--json", dest="json_output", action="store_true")
+    p_ego.set_defaults(func=_cmd_ego)
 
     p.set_defaults(func=lambda args: p.print_help())
 
@@ -258,6 +329,312 @@ def _cmd_runs(args: argparse.Namespace) -> None:
                         f"{r.nodes_upserted:<8} {r.edges_upserted:<8} "
                         f"{r.started_at}"
                     )
+        finally:
+            await conn.close()
+
+    _run_async(_run())
+
+
+# ---------------------------------------------------------------------------
+# Signal ETL commands
+# ---------------------------------------------------------------------------
+
+def _cmd_etl(args: argparse.Namespace) -> None:
+    """Run signal ETL to populate KG from signals/company_files."""
+    async def _run():
+        from storage.signal_store import SignalStore
+        from storage.kg_signal_builder import KGSignalBuilder
+
+        store = SignalStore(args.db_path)
+        await store.initialize()
+        try:
+            builder = KGSignalBuilder(store._db)
+            report = await builder.build(
+                mode=args.mode,
+                dry_run=getattr(args, "dry_run", False),
+            )
+
+            if getattr(args, "json_output", False):
+                print(json.dumps(report.to_dict(), indent=2))
+            else:
+                print("Signal ETL")
+                print("=" * 40)
+                print(f"Run ID:  {report.run_id}")
+                print(f"Mode:    {report.mode}")
+                print(f"Status:  {report.status}")
+                print(f"\nNodes:")
+                print(f"  Companies:  {report.company_nodes}")
+                print(f"  Signals:    {report.signal_nodes}")
+                print(f"  Locations:  {report.location_nodes}")
+                print(f"\nEdges:")
+                print(f"  detected_by:   {report.detected_by_edges}")
+                print(f"  in_sector:     {report.in_sector_edges}")
+                print(f"  located_in:    {report.located_in_edges}")
+                print(f"  has_evidence:  {report.has_evidence_edges}")
+                if report.nodes_tombstoned or report.edges_expired:
+                    print(f"\nCleanup:")
+                    print(f"  Tombstoned: {report.nodes_tombstoned}")
+                    print(f"  Expired:    {report.edges_expired}")
+                print(f"\nScanned: {report.companies_scanned} companies, "
+                      f"{report.signals_scanned} signals")
+                print(f"Duration: {report.duration_ms:.0f}ms")
+                if report.warnings:
+                    print("\nWarnings:")
+                    for w in report.warnings:
+                        print(f"  - {w}")
+        finally:
+            await store.close()
+
+    _run_async(_run())
+
+
+def _cmd_etl_status(args: argparse.Namespace) -> None:
+    """Show signal ETL status."""
+    async def _run():
+        from storage.signal_store import SignalStore
+        from storage.kg_signal_builder import KGSignalBuilder
+
+        store = SignalStore(args.db_path)
+        await store.initialize()
+        try:
+            builder = KGSignalBuilder(store._db)
+            status = await builder.get_etl_status()
+
+            if getattr(args, "json_output", False):
+                print(json.dumps(status, indent=2))
+            else:
+                print("Signal ETL Status")
+                print("=" * 40)
+                nc = status.get("node_counts", {})
+                ec = status.get("edge_counts", {})
+                st = status.get("source_tables", {})
+                print(f"\nSource tables:")
+                print(f"  signals:        {st.get('signals', 0)}")
+                print(f"  company_files:  {st.get('company_files', 0)}")
+                if nc:
+                    print(f"\nKG nodes (signal_etl):")
+                    for nt, count in sorted(nc.items()):
+                        print(f"  {nt}: {count}")
+                if ec:
+                    print(f"\nKG edges (signal_etl):")
+                    for et, count in sorted(ec.items()):
+                        print(f"  {et}: {count}")
+                lr = status.get("last_run")
+                if lr:
+                    print(f"\nLast ETL run: {lr['run_id']} ({lr['mode']}, {lr['status']})")
+                    print(f"  Started: {lr['started_at']}")
+                else:
+                    print("\nNo ETL runs found.")
+        finally:
+            await store.close()
+
+    _run_async(_run())
+
+
+# ---------------------------------------------------------------------------
+# Query commands
+# ---------------------------------------------------------------------------
+
+def _cmd_evidence(args: argparse.Namespace) -> None:
+    """Evidence chain for a company."""
+    async def _run():
+        from storage.kg_queries import KGQueryEngine
+        store, conn = await _open_kg_store(args.db_path)
+        try:
+            engine = KGQueryEngine(store, conn)
+            chain = await engine.company_evidence_chain(args.company_id)
+            if chain is None:
+                print(f"Company {args.company_id} not found.", file=sys.stderr)
+                sys.exit(1)
+            if getattr(args, "json_output", False):
+                print(json.dumps(chain.to_dict(), indent=2))
+            else:
+                print(f"Evidence Chain: {chain.company_label} ({chain.company_id})")
+                print("=" * 50)
+                print(f"Sources: {chain.source_count}")
+                print(f"Weighted score: {chain.weighted_score:.3f}")
+                print(f"Sectors: {', '.join(chain.sectors) or 'none'}")
+                print(f"Locations: {', '.join(chain.locations) or 'none'}")
+                print(f"Evidence families: {', '.join(chain.evidence_families) or 'none'}")
+                if chain.signals:
+                    print(f"\nSignals ({len(chain.signals)}):")
+                    for s in chain.signals:
+                        print(f"  {s['source_api']}/{s['signal_type']} "
+                              f"conf={s['confidence']:.2f} at {s['detected_at']}")
+        finally:
+            await conn.close()
+
+    _run_async(_run())
+
+
+def _cmd_gaps(args: argparse.Namespace) -> None:
+    """Find companies with thin evidence."""
+    async def _run():
+        from storage.kg_queries import KGQueryEngine
+        store, conn = await _open_kg_store(args.db_path)
+        try:
+            engine = KGQueryEngine(store, conn)
+            gaps = await engine.find_data_gaps(
+                min_evidence=args.min_evidence,
+                limit=args.limit,
+            )
+            if getattr(args, "json_output", False):
+                print(json.dumps(gaps, indent=2))
+            else:
+                if not gaps:
+                    print("No data gaps found.")
+                    return
+                print(f"Data Gaps (< {args.min_evidence} sources)")
+                print("=" * 50)
+                for g in gaps:
+                    print(f"  {g['company_label']} ({g['company_id']}): "
+                          f"{g['source_count']} source(s), "
+                          f"{g['signal_count']} signal(s)")
+        finally:
+            await conn.close()
+
+    _run_async(_run())
+
+
+def _cmd_conflicts(args: argparse.Namespace) -> None:
+    """Detect source disagreements."""
+    async def _run():
+        from storage.kg_queries import KGQueryEngine
+        store, conn = await _open_kg_store(args.db_path)
+        try:
+            engine = KGQueryEngine(store, conn)
+            conflicts = await engine.detect_conflicts(limit=args.limit)
+            if getattr(args, "json_output", False):
+                print(json.dumps([c.to_dict() for c in conflicts], indent=2))
+            else:
+                if not conflicts:
+                    print("No conflicts detected.")
+                    return
+                print(f"Conflicts ({len(conflicts)})")
+                print("=" * 50)
+                for c in conflicts:
+                    print(f"  {c.company_label} ({c.company_id}): "
+                          f"{c.field_name} disagrees")
+                    for src, val in c.values.items():
+                        print(f"    {src}: {val}")
+        finally:
+            await conn.close()
+
+    _run_async(_run())
+
+
+def _cmd_sector(args: argparse.Namespace) -> None:
+    """Companies in a sector cluster."""
+    async def _run():
+        from storage.kg_queries import KGQueryEngine
+        store, conn = await _open_kg_store(args.db_path)
+        try:
+            engine = KGQueryEngine(store, conn)
+            results = await engine.sector_cluster(
+                args.sector_id, limit=args.limit
+            )
+            if getattr(args, "json_output", False):
+                print(json.dumps(results, indent=2))
+            else:
+                if not results:
+                    print(f"No companies in sector {args.sector_id}.")
+                    return
+                print(f"Sector: {args.sector_id} ({len(results)} companies)")
+                print("=" * 50)
+                for r in results:
+                    print(f"  {r['company_label']} ({r['company_id']}): "
+                          f"{r['signal_count']} signals")
+        finally:
+            await conn.close()
+
+    _run_async(_run())
+
+
+def _cmd_duplicates(args: argparse.Namespace) -> None:
+    """Find duplicate company candidates."""
+    async def _run():
+        from storage.kg_queries import KGQueryEngine
+        store, conn = await _open_kg_store(args.db_path)
+        try:
+            engine = KGQueryEngine(store, conn)
+            dups = await engine.find_duplicate_candidates(limit=args.limit)
+            if getattr(args, "json_output", False):
+                print(json.dumps(dups, indent=2))
+            else:
+                if not dups:
+                    print("No duplicate candidates found.")
+                    return
+                print(f"Duplicate Candidates ({len(dups)})")
+                print("=" * 50)
+                for d in dups:
+                    print(f"  {d['company_a']} <-> {d['company_b']}")
+                    print(f"    Location: {d['location']}")
+                    print(f"    Shared: {', '.join(d['shared_connections'])}")
+        finally:
+            await conn.close()
+
+    _run_async(_run())
+
+
+def _cmd_rank(args: argparse.Namespace) -> None:
+    """Rank companies by evidence strength."""
+    async def _run():
+        from storage.kg_queries import KGQueryEngine
+        store, conn = await _open_kg_store(args.db_path)
+        try:
+            engine = KGQueryEngine(store, conn)
+            rankings = await engine.rank_by_evidence_strength(
+                limit=args.limit,
+                min_sources=args.min_sources,
+            )
+            if getattr(args, "json_output", False):
+                print(json.dumps(rankings, indent=2))
+            else:
+                if not rankings:
+                    print("No ranked companies found.")
+                    return
+                print(f"Evidence Strength Ranking ({len(rankings)})")
+                print("=" * 60)
+                print(f"{'Company':<30} {'Sources':<8} {'Signals':<8} {'Strength'}")
+                print("-" * 60)
+                for r in rankings:
+                    label = (r['company_label'] or r['company_id'])[:28]
+                    print(f"  {label:<28} {r['source_count']:<8} "
+                          f"{r['signal_count']:<8} {r['evidence_strength']:.3f}")
+        finally:
+            await conn.close()
+
+    _run_async(_run())
+
+
+def _cmd_ego(args: argparse.Namespace) -> None:
+    """Generate ego graph around a node."""
+    async def _run():
+        from storage.kg_queries import KGQueryEngine
+        store, conn = await _open_kg_store(args.db_path)
+        try:
+            engine = KGQueryEngine(store, conn)
+            graph = await engine.ego_graph(
+                args.node_id,
+                depth=args.depth,
+            )
+
+            out = getattr(args, "out_file", None)
+            if out:
+                with open(out, "w") as f:
+                    json.dump(graph, f, indent=2)
+                print(f"Ego graph written to {out} "
+                      f"({graph['node_count']} nodes, {graph['edge_count']} edges)")
+            elif getattr(args, "json_output", False):
+                print(json.dumps(graph, indent=2))
+            else:
+                print(f"Ego Graph: {args.node_id} (depth={args.depth})")
+                print("=" * 50)
+                print(f"Nodes: {graph['node_count']}")
+                print(f"Edges: {graph['edge_count']}")
+                for n in graph["nodes"]:
+                    indent = "  " * (n["depth"] + 1)
+                    print(f"{indent}{n['type']}: {n['label']} ({n['id']})")
         finally:
             await conn.close()
 

@@ -11,7 +11,8 @@ from utils.runtime_controls import RuntimeControls, VALID_ML_ENABLEMENTS
 class TestMLEnablement:
     """Test ML enablement resolution."""
 
-    def test_default_is_disabled(self):
+    def test_default_is_disabled(self, monkeypatch):
+        monkeypatch.delenv("ML_ENABLEMENT", raising=False)
         controls = RuntimeControls.from_env()
         assert controls.ml_enablement == "disabled"
         assert controls.ml_model_path is None
@@ -83,7 +84,8 @@ class TestMLProperties:
         controls = RuntimeControls.from_env(ml_enablement="shadow")
         assert controls.is_ml_active is True
 
-    def test_is_ml_active_disabled(self):
+    def test_is_ml_active_disabled(self, monkeypatch):
+        monkeypatch.delenv("ML_ENABLEMENT", raising=False)
         controls = RuntimeControls.from_env()
         assert controls.is_ml_active is False
 

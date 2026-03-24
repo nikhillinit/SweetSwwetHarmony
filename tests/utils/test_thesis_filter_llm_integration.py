@@ -220,6 +220,127 @@ class TestThresholdBoundaries:
 
 # ── Phase 6 fields in LLM path ──────────────────────────────────────────────
 
+# ── Fallback proxy detection per rationale prefix ─────────────────────────
+
+class TestFallbackProxyRationales:
+    """Each operational failure rationale marker must trigger llm_skipped=True.
+
+    The HN replay trial metric 'fallback proxy rate' relies on detecting these
+    rationale prefixes to distinguish genuine LLM classifications from fallbacks.
+    The code uses case-insensitive substring match (not startswith).
+    """
+
+    @pytest.mark.asyncio
+    async def test_circuit_breaker_open_triggers_fallback(self, filter_instance):
+        """Rationale containing 'circuit breaker open' → operational failure → llm_skipped."""
+        _install_mock_llm(
+            filter_instance,
+            return_value=_mock_llm_result(
+                thesis_fit_score=0.0,
+                category="excluded",
+                rationale="Circuit breaker OPEN for gemini-1.5-flash",
+            ),
+        )
+        result = await filter_instance.classify(_CONSUMER_TEXT)
+        assert result.llm_skipped is True
+
+    @pytest.mark.asyncio
+    async def test_rate_limit_exceeded_triggers_fallback(self, filter_instance):
+        """Rationale containing 'rate limit exceeded' → operational failure → llm_skipped."""
+        _install_mock_llm(
+            filter_instance,
+            return_value=_mock_llm_result(
+                thesis_fit_score=0.0,
+                category="excluded",
+                rationale="Rate limit exceeded: 429 from Gemini API",
+            ),
+        )
+        result = await filter_instance.classify(_CONSUMER_TEXT)
+        assert result.llm_skipped is True
+
+    @pytest.mark.asyncio
+    async def test_classification_failed_triggers_fallback(self, filter_instance):
+        """Rationale containing 'classification failed' → operational failure → llm_skipped."""
+        _install_mock_llm(
+            filter_instance,
+            return_value=_mock_llm_result(
+                thesis_fit_score=0.0,
+                category="excluded",
+                rationale="Classification failed: timeout after 30s",
+            ),
+        )
+        result = await filter_instance.classify(_CONSUMER_TEXT)
+        assert result.llm_skipped is True
+
+    @pytest.mark.asyncio
+    async def test_failed_to_parse_response_triggers_fallback(self, filter_instance):
+        """Rationale containing 'failed to parse response' → operational failure → llm_skipped."""
+        _install_mock_llm(
+            filter_instance,
+            return_value=_mock_llm_result(
+                thesis_fit_score=0.0,
+                category="excluded",
+                rationale="Failed to parse response: invalid JSON",
+            ),
+        )
+        result = await filter_instance.classify(_CONSUMER_TEXT)
+        assert result.llm_skipped is True
+
+    @pytest.mark.asyncio
+    async def test_non_failure_rationale_with_zero_score_not_fallback(self, filter_instance):
+        """score=0.0 + category=excluded + genuine rationale → NOT operational failure.
+
+        A real LLM that returns score=0.0 with a substantive rationale should be
+        treated as a real REJECTED classification, not a fallback.
+        """
+        _install_mock_llm(
+            filter_instance,
+            return_value=_mock_llm_result(
+                thesis_fit_score=0.0,
+                category="excluded",
+                rationale="This is a B2B enterprise SaaS product with no consumer focus",
+            ),
+        )
+        result = await filter_instance.classify(_CONSUMER_TEXT)
+        # Genuine LLM exclusion → REJECTED, not fallback
+        assert result.llm_skipped is False
+        assert result.routing == RoutingDecision.REJECTED
+
+
+# ── HELD vs REJECTED routing distinction ──────────────────────────────────
+
+class TestHeldVsRejectedDistinction:
+    """HELD and REJECTED are semantically different routing outcomes.
+
+    HELD = safety improvement (uncertain, parked for review)
+    REJECTED = precision signal (confidently off-thesis)
+    The replay trial reports them separately.
+    """
+
+    @pytest.mark.asyncio
+    async def test_held_and_rejected_have_distinct_routing_values(self, filter_instance):
+        """HELD and REJECTED are distinct RoutingDecision enum values."""
+        # HELD: low score, non-excluded category
+        _install_mock_llm(
+            filter_instance,
+            return_value=_mock_llm_result(thesis_fit_score=0.2, category="other"),
+        )
+        held_result = await filter_instance.classify(_CONSUMER_TEXT)
+
+        # REJECTED: excluded category
+        _install_mock_llm(
+            filter_instance,
+            return_value=_mock_llm_result(thesis_fit_score=0.1, category="excluded"),
+        )
+        rejected_result = await filter_instance.classify(_CONSUMER_TEXT)
+
+        assert held_result.routing == RoutingDecision.HELD
+        assert rejected_result.routing == RoutingDecision.REJECTED
+        assert held_result.routing != rejected_result.routing
+
+
+# ── Phase 6 fields in LLM path ──────────────────────────────────────────────
+
 class TestPhase6FieldsInLLMPath:
     """Phase 6 observability fields must be populated in the LLM success path."""
 
