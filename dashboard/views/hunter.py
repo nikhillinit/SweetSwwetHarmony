@@ -251,7 +251,7 @@ def _render_result_actions(client: APIClient, result_id: int, status: str, updat
                     json={"status": "relevant", "idempotency_key": idempotency_key},
                 )
                 if is_error(resp):
-                    st.error(f"Failed: {error_msg(resp)}")
+                    st.error("Failed")
                 else:
                     st.session_state.hunter_cache_buster += 1
                     st.rerun()
@@ -263,7 +263,7 @@ def _render_result_actions(client: APIClient, result_id: int, status: str, updat
                     json={"status": "not_relevant", "idempotency_key": idempotency_key},
                 )
                 if is_error(resp):
-                    st.error(f"Failed: {error_msg(resp)}")
+                    st.error("Failed")
                 else:
                     st.session_state.hunter_cache_buster += 1
                     st.rerun()
@@ -283,7 +283,7 @@ def _render_result_actions(client: APIClient, result_id: int, status: str, updat
                         json={"idempotency_key": idempotency_key},
                     )
                     if is_error(resp):
-                        st.error(f"Promotion failed: {error_msg(resp)}")
+                        st.error("Promotion failed")
                     else:
                         st.success("Promoted!")
                         st.session_state.hunter_cache_buster += 1

@@ -225,8 +225,6 @@ DELIVERY_MODE=manual_publish          # reverts to Step 3
 
 ## Step 4B: Live Merges (after 7 clean days on 4A)
 
-> **Local policy:** The repo-enforced minimum for Step 4B is 7 clean days on Step 4A. The default local policy is to wait for the 14-day regret check. Earlier promotion requires explicit written sign-off.
-
 **Duration:** Ongoing (full production state).
 
 **Before starting:**
