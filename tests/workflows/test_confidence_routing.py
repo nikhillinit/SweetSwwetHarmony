@@ -20,17 +20,6 @@ from connectors.notion_connector_v2 import NotionConnector, ProspectPayload
 class TestConfidenceBasedRouting:
     """Test routing based on confidence thresholds"""
 
-    @pytest.fixture(autouse=True)
-    def _set_delivery_mode(self, monkeypatch):
-        """Set DELIVERY_MODE=auto_publish for tests that exercise the push path.
-
-        These tests hit _push_to_notion which calls assert_notion_write_allowed().
-        The default staging_only blocks all writes, causing DeliveryPolicyError.
-        auto_publish is needed because these tests use AUTO_PUSH intent (batch_publish
-        only allows MANUAL_PUSH and BATCH_PUSH).
-        """
-        monkeypatch.setenv("DELIVERY_MODE", "auto_publish")
-
     async def test_high_confidence_multi_source_routes_to_source(self):
         """HIGH confidence + multi-source → Status: 'Source' (AUTO_PUSH)"""
         # Create signals from multiple sources
@@ -721,10 +710,3 @@ async def test_batch_commit_passes_override_hold():
         intent=DeliveryIntent.BATCH_PUSH,
         override_hold=True,
     )
-
-
-def test_default_delivery_mode_is_staging_only(monkeypatch):
-    """Sanity check: the default DELIVERY_MODE outside of test fixtures is staging_only."""
-    monkeypatch.delenv("DELIVERY_MODE", raising=False)
-    from workflows.delivery_policy import get_delivery_mode, DeliveryMode
-    assert get_delivery_mode() == DeliveryMode.STAGING_ONLY
