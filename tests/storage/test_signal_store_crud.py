@@ -243,6 +243,29 @@ class TestGetPendingSignals:
         assert len(pending) == 1
         assert pending[0].signal_type == "funding"
 
+    @pytest.mark.asyncio
+    async def test_get_pending_signals_filter_by_source_api(self, store_with_signals: SignalStore):
+        """Should filter by source_api, returning only matching signals."""
+        pending = await store_with_signals.get_pending_signals(source_api="sec_edgar")
+
+        assert len(pending) == 1
+        assert pending[0].source_api == "sec_edgar"
+
+    @pytest.mark.asyncio
+    async def test_get_pending_signals_filter_by_source_api_no_match(self, store_with_signals: SignalStore):
+        """source_api filter with no matches should return empty list."""
+        pending = await store_with_signals.get_pending_signals(source_api="hacker_news")
+
+        assert pending == []
+
+    @pytest.mark.asyncio
+    async def test_get_pending_signals_source_api_with_limit(self, store_with_signals: SignalStore):
+        """source_api filter should work together with limit."""
+        pending = await store_with_signals.get_pending_signals(source_api="sec_edgar", limit=10)
+
+        assert len(pending) == 1
+        assert pending[0].source_api == "sec_edgar"
+
 
 # =============================================================================
 # GET SIGNALS FOR COMPANY TESTS
