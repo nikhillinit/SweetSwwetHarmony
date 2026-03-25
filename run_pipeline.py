@@ -449,14 +449,18 @@ async def cmd_process(args):
     try:
         await pipeline.initialize()
 
+        source_api_filter = getattr(args, 'source_api', None)
+
         print(f"\nDatabase: {config.db_path}")
         print(f"Batch size: {config.batch_size}")
         print(f"Dry run: {args.dry_run}")
         print(f"Use gating: {config.use_gating}")
+        if source_api_filter:
+            print(f"Source API filter: {source_api_filter}")
         print()
 
         # Process pending signals
-        result = await pipeline.process_pending(dry_run=args.dry_run)
+        result = await pipeline.process_pending(dry_run=args.dry_run, source_api=source_api_filter)
 
         # Print results
         print()
@@ -2608,6 +2612,11 @@ Environment variables:
         "--use-entities",
         action="store_true",
         help="Enable entity resolution",
+    )
+    process_parser.add_argument(
+        "--source-api",
+        type=str,
+        help="Only process signals from this source API (e.g., hacker_news)",
     )
 
     # Sync command
