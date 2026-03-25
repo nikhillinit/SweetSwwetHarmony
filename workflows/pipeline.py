@@ -1193,7 +1193,7 @@ class DiscoveryPipeline:
 
         return results
 
-    async def process_pending(self, dry_run: bool = False) -> Dict[str, int]:
+    async def process_pending(self, dry_run: bool = False, source_api: Optional[str] = None) -> Dict[str, int]:
         """
         Process all pending signals in the store.
 
@@ -1205,6 +1205,7 @@ class DiscoveryPipeline:
 
         Args:
             dry_run: If True, don't actually queue or push to Notion
+            source_api: If set, only process signals from this source API
 
         Returns:
             Dictionary with processing statistics
@@ -1217,15 +1218,16 @@ class DiscoveryPipeline:
             {
                 "mode": "process_only",
                 "dry_run": dry_run,
+                "source_api_filter": source_api,
                 "config_snapshot": compute_config_snapshot(),
             },
         )
 
-        logger.info(f"Processing pending signals (dry_run={dry_run})")
+        logger.info(f"Processing pending signals (dry_run={dry_run}, source_api={source_api})")
 
         run_error: Optional[str] = None
         try:
-            process_stats = await self._process_signals_stage(dry_run)
+            process_stats = await self._process_signals_stage(dry_run, source_api=source_api)
 
             if not dry_run:
                 outbox_stats = await self._drain_notion_outbox(limit=self.config.batch_size)
@@ -1631,9 +1633,13 @@ class DiscoveryPipeline:
             metrics.complete()
             self._collector_metrics.append(metrics)
 
-    async def _process_signals_stage(self, dry_run: bool) -> Dict[str, int]:
+    async def _process_signals_stage(self, dry_run: bool, source_api: Optional[str] = None) -> Dict[str, int]:
         """
         Process pending signals through verification and Notion queueing.
+
+        Args:
+            dry_run: If True, don't push to Notion
+            source_api: If set, only process signals from this source API
 
         Returns dict with processing statistics.
         """
@@ -1664,7 +1670,7 @@ class DiscoveryPipeline:
         }
 
         # Get pending signals
-        pending = await self._store.get_pending_signals(limit=self.config.batch_size)
+        pending = await self._store.get_pending_signals(limit=self.config.batch_size, source_api=source_api)
 
         if not pending:
             logger.info("No pending signals to process")
