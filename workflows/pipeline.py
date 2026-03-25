@@ -486,9 +486,10 @@ class DiscoveryPipeline:
         # Thesis filter (Phase 3)
         self._thesis_filter: Optional[ThesisFilter] = None
         if self.config.use_thesis_filter:
-            thesis_config = ThesisFilterConfig(
-                hold_threshold=self.config.thesis_hold_threshold,
-            )
+            thesis_config = ThesisFilterConfig.from_env()
+            # Preserve PipelineConfig override for hold_threshold
+            if self.config.thesis_hold_threshold != 0.3:
+                thesis_config.hold_threshold = self.config.thesis_hold_threshold
             self._thesis_filter = ThesisFilter(thesis_config)
 
         # Initialize competitor detector
