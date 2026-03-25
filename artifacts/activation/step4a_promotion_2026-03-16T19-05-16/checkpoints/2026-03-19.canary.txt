@@ -1,6 +1,0 @@
-Verdict: pass
-Pass rate: 93.14%
-Total: 200 | Passed: 163 | Failed: 12 | Skipped: 25
-Duration: 113ms
-Stored as canary_run_id=48
-Drift verdict: pass
