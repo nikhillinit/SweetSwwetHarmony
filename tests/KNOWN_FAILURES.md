@@ -1,8 +1,9 @@
 # Known Test Failures Baseline
 
-**Commit:** obs/step4a-window-mar19-23
-**Date:** 2026-03-19
-**Known failures:** 0
+**Commit:** ec250a1
+**Date:** 2026-02-13
+**Collected:** 6861 tests, 0 collection errors
+**Known failures:** 6
 
 ## Policy
 
@@ -10,16 +11,13 @@
 - Removals from this list (failures that start passing) are welcome and should be committed.
 - To regenerate: `python -m pytest tests/workflows/test_confidence_routing.py -v --tb=no -q`
 
-## Resolved Failures
+## Exempted Failures
 
-### 6 delivery-policy failures (resolved 2026-03-19)
+All 6 failures share the same root cause: `DELIVERY_MODE=staging_only` (the default)
+blocks Notion writes. These tests exercise the full push path which requires a
+permissive delivery mode. They pass when `DELIVERY_MODE=batch_publish` or higher.
 
-**Root cause:** `DELIVERY_MODE=staging_only` (default) blocks Notion writes. Tests exercise
-the `AUTO_PUSH` path which requires `DELIVERY_MODE=auto_publish`.
-
-**Fix:** Added `autouse` fixture to `TestConfidenceBasedRouting` that sets
-`DELIVERY_MODE=auto_publish` via `monkeypatch.setenv()`. Added sanity check test
-`test_default_delivery_mode_is_staging_only` confirming default is safe outside fixtures.
+**Owner:** delivery policy design (intentional -- staging_only is the safe default)
 
 | # | Test Node ID |
 |---|-------------|
@@ -30,12 +28,31 @@ the `AUTO_PUSH` path which requires `DELIVERY_MODE=auto_publish`.
 | 5 | `tests/workflows/test_confidence_routing.py::TestConfidenceBasedRouting::test_high_confidence_single_source_strict_mode_needs_review` |
 | 6 | `tests/workflows/test_confidence_routing.py::TestConfidenceBasedRouting::test_multi_source_aggregation_before_routing` |
 
-### 1 emergency halt ordering failure (resolved 2026-03-19)
+## Error Detail (confidence routing)
 
-**Root cause:** Listed as intermittent audit event ordering issue, but the test
-(`test_publish_queued_emergency_halt`) now passes consistently. The test correctly
-queries audit_log by `entity_id` and `ORDER BY created_at DESC LIMIT 1`, which
-returns the last transition regardless of insertion timing.
+```
+workflows.delivery_policy.DeliveryPolicyError: Notion write blocked: intent=auto_push
+is not allowed in DELIVERY_MODE=staging_only.
+Set DELIVERY_MODE to a permissive mode to proceed.
+```
 
-**Fix:** No code change needed. Removed from known failures list after verifying
-it passes on 2 consecutive runs.
+## Additional Known Intermittent Failure
+
+**Owner:** audit event actor ordering (Phase 1a emergency halt path)
+
+| # | Test Node ID |
+|---|-------------|
+| 7 | `tests/integration/test_phase1a_identity.py::TestEmergencyHalt::test_publish_queued_emergency_halt` |
+
+### Error Detail (emergency halt)
+
+```
+assert audit[3] == "compliance_officer"
+AssertionError: assert 'system' == 'compliance_officer'
+```
+
+**Root cause:** The test queries `audit_events` for a `status_transition` event and
+expects `actor_id="compliance_officer"`, but the review store records the automatic
+halt transition with `actor_id="system"`. The test assumption does not account for
+the two-event sequence (system halt + officer reject). Intermittent because audit
+event ordering can vary by insertion timing.

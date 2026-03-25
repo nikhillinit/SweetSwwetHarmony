@@ -2778,6 +2778,7 @@ class SignalStore:
         self,
         limit: Optional[int] = None,
         signal_type: Optional[str] = None,
+        source_api: Optional[str] = None,
     ) -> List[StoredSignal]:
         """
         Get signals that haven't been processed yet.
@@ -2785,6 +2786,7 @@ class SignalStore:
         Args:
             limit: Maximum number of signals to return
             signal_type: Filter by signal type (e.g., "github_spike")
+            source_api: Filter by source API (e.g., "hacker_news")
         """
         if not self._db:
             raise RuntimeError("Database not initialized")
@@ -2805,6 +2807,10 @@ class SignalStore:
         if signal_type:
             query += " AND s.signal_type = ?"
             params.append(signal_type)
+
+        if source_api:
+            query += " AND s.source_api = ?"
+            params.append(source_api)
 
         query += " ORDER BY s.detected_at DESC"
 
