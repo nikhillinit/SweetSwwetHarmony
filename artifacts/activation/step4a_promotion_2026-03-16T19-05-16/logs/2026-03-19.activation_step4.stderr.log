@@ -1,3 +1,0 @@
-2026-03-18 20:59:38,771 - storage.signal_store - INFO - SignalStore initialized: signals.db
-2026-03-18 20:59:38,808 - monitoring.activation_gate - INFO - Optional drift monitors not ready: ['quarantine_regret', 'publish_fp_rate']
-2026-03-18 20:59:38,808 - monitoring.activation_gate - INFO - activation_gate_check step=4 verdict=ready reasons=[]
