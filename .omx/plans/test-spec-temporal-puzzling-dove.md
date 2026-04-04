@@ -3,7 +3,7 @@
 ## Scope
 
 Verify that the fallback execution of `temporal-puzzling-dove` is complete by proving:
-- the canonical external plan at `C:\Users\nikhi\.claude\plans\temporal-puzzling-dove.md` remains the source-of-truth
+- the canonical repo plan at `C:\dev\Harmonic\docs\plans\2026-04-03-thesis-classifier-delta-spec.md` remains the source-of-truth
 - internal OMX planning artifacts are aligned to that document
 - current repo evidence still supports the plan's "already landed" and "reuse-first" claims
 
@@ -21,13 +21,15 @@ This is a document-state verification task. Product-code changes are not expecte
 
 ### A. Document-state alignment
 - **Target files:**
+  - `C:\dev\Harmonic\docs\plans\2026-04-03-thesis-classifier-delta-spec.md`
   - `C:\Users\nikhi\.claude\plans\temporal-puzzling-dove.md`
   - `.omx/plans/prd-temporal-puzzling-dove.md`
   - `.omx/plans/test-spec-temporal-puzzling-dove.md`
 - **Required checks:**
-  1. Internal PRD references the external plan as canonical.
-  2. Internal PRD does not reopen `classification_status`, `max_tokens=800`, minimum decomposition fields, hard/soft B2B split, or the CLAUDE wording as pending implementation.
-  3. Internal test spec describes this execution as document-state alignment and verification, not product-code rollout.
+  1. Internal PRD references the repo plan as canonical.
+  2. The external copy clearly identifies itself as a mirror/snapshot.
+  3. Internal PRD does not reopen `classification_status`, `max_tokens=800`, minimum decomposition fields, hard/soft B2B split, or the CLAUDE wording as pending implementation.
+  4. Internal test spec describes this execution as document-state alignment and verification, not product-code rollout.
 
 ### B. Eval-gate infrastructure
 - **Target files:**
@@ -66,23 +68,26 @@ This is a document-state verification task. Product-code changes are not expecte
 
 ## Regression Strategy
 
-1. Re-read the canonical external plan.
-2. Re-read the aligned internal PRD/test-spec.
-3. Run the focused eval-gate tests.
-4. Run the scheduler-quality tests.
-5. Spot-check that no new source-code work was introduced for this fallback execution.
+1. Re-read the canonical repo plan.
+2. Re-read the external mirror.
+3. Re-read the aligned internal PRD/test-spec.
+4. Run the focused eval-gate tests.
+5. Run the scheduler-quality tests.
+6. Spot-check that no new source-code work was introduced for this fallback execution.
 
 ## Acceptance Gate for Completion
 
 Execution is complete only when all of the following are true:
-1. The external plan remains the canonical delta spec.
-2. Internal OMX planning artifacts are aligned to it.
-3. The eval-gate test slice passes.
-4. The scheduler-quality test slice passes.
-5. No product-code changes were needed to satisfy this fallback execution.
+1. The repo plan remains the canonical delta spec.
+2. The external copy is marked as a mirror/snapshot.
+3. Internal OMX planning artifacts are aligned to the canonical repo plan.
+4. The eval-gate test slice passes.
+5. The scheduler-quality test slice passes.
+6. No product-code changes were needed to satisfy this fallback execution.
 
 ## Known Risks
 
 - Future automation may still prefer stale artifacts if internal docs are not aligned.
 - Future `v1.6` candidates may be mistaken for approved work if the gate boundary is not kept explicit.
+- Owner/cadence still needs manual follow-through because `nikhi` is the sole owner.
 - The scheduler-quality slice currently carries one existing pydantic deprecation warning; this is not a task blocker but should not be misread as a new regression.
