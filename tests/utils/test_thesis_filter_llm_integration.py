@@ -34,6 +34,7 @@ def _mock_llm_result(
     category="consumer_cpg",
     rationale="Consumer fit",
     thesis_match=True,
+    classification_status="success",
     **overrides,
 ):
     """Build a MagicMock LLM result."""
@@ -42,6 +43,7 @@ def _mock_llm_result(
     m.category = category
     m.rationale = rationale
     m.thesis_match = thesis_match
+    m.classification_status = classification_status
     for k, v in overrides.items():
         setattr(m, k, v)
     return m
@@ -118,6 +120,7 @@ class TestLLMRoutingChain:
         )
         result = await filter_instance.classify(_CONSUMER_TEXT)
         assert result.llm_skipped is True
+        assert result.llm_classification_status == "error_api"
 
     @pytest.mark.asyncio
     async def test_operational_failure_fallback(self, filter_instance):
@@ -128,11 +131,13 @@ class TestLLMRoutingChain:
                 thesis_fit_score=0.0,
                 category="excluded",
                 rationale="gemini unavailable",
+                classification_status="error_api",
             ),
         )
         result = await filter_instance.classify(_CONSUMER_TEXT)
         # Operational failure detected → fallback to keywords → llm_skipped
         assert result.llm_skipped is True
+        assert result.llm_classification_status == "error_api"
 
 
 # ── Malformed LLM payloads ──────────────────────────────────────────────────

@@ -40,6 +40,7 @@ class ThesisRunResult:
     classified_at: str
     model: str
     prompt_version: str
+    classification_status: str = "success"
 
 
 def _iso_days_ago(days: int) -> str:
@@ -114,6 +115,7 @@ def store_thesis_classification(
     input_tokens: Optional[int],
     output_tokens: Optional[int],
     latency_ms: int,
+    classification_status: str = "success",
     competitor_flag: bool = False,
     competitor_match: Optional[Dict[str, Any]] = None,
     classified_at: Optional[str] = None,
@@ -136,12 +138,12 @@ def store_thesis_classification(
             keyword_score, keyword_category, negative_keywords,
             thesis_match, thesis_fit_score, category, stage_estimate, confidence,
             rationale, key_signals,
-            prompt_version, model, input_tokens, output_tokens, latency_ms,
+            prompt_version, model, input_tokens, output_tokens, latency_ms, classification_status,
             competitor_flag, competitor_match,
             disagreement_detected,
             classified_at
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             signal_id,
@@ -161,6 +163,7 @@ def store_thesis_classification(
             input_tokens,
             output_tokens,
             latency_ms,
+            classification_status,
             1 if competitor_flag else 0,
             json.dumps(competitor_match, ensure_ascii=False) if competitor_match else None,
             disagreement_detected,
@@ -187,6 +190,14 @@ def classify_signal_llm(
     canonical_key = str(row["canonical_key"])
     company_name = str(row["company_name"] or "")
     raw_data = row["raw_data"]
+    raw_payload = raw_data
+    if isinstance(raw_data, str):
+        try:
+            raw_payload = json.loads(raw_data)
+        except Exception:
+            raw_payload = {}
+    if not isinstance(raw_payload, dict):
+        raw_payload = {}
 
     # Keyword match (fast, deterministic)
     matcher = ThesisMatcher()
@@ -210,11 +221,10 @@ def classify_signal_llm(
     start = time.time()
     classification = classifier.classify_sync(
         {
-            "canonical_key": canonical_key,
-            "company_name": company_name,
-            "text": text_blob,
+            "title": raw_payload.get("title") or raw_payload.get("name") or company_name or canonical_key,
+            "url": raw_payload.get("url") or raw_payload.get("website") or raw_payload.get("link") or "",
             "source_api": str(row["source_api"] or ""),
-            "signal_type": str(row["signal_type"] or ""),
+            "source_context": text_blob,
         }
     )
     latency_ms = int((time.time() - start) * 1000)
@@ -238,6 +248,7 @@ def classify_signal_llm(
         input_tokens=None,
         output_tokens=None,
         latency_ms=latency_ms,
+        classification_status=str(classification.classification_status or "success"),
     )
 
     return ThesisRunResult(
@@ -255,6 +266,7 @@ def classify_signal_llm(
         classified_at=utc_now_iso(),
         model=model,
         prompt_version=prompt_version,
+        classification_status=str(classification.classification_status or "success"),
     )
 
 

@@ -22,6 +22,7 @@ import re
 import time
 from collections import deque
 from dataclasses import dataclass
+from enum import Enum
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -34,7 +35,45 @@ logger = logging.getLogger(__name__)
 # PROMPT CONFIGURATION
 # =============================================================================
 
-CLASSIFIER_PROMPT_VERSION = "v1.4.0-gemini-adjacent"
+CLASSIFIER_PROMPT_VERSION = "v1.5.0-b2b-decomposition-minimal"
+
+VALID_PRIMARY_END_USERS = {
+    "individual_consumer",
+    "business_employee",
+    "both",
+    "unclear",
+}
+
+VALID_PAYING_CUSTOMERS = {
+    "individual_consumer",
+    "business",
+    "both",
+    "unclear",
+}
+
+VALID_SELLS_TO_OR_OPERATES_IN = {
+    "sells_tools_to_industry",
+    "operates_in_industry_for_consumers",
+    "both",
+    "unclear",
+}
+
+
+def _normalize_choice(value: Any, allowed: set[str], default: str = "unclear") -> str:
+    """Normalize model-emitted structured fields to allowed enum values."""
+    if not isinstance(value, str):
+        return default
+    normalized = value.strip().lower()
+    return normalized if normalized in allowed else default
+
+
+class ClassificationStatus(str, Enum):
+    """Operational outcome for a classification attempt."""
+    SUCCESS = "success"
+    ERROR_API = "error_api"
+    ERROR_PARSE = "error_parse"
+    ERROR_RATE_LIMIT = "error_rate_limit"
+    ERROR_CIRCUIT_BREAKER = "error_circuit_breaker"
 
 CLASSIFIER_SYSTEM_PROMPT = """You are a venture capital analyst evaluating early-stage consumer startups.
 
@@ -65,6 +104,26 @@ These categories are SOMETIMES in thesis depending on execution:
 
 When classifying edge cases, ask: "Is the END USER an individual consumer making a personal purchase decision?"
 
+## B2B-in-Disguise Detection
+CRITICAL: A company serving a consumer industry is not automatically a consumer company.
+
+Ask these questions before deciding:
+1. Is this company selling tools TO an industry, or operating IN that industry for consumers?
+2. Who is the primary end user?
+3. Who is the paying customer?
+
+Rules:
+- Selling operating software/tools TO restaurants, hotels, retailers, clinics, or employers is EXCLUDED
+- Operating IN those sectors for individual consumers can still be IN THESIS
+- Two-sided consumer marketplaces stay in thesis when the consumer side is primary
+- Employer-sponsored consumer apps may still fit when the product is used primarily by individuals
+
+Examples:
+- "AI voice ordering system for restaurants" -> sells tools TO industry -> EXCLUDED
+- "Restaurant reservation app for diners" -> operates IN industry for consumers -> IN THESIS
+- "Hotel property management system" -> sells tools TO hotels -> EXCLUDED
+- "BNPL for hotel bookings" -> operates IN travel for consumers -> IN THESIS
+
 ## Output Format
 Respond ONLY with valid JSON (no markdown, no code blocks):
 {
@@ -75,12 +134,18 @@ Respond ONLY with valid JSON (no markdown, no code blocks):
     "confidence": "high",
     "company_name": "Company Name",
     "rationale": "2-3 sentence explanation",
-    "key_signals": ["signal1", "signal2"]
+    "key_signals": ["signal1", "signal2"],
+    "primary_end_user": "individual_consumer",
+    "paying_customer": "business",
+    "sells_to_or_operates_in": "sells_tools_to_industry"
 }
 
 Valid categories: consumer_cpg, consumer_health_tech, travel_hospitality, consumer_marketplace, other, excluded
 Valid stages: pre_seed, seed, series_a, later_stage, unknown
 Valid confidence: high, medium, low
+Valid primary_end_user: individual_consumer, business_employee, both, unclear
+Valid paying_customer: individual_consumer, business, both, unclear
+Valid sells_to_or_operates_in: sells_tools_to_industry, operates_in_industry_for_consumers, both, unclear
 
 ## Scoring Guide
 - 0.85-1.0: Strong thesis match, clear consumer focus, likely early-stage
@@ -93,6 +158,7 @@ Valid confidence: high, medium, low
 CHAIN_OF_THOUGHT_PROMPT = """Before providing your classification, think through these questions step by step:
 
 1. **Consumer vs B2B**: Who is the end customer? Individual consumers or businesses?
+1.5. **B2B-in-Disguise Check**: Is this selling tools TO a consumer industry or operating IN that industry for consumers? Populate primary_end_user, paying_customer, sells_to_or_operates_in.
 2. **Category Fit**: Does this match CPG, Health Tech, Travel/Hospitality, or Marketplace?
 3. **Excluded Categories**: Is this crypto, services, developer tools, or hardware-only?
 4. **Stage Assessment**: Does this appear to be pre-seed to Series A stage?
@@ -199,6 +265,10 @@ class ThesisClassification:
     # Chain-of-thought reasoning support
     cot_enabled: bool = False
     reasoning_trace: Optional[Dict[str, Any]] = None
+    classification_status: str = ClassificationStatus.SUCCESS.value
+    primary_end_user: str = "unclear"
+    paying_customer: str = "unclear"
+    sells_to_or_operates_in: str = "unclear"
 
 
 # =============================================================================
@@ -229,7 +299,7 @@ class LLMClassifier:
         model: str = "gemini-2.0-flash",
         api_key: Optional[str] = None,
         temperature: float = 0.2,
-        max_tokens: int = 400,
+        max_tokens: int = 800,
         cot_enabled: Optional[bool] = None,
         rate_limiter: Optional[RateLimiter] = None,
         circuit_breaker: Optional[CircuitBreaker] = None,
@@ -307,6 +377,7 @@ class LLMClassifier:
                 key_signals=[],
                 prompt_version=CLASSIFIER_PROMPT_VERSION,
                 model=self.model_name,
+                classification_status=ClassificationStatus.ERROR_CIRCUIT_BREAKER.value,
             )
 
         # Phase 9: Rate limiting
@@ -325,6 +396,7 @@ class LLMClassifier:
                 key_signals=[],
                 prompt_version=CLASSIFIER_PROMPT_VERSION,
                 model=self.model_name,
+                classification_status=ClassificationStatus.ERROR_RATE_LIMIT.value,
             )
 
         # Build user prompt
@@ -386,6 +458,7 @@ Respond with JSON classification only."""
                 key_signals=[],
                 prompt_version=CLASSIFIER_PROMPT_VERSION,
                 model=self.model_name,
+                classification_status=ClassificationStatus.ERROR_CIRCUIT_BREAKER.value,
             )
         except Exception as e:
             logger.error(f"Gemini API error: {e}")
@@ -400,6 +473,7 @@ Respond with JSON classification only."""
                 key_signals=[],
                 prompt_version=CLASSIFIER_PROMPT_VERSION,
                 model=self.model_name,
+                classification_status=ClassificationStatus.ERROR_API.value,
             )
 
         latency_ms = int((time.time() - start_time) * 1000)
@@ -439,6 +513,7 @@ Respond with JSON classification only."""
                 key_signals=[],
                 prompt_version=CLASSIFIER_PROMPT_VERSION,
                 model=self.model_name,
+                classification_status=ClassificationStatus.ERROR_PARSE.value,
             )
 
         # Extract usage info if available
@@ -477,6 +552,19 @@ Respond with JSON classification only."""
             raw_response=result,
             cot_enabled=self.cot_enabled,
             reasoning_trace=reasoning_trace,
+            classification_status=ClassificationStatus.SUCCESS.value,
+            primary_end_user=_normalize_choice(
+                result.get("primary_end_user"),
+                VALID_PRIMARY_END_USERS,
+            ),
+            paying_customer=_normalize_choice(
+                result.get("paying_customer"),
+                VALID_PAYING_CUSTOMERS,
+            ),
+            sells_to_or_operates_in=_normalize_choice(
+                result.get("sells_to_or_operates_in"),
+                VALID_SELLS_TO_OR_OPERATES_IN,
+            ),
         )
 
     def classify_sync(

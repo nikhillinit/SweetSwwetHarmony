@@ -33,26 +33,26 @@ class DisqualifyResult:
 # =============================================================================
 
 # B2B/Enterprise keywords - disqualify
-B2B_KEYWORDS: Set[str] = {
-    # Enterprise terms
-    "enterprise", "b2b", "saas", "api", "sdk",
-    "devops", "devtool", "infrastructure", "platform",
-    "backend", "middleware", "microservice",
-
-    # Business software
-    "crm", "erp", "hrms", "hris", "payroll",
-    "invoicing", "procurement", "workflow automation",
-
-    # Technical infrastructure
-    "kubernetes", "k8s", "docker", "terraform",
-    "aws", "azure", "gcp", "cloud infrastructure",
-    "data pipeline", "etl", "data warehouse",
-
-    # Developer tools
-    "developer experience", "dx", "code review",
-    "ci/cd", "testing framework", "monitoring",
-    "observability", "logging", "apm",
+HARD_B2B_KEYWORDS: Set[str] = {
+    "api", "backend", "b2b", "crm", "devops",
+    "enterprise", "erp", "infrastructure", "middleware",
+    "microservice", "platform", "saas", "sdk",
 }
+
+SOFT_B2B_KEYWORDS: Set[str] = {
+    # Business software
+    "hris", "hrms", "invoicing", "payroll", "procurement",
+    "workflow automation",
+
+    # Technical infrastructure / devtool context
+    "apm", "aws", "azure", "ci/cd", "cloud infrastructure",
+    "code review", "data pipeline", "data warehouse", "developer experience",
+    "devtool", "docker", "dx", "etl", "gcp", "k8s",
+    "kubernetes", "logging", "monitoring", "observability",
+    "terraform", "testing framework",
+}
+
+B2B_KEYWORDS: Set[str] = HARD_B2B_KEYWORDS | SOFT_B2B_KEYWORDS
 
 # Crypto/Web3 keywords - disqualify
 CRYPTO_KEYWORDS: Set[str] = {
@@ -115,6 +115,13 @@ CONSUMER_POSITIVE_KEYWORDS: Set[str] = {
     "subscription box", "membership",
 }
 
+DIRECT_CONSUMER_OVERRIDE_KEYWORDS: Set[str] = {
+    "consumer", "consumers", "customer", "customers", "diners",
+    "guest", "guests", "traveler", "travelers", "shopper", "shoppers",
+    "patient", "patients", "family", "families", "household", "households",
+    "for consumers", "for diners", "for guests", "for travelers",
+}
+
 
 # =============================================================================
 # FILTER FUNCTIONS
@@ -153,6 +160,16 @@ def is_b2b(text: str) -> Optional[str]:
     return _contains_keywords(text, B2B_KEYWORDS)
 
 
+def is_hard_b2b(text: str) -> Optional[str]:
+    """Check if text indicates a hard B2B/enterprise focus."""
+    return _contains_keywords(text, HARD_B2B_KEYWORDS)
+
+
+def is_soft_b2b(text: str) -> Optional[str]:
+    """Check if text indicates a soft B2B/enterprise focus."""
+    return _contains_keywords(text, SOFT_B2B_KEYWORDS)
+
+
 def is_crypto(text: str) -> Optional[str]:
     """
     Check if text indicates Crypto/Web3 focus.
@@ -183,6 +200,16 @@ def has_consumer_signals(text: str) -> bool:
     Used to reduce false positives.
     """
     return _contains_keywords(text, CONSUMER_POSITIVE_KEYWORDS) is not None
+
+
+def has_direct_consumer_override(text: str) -> bool:
+    """
+    Check for language that explicitly identifies the end user as a consumer.
+
+    This is intentionally narrower than CONSUMER_POSITIVE_KEYWORDS so industry
+    nouns like "restaurant" do not automatically rescue hard B2B terms.
+    """
+    return _contains_keywords(text, DIRECT_CONSUMER_OVERRIDE_KEYWORDS) is not None
 
 
 # =============================================================================
@@ -269,16 +296,30 @@ class HardDisqualifiers:
                 category="services"
             )
 
-        # 4. B2B/Enterprise - disqualify unless strong consumer signals
-        if match := is_b2b(combined_text):
-            if has_consumer:
-                # Consumer signals override B2B keywords
-                # (e.g., "enterprise-grade meal delivery" is still consumer)
-                pass
-            else:
+        # 4. B2B/Enterprise - hard terms should not be silently rescued by
+        # generic consumer context, while softer terms can still be overridden.
+        if hard_match := is_hard_b2b(combined_text):
+            if not has_consumer:
                 return DisqualifyResult(
                     passed=False,
-                    reason=f"B2B/Enterprise focus: '{match}'",
+                    reason=f"B2B/Enterprise focus: '{hard_match}'",
+                    category="b2b"
+                )
+
+            # Allow ambiguous hybrid consumer text to continue downstream rather
+            # than rejecting it outright, but do not silently rescue clearly
+            # B2B-in-disguise descriptions.
+            if not has_direct_consumer_override(combined_text):
+                return DisqualifyResult(
+                    passed=False,
+                    reason=f"B2B/Enterprise focus: '{hard_match}'",
+                    category="b2b"
+                )
+        elif soft_match := is_soft_b2b(combined_text):
+            if not has_consumer:
+                return DisqualifyResult(
+                    passed=False,
+                    reason=f"B2B/Enterprise focus: '{soft_match}'",
                     category="b2b"
                 )
 

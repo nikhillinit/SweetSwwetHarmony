@@ -41,9 +41,11 @@ class TestThesisClassificationSchema:
         required = {
             "id", "signal_id", "canonical_key",
             "thesis_match", "thesis_fit_score", "category",
+            "primary_end_user", "paying_customer", "sells_to_or_operates_in",
             "keyword_score", "keyword_category", "negative_keywords",
             "stage_estimate", "confidence", "rationale", "key_signals",
             "prompt_version", "model", "input_tokens", "output_tokens",
+            "classification_status",
             "latency_ms", "classified_at", "competitor_flag", "competitor_match"
         }
         assert required.issubset(column_names)
@@ -112,6 +114,7 @@ class TestThesisClassificationStorage:
         assert result is not None
         assert result["thesis_fit_score"] == 0.75
         assert result["category"] == "consumer_cpg"
+        assert result["classification_status"] == "success"
 
     @pytest.mark.asyncio
     async def test_get_thesis_classification_not_found(self, store):
@@ -169,6 +172,9 @@ class TestThesisClassificationStorage:
             thesis_match=True,
             thesis_fit_score=0.85,
             category="consumer_health_tech",
+            primary_end_user="individual_consumer",
+            paying_customer="individual_consumer",
+            sells_to_or_operates_in="operates_in_industry_for_consumers",
             stage_estimate="pre-seed",
             confidence="high",
             rationale="Fitness app for consumers",
@@ -178,6 +184,7 @@ class TestThesisClassificationStorage:
             input_tokens=150,
             output_tokens=75,
             latency_ms=450,
+            classification_status="error_parse",
             competitor_flag=True,
             competitor_match={"name": "Peloton", "similarity": 0.65},
         )
@@ -190,6 +197,12 @@ class TestThesisClassificationStorage:
         assert result["thesis_match"] is True
         assert result["thesis_fit_score"] == 0.85
         assert result["category"] == "consumer_health_tech"
+        assert result["primary_end_user"] == "individual_consumer"
+        assert result["paying_customer"] == "individual_consumer"
+        assert (
+            result["sells_to_or_operates_in"]
+            == "operates_in_industry_for_consumers"
+        )
         assert result["stage_estimate"] == "pre-seed"
         assert result["confidence"] == "high"
         assert result["rationale"] == "Fitness app for consumers"
@@ -199,6 +212,7 @@ class TestThesisClassificationStorage:
         assert result["input_tokens"] == 150
         assert result["output_tokens"] == 75
         assert result["latency_ms"] == 450
+        assert result["classification_status"] == "error_parse"
         assert result["competitor_flag"] is True
         assert result["competitor_match"] == {"name": "Peloton", "similarity": 0.65}
 
@@ -217,6 +231,10 @@ class TestThesisClassificationStorage:
         assert classification["canonical_key"] == "domain:test.com"
         assert classification["thesis_fit_score"] is None
         assert classification["category"] is None
+        assert classification["primary_end_user"] is None
+        assert classification["paying_customer"] is None
+        assert classification["sells_to_or_operates_in"] is None
+        assert classification["classification_status"] == "success"
         assert classification["negative_keywords"] == []
         assert classification["key_signals"] == []
 

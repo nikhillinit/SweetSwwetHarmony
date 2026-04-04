@@ -414,39 +414,26 @@ async def _handle_push_to_notion(arguments: dict[str, str]) -> GetPromptResult:
 
     logger.info(f"Push to Notion: discovery_id={discovery_id} (dry_run={dry_run})")
 
+    if dry_run:
+        return _success_result(
+            "Dry run - would push to Notion",
+            {
+                "status": "dry_run",
+                "discovery_id": discovery_id,
+                "would_create": True,
+                "message": "Prospect lookup and verification gate integration pending",
+            },
+        )
+
     try:
-        connector = get_notion_connector()
-        gate = get_verification_gate()
+        get_notion_connector()
+        get_verification_gate()
 
         # NOTE: This requires a prospect storage system to look up by discovery_id
-        # For now, return a skeleton response showing what would happen
-
-        # In production, this would:
-        # 1. Look up prospect by discovery_id from internal storage
-        # 2. Run through verification gate to get routing decision
-        # 3. Push to Notion with appropriate status
-
-        if dry_run:
-            return _success_result(
-                "Dry run - would push to Notion",
-                {
-                    "status": "dry_run",
-                    "discovery_id": discovery_id,
-                    "would_create": True,
-                    "message": "Prospect lookup and verification gate integration pending",
-                },
-            )
-        else:
-            # When implemented:
-            # prospect = await storage.get_prospect(discovery_id)
-            # decision = gate.route(prospect.signals)
-            # if decision.action == "push":
-            #     result = await connector.upsert_prospect(prospect.to_payload())
-            #     return _success_result("Pushed to Notion", result)
-
-            return _error_result(
-                "Live push not yet implemented - use dry_run=true for validation"
-            )
+        # before live pushes can be supported end-to-end.
+        return _error_result(
+            "Live push not yet implemented - use dry_run=true for validation"
+        )
 
     except Exception as e:
         logger.exception("Error pushing to Notion")
