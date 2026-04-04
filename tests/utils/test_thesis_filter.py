@@ -117,6 +117,19 @@ class TestThesisFilterResult:
         d = result.to_dict()
         assert d["llm_score"] is None
         assert d["llm_category"] is None
+        assert d["llm_model"] is None
+        assert d["llm_prompt_version"] is None
+
+    def test_to_dict_includes_llm_provenance_fields(self):
+        result = ThesisFilterResult(
+            routing=RoutingDecision.QUALIFIED,
+            keyword_score=0.6,
+            llm_model="gemini-2.0-flash",
+            llm_prompt_version="v1.6.0",
+        )
+        d = result.to_dict()
+        assert d["llm_model"] == "gemini-2.0-flash"
+        assert d["llm_prompt_version"] == "v1.6.0"
 
     # Phase B: Test new fields
     def test_intent_phrases_matched_default_empty(self):
@@ -449,6 +462,8 @@ class TestThesisFilterWithMockedLLM:
             thesis_fit_score=0.85,
             category="consumer_cpg",
             rationale="Strong consumer CPG fit",
+            model="gemini-2.0-flash",
+            prompt_version="v1.6.0",
             primary_end_user="individual_consumer",
             paying_customer="individual_consumer",
             sells_to_or_operates_in="operates_in_industry_for_consumers",
@@ -462,6 +477,8 @@ class TestThesisFilterWithMockedLLM:
         assert result.llm_primary_end_user == "individual_consumer"
         assert result.llm_paying_customer == "individual_consumer"
         assert result.llm_sells_to_or_operates_in == "operates_in_industry_for_consumers"
+        assert result.llm_model == "gemini-2.0-flash"
+        assert result.llm_prompt_version == "v1.6.0"
         assert result.llm_skipped is False
 
     @pytest.mark.asyncio
@@ -477,6 +494,8 @@ class TestThesisFilterWithMockedLLM:
         assert result.routing == RoutingDecision.QUALIFIED
         assert result.llm_score is None
         assert result.llm_classification_status == "error_api"
+        assert result.llm_model is None
+        assert result.llm_prompt_version is None
 
     @pytest.mark.asyncio
     async def test_llm_failure_payload_falls_back_to_keywords(self, filter_instance):
