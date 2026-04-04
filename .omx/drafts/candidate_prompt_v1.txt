@@ -48,6 +48,7 @@ Default rule: If the PAYING CUSTOMER is a business/employer and there is NO evid
 Specifics:
 - Employer-funded wellness, mental health, or care-navigation apps where the employer selects and pays -> score 0.20-0.25
 - Insurance, stipend, or benefit products distributed via gig platforms or employer benefit packages -> score 0.20-0.25
+- Insurance or benefits-infrastructure products for gig workers, even if purchased directly by the individual -> score 0.20-0.25 (insurance straddles services/health-tech boundary)
 - Products with BOTH employer distribution AND a clear independent D2C channel (consumers can also buy directly without employer) -> score normally
 - Consumer apps that happen to serve gig workers but are purchased directly by individuals (e.g., meal marketplace, personal fitness app) -> score normally
 
@@ -56,6 +57,7 @@ Examples:
 - "Employer-funded mental health app for workers and families" -> paying_customer=business -> score 0.23
 - "Care-navigation app distributed through employer benefit programs" -> paying_customer=business -> score 0.22
 - "Insurance and care app for couriers via gig platform benefits" -> benefit-distribution model -> score 0.24
+- "Insurance and care app for couriers buying benefits directly" -> insurance/benefits infra for gig workers -> score 0.24
 - "Mental health app with employer AND consumer subscription plans" -> paying_customer=both -> score normally
 - "Marketplace app helping gig workers find discounted meals" -> paying_customer=individual_consumer, direct purchase -> score normally
 - "Wellness app for rideshare drivers managing sleep and stress" -> paying_customer=individual_consumer, direct purchase -> score normally

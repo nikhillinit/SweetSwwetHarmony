@@ -1,0 +1,99 @@
+{
+  "accuracy": 1.0,
+  "comparison": {
+    "baseline_accuracy": 0.9,
+    "baseline_only_sample_ids": [],
+    "baseline_path": "artifacts\\thesis_diagnostics\\live_api_smoke_escalated.jsonl",
+    "candidate_accuracy": 1.0,
+    "candidate_only_sample_ids": [],
+    "improved_sample_ids": [
+      "llm_employer_sponsored_01",
+      "llm_employer_sponsored_02",
+      "llm_employer_sponsored_03",
+      "llm_gig_03"
+    ],
+    "regressed_sample_ids": [],
+    "shared_sample_count": 40,
+    "unchanged_correct_sample_ids": [
+      "llm_ad_supported_01",
+      "llm_ad_supported_02",
+      "llm_ad_supported_03",
+      "llm_b2b_disguise_01",
+      "llm_b2b_disguise_02",
+      "llm_b2b_disguise_03",
+      "llm_b2b_disguise_04",
+      "llm_b2b_disguise_05",
+      "llm_clear_b2b_01",
+      "llm_clear_b2b_02",
+      "llm_clear_b2b_03",
+      "llm_clear_b2b_04",
+      "llm_clear_b2b_05",
+      "llm_clear_b2b_06",
+      "llm_clear_b2b_07",
+      "llm_clear_b2b_08",
+      "llm_clear_b2b_09",
+      "llm_clear_b2b_10",
+      "llm_clear_consumer_01",
+      "llm_clear_consumer_02",
+      "llm_clear_consumer_03",
+      "llm_clear_consumer_04",
+      "llm_clear_consumer_05",
+      "llm_clear_consumer_06",
+      "llm_clear_consumer_07",
+      "llm_clear_consumer_08",
+      "llm_clear_consumer_09",
+      "llm_clear_consumer_10",
+      "llm_creator_01",
+      "llm_creator_02",
+      "llm_creator_03",
+      "llm_gig_01",
+      "llm_gig_02",
+      "llm_marketplace_01",
+      "llm_marketplace_02",
+      "llm_marketplace_03"
+    ],
+    "unchanged_incorrect_sample_ids": []
+  },
+  "confusion_matrix": {
+    "HELD": {
+      "HELD": 4,
+      "QUALIFIED": 0,
+      "REJECTED": 0
+    },
+    "QUALIFIED": {
+      "HELD": 0,
+      "QUALIFIED": 20,
+      "REJECTED": 0
+    },
+    "REJECTED": {
+      "HELD": 0,
+      "QUALIFIED": 0,
+      "REJECTED": 16
+    }
+  },
+  "dataset_path": "tests\\fixtures\\thesis_llm_golden_set.jsonl",
+  "dry_run": false,
+  "error_count": 0,
+  "per_class_metrics": {
+    "HELD": {
+      "f1": 1.0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 4
+    },
+    "QUALIFIED": {
+      "f1": 1.0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 20
+    },
+    "REJECTED": {
+      "f1": 1.0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 16
+    }
+  },
+  "run_id": "candidate_v3",
+  "total_samples": 40
+}
