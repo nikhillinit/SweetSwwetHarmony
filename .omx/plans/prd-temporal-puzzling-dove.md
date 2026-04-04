@@ -2,13 +2,13 @@
 
 ## Requirements Summary
 
-Execute the approved `temporal-puzzling-dove` plan by bringing OMX planning artifacts into alignment with the rewritten external source-of-truth document at `C:\Users\nikhi\.claude\plans\temporal-puzzling-dove.md`.
+Execute the approved `temporal-puzzling-dove` plan by bringing OMX planning artifacts into alignment with the canonical repo document at `C:\dev\Harmonic\docs\plans\2026-04-03-thesis-classifier-delta-spec.md`.
 
-This is a document-state execution task, not a product-code rollout. The external plan has already been rewritten as a repo-aligned delta spec. The remaining work is to ensure internal OMX artifacts no longer misstate already-landed code as missing and that completion is backed by current repo evidence.
+This is a document-state execution task, not a product-code rollout. The repo plan is canonical and the external planning-mode copy is now a mirror. The remaining work is to ensure internal OMX artifacts no longer misstate already-landed code as missing and that completion is backed by current repo evidence.
 
 ## Brownfield Grounding
 
-- `C:\Users\nikhi\.claude\plans\temporal-puzzling-dove.md` is now the canonical execution brief and already uses the delta-spec structure:
+- `C:\dev\Harmonic\docs\plans\2026-04-03-thesis-classifier-delta-spec.md` is now the canonical execution brief and already uses the delta-spec structure:
   - `Already Landed`
   - `Remaining Delta for v1.6`
   - `Acceptance Gates`
@@ -31,7 +31,7 @@ This is a document-state execution task, not a product-code rollout. The externa
 ### Principles
 1. Keep planning artifacts truthful to the current repo state.
 2. Do not reopen already-landed code changes as pending execution work.
-3. Treat the external plan as canonical and align internal OMX artifacts to it.
+3. Treat the repo plan as canonical and align internal OMX artifacts to it.
 4. Preserve evidence that future `v1.6` work is deferred behind a fresh eval gate.
 5. Close the task with verification evidence, not assumption.
 
@@ -57,7 +57,7 @@ Choose **Option A**.
 
 1. `.omx/plans/prd-temporal-puzzling-dove.md` no longer describes `classification_status`, `max_tokens=800`, minimum decomposition fields, hard/soft B2B split, or the CLAUDE exclusion update as missing implementation work.
 2. `.omx/plans/test-spec-temporal-puzzling-dove.md` no longer treats product-code rollout as the active execution target for this task.
-3. Internal OMX artifacts explicitly recognize the external plan at `C:\Users\nikhi\.claude\plans\temporal-puzzling-dove.md` as the canonical delta spec.
+3. Internal OMX artifacts explicitly recognize the repo plan at `C:\dev\Harmonic\docs\plans\2026-04-03-thesis-classifier-delta-spec.md` as the canonical delta spec.
 4. Internal OMX artifacts preserve the distinction between:
    - already landed
    - existing gate/reuse infrastructure
@@ -81,13 +81,13 @@ Choose **Option A**.
   - `pytest tests/utils/test_thesis_llm_golden_set.py tests/utils/test_thesis_llm_accuracy.py tests/utils/test_thesis_eval_gate.py tests/scripts/test_run_thesis_llm_eval_gate.py -q`
 - Run the scheduler-quality slice:
   - `pytest tests/ops/test_scheduler_quality.py -q`
-- Re-read the updated internal docs and confirm they match the canonical external plan.
+- Re-read the updated internal docs and confirm they match the canonical repo plan.
 
 ## Risks and Mitigations
 
 | Risk | Why it matters | Mitigation |
 |---|---|---|
-| Internal OMX docs drift behind the external plan | Future execution could reopen shipped work | Rewrite PRD/test-spec to make the external delta spec canonical |
+| Internal OMX docs drift behind the canonical repo plan | Future execution could reopen shipped work | Rewrite PRD/test-spec to make the repo delta spec canonical |
 | Future `v1.6` candidates look pre-approved | Could trigger speculative schema expansion | Keep them explicitly deferred behind a fresh gate |
 | Quality-loop work gets reopened as greenfield | Could cause duplicate orchestration work | Keep Step 4 framed as reuse of `quality-*` modes |
 | Task is declared done without evidence | Could leave hidden doc drift | Re-run focused test slices and re-read updated artifacts |
@@ -96,7 +96,7 @@ Choose **Option A**.
 
 1. Confirm `.omx/plans/prd-temporal-puzzling-dove.md` now describes this task as planning-artifact alignment, not product-code rollout.
 2. Confirm `.omx/plans/test-spec-temporal-puzzling-dove.md` now verifies document-state alignment and current infrastructure reuse.
-3. Confirm both internal artifacts point back to `C:\Users\nikhi\.claude\plans\temporal-puzzling-dove.md` as the canonical delta spec.
+3. Confirm both internal artifacts point back to `C:\dev\Harmonic\docs\plans\2026-04-03-thesis-classifier-delta-spec.md` as the canonical delta spec.
 4. Confirm the focused eval-gate test slice passes.
 5. Confirm the scheduler-quality test slice passes.
 6. Confirm no product source files were changed for this fallback execution.
@@ -104,11 +104,11 @@ Choose **Option A**.
 ## ADR
 
 ### Decision
-Treat the rewritten external plan as canonical and align internal OMX planning artifacts to it.
+Treat the rewritten repo plan as canonical and align internal OMX planning artifacts to it.
 
 ### Drivers
 - The previous internal PRD/test-spec are stale.
-- The external plan rewrite is already complete.
+- The repo plan rewrite is already complete.
 - Future execution safety depends on internal and external planning state agreeing.
 
 ### Alternatives Considered
