@@ -2178,6 +2178,19 @@ class SignalStore:
         ddl: str,
     ) -> None:
         """Apply an ALTER TABLE ADD COLUMN only when the target column is absent."""
+        table_cursor = await conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (table,),
+        )
+        table_row = await table_cursor.fetchone()
+        if not table_row:
+            logger.warning(
+                "Skipping column add for %s.%s because table does not exist in this schema snapshot",
+                table,
+                column,
+            )
+            return
+
         cursor = await conn.execute(f"PRAGMA table_info({table})")
         rows = await cursor.fetchall()
         existing_columns = {row[1] for row in rows}
