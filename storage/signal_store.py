@@ -91,7 +91,7 @@ logger = logging.getLogger(__name__)
 # SCHEMA VERSION
 # =============================================================================
 
-CURRENT_SCHEMA_VERSION = 51
+CURRENT_SCHEMA_VERSION = 53
 
 # SQL for creating tables (migrations applied in order)
 MIGRATIONS = {
@@ -259,6 +259,9 @@ MIGRATIONS = {
         thesis_match BOOLEAN,
         thesis_fit_score REAL,
         category TEXT,
+        primary_end_user TEXT,
+        paying_customer TEXT,
+        sells_to_or_operates_in TEXT,
         stage_estimate TEXT,
         confidence TEXT,
         rationale TEXT,
@@ -1750,6 +1753,16 @@ MIGRATIONS = {
     49: V49_ADJACENT_LABEL_DDL,
     50: V50_KNOWLEDGE_GRAPH_DDL,
     51: V51_CONFIDENCE_LEDGER_DDL,
+    52: """
+    -- Track whether LLM exclusions are genuine thesis outcomes or operational failures.
+    ALTER TABLE thesis_classifications ADD COLUMN classification_status TEXT DEFAULT 'success';
+    """,
+    53: """
+    -- Narrow Step 3 rollout: only persist the minimal B2B-in-disguise decomposition fields.
+    ALTER TABLE thesis_classifications ADD COLUMN primary_end_user TEXT;
+    ALTER TABLE thesis_classifications ADD COLUMN paying_customer TEXT;
+    ALTER TABLE thesis_classifications ADD COLUMN sells_to_or_operates_in TEXT;
+    """,
 }
 
 
@@ -2112,7 +2125,34 @@ class SignalStore:
 
             async with self.transaction() as conn:
                 # Execute migration SQL
-                await conn.executescript(MIGRATIONS[version])
+                if version == 52:
+                    await self._add_column_if_missing(
+                        conn,
+                        table="thesis_classifications",
+                        column="classification_status",
+                        ddl="ALTER TABLE thesis_classifications ADD COLUMN classification_status TEXT DEFAULT 'success'",
+                    )
+                elif version == 53:
+                    await self._add_column_if_missing(
+                        conn,
+                        table="thesis_classifications",
+                        column="primary_end_user",
+                        ddl="ALTER TABLE thesis_classifications ADD COLUMN primary_end_user TEXT",
+                    )
+                    await self._add_column_if_missing(
+                        conn,
+                        table="thesis_classifications",
+                        column="paying_customer",
+                        ddl="ALTER TABLE thesis_classifications ADD COLUMN paying_customer TEXT",
+                    )
+                    await self._add_column_if_missing(
+                        conn,
+                        table="thesis_classifications",
+                        column="sells_to_or_operates_in",
+                        ddl="ALTER TABLE thesis_classifications ADD COLUMN sells_to_or_operates_in TEXT",
+                    )
+                else:
+                    await conn.executescript(MIGRATIONS[version])
 
                 # Record migration
                 await conn.execute(
@@ -2128,6 +2168,35 @@ class SignalStore:
                 )
 
             logger.info(f"Migration v{version} applied successfully")
+
+    async def _add_column_if_missing(
+        self,
+        conn: aiosqlite.Connection,
+        *,
+        table: str,
+        column: str,
+        ddl: str,
+    ) -> None:
+        """Apply an ALTER TABLE ADD COLUMN only when the target column is absent."""
+        table_cursor = await conn.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (table,),
+        )
+        table_row = await table_cursor.fetchone()
+        if not table_row:
+            logger.warning(
+                "Skipping column add for %s.%s because table does not exist in this schema snapshot",
+                table,
+                column,
+            )
+            return
+
+        cursor = await conn.execute(f"PRAGMA table_info({table})")
+        rows = await cursor.fetchall()
+        existing_columns = {row[1] for row in rows}
+        if column in existing_columns:
+            return
+        await conn.execute(ddl)
 
     async def _create_fts_table(self) -> None:
         """Create FTS5 virtual table for fuzzy search."""
@@ -4381,6 +4450,9 @@ class SignalStore:
         thesis_match: Optional[bool] = None,
         thesis_fit_score: Optional[float] = None,
         category: Optional[str] = None,
+        primary_end_user: Optional[str] = None,
+        paying_customer: Optional[str] = None,
+        sells_to_or_operates_in: Optional[str] = None,
         stage_estimate: Optional[str] = None,
         confidence: Optional[str] = None,
         rationale: Optional[str] = None,
@@ -4390,6 +4462,7 @@ class SignalStore:
         input_tokens: Optional[int] = None,
         output_tokens: Optional[int] = None,
         latency_ms: Optional[int] = None,
+        classification_status: str = "success",
         competitor_flag: bool = False,
         competitor_match: Optional[Dict] = None,
         cot_enabled: bool = False,
@@ -4407,6 +4480,9 @@ class SignalStore:
             thesis_match: Whether LLM determined thesis match
             thesis_fit_score: Fit score from LLM (0-1)
             category: Thesis category from LLM
+            primary_end_user: Whether the primary end user is a consumer, employee, both, or unclear
+            paying_customer: Whether the paying customer is a consumer, business, both, or unclear
+            sells_to_or_operates_in: Whether the company sells tools to industry or operates in-industry for consumers
             stage_estimate: Estimated funding stage
             confidence: LLM confidence level
             rationale: LLM's explanation for the classification
@@ -4416,6 +4492,7 @@ class SignalStore:
             input_tokens: Input token count
             output_tokens: Output token count
             latency_ms: API call latency in milliseconds
+            classification_status: Operational classifier outcome
             competitor_flag: Whether a competitor was detected
             competitor_match: Details of matched portfolio company
             cot_enabled: Whether chain-of-thought reasoning was used
@@ -4444,13 +4521,14 @@ class SignalStore:
                     signal_id, canonical_key,
                     keyword_score, keyword_category, negative_keywords,
                     thesis_match, thesis_fit_score, category,
+                    primary_end_user, paying_customer, sells_to_or_operates_in,
                     stage_estimate, confidence, rationale, key_signals,
-                    prompt_version, model, input_tokens, output_tokens, latency_ms,
+                    prompt_version, model, input_tokens, output_tokens, latency_ms, classification_status,
                     competitor_flag, competitor_match,
                     cot_enabled, reasoning_trace,
                     disagreement_detected,
                     classified_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     signal_id,
@@ -4461,6 +4539,9 @@ class SignalStore:
                     thesis_match,
                     thesis_fit_score,
                     category,
+                    primary_end_user,
+                    paying_customer,
+                    sells_to_or_operates_in,
                     stage_estimate,
                     confidence,
                     rationale,
@@ -4470,6 +4551,7 @@ class SignalStore:
                     input_tokens,
                     output_tokens,
                     latency_ms,
+                    classification_status,
                     competitor_flag,
                     json.dumps(competitor_match) if competitor_match else None,
                     1 if cot_enabled else 0,
@@ -4501,8 +4583,10 @@ class SignalStore:
             SELECT signal_id, canonical_key,
                    keyword_score, keyword_category, negative_keywords,
                    thesis_match, thesis_fit_score, category,
+                   primary_end_user, paying_customer, sells_to_or_operates_in,
                    stage_estimate, confidence, rationale, key_signals,
                    prompt_version, model, input_tokens, output_tokens, latency_ms,
+                   classification_status,
                    competitor_flag, competitor_match,
                    disagreement_detected,
                    classified_at
@@ -4527,19 +4611,23 @@ class SignalStore:
             "thesis_match": bool(row[5]) if row[5] is not None else None,
             "thesis_fit_score": row[6],
             "category": row[7],
-            "stage_estimate": row[8],
-            "confidence": row[9],
-            "rationale": row[10],
-            "key_signals": json.loads(row[11]) if row[11] else [],
-            "prompt_version": row[12],
-            "model": row[13],
-            "input_tokens": row[14],
-            "output_tokens": row[15],
-            "latency_ms": row[16],
-            "competitor_flag": bool(row[17]),
-            "competitor_match": json.loads(row[18]) if row[18] else None,
-            "disagreement_detected": bool(row[19]),
-            "classified_at": row[20],
+            "primary_end_user": row[8],
+            "paying_customer": row[9],
+            "sells_to_or_operates_in": row[10],
+            "stage_estimate": row[11],
+            "confidence": row[12],
+            "rationale": row[13],
+            "key_signals": json.loads(row[14]) if row[14] else [],
+            "prompt_version": row[15],
+            "model": row[16],
+            "input_tokens": row[17],
+            "output_tokens": row[18],
+            "latency_ms": row[19],
+            "classification_status": row[20] or "success",
+            "competitor_flag": bool(row[21]),
+            "competitor_match": json.loads(row[22]) if row[22] else None,
+            "disagreement_detected": bool(row[23]),
+            "classified_at": row[24],
         }
 
     async def get_recent_classification(

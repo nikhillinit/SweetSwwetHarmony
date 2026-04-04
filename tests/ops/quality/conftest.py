@@ -11,6 +11,16 @@ import pytest
 from storage.signal_store import SignalStore
 
 
+def _get_or_create_event_loop():
+    """Support sync fixtures under pytest-asyncio auto mode on Windows."""
+    try:
+        return asyncio.get_event_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        return loop
+
+
 def _utc_iso(days_ago: int = 0) -> str:
     dt = datetime.now(timezone.utc) - timedelta(days=days_ago)
     return dt.isoformat()
@@ -52,7 +62,8 @@ def quality_db(tmp_path):
     db_path = tmp_path / "quality_test.db"
 
     store = SignalStore(str(db_path))
-    asyncio.get_event_loop().run_until_complete(store.initialize())
+    loop = _get_or_create_event_loop()
+    loop.run_until_complete(store.initialize())
 
     # Also ensure quality tables via the sync helper (idempotent)
     from ops.quality.db import quality_conn
@@ -62,7 +73,7 @@ def quality_db(tmp_path):
 
     yield str(db_path), store
 
-    asyncio.get_event_loop().run_until_complete(store.close())
+    loop.run_until_complete(store.close())
 
 
 @pytest.fixture

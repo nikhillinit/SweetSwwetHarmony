@@ -2093,7 +2093,19 @@ class DiscoveryPipeline:
                                 negative_keywords=thesis_result.negative_keywords,
                                 thesis_fit_score=thesis_result.llm_score,
                                 category=thesis_result.llm_category,
+                                primary_end_user=getattr(
+                                    thesis_result, "llm_primary_end_user", None
+                                ),
+                                paying_customer=getattr(
+                                    thesis_result, "llm_paying_customer", None
+                                ),
+                                sells_to_or_operates_in=getattr(
+                                    thesis_result, "llm_sells_to_or_operates_in", None
+                                ),
                                 rationale=thesis_result.llm_rationale,
+                                classification_status=(
+                                    thesis_result.llm_classification_status or "success"
+                                ),
                                 competitor_flag=False,
                                 competitor_match=None,
                             )
@@ -2134,7 +2146,19 @@ class DiscoveryPipeline:
                                 negative_keywords=thesis_result.negative_keywords,
                                 thesis_fit_score=thesis_result.llm_score,
                                 category=thesis_result.llm_category,
+                                primary_end_user=getattr(
+                                    thesis_result, "llm_primary_end_user", None
+                                ),
+                                paying_customer=getattr(
+                                    thesis_result, "llm_paying_customer", None
+                                ),
+                                sells_to_or_operates_in=getattr(
+                                    thesis_result, "llm_sells_to_or_operates_in", None
+                                ),
                                 rationale=thesis_result.llm_rationale,
+                                classification_status=(
+                                    thesis_result.llm_classification_status or "success"
+                                ),
                                 competitor_flag=False,
                                 competitor_match=None,
                             )
@@ -2184,7 +2208,19 @@ class DiscoveryPipeline:
                             negative_keywords=thesis_result.negative_keywords,
                             thesis_fit_score=thesis_result.llm_score,
                             category=thesis_result.llm_category,
+                            primary_end_user=getattr(
+                                thesis_result, "llm_primary_end_user", None
+                            ),
+                            paying_customer=getattr(
+                                thesis_result, "llm_paying_customer", None
+                            ),
+                            sells_to_or_operates_in=getattr(
+                                thesis_result, "llm_sells_to_or_operates_in", None
+                            ),
                             rationale=thesis_result.llm_rationale,
+                            classification_status=(
+                                thesis_result.llm_classification_status or "success"
+                            ),
                             competitor_flag=competitor_match is not None,
                             competitor_match=competitor_match.to_dict() if competitor_match else None,
                         )

@@ -60,6 +60,10 @@ def _make_classification(
     llm_score=0.7,
     llm_category="consumer_cpg",
     llm_rationale="Consumer CPG fit",
+    llm_classification_status="success",
+    llm_primary_end_user=None,
+    llm_paying_customer=None,
+    llm_sells_to_or_operates_in=None,
     keyword_matches=None,
     routing=RoutingDecision.QUALIFIED,
 ):
@@ -72,6 +76,10 @@ def _make_classification(
         llm_score=llm_score,
         llm_category=llm_category,
         llm_rationale=llm_rationale,
+        llm_classification_status=llm_classification_status,
+        llm_primary_end_user=llm_primary_end_user,
+        llm_paying_customer=llm_paying_customer,
+        llm_sells_to_or_operates_in=llm_sells_to_or_operates_in,
         keyword_matches=keyword_matches or ["meal kit", "food"],
     )
 
@@ -109,6 +117,7 @@ class TestSaveClassificationRoundTrip:
         assert row["thesis_fit_score"] == 0.72
         assert row["category"] == "consumer_cpg"
         assert row["rationale"] == "Strong consumer CPG fit"
+        assert row["classification_status"] == "success"
 
     @pytest.mark.asyncio
     async def test_signal_store_none_no_crash(self):
@@ -162,6 +171,50 @@ class TestSaveClassificationRoundTrip:
         assert row["thesis_fit_score"] is None
         assert row["category"] is None
         assert row["rationale"] is None
+        assert row["classification_status"] == "success"
+
+    @pytest.mark.asyncio
+    async def test_llm_classification_status_persisted(self, store, signal_id):
+        """Explicit LLM operational status should round-trip through persistence."""
+        classification = _make_classification(
+            llm_score=None,
+            llm_category=None,
+            llm_rationale="Rate limit exceeded: test",
+            llm_classification_status="error_rate_limit",
+        )
+
+        tf = ThesisFilter(ThesisFilterConfig(), signal_store=store)
+        await tf.save_classification(
+            signal_id=signal_id,
+            canonical_key="domain:acme.ai",
+            classification=classification,
+        )
+
+        row = await store.get_thesis_classification("domain:acme.ai")
+        assert row is not None
+        assert row["classification_status"] == "error_rate_limit"
+
+    @pytest.mark.asyncio
+    async def test_step3_decomposition_fields_round_trip(self, store, signal_id):
+        """Narrow Step 3 decomposition fields should persist through save_classification."""
+        classification = _make_classification(
+            llm_primary_end_user="individual_consumer",
+            llm_paying_customer="individual_consumer",
+            llm_sells_to_or_operates_in="operates_in_industry_for_consumers",
+        )
+
+        tf = ThesisFilter(ThesisFilterConfig(), signal_store=store)
+        await tf.save_classification(
+            signal_id=signal_id,
+            canonical_key="domain:acme.ai",
+            classification=classification,
+        )
+
+        row = await store.get_thesis_classification("domain:acme.ai")
+        assert row is not None
+        assert row["primary_end_user"] == "individual_consumer"
+        assert row["paying_customer"] == "individual_consumer"
+        assert row["sells_to_or_operates_in"] == "operates_in_industry_for_consumers"
 
     @pytest.mark.asyncio
     async def test_duplicate_save_inserts_new_row(self, store, signal_id):

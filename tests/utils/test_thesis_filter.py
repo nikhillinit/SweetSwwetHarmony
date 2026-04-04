@@ -449,6 +449,9 @@ class TestThesisFilterWithMockedLLM:
             thesis_fit_score=0.85,
             category="consumer_cpg",
             rationale="Strong consumer CPG fit",
+            primary_end_user="individual_consumer",
+            paying_customer="individual_consumer",
+            sells_to_or_operates_in="operates_in_industry_for_consumers",
         )
         filter_instance._llm_classifier = mock_llm
 
@@ -456,6 +459,9 @@ class TestThesisFilterWithMockedLLM:
         assert result.routing == RoutingDecision.QUALIFIED
         assert result.llm_score == 0.85
         assert result.llm_category == "consumer_cpg"
+        assert result.llm_primary_end_user == "individual_consumer"
+        assert result.llm_paying_customer == "individual_consumer"
+        assert result.llm_sells_to_or_operates_in == "operates_in_industry_for_consumers"
         assert result.llm_skipped is False
 
     @pytest.mark.asyncio
@@ -470,6 +476,7 @@ class TestThesisFilterWithMockedLLM:
         # Should still route based on keywords
         assert result.routing == RoutingDecision.QUALIFIED
         assert result.llm_score is None
+        assert result.llm_classification_status == "error_api"
 
     @pytest.mark.asyncio
     async def test_llm_failure_payload_falls_back_to_keywords(self, filter_instance):
@@ -480,6 +487,7 @@ class TestThesisFilterWithMockedLLM:
             thesis_fit_score=0.0,
             category="excluded",
             rationale="Classification failed: GOOGLE_API_KEY not set",
+            classification_status="error_api",
         )
         filter_instance._llm_classifier = mock_llm
 
@@ -488,6 +496,7 @@ class TestThesisFilterWithMockedLLM:
         assert result.llm_skipped is True
         assert result.llm_score is None
         assert result.llm_category is None
+        assert result.llm_classification_status == "error_api"
 
     @pytest.mark.asyncio
     async def test_llm_rationale_captured(self, filter_instance):
@@ -498,11 +507,15 @@ class TestThesisFilterWithMockedLLM:
             thesis_fit_score=0.7,
             category="consumer_health_tech",
             rationale="Wellness app with strong consumer focus",
+            primary_end_user="individual_consumer",
+            paying_customer="individual_consumer",
+            sells_to_or_operates_in="operates_in_industry_for_consumers",
         )
         filter_instance._llm_classifier = mock_llm
 
         result = await filter_instance.classify("Meditation and wellness platform")
         assert result.llm_rationale == "Wellness app with strong consumer focus"
+        assert result.llm_primary_end_user == "individual_consumer"
 
 
 # =============================================================================
