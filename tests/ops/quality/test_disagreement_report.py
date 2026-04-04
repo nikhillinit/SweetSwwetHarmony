@@ -37,6 +37,7 @@ def test_db(tmp_path):
             thesis_match BOOLEAN,
             thesis_fit_score REAL,
             category TEXT,
+            classification_status TEXT DEFAULT 'success',
             confidence TEXT,
             disagreement_detected BOOLEAN DEFAULT 0,
             classified_at TEXT
@@ -53,8 +54,14 @@ def test_db(tmp_path):
         (1, "test", "github", "domain:test1.com", "Test Co 1", 0.8, "{}", now, now)
     )
     conn.execute(
-        "INSERT INTO thesis_classifications VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (1, 1, "domain:test1.com", 0.85, "consumer_cpg", 0, 0.25, "excluded", "high", 1, now)
+        """
+        INSERT INTO thesis_classifications (
+            id, signal_id, canonical_key, keyword_score, keyword_category,
+            thesis_match, thesis_fit_score, category, classification_status,
+            confidence, disagreement_detected, classified_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (1, 1, "domain:test1.com", 0.85, "consumer_cpg", 0, 0.25, "excluded", "success", "high", 1, now)
     )
 
     # Signal 2: Disagreement (keyword low, LLM high)
@@ -63,8 +70,14 @@ def test_db(tmp_path):
         (2, "test", "github", "domain:test2.com", "Test Co 2", 0.8, "{}", now, now)
     )
     conn.execute(
-        "INSERT INTO thesis_classifications VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (2, 2, "domain:test2.com", 0.25, "other", 1, 0.85, "consumer_cpg", "high", 1, now)
+        """
+        INSERT INTO thesis_classifications (
+            id, signal_id, canonical_key, keyword_score, keyword_category,
+            thesis_match, thesis_fit_score, category, classification_status,
+            confidence, disagreement_detected, classified_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (2, 2, "domain:test2.com", 0.25, "other", 1, 0.85, "consumer_cpg", "success", "high", 1, now)
     )
 
     # Signal 3: Agreement (both high)
@@ -73,8 +86,14 @@ def test_db(tmp_path):
         (3, "test", "github", "domain:test3.com", "Test Co 3", 0.8, "{}", now, now)
     )
     conn.execute(
-        "INSERT INTO thesis_classifications VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (3, 3, "domain:test3.com", 0.85, "consumer_cpg", 1, 0.80, "consumer_cpg", "high", 0, now)
+        """
+        INSERT INTO thesis_classifications (
+            id, signal_id, canonical_key, keyword_score, keyword_category,
+            thesis_match, thesis_fit_score, category, classification_status,
+            confidence, disagreement_detected, classified_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (3, 3, "domain:test3.com", 0.85, "consumer_cpg", 1, 0.80, "consumer_cpg", "success", "high", 0, now)
     )
 
     # Signal 4: Another disagreement (keyword high, LLM low)
@@ -83,8 +102,14 @@ def test_db(tmp_path):
         (4, "test", "sec_edgar", "domain:test4.com", "Test Co 4", 0.8, "{}", now, now)
     )
     conn.execute(
-        "INSERT INTO thesis_classifications VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        (4, 4, "domain:test4.com", 0.90, "consumer_health_tech", 0, 0.15, "excluded", "high", 1, now)
+        """
+        INSERT INTO thesis_classifications (
+            id, signal_id, canonical_key, keyword_score, keyword_category,
+            thesis_match, thesis_fit_score, category, classification_status,
+            confidence, disagreement_detected, classified_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (4, 4, "domain:test4.com", 0.90, "consumer_health_tech", 0, 0.15, "excluded", "success", "high", 1, now)
     )
 
     conn.commit()

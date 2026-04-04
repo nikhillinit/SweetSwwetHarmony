@@ -882,45 +882,28 @@ class ThesisFilter:
             logger.warning("No signal_store available - skipping classification save")
             return
 
-        now = datetime.now(timezone.utc)
-
-        async with self.signal_store.transaction() as conn:
-            await conn.execute(
-                """
-                INSERT INTO thesis_classifications (
-                    signal_id, canonical_key,
-                    keyword_score, keyword_category, negative_keywords,
-                    thesis_match, thesis_fit_score, category,
-                    primary_end_user, paying_customer, sells_to_or_operates_in,
-                    stage_estimate, confidence, rationale, key_signals,
-                    prompt_version, model, classification_status,
-                    classified_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    signal_id,
-                    canonical_key,
-                    classification.keyword_score,
-                    classification.keyword_category,
-                    json.dumps(classification.negative_keywords),
-                    # LLM fields (may be None if skipped)
-                    classification.llm_score is not None and classification.llm_score > 0.5,
-                    classification.llm_score,
-                    classification.llm_category,
-                    classification.llm_primary_end_user,
-                    classification.llm_paying_customer,
-                    classification.llm_sells_to_or_operates_in,
-                    None,  # stage_estimate (not in current result)
-                    None,  # confidence (not in current result)
-                    classification.llm_rationale,
-                    json.dumps(classification.keyword_matches) if classification.keyword_matches else None,
-                    prompt_version,
-                    model,
-                    classification.llm_classification_status or "success",
-                    now.isoformat(),
-                )
-            )
-            await conn.commit()
+        await self.signal_store.save_thesis_classification(
+            signal_id=signal_id,
+            canonical_key=canonical_key,
+            keyword_score=classification.keyword_score,
+            keyword_category=classification.keyword_category,
+            negative_keywords=classification.negative_keywords,
+            thesis_match=(
+                classification.llm_score is not None and classification.llm_score > 0.5
+            ),
+            thesis_fit_score=classification.llm_score,
+            category=classification.llm_category,
+            primary_end_user=classification.llm_primary_end_user,
+            paying_customer=classification.llm_paying_customer,
+            sells_to_or_operates_in=classification.llm_sells_to_or_operates_in,
+            stage_estimate=None,
+            confidence=None,
+            rationale=classification.llm_rationale,
+            key_signals=classification.keyword_matches,
+            prompt_version=prompt_version,
+            model=model,
+            classification_status=classification.llm_classification_status or "success",
+        )
 
         logger.debug(
             f"Saved thesis classification for signal_id={signal_id}, "
