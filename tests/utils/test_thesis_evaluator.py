@@ -9,11 +9,13 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Dict, List
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from utils.thesis_evaluator import (
     ClassMetrics,
+    LLMSampleEvaluation,
     ThesisEvaluationResult,
     EvaluationComparison,
     KeywordEvaluator,
@@ -355,13 +357,13 @@ class TestLLMEvaluator:
         assert label == "REJECTED"
 
     def test_classify_result_no_match_rejected(self):
-        """No thesis match should map to REJECTED."""
+        """No thesis match with score below ambiguous range should map to REJECTED."""
         evaluator = LLMEvaluator()
 
         class MockResult:
             category = "consumer_cpg"
             thesis_match = False
-            thesis_fit_score = 0.2
+            thesis_fit_score = 0.15
 
         result = MockResult()
         label = evaluator.classify_result_to_label(result)
@@ -396,6 +398,133 @@ class TestLLMEvaluator:
 
         assert label == "HELD"
 
+    def test_classify_result_ambiguous_score_range_held(self):
+        """Score in 0.20-0.29 (ambiguous distribution) maps to HELD regardless of thesis_match."""
+        evaluator = LLMEvaluator()
+
+        class MockResult:
+            category = "consumer_health_tech"
+            thesis_match = False
+            thesis_fit_score = 0.22
+
+        label = evaluator.classify_result_to_label(MockResult())
+        assert label == "HELD"
+
+    def test_classify_result_ambiguous_score_range_with_match_held(self):
+        """Score in 0.20-0.29 maps to HELD even when thesis_match is True."""
+        evaluator = LLMEvaluator()
+
+        class MockResult:
+            category = "consumer_health_tech"
+            thesis_match = True
+            thesis_fit_score = 0.25
+
+        label = evaluator.classify_result_to_label(MockResult())
+        assert label == "HELD"
+
+    def test_classify_result_below_ambiguous_range_rejected(self):
+        """Score below 0.20 with thesis_match=False stays REJECTED."""
+        evaluator = LLMEvaluator()
+
+        class MockResult:
+            category = "consumer_health_tech"
+            thesis_match = False
+            thesis_fit_score = 0.15
+
+        label = evaluator.classify_result_to_label(MockResult())
+        assert label == "REJECTED"
+
+    def test_classify_result_excluded_overrides_ambiguous_range(self):
+        """category=excluded still maps to REJECTED even if score is in 0.20-0.29."""
+        evaluator = LLMEvaluator()
+
+        class MockResult:
+            category = "excluded"
+            thesis_match = False
+            thesis_fit_score = 0.25
+
+        label = evaluator.classify_result_to_label(MockResult())
+        assert label == "REJECTED"
+
+    @pytest.mark.asyncio
+    async def test_evaluate_sample_uses_shared_parse_and_label_path(self):
+        """Per-sample evaluation should return parsed signal data and derived label."""
+        evaluator = LLMEvaluator()
+        mock_classifier = Mock()
+        mock_result = Mock()
+        mock_result.thesis_match = True
+        mock_result.thesis_fit_score = 0.8
+        mock_result.category = "consumer_cpg"
+        mock_result.input_tokens = 10
+        mock_result.output_tokens = 5
+        mock_classifier.classify = AsyncMock(return_value=mock_result)
+        evaluator._classifier = mock_classifier
+
+        sample = {
+            "id": "sample_1",
+            "input": "Company: TestCo\nDescription: D2C meal kit\nWebsite: https://example.com\nSector: consumer_cpg",
+            "target": "QUALIFIED",
+        }
+
+        result = await evaluator.evaluate_sample(sample)
+
+        assert isinstance(result, LLMSampleEvaluation)
+        assert result.sample_id == "sample_1"
+        assert result.prediction == "QUALIFIED"
+        assert result.match is True
+        assert result.signal_data["title"] == "TestCo"
+        assert "D2C meal kit" in result.signal_data["source_context"]
+        assert result.classification is mock_result
+
+    @pytest.mark.asyncio
+    async def test_evaluate_sample_falls_back_to_held_on_exception(self):
+        """Unexpected per-sample exceptions should keep aggregate eval stable."""
+        evaluator = LLMEvaluator()
+        mock_classifier = Mock()
+        mock_classifier.classify = AsyncMock(side_effect=RuntimeError("boom"))
+        evaluator._classifier = mock_classifier
+
+        sample = {
+            "id": "sample_2",
+            "input": "Company: TestCo\nDescription: D2C meal kit",
+            "target": "REJECTED",
+        }
+
+        result = await evaluator.evaluate_sample(sample)
+
+        assert result.prediction == "HELD"
+        assert result.match is False
+        assert result.classification is None
+        assert result.error == "boom"
+
+    @pytest.mark.asyncio
+    async def test_evaluate_sample_captures_classifier_operational_errors(self):
+        """Graceful classifier failures should still surface as evaluation errors."""
+        evaluator = LLMEvaluator()
+        mock_classifier = Mock()
+        mock_result = Mock()
+        mock_result.thesis_match = False
+        mock_result.thesis_fit_score = 0.0
+        mock_result.category = "excluded"
+        mock_result.input_tokens = None
+        mock_result.output_tokens = None
+        mock_result.classification_status = "error_api"
+        mock_result.rationale = "Classification failed: upstream error"
+        mock_classifier.classify = AsyncMock(return_value=mock_result)
+        evaluator._classifier = mock_classifier
+
+        sample = {
+            "id": "sample_3",
+            "input": "Company: TestCo\nDescription: D2C meal kit",
+            "target": "REJECTED",
+        }
+
+        result = await evaluator.evaluate_sample(sample)
+
+        assert result.prediction == "REJECTED"
+        assert result.match is True
+        assert result.error == "Classification failed: upstream error"
+
 
 # =============================================================================
 # TESTS: THESIS EVALUATOR (ORCHESTRATOR)
@@ -421,6 +550,26 @@ class TestThesisEvaluator:
         assert comparison.keyword_result is not None
         assert comparison.llm_result is None
         assert comparison.accuracy_delta is None
+
+    @pytest.mark.asyncio
+    async def test_evaluate_llm_records_graceful_classifier_failures(self, minimal_dataset):
+        """Aggregate LLM evaluation should retain classifier-level operational errors."""
+        evaluator = ThesisEvaluator()
+        mock_result = Mock()
+        mock_result.thesis_match = False
+        mock_result.thesis_fit_score = 0.0
+        mock_result.category = "excluded"
+        mock_result.input_tokens = None
+        mock_result.output_tokens = None
+        mock_result.classification_status = "error_api"
+        mock_result.rationale = "Classification failed: upstream error"
+        evaluator.llm_evaluator._classifier = Mock()
+        evaluator.llm_evaluator._classifier.classify = AsyncMock(return_value=mock_result)
+
+        result = await evaluator.evaluate_llm(minimal_dataset)
+
+        assert len(result.errors) == 3
+        assert all("Classification failed: upstream error" in err for err in result.errors)
 
 
 # =============================================================================

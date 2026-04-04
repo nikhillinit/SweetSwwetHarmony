@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 # PROMPT CONFIGURATION
 # =============================================================================
 
-CLASSIFIER_PROMPT_VERSION = "v1.5.0-b2b-decomposition-minimal"
+CLASSIFIER_PROMPT_VERSION = "v1.6.0-employer-distribution-guard"
 
 VALID_PRIMARY_END_USERS = {
     "individual_consumer",
@@ -116,9 +116,28 @@ Rules:
 - Selling operating software/tools TO restaurants, hotels, retailers, clinics, or employers is EXCLUDED
 - Operating IN those sectors for individual consumers can still be IN THESIS
 - Two-sided consumer marketplaces stay in thesis when the consumer side is primary
-- Employer-sponsored consumer apps may still fit when the product is used primarily by individuals
+
+### Employer/Work-Linked Benefits Distribution
+Products distributed through employers, benefit programs, or gig platforms raise a go-to-market concern even when the end user is an individual consumer.
+
+Default rule: If the PAYING CUSTOMER is a business/employer and there is NO evidence of an independent direct-to-consumer acquisition channel, score 0.20-0.29 (flags for human review).
+
+Specifics:
+- Employer-funded wellness, mental health, or care-navigation apps where the employer selects and pays -> score 0.20-0.25
+- Insurance, stipend, or benefit products distributed via gig platforms or employer benefit packages -> score 0.20-0.25
+- Products with BOTH employer distribution AND a clear independent D2C channel (consumers can also buy directly without employer) -> score normally
+- Consumer apps that happen to serve gig workers but are purchased directly by individuals (e.g., meal marketplace, personal fitness app) -> score normally
 
 Examples:
+- "Employer-sponsored wellness app for employees" -> paying_customer=business, no D2C evidence -> score 0.22
+- "Employer-funded mental health app for workers and families" -> paying_customer=business -> score 0.23
+- "Care-navigation app distributed through employer benefit programs" -> paying_customer=business -> score 0.22
+- "Insurance and care app for couriers via gig platform benefits" -> benefit-distribution model -> score 0.24
+- "Mental health app with employer AND consumer subscription plans" -> paying_customer=both -> score normally
+- "Marketplace app helping gig workers find discounted meals" -> paying_customer=individual_consumer, direct purchase -> score normally
+- "Wellness app for rideshare drivers managing sleep and stress" -> paying_customer=individual_consumer, direct purchase -> score normally
+
+Examples (general B2B-in-Disguise):
 - "AI voice ordering system for restaurants" -> sells tools TO industry -> EXCLUDED
 - "Restaurant reservation app for diners" -> operates IN industry for consumers -> IN THESIS
 - "Hotel property management system" -> sells tools TO hotels -> EXCLUDED
@@ -152,13 +171,15 @@ Valid sells_to_or_operates_in: sells_tools_to_industry, operates_in_industry_for
 - 0.65-0.84: Good match, mostly consumer, may need verification
 - 0.50-0.64: Marginal match, some consumer elements
 - 0.30-0.49: Weak match, primarily B2B or unclear
-- 0.00-0.29: No match, clearly outside thesis
+- 0.20-0.29: Ambiguous distribution — employer-funded, benefit-linked, or platform-distributed products without clear D2C pull (flags for human review)
+- 0.00-0.19: No match, clearly outside thesis
 """
 
 CHAIN_OF_THOUGHT_PROMPT = """Before providing your classification, think through these questions step by step:
 
 1. **Consumer vs B2B**: Who is the end customer? Individual consumers or businesses?
 1.5. **B2B-in-Disguise Check**: Is this selling tools TO a consumer industry or operating IN that industry for consumers? Populate primary_end_user, paying_customer, sells_to_or_operates_in.
+1.6. **Distribution Channel Check**: Is this product distributed through employers, benefit programs, or gig platforms? If paying_customer is "business" and there is no evidence of independent D2C acquisition, cap thesis_fit_score at 0.20-0.29.
 2. **Category Fit**: Does this match CPG, Health Tech, Travel/Hospitality, or Marketplace?
 3. **Excluded Categories**: Is this crypto, services, developer tools, or hardware-only?
 4. **Stage Assessment**: Does this appear to be pre-seed to Series A stage?
@@ -301,6 +322,8 @@ class LLMClassifier:
         temperature: float = 0.2,
         max_tokens: int = 800,
         cot_enabled: Optional[bool] = None,
+        system_prompt: Optional[str] = None,
+        prompt_version: Optional[str] = None,
         rate_limiter: Optional[RateLimiter] = None,
         circuit_breaker: Optional[CircuitBreaker] = None,
     ):
@@ -313,6 +336,8 @@ class LLMClassifier:
             temperature: Sampling temperature (lower = more deterministic)
             max_tokens: Max response tokens
             cot_enabled: Enable chain-of-thought reasoning (default: from ENABLE_COT_REASONING env)
+            system_prompt: Override for classifier system prompt
+            prompt_version: Override for classifier prompt version
             rate_limiter: Rate limiter (defaults to 15 RPM, 1500 RPD)
             circuit_breaker: Circuit breaker (defaults to 5 failures, 600s timeout)
         """
@@ -320,6 +345,12 @@ class LLMClassifier:
         self.api_key = api_key or os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
         self.temperature = temperature
         self.max_tokens = max_tokens
+        self.system_prompt = (
+            system_prompt if system_prompt is not None else CLASSIFIER_SYSTEM_PROMPT
+        )
+        self.prompt_version = (
+            prompt_version if prompt_version is not None else CLASSIFIER_PROMPT_VERSION
+        )
         self._client = None
         # Chain-of-thought: enabled via param or env var
         if cot_enabled is None:
@@ -375,7 +406,7 @@ class LLMClassifier:
                 company_name=None,
                 rationale="Circuit breaker OPEN (Gemini unavailable)",
                 key_signals=[],
-                prompt_version=CLASSIFIER_PROMPT_VERSION,
+                prompt_version=self.prompt_version,
                 model=self.model_name,
                 classification_status=ClassificationStatus.ERROR_CIRCUIT_BREAKER.value,
             )
@@ -394,7 +425,7 @@ class LLMClassifier:
                 company_name=None,
                 rationale=f"Rate limit exceeded: {str(e)}",
                 key_signals=[],
-                prompt_version=CLASSIFIER_PROMPT_VERSION,
+                prompt_version=self.prompt_version,
                 model=self.model_name,
                 classification_status=ClassificationStatus.ERROR_RATE_LIMIT.value,
             )
@@ -411,7 +442,7 @@ class LLMClassifier:
 
         # Build prompt with optional chain-of-thought
         if self.cot_enabled:
-            user_prompt = f"""{CLASSIFIER_SYSTEM_PROMPT}
+            user_prompt = f"""{self.system_prompt}
 
 {CHAIN_OF_THOUGHT_PROMPT}
 
@@ -424,7 +455,7 @@ Context: {context if context else 'N/A'}
 
 First provide your step-by-step reasoning, then output your JSON classification."""
         else:
-            user_prompt = f"""{CLASSIFIER_SYSTEM_PROMPT}
+            user_prompt = f"""{self.system_prompt}
 
 Evaluate this signal:
 
@@ -456,7 +487,7 @@ Respond with JSON classification only."""
                 company_name=None,
                 rationale=f"Circuit breaker OPEN: {str(e)}",
                 key_signals=[],
-                prompt_version=CLASSIFIER_PROMPT_VERSION,
+                prompt_version=self.prompt_version,
                 model=self.model_name,
                 classification_status=ClassificationStatus.ERROR_CIRCUIT_BREAKER.value,
             )
@@ -471,7 +502,7 @@ Respond with JSON classification only."""
                 company_name=None,
                 rationale=f"Classification failed: {str(e)}",
                 key_signals=[],
-                prompt_version=CLASSIFIER_PROMPT_VERSION,
+                prompt_version=self.prompt_version,
                 model=self.model_name,
                 classification_status=ClassificationStatus.ERROR_API.value,
             )
@@ -511,7 +542,7 @@ Respond with JSON classification only."""
                 company_name=None,
                 rationale=f"Failed to parse response: {response_text[:100]}",
                 key_signals=[],
-                prompt_version=CLASSIFIER_PROMPT_VERSION,
+                prompt_version=self.prompt_version,
                 model=self.model_name,
                 classification_status=ClassificationStatus.ERROR_PARSE.value,
             )
@@ -544,7 +575,7 @@ Respond with JSON classification only."""
             company_name=result.get("company_name"),
             rationale=result.get("rationale", ""),
             key_signals=result.get("key_signals", []),
-            prompt_version=CLASSIFIER_PROMPT_VERSION,
+            prompt_version=self.prompt_version,
             model=self.model_name,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
