@@ -90,6 +90,19 @@ class ThesisEvaluationResult:
 
 
 @dataclass
+class LLMSampleEvaluation:
+    """Per-sample LLM evaluation result shared by diagnostics and aggregate evals."""
+    sample_id: str
+    target: str
+    prediction: str
+    match: bool
+    signal_data: Dict[str, Any]
+    classification: Any | None
+    error: Optional[str] = None
+    latency_ms: Optional[int] = None
+
+
+@dataclass
 class EvaluationComparison:
     """Side-by-side comparison of keyword vs LLM evaluation."""
     keyword_result: ThesisEvaluationResult
@@ -352,9 +365,15 @@ class LLMEvaluator:
         self,
         model: str = "gemini-2.0-flash",
         api_key: Optional[str] = None,
+        system_prompt: Optional[str] = None,
+        prompt_version: Optional[str] = None,
+        temperature: Optional[float] = None,
     ):
         self.model = model
         self.api_key = api_key
+        self.system_prompt = system_prompt
+        self.prompt_version = prompt_version
+        self.temperature = temperature
         self._classifier = None
 
     @property
@@ -365,6 +384,9 @@ class LLMEvaluator:
             self._classifier = LLMClassifier(
                 model=self.model,
                 api_key=self.api_key,
+                system_prompt=self.system_prompt,
+                prompt_version=self.prompt_version,
+                temperature=self.temperature if self.temperature is not None else 0.2,
             )
         return self._classifier
 
@@ -405,6 +427,12 @@ class LLMEvaluator:
         if result.category == "excluded":
             return "REJECTED"
 
+        # Ambiguous-distribution range (0.20-0.29): prompt instructs the LLM
+        # to score employer-funded / benefit-linked products here to flag
+        # for human review regardless of thesis_match.
+        if 0.20 <= result.thesis_fit_score < 0.30:
+            return "HELD"
+
         # No thesis match → REJECTED
         if not result.thesis_match:
             return "REJECTED"
@@ -414,6 +442,49 @@ class LLMEvaluator:
             return "QUALIFIED"
         else:
             return "HELD"
+
+    async def evaluate_sample(self, sample: Dict[str, Any]) -> LLMSampleEvaluation:
+        """
+        Evaluate one dataset sample using the authoritative parse -> classify -> label path.
+
+        This helper keeps diagnostics aligned with the aggregate evaluator.
+        """
+        sample_id = str(sample.get("id", ""))
+        target = sample.get("target", "")
+        signal_data: Dict[str, Any] = {}
+        sample_start = time.time()
+
+        try:
+            signal_data = self._parse_input_to_signal(sample["input"])
+            result = await self.classifier.classify(signal_data)
+            prediction = self.classify_result_to_label(result)
+            error = None
+            if getattr(result, "classification_status", "success") != "success":
+                error = result.rationale
+            latency_ms = int((time.time() - sample_start) * 1000)
+            return LLMSampleEvaluation(
+                sample_id=sample_id,
+                target=target,
+                prediction=prediction,
+                match=prediction == target,
+                signal_data=signal_data,
+                classification=result,
+                error=error,
+                latency_ms=latency_ms,
+            )
+        except Exception as e:
+            latency_ms = int((time.time() - sample_start) * 1000)
+            fallback_prediction = "HELD"
+            return LLMSampleEvaluation(
+                sample_id=sample_id,
+                target=target,
+                prediction=fallback_prediction,
+                match=fallback_prediction == target,
+                signal_data=signal_data,
+                classification=None,
+                error=str(e),
+                latency_ms=latency_ms,
+            )
 
     async def evaluate(
         self,
@@ -443,31 +514,20 @@ class LLMEvaluator:
         sample_latencies = []
 
         for sample in samples:
-            try:
-                # Parse input to signal format
-                signal_data = self._parse_input_to_signal(sample["input"])
+            sample_eval = await self.evaluate_sample(sample)
+            predictions.append(sample_eval.prediction)
+            targets.append(sample_eval.target)
 
-                # Classify with LLM
-                sample_start = time.time()
-                result = await self.classifier.classify(signal_data)
-                sample_latency = int((time.time() - sample_start) * 1000)
-                sample_latencies.append(sample_latency)
+            if sample_eval.error:
+                errors.append(f"Sample {sample_eval.sample_id}: {sample_eval.error}")
 
-                # Track token usage
-                if result.input_tokens:
-                    total_input_tokens += result.input_tokens
-                if result.output_tokens:
-                    total_output_tokens += result.output_tokens
-
-                # Convert to evaluation label
-                pred = self.classify_result_to_label(result)
-                predictions.append(pred)
-                targets.append(sample["target"])
-
-            except Exception as e:
-                errors.append(f"Sample {sample.get('id')}: {str(e)}")
-                predictions.append("HELD")  # Default on error
-                targets.append(sample["target"])
+            if sample_eval.classification is not None:
+                if sample_eval.latency_ms is not None:
+                    sample_latencies.append(sample_eval.latency_ms)
+                if sample_eval.classification.input_tokens:
+                    total_input_tokens += sample_eval.classification.input_tokens
+                if sample_eval.classification.output_tokens:
+                    total_output_tokens += sample_eval.classification.output_tokens
 
         # Calculate metrics
         accuracy, per_class, confusion = calculate_metrics(predictions, targets)
@@ -507,11 +567,17 @@ class ThesisEvaluator:
         self,
         llm_model: str = "gemini-2.0-flash",
         llm_api_key: Optional[str] = None,
+        llm_system_prompt: Optional[str] = None,
+        llm_prompt_version: Optional[str] = None,
+        llm_temperature: Optional[float] = None,
     ):
         self.keyword_evaluator = KeywordEvaluator()
         self.llm_evaluator = LLMEvaluator(
             model=llm_model,
             api_key=llm_api_key,
+            system_prompt=llm_system_prompt,
+            prompt_version=llm_prompt_version,
+            temperature=llm_temperature,
         )
 
     async def evaluate_keyword(

@@ -102,6 +102,47 @@ class TestLLMRoutingChain:
         assert result.routing == RoutingDecision.QUALIFIED
 
     @pytest.mark.asyncio
+    async def test_llm_ambiguous_distribution_score_held(self, filter_instance):
+        """Score in 0.20-0.29 (ambiguous distribution) → HELD."""
+        _install_mock_llm(
+            filter_instance,
+            return_value=_mock_llm_result(
+                thesis_fit_score=0.22,
+                category="consumer_health_tech",
+                thesis_match=False,
+            ),
+        )
+        result = await filter_instance.classify(_CONSUMER_TEXT)
+        assert result.routing == RoutingDecision.HELD
+
+    @pytest.mark.asyncio
+    async def test_llm_below_ambiguous_range_held(self, filter_instance):
+        """Score below 0.20 still routes to HELD (below hold_threshold 0.3)."""
+        _install_mock_llm(
+            filter_instance,
+            return_value=_mock_llm_result(
+                thesis_fit_score=0.15,
+                category="consumer_health_tech",
+            ),
+        )
+        result = await filter_instance.classify(_CONSUMER_TEXT)
+        assert result.routing == RoutingDecision.HELD
+
+    @pytest.mark.asyncio
+    async def test_llm_ad_supported_business_payer_stays_qualified(self, filter_instance):
+        """Ad-supported consumer product with paying_customer=business is not demoted."""
+        _install_mock_llm(
+            filter_instance,
+            return_value=_mock_llm_result(
+                thesis_fit_score=0.75,
+                category="consumer_health_tech",
+                paying_customer="business",
+            ),
+        )
+        result = await filter_instance.classify(_CONSUMER_TEXT)
+        assert result.routing == RoutingDecision.QUALIFIED
+
+    @pytest.mark.asyncio
     async def test_llm_score_none_fallback(self, filter_instance):
         """LLM score=None → llm_skipped=True, routing from keywords."""
         _install_mock_llm(

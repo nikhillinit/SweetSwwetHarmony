@@ -706,6 +706,10 @@ class ThesisFilter:
             # LLM succeeded - use LLM score for routing
             if getattr(llm_result, "category", None) == "excluded":
                 routing = RoutingDecision.REJECTED
+            elif 0.20 <= llm_score_f < 0.30:
+                # Ambiguous-distribution range: prompt instructs the LLM
+                # to score employer-funded / benefit-linked products here
+                routing = RoutingDecision.HELD
             elif llm_score_f < self.config.hold_threshold:
                 routing = RoutingDecision.HELD
             else:
