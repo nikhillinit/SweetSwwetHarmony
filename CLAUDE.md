@@ -16,7 +16,7 @@
 **One-liner:** Press On Ventures invests in Pre-Seed to Series A consumer companies in CPG (food, beverage, beauty), health tech (fitness, wellness, mental health), travel & hospitality, and consumer marketplaces — excluding B2B, enterprise SaaS, developer tools, crypto, and hardware.
 
 **Categories:** Consumer CPG • Consumer Health Tech • Travel & Hospitality • Consumer Marketplaces  
-**Exclusions:** B2B/Enterprise • developer tools • crypto/Web3 • cleantech/climate • services/agencies • Series B+ • hardware-only
+**Exclusions:** B2B/Enterprise (including tools sold to consumer industries) • developer tools • crypto/Web3 • cleantech/climate • services/agencies • Series B+ • hardware-only
 
 ## Routing Logic
 ```

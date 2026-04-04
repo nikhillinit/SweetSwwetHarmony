@@ -4,7 +4,11 @@ import pytest
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, Mock, patch
 
-from consumer.thesis_filter.llm_classifier import LLMClassifier, RateLimiter
+from consumer.thesis_filter.llm_classifier import (
+    ClassificationStatus,
+    LLMClassifier,
+    RateLimiter,
+)
 from utils.circuit_breaker import CircuitBreaker, CircuitOpenError
 
 
@@ -69,6 +73,12 @@ class TestRateLimiter:
 class TestLLMClassifierCircuitBreaker:
     """Test circuit breaker integration in LLMClassifier."""
 
+    def test_llm_classifier_default_max_tokens(self, monkeypatch):
+        """Default max_tokens should support richer structured output."""
+        monkeypatch.setenv("GOOGLE_API_KEY", "test_key")
+        classifier = LLMClassifier(api_key="test_key")
+        assert classifier.max_tokens == 800
+
     @pytest.mark.asyncio
     async def test_circuit_breaker_opens_after_failures(self):
         """Verify circuit breaker opens after threshold failures."""
@@ -114,6 +124,7 @@ class TestLLMClassifierCircuitBreaker:
 
         assert result.thesis_match is False
         assert "circuit breaker" in result.rationale.lower()
+        assert result.classification_status == ClassificationStatus.ERROR_CIRCUIT_BREAKER.value
 
     @pytest.mark.asyncio
     async def test_llm_classifier_respects_rate_limits(self, monkeypatch):
@@ -136,6 +147,99 @@ class TestLLMClassifierCircuitBreaker:
 
         assert result.thesis_match is False
         assert "rate limit" in result.rationale.lower()
+        assert result.classification_status == ClassificationStatus.ERROR_RATE_LIMIT.value
+
+    @pytest.mark.asyncio
+    async def test_llm_classifier_marks_api_errors(self, monkeypatch):
+        """Unexpected Gemini API errors should surface as error_api."""
+        monkeypatch.setenv("GOOGLE_API_KEY", "test_key")
+        classifier = LLMClassifier(api_key="test_key")
+        with patch.object(classifier, "_call_gemini_api", new_callable=AsyncMock) as mock_call:
+            mock_call.side_effect = Exception("Gemini API error")
+            result = await classifier.classify({"title": "Test signal", "source_api": "test"})
+
+        assert result.thesis_match is False
+        assert result.classification_status == ClassificationStatus.ERROR_API.value
+
+    @pytest.mark.asyncio
+    async def test_llm_classifier_marks_parse_errors(self, monkeypatch):
+        """Malformed JSON responses should surface as error_parse."""
+        monkeypatch.setenv("GOOGLE_API_KEY", "test_key")
+        classifier = LLMClassifier(api_key="test_key")
+        mock_response = Mock()
+        mock_response.text = "not-json"
+        mock_response.usage_metadata = None
+        with patch.object(classifier, "_call_gemini_api", new_callable=AsyncMock) as mock_call:
+            mock_call.return_value = mock_response
+            result = await classifier.classify({"title": "Test signal", "source_api": "test"})
+
+        assert result.thesis_match is False
+        assert result.classification_status == ClassificationStatus.ERROR_PARSE.value
+
+    @pytest.mark.asyncio
+    async def test_llm_classifier_parses_minimal_step3_fields(self, monkeypatch):
+        """Successful classifications should surface the narrowed Step 3 decomposition fields."""
+        monkeypatch.setenv("GOOGLE_API_KEY", "test_key")
+        classifier = LLMClassifier(api_key="test_key")
+
+        mock_response = Mock()
+        mock_response.text = """
+        {
+          "thesis_match": true,
+          "thesis_fit_score": 0.91,
+          "category": "travel_hospitality",
+          "stage_estimate": "seed",
+          "confidence": "high",
+          "company_name": "DineDesk",
+          "rationale": "Consumer reservation app for diners.",
+          "key_signals": ["reservation", "diners"],
+          "primary_end_user": "individual_consumer",
+          "paying_customer": "individual_consumer",
+          "sells_to_or_operates_in": "operates_in_industry_for_consumers"
+        }
+        """
+        mock_response.usage_metadata = None
+
+        with patch.object(classifier, "_call_gemini_api", new_callable=AsyncMock) as mock_call:
+            mock_call.return_value = mock_response
+            result = await classifier.classify({"title": "Test signal", "source_api": "test"})
+
+        assert result.classification_status == ClassificationStatus.SUCCESS.value
+        assert result.primary_end_user == "individual_consumer"
+        assert result.paying_customer == "individual_consumer"
+        assert result.sells_to_or_operates_in == "operates_in_industry_for_consumers"
+
+    @pytest.mark.asyncio
+    async def test_llm_classifier_normalizes_invalid_step3_field_values(self, monkeypatch):
+        """Unexpected structured-field values should fall back to 'unclear'."""
+        monkeypatch.setenv("GOOGLE_API_KEY", "test_key")
+        classifier = LLMClassifier(api_key="test_key")
+
+        mock_response = Mock()
+        mock_response.text = """
+        {
+          "thesis_match": true,
+          "thesis_fit_score": 0.91,
+          "category": "travel_hospitality",
+          "stage_estimate": "seed",
+          "confidence": "high",
+          "company_name": "DineDesk",
+          "rationale": "Consumer reservation app for diners.",
+          "key_signals": ["reservation", "diners"],
+          "primary_end_user": "vip_consumer",
+          "paying_customer": 7,
+          "sells_to_or_operates_in": "???"
+        }
+        """
+        mock_response.usage_metadata = None
+
+        with patch.object(classifier, "_call_gemini_api", new_callable=AsyncMock) as mock_call:
+            mock_call.return_value = mock_response
+            result = await classifier.classify({"title": "Test signal", "source_api": "test"})
+
+        assert result.primary_end_user == "unclear"
+        assert result.paying_customer == "unclear"
+        assert result.sells_to_or_operates_in == "unclear"
 
     def test_circuit_breaker_stats_exposed(self, monkeypatch):
         """Verify circuit breaker stats are accessible."""

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import sys
+import types
 from pathlib import Path
 from unittest.mock import patch
 
@@ -100,6 +102,51 @@ class TestStoreThesisClassification:
         assert row["category"] == "consumer_health_tech"
         assert row["thesis_match"] == 1  # stored as integer
         assert row["latency_ms"] == 450
+
+        conn.close()
+
+    def test_store_thesis_classification_persists_status(self, quality_db):
+        """Operational classification_status should round-trip through the quality helper."""
+        db_path, _store = quality_db
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON;")
+
+        sid = _insert_signal(
+            conn,
+            source_api="github",
+            canonical_key="domain:status-test.com",
+            detected_at=_utc_iso(1),
+        )
+
+        tc_id = store_thesis_classification(
+            conn,
+            signal_id=sid,
+            canonical_key="domain:status-test.com",
+            keyword_score=0.55,
+            keyword_category="consumer_health_tech",
+            negative_keywords=[],
+            thesis_match=False,
+            thesis_fit_score=0.0,
+            category="excluded",
+            stage_estimate="Unknown",
+            confidence="low",
+            rationale="API failure",
+            key_signals=[],
+            prompt_version="quality-ops-v1",
+            model="gemini-2.0-flash",
+            input_tokens=0,
+            output_tokens=0,
+            latency_ms=450,
+            classification_status="error_api",
+        )
+
+        row = conn.execute(
+            "SELECT classification_status FROM thesis_classifications WHERE id = ?",
+            (tc_id,),
+        ).fetchone()
+        assert row is not None
+        assert row["classification_status"] == "error_api"
 
         conn.close()
 
@@ -297,6 +344,77 @@ class TestClassifySignalLlmImportError:
         with patch.dict("sys.modules", {"consumer.thesis_filter.llm_classifier": None}):
             with pytest.raises(ImportError, match="google-genai"):
                 classify_signal_llm(conn, signal_id=sid, model="test-model")
+
+        conn.close()
+
+
+class TestClassifySignalLlmWiring:
+    """Regression coverage for the LLM classifier payload contract."""
+
+    def test_classify_signal_llm_uses_expected_payload_and_persists_status(self, quality_db):
+        db_path, _store = quality_db
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON;")
+
+        sid = _insert_signal(
+            conn,
+            source_api="github",
+            canonical_key="domain:wiring-test.com",
+            company_name="Wiring Test",
+            raw_data=json.dumps(
+                {
+                    "title": "Wiring Test Title",
+                    "description": "Consumer marketplace for diners.",
+                    "url": "https://wiring-test.example",
+                }
+            ),
+            detected_at=_utc_iso(1),
+        )
+
+        captured = {}
+
+        class FakeClassifier:
+            def __init__(self, model: str):
+                self.model = model
+
+            def classify_sync(self, signal_data):
+                captured.update(signal_data)
+                return types.SimpleNamespace(
+                    thesis_match=True,
+                    thesis_fit_score=0.82,
+                    category="consumer_marketplace",
+                    stage_estimate="Seed",
+                    confidence="high",
+                    rationale="Consumer marketplace fit",
+                    key_signals=["marketplace", "diners"],
+                    classification_status="success",
+                )
+
+        fake_module = types.SimpleNamespace(LLMClassifier=FakeClassifier)
+        original_module = sys.modules.get("consumer.thesis_filter.llm_classifier")
+        sys.modules["consumer.thesis_filter.llm_classifier"] = fake_module
+        try:
+            result = classify_signal_llm(conn, signal_id=sid, model="test-model")
+        finally:
+            if original_module is None:
+                sys.modules.pop("consumer.thesis_filter.llm_classifier", None)
+            else:
+                sys.modules["consumer.thesis_filter.llm_classifier"] = original_module
+
+        assert captured["title"] == "Wiring Test Title"
+        assert captured["url"] == "https://wiring-test.example"
+        assert captured["source_api"] == "github"
+        assert "Consumer marketplace for diners." in captured["source_context"]
+        assert result.classification_status == "success"
+
+        row = conn.execute(
+            "SELECT category, classification_status FROM thesis_classifications WHERE signal_id = ?",
+            (sid,),
+        ).fetchone()
+        assert row is not None
+        assert row["category"] == "consumer_marketplace"
+        assert row["classification_status"] == "success"
 
         conn.close()
 

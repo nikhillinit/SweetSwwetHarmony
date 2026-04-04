@@ -1,0 +1,18 @@
+{
+  "accuracy_delta": 0.5,
+  "authorized_changes": [
+    "Add B2B-in-disguise prompt guidance for sells-tools-to-industry vs operates-in-industry.",
+    "Add only the minimum structured decomposition fields proven useful by the eval gate.",
+    "Persist new prompt/schema fields only when they improve routing/reporting evidence."
+  ],
+  "blocked_reasons": [],
+  "decision": "go",
+  "deferred_changes": [],
+  "keyword_accuracy": 0.4,
+  "llm_accuracy": 0.9,
+  "narrowed_changes": [
+    "Keep operational truthfulness/routing fixes outside the prompt/schema gate.",
+    "Limit prompt/schema rollout to changes directly supported by the LLM-focused golden set."
+  ],
+  "threshold": 0.9
+}
