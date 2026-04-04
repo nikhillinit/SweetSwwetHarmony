@@ -149,10 +149,23 @@ def _compute_collector_volume(conn, date: str) -> None:
     ).fetchall()
 
     total = 0
+    seen_collectors = set()
     for source_api, cnt in rows:
         _upsert_metric(conn, date, "collector_volume", float(cnt), cnt,
                         segment_type="collector", segment_key=source_api)
+        seen_collectors.add(source_api)
         total += cnt
+
+    # Backfill zero rows for historically active collectors absent today
+    historical = conn.execute(
+        """SELECT DISTINCT segment_key FROM quality_metrics_daily
+           WHERE metric_name = 'collector_volume' AND segment_type = 'collector'
+             AND segment_key != ''""",
+    ).fetchall()
+    for (collector_key,) in historical:
+        if collector_key not in seen_collectors:
+            _upsert_metric(conn, date, "collector_volume", 0.0, 0,
+                            segment_type="collector", segment_key=collector_key)
 
     _upsert_metric(conn, date, "collector_volume", float(total), total)
 

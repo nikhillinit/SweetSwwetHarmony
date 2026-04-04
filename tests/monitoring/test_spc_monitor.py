@@ -242,3 +242,65 @@ class TestDetectTrends:
         """Invalid metric → ValueError."""
         with pytest.raises(ValueError):
             monitor.detect_trends(db, "bad_metric")
+
+
+class TestCheckZeroVolume:
+    """Test zero-volume collector alerting."""
+
+    def test_zero_with_active_baseline_fires_alert(self, db, monitor, monkeypatch):
+        """Zero volume + active baseline (mean>=1) → warning alert."""
+        monkeypatch.setenv("SPC_MIN_BASELINE_DAYS", "7")
+        monkeypatch.setenv("SPC_ZERO_VOLUME_ALERTING", "true")
+        _seed_metric_days(db, "collector_volume", 14, base_value=10.0,
+                          n_per_day=10, segment_type="collector", segment_key="github")
+        alert = monitor.check_zero_volume(db, "github", 0.0)
+        assert alert is not None
+        assert alert.severity == "warning"
+        assert alert.alert_type == "spc_violation"
+        assert "github" in alert.message
+        assert alert.mean >= 10.0
+
+    def test_zero_with_low_baseline_no_alert(self, db, monitor, monkeypatch):
+        """Zero volume + low baseline mean (<1) → no alert (disabled collector)."""
+        monkeypatch.setenv("SPC_MIN_BASELINE_DAYS", "7")
+        _seed_metric_days(db, "collector_volume", 14, base_value=0.3,
+                          n_per_day=1, segment_type="collector", segment_key="uspto")
+        alert = monitor.check_zero_volume(db, "uspto", 0.0)
+        assert alert is None
+
+    def test_nonzero_value_no_alert(self, db, monitor, monkeypatch):
+        """Non-zero current value → no alert (regardless of baseline)."""
+        monkeypatch.setenv("SPC_MIN_BASELINE_DAYS", "7")
+        _seed_metric_days(db, "collector_volume", 14, base_value=10.0,
+                          n_per_day=10, segment_type="collector", segment_key="github")
+        alert = monitor.check_zero_volume(db, "github", 5.0)
+        assert alert is None
+
+    def test_insufficient_baseline_no_alert(self, db, monitor, monkeypatch):
+        """Not enough baseline days → no alert."""
+        monkeypatch.setenv("SPC_MIN_BASELINE_DAYS", "14")
+        _seed_metric_days(db, "collector_volume", 5, base_value=10.0,
+                          n_per_day=10, segment_type="collector", segment_key="github")
+        alert = monitor.check_zero_volume(db, "github", 0.0)
+        assert alert is None
+
+    def test_disabled_via_env_var(self, db, monitor, monkeypatch):
+        """SPC_ZERO_VOLUME_ALERTING=false → no alert."""
+        monkeypatch.setenv("SPC_MIN_BASELINE_DAYS", "7")
+        monkeypatch.setenv("SPC_ZERO_VOLUME_ALERTING", "false")
+        _seed_metric_days(db, "collector_volume", 14, base_value=10.0,
+                          n_per_day=10, segment_type="collector", segment_key="github")
+        alert = monitor.check_zero_volume(db, "github", 0.0)
+        assert alert is None
+
+    def test_custom_min_baseline_mean(self, db, monitor, monkeypatch):
+        """Custom min_baseline_mean parameter works."""
+        monkeypatch.setenv("SPC_MIN_BASELINE_DAYS", "7")
+        _seed_metric_days(db, "collector_volume", 14, base_value=3.0,
+                          n_per_day=3, segment_type="collector", segment_key="arxiv")
+        # Default threshold (1.0) → alert fires
+        alert = monitor.check_zero_volume(db, "arxiv", 0.0)
+        assert alert is not None
+        # High threshold (5.0) → no alert (mean=3.0 < 5.0)
+        alert = monitor.check_zero_volume(db, "arxiv", 0.0, min_baseline_mean=5.0)
+        assert alert is None

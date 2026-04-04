@@ -6953,6 +6953,25 @@ async def cmd_drift_check(args):
             for alert in result.alerts:
                 print(f"    ALERT: {alert.message}")
 
+        # Zero-volume check for collector segments
+        collector_rows = conn.execute(
+            """SELECT DISTINCT segment_key FROM quality_metrics_daily
+               WHERE metric_name = 'collector_volume' AND segment_type = 'collector'
+                 AND segment_key != ''"""
+        ).fetchall()
+        for (collector_key,) in collector_rows:
+            latest = conn.execute(
+                """SELECT value FROM quality_metrics_daily
+                   WHERE metric_name = 'collector_volume' AND segment_type = 'collector'
+                     AND segment_key = ? AND value IS NOT NULL
+                   ORDER BY metric_date DESC LIMIT 1""",
+                (collector_key,),
+            ).fetchone()
+            if latest is not None:
+                zero_alert = monitor.check_zero_volume(conn, collector_key, latest[0])
+                if zero_alert:
+                    print(f"  ZERO-VOLUME [{collector_key}]: {zero_alert.message}")
+
 
 async def cmd_drift_aggregate(args):
     """Aggregate daily metrics."""
