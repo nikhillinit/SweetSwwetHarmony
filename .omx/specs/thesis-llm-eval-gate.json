@@ -1,5 +1,5 @@
 {
-  "accuracy_delta": 0.5,
+  "accuracy_delta": 0.6,
   "authorized_changes": [
     "Add B2B-in-disguise prompt guidance for sells-tools-to-industry vs operates-in-industry.",
     "Add only the minimum structured decomposition fields proven useful by the eval gate.",
@@ -9,7 +9,7 @@
   "decision": "go",
   "deferred_changes": [],
   "keyword_accuracy": 0.4,
-  "llm_accuracy": 0.9,
+  "llm_accuracy": 1.0,
   "narrowed_changes": [
     "Keep operational truthfulness/routing fixes outside the prompt/schema gate.",
     "Limit prompt/schema rollout to changes directly supported by the LLM-focused golden set."
