@@ -37,12 +37,20 @@ class TestKeywordSets:
 
     def test_b2b_keywords_exist(self):
         """B2B_KEYWORDS set should exist and contain expected terms"""
-        from consumer.thesis_filter.hard_disqualifiers import B2B_KEYWORDS
+        from consumer.thesis_filter.hard_disqualifiers import (
+            B2B_KEYWORDS,
+            HARD_B2B_KEYWORDS,
+            SOFT_B2B_KEYWORDS,
+        )
 
         assert isinstance(B2B_KEYWORDS, set)
+        assert isinstance(HARD_B2B_KEYWORDS, set)
+        assert isinstance(SOFT_B2B_KEYWORDS, set)
         assert "enterprise" in B2B_KEYWORDS
         assert "b2b" in B2B_KEYWORDS
         assert "saas" in B2B_KEYWORDS
+        assert "api" in HARD_B2B_KEYWORDS
+        assert "monitoring" in SOFT_B2B_KEYWORDS
 
     def test_crypto_keywords_exist(self):
         """CRYPTO_KEYWORDS set should exist and contain expected terms"""
@@ -118,3 +126,41 @@ class TestDisqualifierLogic:
         # Health terms
         assert "fitness" in CONSUMER_POSITIVE_KEYWORDS
         assert "wellness" in CONSUMER_POSITIVE_KEYWORDS
+
+
+class TestB2BConsumerOverrideLogic:
+    """Regression coverage for hard-vs-soft B2B override behavior."""
+
+    def test_hard_b2b_keyword_with_industry_consumer_noun_rejects(self):
+        """Industry nouns like 'restaurant' should not rescue clear B2B tooling."""
+        from consumer.thesis_filter.hard_disqualifiers import HardDisqualifiers
+
+        result = HardDisqualifiers().check(
+            title="Enterprise API platform for restaurants",
+            description="Ordering infrastructure for restaurant operators",
+        )
+
+        assert result.passed is False
+        assert result.category == "b2b"
+
+    def test_true_consumer_hospitality_case_still_passes(self):
+        """Consumer hospitality products should continue to the LLM stage."""
+        from consumer.thesis_filter.hard_disqualifiers import HardDisqualifiers
+
+        result = HardDisqualifiers().check(
+            title="Restaurant reservation app for diners",
+            description="Mobile booking app for consumers discovering tables",
+        )
+
+        assert result.passed is True
+
+    def test_ambiguous_enterprise_grade_consumer_case_passes_to_llm(self):
+        """Direct end-user language may keep ambiguous hybrid cases alive."""
+        from consumer.thesis_filter.hard_disqualifiers import HardDisqualifiers
+
+        result = HardDisqualifiers().check(
+            title="Enterprise-grade meal delivery for consumers",
+            description="Subscription meal service built for busy households",
+        )
+
+        assert result.passed is True

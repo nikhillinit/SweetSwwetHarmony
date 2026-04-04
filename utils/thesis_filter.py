@@ -179,6 +179,10 @@ class ThesisFilterResult:
     llm_score: Optional[float] = None
     llm_category: Optional[str] = None
     llm_rationale: Optional[str] = None
+    llm_classification_status: Optional[str] = None
+    llm_primary_end_user: Optional[str] = None
+    llm_paying_customer: Optional[str] = None
+    llm_sells_to_or_operates_in: Optional[str] = None
     llm_skipped: bool = False
     confidence_adjustment: float = 0.0
     rejection_reason: Optional[str] = None
@@ -222,6 +226,10 @@ class ThesisFilterResult:
             "llm_score": self.llm_score,
             "llm_category": self.llm_category,
             "llm_rationale": self.llm_rationale,
+            "llm_classification_status": self.llm_classification_status,
+            "llm_primary_end_user": self.llm_primary_end_user,
+            "llm_paying_customer": self.llm_paying_customer,
+            "llm_sells_to_or_operates_in": self.llm_sells_to_or_operates_in,
             "llm_skipped": self.llm_skipped,
             "confidence_adjustment": self.confidence_adjustment,
             # Phase B additions
@@ -654,6 +662,7 @@ class ThesisFilter:
 
         # Stage 2: LLM classification
         llm_result = None
+        llm_failure_status = None
         llm_classifier = self.llm_classifier
         if llm_classifier:
             try:
@@ -664,6 +673,11 @@ class ThesisFilter:
                 }
                 llm_candidate = await llm_classifier.classify(signal_data)
                 if self._is_operational_llm_failure(llm_candidate):
+                    llm_failure_status = getattr(llm_candidate, "classification_status", None)
+                    if hasattr(llm_failure_status, "value"):
+                        llm_failure_status = llm_failure_status.value
+                    if not isinstance(llm_failure_status, str):
+                        llm_failure_status = None
                     logger.warning(
                         "LLM returned operational failure payload; "
                         "falling back to keyword-only routing"
@@ -671,6 +685,7 @@ class ThesisFilter:
                 else:
                     llm_result = llm_candidate
             except Exception as e:
+                llm_failure_status = "error_api"
                 logger.error(f"LLM classification failed: {e}")
 
         # Calculate confidence adjustment
@@ -724,6 +739,14 @@ class ThesisFilter:
             llm_score=getattr(llm_result, "thesis_fit_score", None) if llm_result else None,
             llm_category=getattr(llm_result, "category", None) if llm_result else None,
             llm_rationale=getattr(llm_result, "rationale", None) if llm_result else None,
+            llm_classification_status=(
+                getattr(llm_result, "classification_status", None) if llm_result else llm_failure_status
+            ),
+            llm_primary_end_user=getattr(llm_result, "primary_end_user", None) if llm_result else None,
+            llm_paying_customer=getattr(llm_result, "paying_customer", None) if llm_result else None,
+            llm_sells_to_or_operates_in=(
+                getattr(llm_result, "sells_to_or_operates_in", None) if llm_result else None
+            ),
             llm_skipped=llm_skipped,
             confidence_adjustment=adjustment,
             # Phase B additions
@@ -782,14 +805,20 @@ class ThesisFilter:
 
     def _is_operational_llm_failure(self, llm_result: Any) -> bool:
         """
-        Detect synthetic exclusion payloads emitted when the LLM backend fails.
+        Detect operational failures emitted by the LLM backend.
 
-        LLM operational failures currently use the same schema as normal results
-        (`category="excluded"` and `thesis_fit_score=0.0`) with a failure rationale.
-        These should fail open to keyword routing.
+        Prefer the explicit classification_status field emitted by the
+        classifier. Keep the legacy payload-shape fallback so older mocks and
+        historical persisted payloads still fail open safely.
         """
         if llm_result is None:
             return False
+
+        classification_status = getattr(llm_result, "classification_status", None)
+        if hasattr(classification_status, "value"):
+            classification_status = classification_status.value
+        if isinstance(classification_status, str):
+            return classification_status != "success"
 
         if getattr(llm_result, "category", None) != "excluded":
             return False
@@ -809,6 +838,7 @@ class ThesisFilter:
         raw_rationale = getattr(llm_result, "rationale", "") or ""
         if not isinstance(raw_rationale, str):
             return False
+
         rationale = raw_rationale.lower()
         failure_markers = (
             "classification failed",
@@ -861,10 +891,11 @@ class ThesisFilter:
                     signal_id, canonical_key,
                     keyword_score, keyword_category, negative_keywords,
                     thesis_match, thesis_fit_score, category,
+                    primary_end_user, paying_customer, sells_to_or_operates_in,
                     stage_estimate, confidence, rationale, key_signals,
-                    prompt_version, model,
+                    prompt_version, model, classification_status,
                     classified_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     signal_id,
@@ -876,12 +907,16 @@ class ThesisFilter:
                     classification.llm_score is not None and classification.llm_score > 0.5,
                     classification.llm_score,
                     classification.llm_category,
+                    classification.llm_primary_end_user,
+                    classification.llm_paying_customer,
+                    classification.llm_sells_to_or_operates_in,
                     None,  # stage_estimate (not in current result)
                     None,  # confidence (not in current result)
                     classification.llm_rationale,
                     json.dumps(classification.keyword_matches) if classification.keyword_matches else None,
                     prompt_version,
                     model,
+                    classification.llm_classification_status or "success",
                     now.isoformat(),
                 )
             )
