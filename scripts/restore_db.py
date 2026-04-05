@@ -8,7 +8,7 @@ Safety rules:
 - Verifies schema version matches CURRENT_SCHEMA_VERSION post-restore.
 
 Usage:
-    python scripts/restore_db.py <backup-file> [--db signals.db] [--force] [--api-url URL]
+    python scripts/restore_db.py <backup-file> [--db-path signals.db] [--db signals.db] [--force] [--api-url URL]
 """
 
 from __future__ import annotations
@@ -21,9 +21,10 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from utils.db_path_helper import add_db_path_args, resolve_db_path, resolve_db_path_env
+
 logger = logging.getLogger(__name__)
 
-DEFAULT_DB = "signals.db"
 DEFAULT_API_URL = "http://localhost:8000/api/v1/health"
 PRE_RESTORE_PREFIX = "pre-restore-"
 
@@ -114,7 +115,7 @@ def _get_schema_version(db_path: Path) -> int | None:
 
 def restore_backup(
     backup_path: str | Path,
-    db_path: str | Path = DEFAULT_DB,
+    db_path: str | Path | None = None,
     force: bool = False,
     api_url: str = DEFAULT_API_URL,
 ) -> Path:
@@ -135,7 +136,7 @@ def restore_backup(
                       or schema version mismatch.
     """
     backup_path = Path(backup_path)
-    db_path = Path(db_path)
+    db_path = Path(resolve_db_path_env(db_path))
 
     if not backup_path.exists():
         raise FileNotFoundError(f"Backup file not found: {backup_path}")
@@ -221,11 +222,7 @@ def main(argv: list[str] | None = None) -> int:
         "backup_file",
         help="Path to the backup file to restore from",
     )
-    parser.add_argument(
-        "--db",
-        default=DEFAULT_DB,
-        help=f"Target database path (default: {DEFAULT_DB})",
-    )
+    add_db_path_args(parser)
     parser.add_argument(
         "--force",
         action="store_true",
@@ -237,6 +234,7 @@ def main(argv: list[str] | None = None) -> int:
         help=f"API health endpoint URL (default: {DEFAULT_API_URL})",
     )
     args = parser.parse_args(argv)
+    resolved_db_path = resolve_db_path(args)
 
     logging.basicConfig(
         level=logging.INFO,
@@ -246,12 +244,12 @@ def main(argv: list[str] | None = None) -> int:
     from utils.db_ops_ledger import append_db_ops_ledger
     from utils.db_tool_lock import DBToolLock
 
-    lock = DBToolLock(args.db, tool_name="restore_db")
+    lock = DBToolLock(resolved_db_path, tool_name="restore_db")
     if not lock.acquire(timeout_seconds=5):
         holder = lock.get_holder_info()
         append_db_ops_ledger(
             tool_name="restore_db",
-            db_path=args.db,
+            db_path=resolved_db_path,
             action="restore_backup",
             status="lock_blocked",
             details={"holder": holder, "backup_file": args.backup_file},
@@ -262,13 +260,13 @@ def main(argv: list[str] | None = None) -> int:
     try:
         pre_restore = restore_backup(
             args.backup_file,
-            args.db,
+            resolved_db_path,
             args.force,
             args.api_url,
         )
         append_db_ops_ledger(
             tool_name="restore_db",
-            db_path=args.db,
+            db_path=resolved_db_path,
             action="restore_backup",
             status="success",
             details={"backup_file": args.backup_file, "pre_restore_backup": str(pre_restore)},
@@ -278,7 +276,7 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as e:
         append_db_ops_ledger(
             tool_name="restore_db",
-            db_path=args.db,
+            db_path=resolved_db_path,
             action="restore_backup",
             status="error",
             details={"backup_file": args.backup_file, "error": str(e)},

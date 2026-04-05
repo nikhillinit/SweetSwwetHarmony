@@ -308,6 +308,27 @@ def test_run_backfill_updates_with_yes(tmp_path: Path) -> None:
     assert any('"tool_name": "run_backfill"' in entry and '"status": "success"' in entry for entry in entries)
 
 
+def test_restore_db_help_shows_shared_db_contract() -> None:
+    result = _run_script("scripts/restore_db.py", "--help")
+
+    assert result.returncode == 0
+    assert "--db-path" in result.stdout
+    assert "[DEPRECATED] Use --db-path instead" in result.stdout
+
+
+def test_restore_db_deprecated_db_alias_warns(tmp_path: Path) -> None:
+    scratch_db = tmp_path / "scratch.db"
+    result = _run_script(
+        "scripts/restore_db.py",
+        "missing-backup.db",
+        "--db",
+        str(scratch_db),
+    )
+
+    assert result.returncode == 1
+    assert "DEPRECATED" in result.stderr
+
+
 def test_restore_db_records_ledger_on_sidecar_refusal(tmp_path: Path) -> None:
     db_path = tmp_path / "signals.db"
     conn = sqlite3.connect(str(db_path))
@@ -342,7 +363,7 @@ def test_restore_db_records_ledger_on_sidecar_refusal(tmp_path: Path) -> None:
         result = _run_script(
             "scripts/restore_db.py",
             str(backup_path),
-            "--db",
+            "--db-path",
             str(db_path),
             env={"DB_OPS_LEDGER_PATH": str(ledger_path)},
         )
