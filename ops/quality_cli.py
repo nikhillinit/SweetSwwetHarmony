@@ -24,6 +24,7 @@ from ops.quality.tuning import generate_tuning_proposal, apply_tuning_proposal
 from ops.quality.thesis import (
     classify_signal_llm,
     batch_classify_missing_thesis,
+    batch_refresh_latest_missing_provenance,
     generate_disagreement_report,
 )
 from ops.quality.keys import suggest_key_strengthening, suggestions_to_markdown
@@ -124,6 +125,17 @@ def register_quality_commands(subparsers: argparse._SubParsersAction) -> None:
     p_tcb.add_argument("--prompt-version", default="quality-ops-v1")
     p_tcb.add_argument("--stop-on-error", action="store_true", default=False)
     p_tcb.set_defaults(func=_cmd_thesis_classify_batch)
+
+    # --------------------------------------------------------- thesis-refresh-latest
+    p_trl = q.add_parser(
+        "thesis-refresh-latest",
+        help="Append fresh thesis rows for the fixed 90-day created_at cohort whose latest row is missing model or prompt_version",
+    )
+    p_trl.add_argument("--limit", type=int, default=200)
+    p_trl.add_argument("--model", default="gemini-2.0-flash")
+    p_trl.add_argument("--prompt-version", default="quality-ops-v1")
+    p_trl.add_argument("--stop-on-error", action="store_true", default=False)
+    p_trl.set_defaults(func=_cmd_thesis_refresh_latest)
 
     # -------------------------------------------------------- thesis-disagreement-report
     p_dis = q.add_parser("thesis-disagreement-report", help="Report keyword vs LLM disagreements")
@@ -302,6 +314,18 @@ def _cmd_thesis_classify_batch(args: argparse.Namespace) -> None:
         summary = batch_classify_missing_thesis(
             conn,
             days=args.days,
+            limit=args.limit,
+            model=args.model,
+            prompt_version=args.prompt_version,
+            stop_on_error=bool(args.stop_on_error),
+        )
+        print(json.dumps(summary, indent=2))
+
+
+def _cmd_thesis_refresh_latest(args: argparse.Namespace) -> None:
+    with quality_conn(args.db_path) as conn:
+        summary = batch_refresh_latest_missing_provenance(
+            conn,
             limit=args.limit,
             model=args.model,
             prompt_version=args.prompt_version,
