@@ -131,7 +131,7 @@ python -m pytest tests/smoke/ -q
 
 ```bash
 # Stop the API server first, then:
-python scripts/restore_db.py backups/signals-YYYYMMDD-HHMMSS.db --db signals.db
+python scripts/restore_db.py backups/signals-YYYYMMDD-HHMMSS.db --db-path signals.db
 ```
 
 **Detailed runbooks:**
@@ -149,6 +149,6 @@ python scripts/restore_db.py backups/signals-YYYYMMDD-HHMMSS.db --db signals.db
 | `python scripts/spc_override_decision.py --db signals.db --json` | Compare Step 3/4 SPC coverage with active vs default SPC settings |
 | `python scripts/preflight_check.py --json` | Pre-flight |
 | `python scripts/backup_db.py` | Create backup |
-| `python scripts/restore_db.py <file>` | Restore backup |
+| `python scripts/restore_db.py <file> --db-path signals.db` | Restore backup |
 | `python scripts/validate_env.py` | Validate env |
 | `python -m ops.cli quality stats --db signals.db` | Quality stats |
