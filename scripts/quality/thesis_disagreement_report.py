@@ -8,15 +8,15 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import os
 
 from ops.quality.db import quality_conn
 from ops.quality.thesis import generate_disagreement_report
+from utils.db_path_helper import resolve_db_path_env
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--db", default=os.getenv("DISCOVERY_DB_PATH", "signals.db"))
+    ap.add_argument("--db", default=resolve_db_path_env())
     ap.add_argument("--days", type=int, default=30)
     ap.add_argument("--keyword-threshold", type=float, default=0.40)
     ap.add_argument("--out", default=None)

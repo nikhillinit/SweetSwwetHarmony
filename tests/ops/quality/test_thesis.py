@@ -221,6 +221,28 @@ class TestIterSignalsMissingThesis:
 
         conn.close()
 
+    def test_iter_signals_missing_thesis_uses_created_at_window(self, quality_db):
+        """Recent ingests with older detected_at values are still eligible."""
+        db_path, _store = quality_db
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON;")
+
+        sid = _insert_signal(
+            conn,
+            source_api="greenhouse_jobs",
+            canonical_key="domain:mercari.com",
+            company_name="Mercari",
+            detected_at="2025-12-15T17:43:09-05:00",
+            created_at=_utc_iso(10),
+        )
+
+        missing = iter_signals_missing_thesis(conn, days=90, limit=100)
+
+        assert sid in missing
+
+        conn.close()
+
 
 class TestGenerateDisagreementReport:
     """Tests for generate_disagreement_report."""

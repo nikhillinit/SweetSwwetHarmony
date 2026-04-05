@@ -9,16 +9,16 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 from pathlib import Path
 
 from ops.quality.db import quality_conn
 from ops.quality.keys import suggest_key_strengthening, suggestions_to_markdown
+from utils.db_path_helper import resolve_db_path_env
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--db", default=os.getenv("DISCOVERY_DB_PATH", "signals.db"))
+    ap.add_argument("--db", default=resolve_db_path_env())
     ap.add_argument("--min-signals", type=int, default=5)
     ap.add_argument("--limit", type=int, default=100)
     ap.add_argument("--fp-only", action="store_true", default=False)

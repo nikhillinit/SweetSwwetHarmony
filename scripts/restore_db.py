@@ -28,6 +28,53 @@ DEFAULT_API_URL = "http://localhost:8000/api/v1/health"
 PRE_RESTORE_PREFIX = "pre-restore-"
 
 
+def _sidecar_paths(db_path: Path) -> tuple[Path, Path]:
+    """Return WAL and SHM sidecar paths for *db_path*."""
+    return (
+        db_path.with_name(db_path.name + "-wal"),
+        db_path.with_name(db_path.name + "-shm"),
+    )
+
+
+def _ensure_no_target_sidecars(db_path: Path) -> None:
+    """Resolve target sidecars when safe, otherwise refuse."""
+    present = [path for path in _sidecar_paths(db_path) if path.exists()]
+    if not present:
+        return
+
+    sidecars = ", ".join(path.name for path in present)
+    try:
+        conn = sqlite3.connect(str(db_path), timeout=5)
+        try:
+            conn.execute("PRAGMA busy_timeout=5000")
+            row = conn.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        finally:
+            conn.close()
+    except Exception as exc:
+        raise RuntimeError(
+            "Target DB sidecars are present "
+            f"({sidecars}) and could not be checkpointed safely: {exc}. "
+            "Stop writers or restore into a fresh target path first."
+        ) from exc
+
+    busy = row[0] if row and len(row) >= 1 else 1
+    if busy:
+        raise RuntimeError(
+            "Target DB sidecars are present "
+            f"({sidecars}) and appear to be owned by an active writer. "
+            "Stop writers or restore into a fresh target path first."
+        )
+
+    for path in present:
+        if path.exists():
+            try:
+                path.unlink()
+            except OSError as exc:
+                raise RuntimeError(
+                    f"Target DB sidecar {path.name} could not be removed after checkpoint: {exc}"
+                ) from exc
+
+
 def _check_api_reachable(api_url: str) -> bool:
     """Return True if the API health endpoint is reachable."""
     try:
@@ -125,6 +172,8 @@ def restore_backup(
                 file=sys.stderr,
             )
 
+    _ensure_no_target_sidecars(db_path)
+
     # Create pre-restore safety backup (always, even with --force)
     pre_restore_path: Path | None = None
     if db_path.exists():
@@ -194,6 +243,22 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s [%(levelname)s] %(message)s",
     )
 
+    from utils.db_ops_ledger import append_db_ops_ledger
+    from utils.db_tool_lock import DBToolLock
+
+    lock = DBToolLock(args.db, tool_name="restore_db")
+    if not lock.acquire(timeout_seconds=5):
+        holder = lock.get_holder_info()
+        append_db_ops_ledger(
+            tool_name="restore_db",
+            db_path=args.db,
+            action="restore_backup",
+            status="lock_blocked",
+            details={"holder": holder, "backup_file": args.backup_file},
+        )
+        print(f"ERROR: Could not acquire DB tool lock. Holder: {holder}", file=sys.stderr)
+        return 1
+
     try:
         pre_restore = restore_backup(
             args.backup_file,
@@ -201,11 +266,27 @@ def main(argv: list[str] | None = None) -> int:
             args.force,
             args.api_url,
         )
+        append_db_ops_ledger(
+            tool_name="restore_db",
+            db_path=args.db,
+            action="restore_backup",
+            status="success",
+            details={"backup_file": args.backup_file, "pre_restore_backup": str(pre_restore)},
+        )
         print(f"Restore complete. Pre-restore backup: {pre_restore}")
         return 0
     except Exception as e:
+        append_db_ops_ledger(
+            tool_name="restore_db",
+            db_path=args.db,
+            action="restore_backup",
+            status="error",
+            details={"backup_file": args.backup_file, "error": str(e)},
+        )
         print(f"ERROR: {e}", file=sys.stderr)
         return 1
+    finally:
+        lock.release()
 
 
 if __name__ == "__main__":

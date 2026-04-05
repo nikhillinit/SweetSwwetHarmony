@@ -38,6 +38,8 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
+from utils.db_path_helper import resolve_db_path_env
+
 try:
     import httpx as _httpx
 except ImportError:
@@ -455,7 +457,7 @@ def run_preflight(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Pre-flight checklist for production activation")
-    parser.add_argument("--db", default="signals.db", help="Database path")
+    parser.add_argument("--db", default=resolve_db_path_env(), help="Database path")
     parser.add_argument("--json", action="store_true", help="Output JSON report")
     parser.add_argument("--mode", choices=["quick", "full"], default="quick",
                         help="Check mode: quick (default, ~5s) or full (includes smoke suite)")

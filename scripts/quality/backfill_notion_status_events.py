@@ -16,15 +16,15 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import os
 
 from ops.quality.db import quality_conn
 from ops.quality.status_events import sync_and_capture_status_events
+from utils.db_path_helper import resolve_db_path_env
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--db", default=os.getenv("DISCOVERY_DB_PATH", "signals.db"))
+    ap.add_argument("--db", default=resolve_db_path_env())
     ap.add_argument("--baseline-new-keys", action="store_true", default=True)
     ap.add_argument("--no-baseline-new-keys", action="store_false", dest="baseline_new_keys")
     args = ap.parse_args()

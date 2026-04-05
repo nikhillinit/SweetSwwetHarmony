@@ -11,6 +11,7 @@ which skips the argparse layer.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import sys
 from argparse import ArgumentParser, Namespace
@@ -40,6 +41,26 @@ def resolve_db_path_env(explicit: Union[str, Path, None] = None) -> str:
         or os.environ.get("SIGNAL_DB_PATH")
         or _DEFAULT_DB
     )
+
+
+def get_production_db_path() -> Path:
+    """Return the resolved production DB path as an absolute path."""
+    return Path(resolve_db_path_env()).resolve()
+
+
+def is_production_db_path(candidate: Union[str, Path, None]) -> bool:
+    """Return True when *candidate* resolves to the configured production DB path."""
+    if candidate is None:
+        return False
+    return Path(candidate).resolve() == get_production_db_path()
+
+
+def get_signal_count_watermark_path() -> Path:
+    """Return the external watermark path for the production DB signal count."""
+    production_db = get_production_db_path()
+    digest = hashlib.sha256(str(production_db).encode("utf-8")).hexdigest()[:12]
+    repo_root = Path(__file__).resolve().parents[1]
+    return repo_root / ".omx" / "state" / f"signal-count-watermark-{digest}.json"
 
 
 def add_db_path_args(parser: ArgumentParser) -> None:

@@ -35,6 +35,7 @@ load_dotenv()
 from monitoring.activation_gate import STEP_POLICY, check_activation_readiness
 from monitoring.daily_aggregator import backfill_daily_metrics
 from storage.signal_store import SignalStore
+from utils.db_path_helper import resolve_db_path_env
 
 SPC_DEFAULTS = {
     "SPC_MIN_BASELINE_DAYS": "14",
@@ -302,7 +303,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Compare Step 3/4 activation readiness with active SPC settings versus defaults"
     )
-    parser.add_argument("--db", default="signals.db", help="Database path")
+    parser.add_argument("--db", default=resolve_db_path_env(), help="Database path")
     parser.add_argument(
         "--steps",
         type=int,
