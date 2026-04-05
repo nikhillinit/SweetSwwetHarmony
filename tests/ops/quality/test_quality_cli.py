@@ -54,6 +54,7 @@ class TestRegisterQualityCommands:
             "label", "stats", "sync-status-events", "backfill-outcomes",
             "backfill-snapshot", "export", "find-patterns", "propose-tuning",
             "apply-tuning", "thesis-classify", "thesis-classify-batch",
+            "thesis-refresh-latest",
             "thesis-disagreement-report", "key-suggestions", "propose-patterns",
             "list-proposals", "review-proposal", "expire-proposals", "enrich",
         }
@@ -203,6 +204,26 @@ class TestThesisClassifyArgsParsing:
         assert args.signal_id == 42
         assert args.model == "gemini-2.0-flash"
         assert args.prompt_version == "quality-ops-v1"
+
+
+class TestThesisRefreshLatestArgsParsing:
+    """Tests for the 'thesis-refresh-latest' subcommand argument parsing."""
+
+    def test_thesis_refresh_latest_args_parsing(self):
+        parser = _make_parser()
+        args = parser.parse_args([
+            "quality", "--db", "test.db",
+            "thesis-refresh-latest",
+            "--limit", "25",
+            "--model", "gemini-2.0-flash",
+            "--prompt-version", "v1.6.0",
+        ])
+
+        assert args.command == "quality"
+        assert args.quality_cmd == "thesis-refresh-latest"
+        assert args.limit == 25
+        assert args.model == "gemini-2.0-flash"
+        assert args.prompt_version == "v1.6.0"
 
 
 class TestDefaultDbPath:
