@@ -1,8 +1,12 @@
 """Tests for run_pipeline.py CLI flags."""
-import pytest
 import asyncio
+import json
+import sqlite3
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
 from run_pipeline import create_parser, cmd_collect, cmd_health
 from discovery_engine.mcp_server import CollectorResult, CollectorStatus
 from utils.signal_health import HealthReport, SourceHealth
@@ -63,9 +67,19 @@ class TestCLIFlags:
         assert args.use_asset_store is True
         assert args.dry_run is True
 
+    def test_sync_parser_accepts_recovery_override(self):
+        """sync should expose the recovery override flag for audited recovery."""
+        parser = create_parser()
+        args = parser.parse_args(["sync", "--recovery-override"])
+        assert args.recovery_override is True
+
 
 class TestHealthCommand:
     """Test health check CLI command."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_gemini_env(self, monkeypatch):
+        monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
 
     def test_health_command_exists(self):
         """Health subcommand should exist in parser."""
@@ -453,3 +467,227 @@ class TestPublishCommitOverrideReason:
             "publish", "commit", "batch-test-123", "--yes",
         ])
         assert args.override_reason is None
+
+
+def _create_signal_count_db(path, count: int) -> None:
+    """Create a minimal SQLite DB with a signals table sized to *count*."""
+    conn = sqlite3.connect(str(path))
+    try:
+        conn.execute("CREATE TABLE signals (id INTEGER PRIMARY KEY)")
+        if count:
+            conn.executemany(
+                "INSERT INTO signals (id) VALUES (?)",
+                [(idx,) for idx in range(1, count + 1)],
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+class TestProductionDbSignalCountGuard:
+    """Focused CLI-boundary tests for the production DB catastrophic-drop guard."""
+
+    @pytest.fixture(autouse=True)
+    def _clean_env(self, monkeypatch):
+        monkeypatch.delenv("STRICT_CONFIG_VALIDATION", raising=False)
+        monkeypatch.delenv("DISCOVERY_DB_PATH", raising=False)
+
+    def _mock_args(self, **overrides):
+        base = {
+            "command": "health",
+            "verbose": False,
+            "db_path": None,
+            "db_deprecated": None,
+            "recovery_override": False,
+            "pipeline_cmd": None,
+            "publish_cmd": None,
+            "triage_cmd": None,
+            "outbox_cmd": None,
+        }
+        base.update(overrides)
+        return MagicMock(**base)
+
+    @pytest.mark.asyncio
+    async def test_warns_and_continues_for_health(self, monkeypatch, tmp_path, capsys):
+        prod_db = tmp_path / "signals.db"
+        watermark = tmp_path / "watermark.json"
+        _create_signal_count_db(prod_db, 4)
+        watermark.write_text(json.dumps({"signal_count": 100, "recorded_at": "2026-04-04T00:00:00Z"}))
+        monkeypatch.setenv("DISCOVERY_DB_PATH", str(prod_db))
+
+        args = self._mock_args(command="health")
+
+        with patch("run_pipeline.get_signal_count_watermark_path", return_value=watermark), \
+             patch("run_pipeline.create_parser") as mock_parser, \
+             patch("run_pipeline.setup_logging"), \
+             patch("utils.config_validator.validate_config", return_value=[]), \
+             patch("utils.config_validator.print_config_report", return_value=False), \
+             patch("run_pipeline.cmd_health", new_callable=AsyncMock, return_value=0) as mock_cmd:
+            mock_parser.return_value.parse_args.return_value = args
+            from run_pipeline import main
+            await main()
+
+        assert "WARNING:" in capsys.readouterr().err
+        mock_cmd.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_blocks_write_command_on_catastrophic_drop(self, monkeypatch, tmp_path):
+        prod_db = tmp_path / "signals.db"
+        watermark = tmp_path / "watermark.json"
+        _create_signal_count_db(prod_db, 4)
+        watermark.write_text(json.dumps({"signal_count": 100, "recorded_at": "2026-04-04T00:00:00Z"}))
+        monkeypatch.setenv("DISCOVERY_DB_PATH", str(prod_db))
+
+        args = self._mock_args(command="process")
+
+        with patch("run_pipeline.get_signal_count_watermark_path", return_value=watermark), \
+             patch("run_pipeline.create_parser") as mock_parser, \
+             patch("run_pipeline.setup_logging"), \
+             patch("utils.config_validator.validate_config", return_value=[]), \
+             patch("utils.config_validator.print_config_report", return_value=False), \
+             patch("run_pipeline.cmd_process", new_callable=AsyncMock, return_value=0) as mock_cmd:
+            mock_parser.return_value.parse_args.return_value = args
+            from run_pipeline import main
+            with pytest.raises(SystemExit) as exc_info:
+                await main()
+
+        assert exc_info.value.code == 2
+        mock_cmd.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_bypasses_non_production_db_path(self, monkeypatch, tmp_path):
+        prod_db = tmp_path / "signals.db"
+        scratch_db = tmp_path / "scratch.db"
+        watermark = tmp_path / "watermark.json"
+        _create_signal_count_db(prod_db, 100)
+        _create_signal_count_db(scratch_db, 4)
+        watermark.write_text(json.dumps({"signal_count": 100, "recorded_at": "2026-04-04T00:00:00Z"}))
+        monkeypatch.setenv("DISCOVERY_DB_PATH", str(prod_db))
+
+        args = self._mock_args(command="process", db_path=str(scratch_db))
+
+        with patch("run_pipeline.get_signal_count_watermark_path", return_value=watermark), \
+             patch("run_pipeline.create_parser") as mock_parser, \
+             patch("run_pipeline.setup_logging"), \
+             patch("utils.config_validator.validate_config", return_value=[]), \
+             patch("utils.config_validator.print_config_report", return_value=False), \
+             patch("run_pipeline.cmd_process", new_callable=AsyncMock, return_value=0) as mock_cmd:
+            mock_parser.return_value.parse_args.return_value = args
+            from run_pipeline import main
+            await main()
+
+        mock_cmd.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_sync_blocks_without_recovery_override(self, monkeypatch, tmp_path):
+        prod_db = tmp_path / "signals.db"
+        watermark = tmp_path / "watermark.json"
+        _create_signal_count_db(prod_db, 4)
+        watermark.write_text(json.dumps({"signal_count": 100, "recorded_at": "2026-04-04T00:00:00Z"}))
+        monkeypatch.setenv("DISCOVERY_DB_PATH", str(prod_db))
+
+        args = self._mock_args(command="sync")
+
+        with patch("run_pipeline.get_signal_count_watermark_path", return_value=watermark), \
+             patch("run_pipeline.create_parser") as mock_parser, \
+             patch("run_pipeline.setup_logging"), \
+             patch("utils.config_validator.validate_config", return_value=[]), \
+             patch("utils.config_validator.print_config_report", return_value=False), \
+             patch("run_pipeline.cmd_sync", new_callable=AsyncMock, return_value=None) as mock_cmd:
+            mock_parser.return_value.parse_args.return_value = args
+            from run_pipeline import main
+            with pytest.raises(SystemExit) as exc_info:
+                await main()
+
+        assert exc_info.value.code == 2
+        mock_cmd.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_sync_allows_audited_recovery_override(self, monkeypatch, tmp_path, capsys):
+        prod_db = tmp_path / "signals.db"
+        watermark = tmp_path / "watermark.json"
+        _create_signal_count_db(prod_db, 4)
+        watermark.write_text(json.dumps({"signal_count": 100, "recorded_at": "2026-04-04T00:00:00Z"}))
+        monkeypatch.setenv("DISCOVERY_DB_PATH", str(prod_db))
+
+        args = self._mock_args(command="sync", recovery_override=True)
+
+        with patch("run_pipeline.get_signal_count_watermark_path", return_value=watermark), \
+             patch("run_pipeline.create_parser") as mock_parser, \
+             patch("run_pipeline.setup_logging"), \
+             patch("utils.config_validator.validate_config", return_value=[]), \
+             patch("utils.config_validator.print_config_report", return_value=False), \
+             patch("run_pipeline.cmd_sync", new_callable=AsyncMock, return_value=None) as mock_cmd:
+            mock_parser.return_value.parse_args.return_value = args
+            from run_pipeline import main
+            await main()
+
+        assert "--recovery-override" in capsys.readouterr().err
+        mock_cmd.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_healthy_read_seeds_missing_watermark(self, monkeypatch, tmp_path):
+        prod_db = tmp_path / "signals.db"
+        watermark = tmp_path / "watermark.json"
+        _create_signal_count_db(prod_db, 612)
+        monkeypatch.setenv("DISCOVERY_DB_PATH", str(prod_db))
+
+        args = self._mock_args(command="health")
+
+        with patch("run_pipeline.get_signal_count_watermark_path", return_value=watermark), \
+             patch("run_pipeline.create_parser") as mock_parser, \
+             patch("run_pipeline.setup_logging"), \
+             patch("utils.config_validator.validate_config", return_value=[]), \
+             patch("utils.config_validator.print_config_report", return_value=False), \
+             patch("run_pipeline.cmd_health", new_callable=AsyncMock, return_value=0):
+            mock_parser.return_value.parse_args.return_value = args
+            from run_pipeline import main
+            await main()
+
+        payload = json.loads(watermark.read_text())
+        assert payload["signal_count"] == 612
+
+    @pytest.mark.asyncio
+    async def test_health_does_not_seed_missing_watermark(self, monkeypatch, tmp_path):
+        prod_db = tmp_path / "signals.db"
+        watermark = tmp_path / "watermark.json"
+        _create_signal_count_db(prod_db, 4)
+        monkeypatch.setenv("DISCOVERY_DB_PATH", str(prod_db))
+
+        args = self._mock_args(command="health")
+
+        with patch("run_pipeline.get_signal_count_watermark_path", return_value=watermark), \
+             patch("run_pipeline.create_parser") as mock_parser, \
+             patch("run_pipeline.setup_logging"), \
+             patch("utils.config_validator.validate_config", return_value=[]), \
+             patch("utils.config_validator.print_config_report", return_value=False), \
+             patch("run_pipeline.cmd_health", new_callable=AsyncMock, return_value=0) as mock_cmd:
+            mock_parser.return_value.parse_args.return_value = args
+            from run_pipeline import main
+            await main()
+
+        assert not watermark.exists()
+        mock_cmd.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_sync_override_seeds_missing_watermark(self, monkeypatch, tmp_path):
+        prod_db = tmp_path / "signals.db"
+        watermark = tmp_path / "watermark.json"
+        _create_signal_count_db(prod_db, 612)
+        monkeypatch.setenv("DISCOVERY_DB_PATH", str(prod_db))
+
+        args = self._mock_args(command="sync", recovery_override=True)
+
+        with patch("run_pipeline.get_signal_count_watermark_path", return_value=watermark), \
+             patch("run_pipeline.create_parser") as mock_parser, \
+             patch("run_pipeline.setup_logging"), \
+             patch("utils.config_validator.validate_config", return_value=[]), \
+             patch("utils.config_validator.print_config_report", return_value=False), \
+             patch("run_pipeline.cmd_sync", new_callable=AsyncMock, return_value=None) as mock_cmd:
+            mock_parser.return_value.parse_args.return_value = args
+            from run_pipeline import main
+            await main()
+
+        payload = json.loads(watermark.read_text())
+        assert payload["signal_count"] == 612
+        mock_cmd.assert_called_once()

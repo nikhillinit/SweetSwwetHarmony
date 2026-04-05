@@ -287,9 +287,9 @@ def iter_signals_missing_thesis(
             FROM thesis_classifications
             GROUP BY signal_id
         ) tc ON tc.signal_id = s.id
-        WHERE s.detected_at >= ?
+        WHERE s.created_at >= ?
           AND tc.max_id IS NULL
-        ORDER BY s.detected_at DESC
+        ORDER BY s.created_at DESC, s.id DESC
         LIMIT ?
         """,
         (since, limit),

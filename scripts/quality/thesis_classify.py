@@ -9,15 +9,15 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 
 from ops.quality.db import quality_conn
 from ops.quality.thesis import classify_signal_llm
+from utils.db_path_helper import resolve_db_path_env
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--db", default=os.getenv("DISCOVERY_DB_PATH", "signals.db"))
+    ap.add_argument("--db", default=resolve_db_path_env())
     ap.add_argument("--model", default="gemini-2.0-flash")
     ap.add_argument("--prompt-version", default="quality-ops-v1")
     ap.add_argument("signal_id", type=int)

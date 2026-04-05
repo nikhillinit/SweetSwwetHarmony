@@ -16,10 +16,12 @@ import sqlite3
 import sys
 from datetime import datetime, timezone
 
+from utils.db_path_helper import resolve_db_path_env
+
 
 def main():
     parser = argparse.ArgumentParser(description="Backfill thesis provenance metadata")
-    parser.add_argument("--db", default="signals.db", help="Database path")
+    parser.add_argument("--db", default=resolve_db_path_env(), help="Database path")
     parser.add_argument("--dry-run", action="store_true", help="Preview without writing")
     args = parser.parse_args()
 

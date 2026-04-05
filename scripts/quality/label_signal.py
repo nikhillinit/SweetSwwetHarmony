@@ -13,11 +13,12 @@ import os
 
 from ops.quality.db import quality_conn
 from ops.quality.labels import label_signal_manual
+from utils.db_path_helper import resolve_db_path_env
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--db", default=os.getenv("DISCOVERY_DB_PATH", "signals.db"))
+    ap.add_argument("--db", default=resolve_db_path_env())
     ap.add_argument("--by", dest="created_by", default=os.getenv("USER", "human"))
     ap.add_argument("--reason", default=None)
     ap.add_argument("--notes", default=None)
