@@ -241,6 +241,7 @@ class TestInvokeCapabilities:
         assert plugin_items
         command = plugin_items[0].command
         assert command is not None
+        assert command.plugin_identity == "plugin:babysitter@a5c.ai"
         assert command.command_name == "plan"
         assert command.invocation.startswith("/babysitter:plan ")
         assert "workflow-oriented command" in command.reasons
@@ -274,7 +275,7 @@ class TestExecuteCapabilities:
         plugin_actions = [item for item in plan.plugin_actions if item.item.asset.name == "babysitter"]
         assert plugin_actions
         assert plugin_actions[0].disposition == "approved_manual_invoke"
-        assert plugin_actions[0].next_step.startswith("/babysitter:plan ")
+        assert plugin_actions[0].next_step.startswith("plugin:babysitter@a5c.ai :: /babysitter:plan ")
 
     def test_canonical_plugin_command_allowlist_does_not_cross_approve_same_name_plugins(self, tmp_path):
         manifest = build_capability_manifest(
@@ -295,4 +296,7 @@ class TestExecuteCapabilities:
         }
         assert actions_by_id["plugin:babysitter@shadow.ai"].disposition == "approved_manual_invoke"
         assert actions_by_id["plugin:babysitter@shadow.ai"].item.command.command_name == "deploy"
+        assert actions_by_id["plugin:babysitter@shadow.ai"].next_step.startswith(
+            "plugin:babysitter@shadow.ai :: /babysitter:deploy "
+        )
         assert actions_by_id["plugin:babysitter@a5c.ai"].disposition == "manual_review_required"

@@ -204,6 +204,7 @@ class TestRouteCapabilitiesCli:
         assert any(item["asset"]["name"] == "sqlite-expert" for item in data["agents"])
         plugin_items = [item for item in data["plugins"] if item["asset"]["name"] == "babysitter"]
         assert plugin_items
+        assert plugin_items[0]["command"]["plugin_identity"] == "plugin:babysitter@a5c.ai"
         assert plugin_items[0]["command"]["command_name"] == "plan"
 
     def test_execute_json_applies_policy_to_plugin_command(self, capability_fixture, capsys):
@@ -237,6 +238,7 @@ class TestRouteCapabilitiesCli:
         assert plugin_actions
         assert plugin_actions[0]["disposition"] == "approved_manual_invoke"
         assert plugin_actions[0]["item"]["command"]["command_name"] == "plan"
+        assert plugin_actions[0]["next_step"].startswith("plugin:babysitter@a5c.ai :: /babysitter:plan ")
 
     def test_execute_json_uses_canonical_plugin_command_identity(self, duplicate_plugin_fixture, capsys):
         user_home, repo_root = duplicate_plugin_fixture
@@ -266,4 +268,7 @@ class TestRouteCapabilitiesCli:
         plugin_actions = {item["item"]["asset"]["id"]: item for item in data["plugin_actions"]}
         assert plugin_actions["plugin:babysitter@shadow.ai"]["disposition"] == "approved_manual_invoke"
         assert plugin_actions["plugin:babysitter@shadow.ai"]["item"]["command"]["command_name"] == "deploy"
+        assert plugin_actions["plugin:babysitter@shadow.ai"]["next_step"].startswith(
+            "plugin:babysitter@shadow.ai :: /babysitter:deploy "
+        )
         assert plugin_actions["plugin:babysitter@a5c.ai"]["disposition"] == "manual_review_required"
