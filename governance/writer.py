@@ -48,6 +48,8 @@ async def record_feature_promote(
     reason: str,
     config_snapshot_hash: str,
     config_snapshot_flags: Optional[Dict[str, Any]] = None,
+    effective_at: Optional[str] = None,
+    repair_source: Optional[str] = None,
 ) -> int:
     """Record a feature promotion event.
 
@@ -63,6 +65,8 @@ async def record_feature_promote(
         regret_due_at=regret_due_at,
         config_snapshot_hash=config_snapshot_hash,
         config_snapshot_flags=config_snapshot_flags,
+        effective_at=effective_at,
+        repair_source=repair_source,
     )
     return await _write_event(
         store_or_conn,

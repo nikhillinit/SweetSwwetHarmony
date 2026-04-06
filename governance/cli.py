@@ -155,6 +155,8 @@ async def _cmd_promote(args: argparse.Namespace) -> None:
     api_creds = _use_api(args)
     if api_creds:
         api_url, api_token = api_creds
+        effective_at = getattr(args, "effective_at", None)
+        repair_source = getattr(args, "repair_source", None)
         try:
             await _send_via_api(api_url, api_token, operator.request_id, {
                 "feature_name": args.flag,
@@ -167,6 +169,8 @@ async def _cmd_promote(args: argparse.Namespace) -> None:
                     "regret_due_at": regret_due_at,
                     "config_snapshot_hash": snapshot["hash"],
                     "config_snapshot_flags": snapshot["flags"],
+                    "effective_at": effective_at,
+                    "repair_source": repair_source,
                 },
             })
         except _ApiError:
@@ -178,6 +182,8 @@ async def _cmd_promote(args: argparse.Namespace) -> None:
         db_path = resolve_db_path_for_governance(
             getattr(args, "direct_db", None),
         )
+        effective_at = getattr(args, "effective_at", None)
+        repair_source = getattr(args, "repair_source", None)
         store = SignalStore(db_path=db_path)
         await store.initialize()
         try:
@@ -190,6 +196,8 @@ async def _cmd_promote(args: argparse.Namespace) -> None:
                 reason=args.reason,
                 config_snapshot_hash=snapshot["hash"],
                 config_snapshot_flags=snapshot["flags"],
+                effective_at=effective_at,
+                repair_source=repair_source,
             )
             print(json.dumps({
                 "event_id": event_id, "action": "feature_promote",
@@ -352,6 +360,19 @@ def _add_feature_subcommands(feature_sub) -> None:
     p_promote.add_argument(
         "--regret-check-date", default=None,
         help="YYYY-MM-DD for regret check (default: +14 days)",
+    )
+    p_promote.add_argument(
+        "--effective-at",
+        default=None,
+        help=(
+            "ISO 8601 timestamp for the actual promotion time when "
+            "recording a retroactive repair"
+        ),
+    )
+    p_promote.add_argument(
+        "--repair-source",
+        default=None,
+        help="Artifact or note that justifies a retroactive promotion repair",
     )
     p_promote.add_argument("--reason", required=True)
     p_promote.add_argument(

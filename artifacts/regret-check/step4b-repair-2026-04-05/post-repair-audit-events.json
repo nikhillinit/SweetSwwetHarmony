@@ -1,0 +1,11 @@
+[
+  {
+    "id": 21,
+    "action_type": "feature_promote",
+    "entity_id": "MERGE_WRITES_ENABLED",
+    "actor_id": "cli:nikhillinit@users.noreply.github.com",
+    "reason": "Repair missing Step 4B governance event after env-only activation evidenced by active env state and pre-step4b backup lineage",
+    "metadata": "{\"action_type\": \"feature_promote\", \"feature_name\": \"MERGE_WRITES_ENABLED\", \"from_state\": \"shadow\", \"to_state\": \"active\", \"regret_due_at\": \"2026-04-18\", \"config_snapshot_hash\": \"6c4ad749fcc12900\", \"config_snapshot_flags\": {\"MERGE_WRITES_ENABLED\": \"active\"}, \"effective_at\": \"2026-04-04T00:00:00Z\", \"repair_source\": \"artifacts/regret-check/step4b-repair-2026-04-05/summary.md\"}",
+    "created_at": "2026-04-06T05:27:51.920192+00:00"
+  }
+]
