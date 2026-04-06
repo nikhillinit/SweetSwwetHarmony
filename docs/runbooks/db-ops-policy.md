@@ -55,6 +55,26 @@ Tranche-1 hardening applies to:
 
 This does not imply a repo-wide ban on every `"signals.db"` mention in docs, help text, or lower-risk parser defaults.
 
+## Support Tooling Quarantine
+
+The following scripts are currently local-only and are not repo-supported until a separate promotion plan lands:
+
+- `scripts/e2e_batch_verify.py`
+- `check_keys.py`
+- `view_signals.py`
+- `view_signals_detail.py`
+- `view_unlabeled.py`
+
+`scripts/e2e_batch_verify.py` is publish-capable and high-risk. Do not execute it against `signals.db` under repo-guided workflows.
+
+Promotion from quarantine requires all of the following:
+
+1. explicit DB-path handling
+2. dry-run or safe-default behavior
+3. tests
+4. docs
+5. guardrails
+
 ## Restore Sidecar Contract
 
 When `-wal` / `-shm` sidecars are present for the target DB, `scripts/restore_db.py` must either:

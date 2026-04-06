@@ -1,0 +1,92 @@
+﻿[
+  {
+    "id": 53,
+    "status": "open",
+    "alert_type": "archetype_improvement",
+    "severity": "info",
+    "metric_name": "pass_rate:archetype:consumer_cpg",
+    "message": "Stratum 'archetype:consumer_cpg' improved: 33.33% \u2192 50.00%",
+    "created_at": "2026-04-04T13:39:29.037203+00:00",
+    "acknowledged_at": null
+  },
+  {
+    "id": 54,
+    "status": "open",
+    "alert_type": "archetype_improvement",
+    "severity": "info",
+    "metric_name": "pass_rate:archetype:travel_hospitality",
+    "message": "Stratum 'archetype:travel_hospitality' improved: 50.00% \u2192 66.67%",
+    "created_at": "2026-04-04T13:39:29.037203+00:00",
+    "acknowledged_at": null
+  },
+  {
+    "id": 55,
+    "status": "open",
+    "alert_type": "archetype_improvement",
+    "severity": "info",
+    "metric_name": "pass_rate:archetype:consumer_health_tech",
+    "message": "Stratum 'archetype:consumer_health_tech' improved: 0.00% \u2192 80.00%",
+    "created_at": "2026-04-04T13:39:29.037203+00:00",
+    "acknowledged_at": null
+  },
+  {
+    "id": 56,
+    "status": "open",
+    "alert_type": "archetype_improvement",
+    "severity": "info",
+    "metric_name": "pass_rate:collector:ashby_jobs",
+    "message": "Stratum 'collector:ashby_jobs' improved: 0.00% \u2192 75.00%",
+    "created_at": "2026-04-04T13:39:29.037203+00:00",
+    "acknowledged_at": null
+  },
+  {
+    "id": 57,
+    "status": "open",
+    "alert_type": "archetype_improvement",
+    "severity": "info",
+    "metric_name": "pass_rate:collector:greenhouse_jobs",
+    "message": "Stratum 'collector:greenhouse_jobs' improved: 0.00% \u2192 63.64%",
+    "created_at": "2026-04-04T13:39:29.037203+00:00",
+    "acknowledged_at": null
+  },
+  {
+    "id": 38,
+    "status": "open",
+    "alert_type": "pass_rate_improvement",
+    "severity": "info",
+    "metric_name": "pass_rate",
+    "message": "Pass rate improved from 76.67% to 96.67%",
+    "created_at": "2026-02-19T03:32:51.264717+00:00",
+    "acknowledged_at": null
+  },
+  {
+    "id": 39,
+    "status": "open",
+    "alert_type": "archetype_improvement",
+    "severity": "info",
+    "metric_name": "pass_rate:archetype:excluded",
+    "message": "Stratum 'archetype:excluded' improved: 82.14% \u2192 100.00%",
+    "created_at": "2026-02-19T03:32:51.264717+00:00",
+    "acknowledged_at": null
+  },
+  {
+    "id": 40,
+    "status": "open",
+    "alert_type": "archetype_improvement",
+    "severity": "info",
+    "metric_name": "pass_rate:collector:rss_feeds",
+    "message": "Stratum 'collector:rss_feeds' improved: 50.00% \u2192 100.00%",
+    "created_at": "2026-02-19T03:32:51.264717+00:00",
+    "acknowledged_at": null
+  },
+  {
+    "id": 41,
+    "status": "open",
+    "alert_type": "archetype_improvement",
+    "severity": "info",
+    "metric_name": "pass_rate:collector:news_api",
+    "message": "Stratum 'collector:news_api' improved: 20.00% \u2192 80.00%",
+    "created_at": "2026-02-19T03:32:51.264717+00:00",
+    "acknowledged_at": null
+  }
+]

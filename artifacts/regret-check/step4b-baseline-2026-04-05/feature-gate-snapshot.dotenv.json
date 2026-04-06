@@ -1,0 +1,17 @@
+﻿{
+  "flags": {
+    "BULK_TRIAGE_ENABLED": "active",
+    "DELIVERY_MODE": "batch_publish",
+    "DRIFT_MONITORING_ENABLED": "active",
+    "HUNTER_PROMOTE_ENABLED": "active",
+    "LLM_THESIS_MODE": "active",
+    "MERGE_WRITES_ENABLED": "active",
+    "ML_ENABLEMENT": "shadow",
+    "USE_CLAIM_FACTS": "true",
+    "USE_PHASE_G_IDENTITY_RESOLUTION": "true",
+    "USE_SHADOW_ENTITY_RESOLUTION": "true",
+    "USE_THIN_FILES": "true",
+    "V2_ENABLEMENT": "live"
+  },
+  "hash": "970a3c74a0ae7c61"
+}

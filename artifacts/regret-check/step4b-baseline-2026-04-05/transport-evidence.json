@@ -1,0 +1,8 @@
+﻿{
+  "DISCOVERY_API_URL_present": false,
+  "DISCOVERY_DB_PATH_env": null,
+  "env_file_flags": {
+    "MERGE_WRITES_ENABLED": "active",
+    "DELIVERY_MODE": "batch_publish"
+  }
+}
