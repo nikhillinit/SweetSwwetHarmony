@@ -71,13 +71,13 @@ def _make_db(path: Path) -> None:
             """
         )
 
-        def add_signal(source_api, canonical_key, days_ago, label=None):
+        def add_signal(source_api, canonical_key, days_ago, label=None, signal_type="x"):
             ts = _now_minus_days(days_ago)
             conn.execute(
                 "INSERT INTO signals (signal_type, source_api, canonical_key, "
                 "confidence, raw_data, detected_at, created_at) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                ("x", source_api, canonical_key, 0.6, "{}", ts, ts),
+                (signal_type, source_api, canonical_key, 0.6, "{}", ts, ts),
             )
             sid = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
             if label:
@@ -88,17 +88,24 @@ def _make_db(path: Path) -> None:
                 )
             return sid
 
-        # company A: strong signal 30 days ago, ambient mention 20 days ago (we found it 10d before HN)
-        add_signal("sec_edgar", "domain:a.ai", 30, label="TP")
-        add_signal("linkedin", "domain:a.ai", 25)
-        add_signal("hacker_news", "domain:a.ai", 20)
+        # company A: realistic signal_types wired so the production classifier
+        # collapses sec_edgar (regulatory→INFRA) and linkedin_company
+        # (web_presence→INFRA) into a SINGLE discovery class. Under the simple
+        # source_api-only classifier, the same two signals look like 2 distinct
+        # classes (INFRA + HUMAN_TRANSITION). Pre-E3 → 2; post-E3 → 1.
+        add_signal("sec_edgar", "domain:a.ai", 30, label="TP", signal_type="incorporation")
+        add_signal("linkedin", "domain:a.ai", 25, signal_type="linkedin_company")
+        add_signal("hacker_news", "domain:a.ai", 20, signal_type="hacker_news_mention")
 
         # company B: ambient mention only — we lagged
-        add_signal("hacker_news", "domain:b.ai", 15, label="FP")
+        add_signal("hacker_news", "domain:b.ai", 15, label="FP", signal_type="hacker_news_mention")
 
-        # company C: promoted, two non-ambient classes
-        add_signal("sec_edgar", "domain:c.ai", 10, label="TP")
-        add_signal("job_postings", "domain:c.ai", 5)
+        # company C: realistic signal_types so BOTH classifiers agree it has
+        # 2 distinct discovery classes (regulatory→INFRA + hiring→HIRING).
+        # This is the control case that proves E3 doesn't break working
+        # multi-class detection.
+        add_signal("sec_edgar", "domain:c.ai", 10, label="TP", signal_type="incorporation")
+        add_signal("job_postings", "domain:c.ai", 5, signal_type="hiring_signal")
 
         # company files: A, C promoted; B not
         ts = _now_minus_days(30)
@@ -186,15 +193,67 @@ def test_baseline_precision_at_queue(tmp_path: Path):
     assert abs(baseline.precision_at_queue_value - 2 / 3) < 1e-6
 
 
-def test_baseline_convergence_rate(tmp_path: Path):
+def test_baseline_convergence_rate_uses_production_classifier(tmp_path: Path):
+    """KPI 5 must classify per-signal via the production-authoritative
+    classifier (verification.evidence_families.get_family) by way of
+    analytics.kg_bridge.class_for_signal_row, NOT via the simpler P0
+    source_api map.
+
+    With realistic signal_types in the fixture:
+    - Company A (incorporation+sec_edgar, linkedin_company+linkedin):
+        - Production: BOTH map to INFRASTRUCTURE_INTENT (regulatory and
+          web_presence both collapse there) → 1 discovery class → NOT in two_or_more
+        - Simple source_api map (pre-E3): sec_edgar→INFRA, linkedin→HUMAN
+          → 2 distinct classes → would be in two_or_more (WRONG)
+    - Company C (incorporation+sec_edgar, hiring_signal+job_postings):
+        - Production: regulatory→INFRA, hiring→HIRING → 2 discovery classes
+        - Simple: sec_edgar→INFRA, job_postings→HIRING → 2 classes
+        - Both classifiers agree → IN two_or_more
+
+    Expected post-E3 result:
+        convergence_n_promoted = 2
+        convergence_n_two_or_more_classes = 1   (only C, not A)
+        convergence_rate = 0.5
+
+    Pre-E3 result (with simple classifier) would be:
+        convergence_n_two_or_more_classes = 2
+        convergence_rate = 1.0
+    This test fails RED on pre-E3 code.
+    """
     db = tmp_path / "fake_signals.db"
     _make_db(db)
     baseline = compute_baseline(production_db=db, window_days=90)
-    # 2 promoted: A (sec_edgar+linkedin) → 2 non-ambient classes;
-    #             C (sec_edgar+job_postings) → 2 non-ambient classes
     assert baseline.convergence_n_promoted == 2
-    assert baseline.convergence_n_two_or_more_classes == 2
-    assert baseline.convergence_rate == 1.0
+    assert baseline.convergence_n_two_or_more_classes == 1, (
+        "E3: production classifier must correctly identify that linkedin_company "
+        "is web_presence (INFRASTRUCTURE_INTENT), the same family as sec_edgar's "
+        "incorporation (regulatory→INFRASTRUCTURE_INTENT). Company A should NOT "
+        "be counted as multi-class. Pre-E3 simple classifier wrongly counts it."
+    )
+    assert baseline.convergence_rate == 0.5
+
+
+def test_kpi5_source_shape_branch_unchanged(tmp_path: Path):
+    """Pin: the source-shape branch (sole_ambient / with_any_discovery counts)
+    operates on company_files.source_apis strings only — there is no signal_type
+    available there, so the branch MUST continue to use classify_source_api.
+
+    E3 must NOT change this branch. Both promoted companies in the fixture have
+    source_apis with at least one non-ambient source, so:
+        sole_ambient_count = 0
+        with_any_discovery_class = 2
+    These numbers are pinned to the source_api-only classification.
+    """
+    db = tmp_path / "fake_signals.db"
+    _make_db(db)
+    baseline = compute_baseline(production_db=db, window_days=90)
+    assert baseline.promoted_sole_ambient_count == 0, (
+        "Source-shape branch (line ~380 in compute_discovery_kpi_baseline.py) "
+        "must use classify_source_api on company_files.source_apis strings. "
+        "Both A (sec_edgar+linkedin) and C (sec_edgar+job_postings) have "
+        "non-ambient sources by source_api alone."
+    )
+    assert baseline.promoted_with_any_discovery_class == 2
 
 
 def test_baseline_handles_missing_db(tmp_path: Path):
