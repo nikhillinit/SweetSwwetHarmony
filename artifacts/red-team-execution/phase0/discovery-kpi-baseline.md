@@ -1,6 +1,6 @@
 # Discovery KPI Baseline (Phase 0, task p0.10)
 
-**Computed at:** 2026-04-06T18:02:30.686191+00:00
+**Computed at:** 2026-04-06T19:06:07.414107+00:00
 **Window:** last 90 days
 **Queue size for KPI 2:** 20
 
@@ -28,9 +28,42 @@
    headline. The labelling sprint (`p0.3`) is the primary remedy.
 
 3. **KPI 5 uses derived classes.** Computed via
-   `analytics.evidence_ontology.aggregate_company_evidence`. No schema
-   migration. The result will change when new collectors land in the
-   ontology table.
+   `analytics.kg_bridge.class_for_signal_row`, which defers to
+   `verification.evidence_families.get_family()` (the production-
+   authoritative classifier). No schema migration. The result will change
+   when new collectors land in the ontology table or when
+   `verification/evidence_families.py` adds new (signal_type, source_api)
+   mappings.
+
+## KPI 5 classifier provenance (E3)
+
+KPI 5 (cross-source convergence) is computed using the
+**`production_evidence_family`** path:
+
+- `production_evidence_family` *(default after E3)*: per-signal
+  classification via `analytics.kg_bridge.class_for_signal_row(signal_type,
+  source_api)`, which defers to the production-authoritative
+  `verification.evidence_families.get_family()`. This path uses BOTH
+  `signals.signal_type` and `signals.source_api`, so it correctly handles
+  source-API overrides for ambiguous signal types and collapses
+  `linkedin_company` (web_presence) and `incorporation` (regulatory) into
+  the same INFRASTRUCTURE_INTENT discovery class.
+
+- `source_api_only` *(pre-E3 path; preserved for the source-shape branch
+  at line ~380 because `company_files.source_apis` has only source-api
+  strings, no signal_type)*: classification via
+  `analytics.evidence_ontology.classify_source_api(source_api)`. This path
+  is what the `promoted_sole_ambient_count` and
+  `promoted_with_any_discovery_class` numbers above are computed under,
+  because the source-shape branch operates on a list of source-api strings
+  with no signal_type available.
+
+This means the report mixes two classifiers by design: the headline KPI 5
+uses the production classifier; the source-shape distribution uses the
+simpler source-api map. The two classifiers agree on most cases but
+disagree where the production taxonomy distinguishes signals that the
+simple map collapses (or vice versa). The disagreement is documented in
+`artifacts/red-team-execution/phase0/kg-enhancement-design.md` §4.
 
 ## Per-source signal counts (window)
 
