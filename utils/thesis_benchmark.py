@@ -91,7 +91,7 @@ def _resolve_manifest_dataset_path(raw_path: str, manifest_path: Path) -> Path:
     candidate = Path(raw_path)
     if candidate.is_absolute():
         return candidate.resolve()
-    return (Path.cwd() / candidate).resolve()
+    return (manifest_path.parent / candidate).resolve()
 
 
 def load_benchmark_manifest(

@@ -38,12 +38,12 @@ def _write_dataset(path: Path) -> Path:
     return path
 
 
-def _write_manifest(dataset_path: Path) -> Path:
+def _write_manifest(dataset_path: Path, *, manifest_dataset_path: str | None = None) -> Path:
     samples = load_evaluation_dataset(dataset_path)
     manifest = {
         "benchmark_id": "thesis_llm_golden_set",
         "benchmark_version": "test.v1",
-        "dataset_path": str(dataset_path),
+        "dataset_path": manifest_dataset_path or str(dataset_path),
         "dataset_fingerprint": compute_dataset_fingerprint(samples),
         "sample_count": len(samples),
         "scenario_counts": scenario_counts_for_samples(samples),
@@ -74,6 +74,24 @@ def test_load_benchmark_manifest_validates_parity(tmp_path):
         "b2b_in_disguise": 1,
         "clear_consumer": 1,
     }
+
+
+def test_load_benchmark_manifest_resolves_relative_dataset_path_from_manifest_directory(
+    tmp_path,
+    monkeypatch,
+):
+    dataset_dir = tmp_path / "fixtures"
+    dataset_dir.mkdir()
+    dataset = _write_dataset(dataset_dir / "dataset.jsonl")
+    manifest_path = _write_manifest(dataset, manifest_dataset_path=dataset.name)
+    other_cwd = tmp_path / "elsewhere"
+    other_cwd.mkdir()
+    monkeypatch.chdir(other_cwd)
+
+    manifest = load_benchmark_manifest(dataset.resolve(), manifest_path=manifest_path)
+
+    assert manifest["benchmark_fingerprint"] == manifest["dataset_fingerprint"]
+    assert manifest["benchmark_manifest_path"].endswith("dataset.manifest.json")
 
 
 def test_load_benchmark_manifest_fails_on_drift(tmp_path):
