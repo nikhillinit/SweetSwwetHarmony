@@ -326,7 +326,7 @@ architectural deficiency *visible at the query layer*.
 |---|---|---|---|---|
 | E1 | **Bridge module** (`analytics/kg_bridge.py`) | Phase 0 (now) | None | **DONE** — 20 tests passing |
 | E2 | **Schema-flow design doc** (this file) | Phase 0 (now) | None | **DONE** |
-| E3 | Use bridge in `compute_discovery_kpi_baseline` to compute KPI 5 via the production family classifier (instead of P0 source_api map) | Phase 0 day-2 | Low (pure derivation change, additive output column) | TODO |
+| E3 | Use bridge in `compute_discovery_kpi_baseline` to compute KPI 5 via the production family classifier (instead of P0 source_api map) | Phase 0 day-2 | Low (pure derivation change, additive output column) | **DONE** — see §10 retrospective |
 | E4 | Run `kg_builder` against signals.db to actually populate `kg_nodes(node_type='company')` and `kg_edges(edge_type='has_evidence')` | Post-2026-04-19 | Medium (writes to production KG tables — but those tables are currently empty, so risk is bounded) | TODO |
 | E5 | Link `company_embeddings` to `kg_nodes` via canonical_key — enables hybrid graph+vector retrieval (KG construction skill principle) | Post-2026-04-19 | Low (no schema change; just a JOIN view) | TODO |
 | E6 | Add a Phase 1 SQL view that exposes `(canonical_key, evidence_class, evidence_family, kg_node_id)` for downstream analytics | Phase 1 | Low (CREATE VIEW IF NOT EXISTS; can be additive) | TODO |
@@ -403,3 +403,88 @@ The test suite covers:
 - `storage/kg_builder.py` — architecture KG builder (note: targets the codebase, not signals)
 - `artifacts/red-team-execution/phase0/discovery-kpi-baseline.md` — empirical validation that the schema-flow problem is real and quantified
 - KG construction skill: `.claude/skills/knowledge-graph-builder/` — ontology design, hybrid architecture, query patterns
+
+---
+
+## 10. E3 retrospective
+
+**Status:** DONE — 2026-04-06 (executed via babysitter run `01KNJ14ENYYH5TFTFFZP2B70PN`)
+
+### What changed
+
+One file modified: `scripts/compute_discovery_kpi_baseline.py`
+
+Four edits:
+1. **Import** `class_for_signal_row` from `analytics.kg_bridge`
+2. **Dataclass** `KpiBaseline` gained a `convergence_classifier: str = "production_evidence_family"` field
+3. **Logic** in `_compute_cross_source_convergence` per-promoted-company loop:
+   - Widened SQL `SELECT` to include `signal_type`
+   - Replaced `aggregate_company_evidence(...)` + `bundle.classes_present` with inline `{class_for_signal_row(r["signal_type"], r["source_api"]) for r in signal_rows}`
+   - Added `EvidenceClass.UNKNOWN` to the exclusion set (matches the production classifier's invariant #4 — unmapped signal types are not silently classified)
+4. **Markdown** rendering gained a "KPI 5 classifier provenance" section explaining the two-classifier design (production classifier for KPI 5, simple `classify_source_api` still used by the source-shape branch because `company_files.source_apis` has no `signal_type`)
+
+`analytics/evidence_ontology.py` was **deliberately not modified** — `aggregate_company_evidence` is unchanged. The bridge is used inline in the script only, so the simpler ontology stays available for shadow uses.
+
+### KPI delta on the live signals.db
+
+Computed against `signals.db` (612 signals, 90-day window) before and after E3:
+
+| KPI | Pre-E3 | Post-E3 | Delta |
+|---|---:|---:|:---:|
+| Companies promoted | 118 | 118 | — |
+| Lead time median | — | — | — |
+| Precision @ queue 20 | 15.0% | 15.0% | — |
+| Meetings booked | 9.8% | 9.8% | — |
+| Pre-launch detection | 42.1% | 42.1% | — |
+| **Convergence rate** | **0.0% (0/118)** | **0.0% (0/118)** | **— (preventive)** |
+| Sole-ambient promotions | 98 | 98 | — |
+| With any discovery class | 20 | 20 | — |
+| `convergence_classifier` | *(field absent)* | `production_evidence_family` | **NEW** |
+
+### Why KPI 5 didn't change visibly
+
+The live promoted cohort has only two source-shape patterns:
+- **98 sole-source HN** — both classifiers map HN → AMBIENT, contributing 0 to convergence
+- **20 (ATS + manual_seed)** — both classifiers cap at 1 discovery class (HIRING_VALIDATION), never 2
+
+**The disagreement case the test fixture demonstrates (`sec_edgar` + `linkedin_company`) does not exist in the live promoted cohort.** E3 is preventive: when a future promotion has that shape, the production classifier will correctly count it as 1 discovery class instead of the simple classifier's 2.
+
+The test `test_baseline_convergence_rate_uses_production_classifier` proves the behavior change with a fixture where company A has signals (incorporation, sec_edgar) + (linkedin_company, linkedin):
+- Simple classifier: sec_edgar → INFRA, linkedin → HUMAN → 2 distinct classes (wrong)
+- Production classifier: incorporation → regulatory → INFRA, linkedin_company → web_presence → INFRA → 1 distinct class (correct)
+
+### Subtle classifier difference (no KPI impact)
+
+The 20 `manual_seed_buzz` signals (`signal_type=news_mention`) are reclassified post-E3:
+- **Pre-E3**: `manual_seed_buzz` → `ANALYST_SEED` (via simple `classify_source_api` map)
+- **Post-E3**: `(news_mention, manual_seed_buzz)` → `public_buzz` family → `AMBIENT_CORROBORATION` (via production classifier)
+
+Both are excluded from `discovery_classes`, so the convergence count is unchanged. But the reclassification is a real semantic shift — these are now correctly understood as popularity signals, not analyst priors. Documented in the post-E3 markdown report's "KPI 5 classifier provenance" section.
+
+### Data quality finding (out of scope, flagged for follow-up)
+
+`company_files.source_apis` arrays for the 20 ATS+manual_seed promotions contain the string `"manual_seed"`, but the actual signal rows have `source_api="manual_seed_buzz"`. Both classify consistently in our ontology so no E3 impact, but worth a future cleanup.
+
+### Process discipline
+
+E3 was executed under the babysitter TDD process at `.a5c/processes/e3-kpi-bridge-integration.js`:
+
+| Phase | Status |
+|---|---|
+| P0 — Pre-flight (regret window check + baseline capture) | PASS |
+| BP1 — Pre-flight review | APPROVED |
+| P1 — TDD RED (failing test) | VERIFIED RED |
+| P2 — TDD GREEN (minimal impl) | VERIFIED GREEN |
+| P3 — Verification (90 targeted tests) | 90/90 PASS |
+| P4 — Live KPI baseline re-run | PASS — delta documented above |
+| P5 — Doc update (this section) | DONE |
+| P6 — Code review | (next) |
+| P7 — Reality check | (next) |
+| BP2 — Commit approval | (next) |
+| P8 — Commit | (next) |
+
+Test count: 89 → 90 (+1 net; replaced 1 existing test with 1 stronger test, added 1 pin test).
+
+### Regret-window safety re-affirmation
+
+Zero edits to `workflows/`, `governance/`, `monitoring/`, `connectors/`, `storage/migrations/`. Step 4B regret check (due 2026-04-18) intact.
