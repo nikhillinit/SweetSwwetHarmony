@@ -34,6 +34,19 @@ class TestFeaturePromoteMetadata:
         )
         assert m.config_snapshot_flags == {"LLM_THESIS_MODE": "shadow"}
 
+    def test_with_repair_metadata(self):
+        m = FeaturePromoteMetadata(
+            feature_name="MERGE_WRITES_ENABLED",
+            from_state="shadow",
+            to_state="active",
+            regret_due_at="2026-04-18",
+            config_snapshot_hash="repair123",
+            effective_at="2026-04-04T00:00:00Z",
+            repair_source="artifacts/regret-check/step4b-baseline-2026-04-05/summary.md",
+        )
+        assert m.effective_at == "2026-04-04T00:00:00Z"
+        assert m.repair_source.endswith("summary.md")
+
     def test_missing_feature_name_raises(self):
         with pytest.raises(ValidationError):
             FeaturePromoteMetadata(

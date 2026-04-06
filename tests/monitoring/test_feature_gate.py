@@ -316,3 +316,41 @@ class TestGetOverdueRegretChecks:
         result = get_overdue_regret_checks(gate_db)
         overdue_ids = [r["entity_id"] for r in result["overdue"]]
         assert "FLAG_META_PAST" in overdue_ids
+
+    def test_repaired_promotion_uses_effective_at_for_matching_checks(self, gate_db):
+        """Retroactive repairs should match regret checks after effective_at, not insert time."""
+        now = datetime.now(timezone.utc)
+        effective_at = now - timedelta(days=30)
+        regret_check_at = effective_at + timedelta(days=1)
+        metadata = json.dumps(
+            {
+                "effective_at": effective_at.isoformat(),
+                "regret_due_at": (effective_at + timedelta(days=14)).isoformat(),
+            }
+        )
+
+        conn = sqlite3.connect(gate_db)
+        conn.execute(
+            "INSERT INTO audit_events "
+            "(action_type, entity_type, entity_id, actor_id, metadata, created_at) "
+            "VALUES (?, 'feature_flag', ?, ?, ?, ?)",
+            (
+                "feature_promote",
+                "FLAG_REPAIRED",
+                "operator:test",
+                metadata,
+                now.isoformat(),
+            ),
+        )
+        conn.execute(
+            "INSERT INTO audit_events "
+            "(action_type, entity_type, entity_id, actor_id, created_at) "
+            "VALUES ('regret_check', 'feature_flag', ?, 'operator:test', ?)",
+            ("FLAG_REPAIRED", regret_check_at.isoformat()),
+        )
+        conn.commit()
+        conn.close()
+
+        result = get_overdue_regret_checks(gate_db)
+        overdue_ids = [r["entity_id"] for r in result["overdue"]]
+        assert "FLAG_REPAIRED" not in overdue_ids
