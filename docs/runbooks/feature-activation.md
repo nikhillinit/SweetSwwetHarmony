@@ -192,6 +192,9 @@ python scripts/preflight_check.py --json     # Must pass
 python scripts/backup_db.py                   # Pre-step backup
 python scripts/spc_override_decision.py --db signals.db --json > artifacts/activation/step4a_spc_override_decision.json
 python run_pipeline.py activation-check --step 4 --json > artifacts/activation/step4a_gate.json
+python -m governance feature promote DELIVERY_MODE \
+  --from manual_publish --to batch_publish \
+  --reason "Step 4A: enable batch publish after clean Step 3 window"
 ```
 
 **Gate check:** `python run_pipeline.py activation-check --step 4`
@@ -232,6 +235,20 @@ DELIVERY_MODE=manual_publish          # reverts to Step 3
 python scripts/preflight_check.py --json     # Must pass
 python scripts/backup_db.py                   # Pre-step backup
 python run_pipeline.py activation-check --step 4 --json > artifacts/activation/step4b_gate.json
+python -m governance feature promote MERGE_WRITES_ENABLED \
+  --from shadow --to active \
+  --reason "Step 4B: enable live merges after clean 4A window"
+```
+
+If the env var was already flipped before governance was recorded, repair the
+missing audit event instead of editing `audit_events` directly:
+
+```bash
+python -m governance feature promote MERGE_WRITES_ENABLED \
+  --from shadow --to active \
+  --effective-at <actual-step4b-timestamp> \
+  --repair-source <artifact-or-runbook-reference> \
+  --reason "Repair missing Step 4B governance event after env-only activation"
 ```
 
 **Gate check:** `python run_pipeline.py activation-check --step 4`

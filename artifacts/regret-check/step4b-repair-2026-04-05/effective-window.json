@@ -1,0 +1,11 @@
+{
+  "feature": "MERGE_WRITES_ENABLED",
+  "evidence_window_start": "2026-04-04T07:20:49.900541+00:00",
+  "evidence_window_end": "2026-04-04T13:38:54.380441+00:00",
+  "window_basis": [
+    "DELIVERY_MODE regret_check completed before Step 4B promotion",
+    "First alert_acknowledged row explicitly citing Step 4B promotion"
+  ],
+  "recorded_effective_at": "2026-04-04T00:00:00Z",
+  "recorded_effective_at_precision": "day"
+}

@@ -1,0 +1,32 @@
+{
+  "ambiguous_scenarios": [
+    "b2b_in_disguise",
+    "ad_supported",
+    "employer_sponsored",
+    "two_sided_marketplace",
+    "gig_economy",
+    "creator_tools"
+  ],
+  "benchmark_id": "thesis_llm_golden_set",
+  "benchmark_version": "2026-04-03.v1",
+  "changelog": [
+    {
+      "date": "2026-04-03",
+      "summary": "Historical 40-row thesis benchmark before the 2026-04-05 expansion.",
+      "version": "2026-04-03.v1"
+    }
+  ],
+  "dataset_fingerprint": "a767ff5d484324493ebabeb0bee0968b6653f9ae5dc9c26c61619ca30e24fa13",
+  "dataset_path": "artifacts\\thesis_diagnostics\\thesis_llm_golden_set.2026-04-03.v1.jsonl",
+  "sample_count": 40,
+  "scenario_counts": {
+    "ad_supported": 3,
+    "b2b_in_disguise": 5,
+    "clear_b2b": 10,
+    "clear_consumer": 10,
+    "creator_tools": 3,
+    "employer_sponsored": 3,
+    "gig_economy": 3,
+    "two_sided_marketplace": 3
+  }
+}

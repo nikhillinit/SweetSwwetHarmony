@@ -9,16 +9,16 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 from pathlib import Path
 
 from ops.quality.db import quality_conn
 from ops.quality.patterns import PatternConfig, detect_patterns
+from utils.db_path_helper import resolve_db_path_env
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--db", default=os.getenv("DISCOVERY_DB_PATH", "signals.db"))
+    ap.add_argument("--db", default=resolve_db_path_env())
     ap.add_argument("--days", type=int, default=30)
     ap.add_argument("--min-count", type=int, default=10)
     ap.add_argument("--fp-rate-threshold", type=float, default=0.70)

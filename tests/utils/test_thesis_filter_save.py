@@ -64,6 +64,8 @@ def _make_classification(
     llm_primary_end_user=None,
     llm_paying_customer=None,
     llm_sells_to_or_operates_in=None,
+    llm_model=None,
+    llm_prompt_version=None,
     keyword_matches=None,
     routing=RoutingDecision.QUALIFIED,
 ):
@@ -80,6 +82,8 @@ def _make_classification(
         llm_primary_end_user=llm_primary_end_user,
         llm_paying_customer=llm_paying_customer,
         llm_sells_to_or_operates_in=llm_sells_to_or_operates_in,
+        llm_model=llm_model,
+        llm_prompt_version=llm_prompt_version,
         keyword_matches=keyword_matches or ["meal kit", "food"],
     )
 
@@ -118,6 +122,48 @@ class TestSaveClassificationRoundTrip:
         assert row["category"] == "consumer_cpg"
         assert row["rationale"] == "Strong consumer CPG fit"
         assert row["classification_status"] == "success"
+
+    @pytest.mark.asyncio
+    async def test_save_classification_uses_llm_provenance_when_present(self, store, signal_id):
+        """save_classification() should default model/prompt_version from the classification result."""
+        classification = _make_classification(
+            llm_model="gemini-2.0-flash",
+            llm_prompt_version="v1.6.0",
+        )
+
+        tf = ThesisFilter(ThesisFilterConfig(), signal_store=store)
+        await tf.save_classification(
+            signal_id=signal_id,
+            canonical_key="domain:acme.ai",
+            classification=classification,
+        )
+
+        row = await store.get_thesis_classification("domain:acme.ai")
+        assert row is not None
+        assert row["model"] == "gemini-2.0-flash"
+        assert row["prompt_version"] == "v1.6.0"
+
+    @pytest.mark.asyncio
+    async def test_explicit_save_classification_args_override_llm_provenance(self, store, signal_id):
+        """Explicit save_classification() args should override embedded classification provenance."""
+        classification = _make_classification(
+            llm_model="embedded-model",
+            llm_prompt_version="embedded-v1",
+        )
+
+        tf = ThesisFilter(ThesisFilterConfig(), signal_store=store)
+        await tf.save_classification(
+            signal_id=signal_id,
+            canonical_key="domain:acme.ai",
+            classification=classification,
+            model="override-model",
+            prompt_version="override-v2",
+        )
+
+        row = await store.get_thesis_classification("domain:acme.ai")
+        assert row is not None
+        assert row["model"] == "override-model"
+        assert row["prompt_version"] == "override-v2"
 
     @pytest.mark.asyncio
     async def test_signal_store_none_no_crash(self):

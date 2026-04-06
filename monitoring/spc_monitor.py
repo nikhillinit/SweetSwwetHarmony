@@ -44,9 +44,18 @@ RATIO_METRICS = frozenset({
 # Metrics that only alert on increase (decrease is good)
 ONE_SIDED_INCREASE_METRICS = frozenset({"overall_fp_rate", "publish_fp_rate"})
 
+# Zero-volume alerting defaults
+ZERO_VOLUME_MIN_BASELINE_MEAN = 1.0
+
 
 def _get_min_baseline_days() -> int:
     return int(os.environ.get("SPC_MIN_BASELINE_DAYS", str(DEFAULT_MIN_BASELINE_DAYS)))
+
+
+def _get_zero_volume_alerting_enabled() -> bool:
+    return os.environ.get("SPC_ZERO_VOLUME_ALERTING", "true").lower() not in (
+        "false", "0", "no", "off",
+    )
 
 
 def _get_min_total_samples_for_spc() -> int:
@@ -278,6 +287,72 @@ class SPCMonitor:
             alerts=alerts,
             limits=limits,
             current_value=current_value,
+        )
+
+    def check_zero_volume(
+        self,
+        conn,
+        segment_key: str,
+        current_value: float,
+        lookback_days: int = 30,
+        min_baseline_mean: float = ZERO_VOLUME_MIN_BASELINE_MEAN,
+    ) -> Optional[SPCAlert]:
+        """Check if a collector that historically produces signals has dropped to zero.
+
+        Returns SPCAlert (warning severity) if:
+        1. Zero-volume alerting is enabled (SPC_ZERO_VOLUME_ALERTING env var)
+        2. current_value == 0
+        3. Baseline has >= SPC_MIN_BASELINE_DAYS days of data
+        4. Baseline mean >= min_baseline_mean (collector historically active)
+
+        Returns None otherwise.
+        """
+        if not _get_zero_volume_alerting_enabled():
+            return None
+
+        if current_value > 0:
+            return None
+
+        rows = conn.execute(
+            """SELECT value FROM quality_metrics_daily
+               WHERE metric_name = 'collector_volume'
+                 AND segment_type = 'collector' AND segment_key = ?
+                 AND value IS NOT NULL
+               ORDER BY metric_date DESC
+               LIMIT ?""",
+            (segment_key, lookback_days),
+        ).fetchall()
+
+        min_baseline_days = _get_min_baseline_days()
+        if len(rows) < min_baseline_days:
+            return None
+
+        values = [r[0] for r in rows]
+        mean = sum(values) / len(values)
+
+        if mean < min_baseline_mean:
+            return None
+
+        logger.warning(
+            "Zero-volume detected for collector '%s' (baseline mean=%.1f over %d days)",
+            segment_key, mean, len(rows),
+        )
+
+        return SPCAlert(
+            metric_name="collector_volume",
+            segment_type="collector",
+            segment_key=segment_key,
+            alert_type="spc_violation",
+            severity="warning",
+            current_value=0.0,
+            ucl=0.0,
+            lcl=0.0,
+            mean=mean,
+            message=(
+                f"collector_volume for '{segment_key}' is 0 "
+                f"(baseline mean={mean:.1f} over {len(rows)} days). "
+                f"Collector may have stopped producing signals."
+            ),
         )
 
     def detect_trends(

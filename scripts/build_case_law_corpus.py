@@ -37,6 +37,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from utils.corpus_text_builder import build_corpus_text
+from utils.db_path_helper import resolve_db_path_env
 from intelligence.vectorizer_config import (
     VECTORIZER_DIR,
     VectorizerMetadata,
@@ -300,7 +301,7 @@ async def main():
     from storage.signal_store import SignalStore
 
     parser = argparse.ArgumentParser(description="Build case-law corpus from labeled signals")
-    parser.add_argument("--db", default="signals.db", help="Database path")
+    parser.add_argument("--db", default=resolve_db_path_env(), help="Database path")
     parser.add_argument("--version", default="v1.0.0", help="Vectorizer version")
     parser.add_argument("--dry-run", action="store_true", help="Print stats without writing")
     parser.add_argument("--calibrate", action="store_true", help="Print similarity distributions")

@@ -9,15 +9,15 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 
 from ops.quality.db import quality_conn
 from ops.quality.export import export_dataset_csv, export_dataset_jsonl
+from utils.db_path_helper import resolve_db_path_env
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--db", default=os.getenv("DISCOVERY_DB_PATH", "signals.db"))
+    ap.add_argument("--db", default=resolve_db_path_env())
     ap.add_argument("--days", type=int, default=90)
     ap.add_argument("--format", choices=["csv", "jsonl"], default="csv")
     ap.add_argument("--out", required=True)

@@ -37,6 +37,8 @@ env/
 *.swp
 *.swo
 *~
+.claude/settings.local.json
+.claude/settings.local.backup.json
 
 # Testing
 .pytest_cache/
@@ -84,3 +86,20 @@ reports/
 shadow_logs.jsonl
 artifacts/shadow/
 datasets/thesis_ground_truth.jsonl
+
+# OMX local runtime state
+.omx/context/
+.omx/drafts/
+.omx/interviews/
+.omx/state/
+.omx/hud-config.json
+.omx/metrics.json
+.omx/notepad.md
+.omx/project-memory.json
+.omx/setup-scope.json
+.omx/tmux-hook.json
+
+# Local restore / recovery scratch artifacts
+artifacts/incident-db-restore-*/
+artifacts/restore-recovery-*/
+signals.db.restore-stage-*

@@ -110,6 +110,11 @@ from workflows.pipeline import (
     PipelineMode,
     PipelineStats,
 )
+from utils.db_path_helper import (
+    get_signal_count_watermark_path,
+    is_production_db_path,
+    resolve_db_path,
+)
 from utils.signal_health import SignalHealthMonitor
 from utils.cli_format import (
     BANNER_SEP, SECTION_SEP,
@@ -124,6 +129,11 @@ try:
     import httpx
 except ImportError:
     httpx = None
+
+
+_DB_GUARD_MIN_BASELINE = 10
+_DB_GUARD_DROP_RATIO = 0.90
+_DB_GUARD_BLOCK_EXIT_CODE = 2
 
 
 # =============================================================================
@@ -171,6 +181,161 @@ def setup_logging(verbose: bool = False):
     # Reduce noise from some modules
     logging.getLogger("httpx").setLevel(logging.WARNING)
     logging.getLogger("httpcore").setLevel(logging.WARNING)
+
+
+def _db_guard_mode(args: argparse.Namespace) -> Optional[str]:
+    """Return guard mode for commands that operate on the production signals DB."""
+    command = getattr(args, "command", None)
+    if command in {"health", "health-json-pure"}:
+        return "warn"
+    if command == "pipeline" and getattr(args, "pipeline_cmd", None) == "status":
+        return "warn"
+    if command == "sync":
+        return "recovery"
+    if command in {"full", "collect", "process", "push"}:
+        return "block"
+    if command == "pipeline" and getattr(args, "pipeline_cmd", None) == "push":
+        return "block"
+    if command == "publish" and getattr(args, "publish_cmd", None) == "commit":
+        return "block"
+    if command == "triage" and getattr(args, "triage_cmd", None) in {"approve", "reject", "defer"}:
+        return "block"
+    if command == "outbox" and getattr(args, "outbox_cmd", None) == "drain":
+        return "block"
+    return None
+
+
+def _guard_db_path(args: argparse.Namespace) -> Optional[str]:
+    """Resolve the DB path used by the guard-relevant command, if any."""
+    mode = _db_guard_mode(args)
+    if mode is None:
+        return None
+    try:
+        return resolve_db_path(args)
+    except Exception:
+        return getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH") or "signals.db"
+
+
+def _read_signal_count_watermark(path: Path) -> Optional[dict]:
+    """Load external signal-count watermark metadata."""
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+
+
+def _write_signal_count_watermark(path: Path, db_path: str, signal_count: int) -> None:
+    """Persist the latest healthy production signal-count watermark."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "db_path": str(Path(db_path).resolve()),
+        "signal_count": signal_count,
+        "recorded_at": datetime.now(timezone.utc).isoformat(),
+    }
+    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+
+
+def _read_current_signal_count(db_path: str) -> tuple[Optional[int], Optional[str]]:
+    """Return the current signal count or a read error for *db_path*."""
+    import sqlite3
+
+    try:
+        conn = sqlite3.connect(f"file:{Path(db_path).resolve()}?mode=ro", uri=True, timeout=1)
+        try:
+            count = conn.execute("SELECT COUNT(*) FROM signals").fetchone()[0]
+            return int(count), None
+        finally:
+            conn.close()
+    except Exception as exc:  # pragma: no cover - surfaced through guard tests
+        return None, str(exc)
+
+
+def _format_db_guard_message(db_path: str, baseline: Optional[int], current: Optional[int], error: Optional[str]) -> str:
+    """Format the operator-facing catastrophic-drop message."""
+    if error:
+        return (
+            f"Production DB guard could not read signal count for {db_path}: {error}. "
+            "This command is blocked until the DB is verified or an allowed recovery override is used."
+        )
+    if baseline is None or current is None:
+        return f"Production DB guard has insufficient signal-count data for {db_path}."
+    drop_ratio = 1 - (current / baseline) if baseline else 1.0
+    drop_pct = max(0.0, drop_ratio * 100)
+    return (
+        f"Production DB guard detected a catastrophic signal-count drop for {db_path}: "
+        f"current={current}, baseline={baseline}, drop={drop_pct:.1f}%."
+    )
+
+
+def _update_watermark_if_healthy(
+    db_path: str,
+    current_count: Optional[int],
+    watermark: Optional[dict],
+    *,
+    allow_seed: bool = False,
+) -> None:
+    """Raise the production watermark after a healthy count read."""
+    if current_count is None or current_count <= 0:
+        return
+    watermark_path = get_signal_count_watermark_path()
+    baseline = watermark.get("signal_count") if watermark else None
+    if baseline is None and not allow_seed and current_count < _DB_GUARD_MIN_BASELINE:
+        return
+    if baseline is None or current_count > int(baseline):
+        _write_signal_count_watermark(watermark_path, db_path, current_count)
+
+
+def _enforce_signal_count_guard(args: argparse.Namespace) -> None:
+    """Warn or fail closed when the production DB signal count collapses."""
+    mode = _db_guard_mode(args)
+    if mode is None:
+        return
+
+    db_path = _guard_db_path(args)
+    if not db_path or not is_production_db_path(db_path):
+        return
+
+    watermark_path = get_signal_count_watermark_path()
+    watermark = _read_signal_count_watermark(watermark_path)
+    baseline = int(watermark["signal_count"]) if watermark and watermark.get("signal_count") is not None else None
+    current_count, read_error = _read_current_signal_count(db_path)
+    recovery_override = bool(getattr(args, "recovery_override", False))
+
+    if not read_error and current_count is not None:
+        _update_watermark_if_healthy(
+            db_path,
+            current_count,
+            watermark,
+            allow_seed=(mode == "recovery" and recovery_override),
+        )
+
+    catastrophic_drop = False
+    if read_error:
+        catastrophic_drop = baseline is not None
+    elif baseline is not None and baseline >= _DB_GUARD_MIN_BASELINE:
+        catastrophic_drop = current_count <= max(1, int(baseline * (1 - _DB_GUARD_DROP_RATIO)))
+
+    if not catastrophic_drop:
+        return
+
+    message = _format_db_guard_message(db_path, baseline, current_count, read_error)
+    if mode == "warn":
+        print(f"WARNING: {message}", file=sys.stderr)
+        logging.warning(message)
+        return
+    if mode == "recovery" and recovery_override:
+        override_message = f"{message} Proceeding because --recovery-override was supplied for the recovery sync path."
+        print(f"WARNING: {override_message}", file=sys.stderr)
+        logging.warning(override_message)
+        return
+    if mode == "recovery":
+        detail = f"{message} Use --recovery-override to continue the audited recovery sync path."
+    else:
+        detail = message
+    print(f"ERROR: {detail}", file=sys.stderr)
+    raise SystemExit(_DB_GUARD_BLOCK_EXIT_CODE)
 
 
 # =============================================================================
@@ -2628,6 +2793,11 @@ Environment variables:
         "--db-path",
         type=str,
         help="Path to SQLite database",
+    )
+    sync_parser.add_argument(
+        "--recovery-override",
+        action="store_true",
+        help="Allow the audited recovery sync path to proceed even when the production DB guard is tripped",
     )
 
     # Stats command
@@ -6953,6 +7123,25 @@ async def cmd_drift_check(args):
             for alert in result.alerts:
                 print(f"    ALERT: {alert.message}")
 
+        # Zero-volume check for collector segments
+        collector_rows = conn.execute(
+            """SELECT DISTINCT segment_key FROM quality_metrics_daily
+               WHERE metric_name = 'collector_volume' AND segment_type = 'collector'
+                 AND segment_key != ''"""
+        ).fetchall()
+        for (collector_key,) in collector_rows:
+            latest = conn.execute(
+                """SELECT value FROM quality_metrics_daily
+                   WHERE metric_name = 'collector_volume' AND segment_type = 'collector'
+                     AND segment_key = ? AND value IS NOT NULL
+                   ORDER BY metric_date DESC LIMIT 1""",
+                (collector_key,),
+            ).fetchone()
+            if latest is not None:
+                zero_alert = monitor.check_zero_volume(conn, collector_key, latest[0])
+                if zero_alert:
+                    print(f"  ZERO-VOLUME [{collector_key}]: {zero_alert.message}")
+
 
 async def cmd_drift_aggregate(args):
     """Aggregate daily metrics."""
@@ -7716,6 +7905,8 @@ async def main():
     if not args.command:
         parser.print_help()
         sys.exit(1)
+
+    _enforce_signal_count_guard(args)
 
     # Dispatch to command handler
     try:

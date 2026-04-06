@@ -563,6 +563,8 @@ class PhaseGEntityResolver:
             alias_bindings: List[Tuple[str, str, str, float, Optional[str], Optional[datetime]]] = []
             blocking_bindings: List[Tuple[str, str, str, str]] = []
 
+            seen_alias_keys = set()
+
             for signal in group_signals:
                 # Strong key binding
                 strong_bindings.append((
@@ -577,6 +579,10 @@ class PhaseGEntityResolver:
                     alias_info = signal_aliases[signal.id]
 
                     for alias_key in alias_info["alias_keys"]:
+                        dedup_key = (alias_key, root_entity_id)
+                        if dedup_key in seen_alias_keys:
+                            continue
+                        seen_alias_keys.add(dedup_key)
                         alias_type = "name_norm" if alias_key.startswith("name_norm:") else "name_loc"
                         alias_bindings.append((
                             alias_key,

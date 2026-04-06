@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, Mock, patch
 
 from consumer.thesis_filter.llm_classifier import (
+    CLASSIFIER_PROMPT_VERSION,
+    CLASSIFIER_SYSTEM_PROMPT,
     ClassificationStatus,
     LLMClassifier,
     RateLimiter,
@@ -78,6 +80,47 @@ class TestLLMClassifierCircuitBreaker:
         monkeypatch.setenv("GOOGLE_API_KEY", "test_key")
         classifier = LLMClassifier(api_key="test_key")
         assert classifier.max_tokens == 800
+
+    def test_llm_classifier_defaults_keep_builtin_prompt_config(self, monkeypatch):
+        """Runtime prompt injection should preserve the current defaults when unused."""
+        monkeypatch.setenv("GOOGLE_API_KEY", "test_key")
+        classifier = LLMClassifier(api_key="test_key")
+        assert classifier.system_prompt == CLASSIFIER_SYSTEM_PROMPT
+        assert classifier.prompt_version == CLASSIFIER_PROMPT_VERSION
+
+    @pytest.mark.asyncio
+    async def test_llm_classifier_uses_injected_prompt_and_version(self, monkeypatch):
+        """Injected prompt text/version should flow into the request and result metadata."""
+        monkeypatch.setenv("GOOGLE_API_KEY", "test_key")
+        classifier = LLMClassifier(
+            api_key="test_key",
+            system_prompt="SYSTEM OVERRIDE",
+            prompt_version="diag-v1",
+        )
+        mock_response = Mock()
+        mock_response.text = """
+        {
+          "thesis_match": true,
+          "thesis_fit_score": 0.91,
+          "category": "travel_hospitality",
+          "stage_estimate": "seed",
+          "confidence": "high",
+          "company_name": "DineDesk",
+          "rationale": "Consumer reservation app for diners.",
+          "key_signals": ["reservation", "diners"],
+          "primary_end_user": "individual_consumer",
+          "paying_customer": "individual_consumer",
+          "sells_to_or_operates_in": "operates_in_industry_for_consumers"
+        }
+        """
+        mock_response.usage_metadata = None
+
+        with patch.object(classifier, "_call_gemini_api", new_callable=AsyncMock) as mock_call:
+            mock_call.return_value = mock_response
+            result = await classifier.classify({"title": "Test signal", "source_api": "test"})
+
+        assert "SYSTEM OVERRIDE" in mock_call.await_args.args[0]
+        assert result.prompt_version == "diag-v1"
 
     @pytest.mark.asyncio
     async def test_circuit_breaker_opens_after_failures(self):

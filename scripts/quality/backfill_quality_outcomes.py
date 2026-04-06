@@ -13,15 +13,15 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 
 from ops.quality.db import quality_conn
 from ops.quality.outcomes import backfill_outcomes_from_events
+from utils.db_path_helper import resolve_db_path_env
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--db", default=os.getenv("DISCOVERY_DB_PATH", "signals.db"))
+    ap.add_argument("--db", default=resolve_db_path_env())
     ap.add_argument("--days-to-count", type=int, default=30)
     ap.add_argument("--since-days", type=int, default=None)
     ap.add_argument("--override-manual", action="store_true", default=False)

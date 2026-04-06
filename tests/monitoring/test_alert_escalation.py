@@ -13,6 +13,7 @@ Covers:
 import os
 import sys
 import tempfile
+from datetime import datetime, timezone
 
 import pytest
 import pytest_asyncio
@@ -44,16 +45,17 @@ async def store():
         pass
 
 
-async def _insert_alert(store, alert_id=None, status="open"):
+async def _insert_alert(store, status="open"):
     """Insert a test alert."""
     db = store._db
     await db.execute("PRAGMA foreign_keys = OFF")
+    created_at = datetime.now(timezone.utc).isoformat()
     sql = (
         "INSERT INTO canary_drift_alerts "
         "(alert_type, severity, metric_name, message, status, created_at) "
-        "VALUES ('pass_rate_drop', 'warning', 'pass_rate', 'test alert', ?, '2026-02-10T00:00:00Z')"
+        "VALUES ('pass_rate_drop', 'warning', 'pass_rate', 'test alert', ?, ?)"
     )
-    cursor = await db.execute(sql, (status,))
+    cursor = await db.execute(sql, (status, created_at))
     await db.commit()
     return cursor.lastrowid
 

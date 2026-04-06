@@ -23,6 +23,7 @@ from typing import Any, Dict, List, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from utils.db_path_helper import resolve_db_path_env
 from utils.git_utils import get_git_info
 
 logger = logging.getLogger(__name__)
@@ -824,7 +825,7 @@ async def async_main(args: argparse.Namespace) -> Dict[str, Any]:
 def main():
     parser = argparse.ArgumentParser(description="Pipeline Report 4A")
     parser.add_argument(
-        "--db", default=os.getenv("DISCOVERY_DB_PATH", "signals.db"),
+        "--db", default=resolve_db_path_env(),
         help="Database path (default: DISCOVERY_DB_PATH or signals.db)",
     )
     parser.add_argument(

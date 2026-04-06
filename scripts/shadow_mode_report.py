@@ -28,6 +28,7 @@ from typing import Any, Dict, List
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from storage.signal_store import SignalStore
+from utils.db_path_helper import resolve_db_path_env
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +123,7 @@ async def generate_report(db_path: str, days: int) -> Dict[str, Any]:
 
 def main():
     parser = argparse.ArgumentParser(description="Shadow Mode Report for Warm Intro Indicators")
-    parser.add_argument("--db", default="signals.db", help="Database path")
+    parser.add_argument("--db", default=resolve_db_path_env(), help="Database path")
     parser.add_argument("--days", type=int, default=30, help="Lookback window in days")
     args = parser.parse_args()
 

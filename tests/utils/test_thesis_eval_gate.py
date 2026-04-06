@@ -2,8 +2,30 @@
 
 from __future__ import annotations
 
-from utils.thesis_eval_gate import build_eval_gate_artifact
+from utils.thesis_eval_gate import build_eval_gate_artifact, build_rebaseline_artifact
 from utils.thesis_evaluator import ClassMetrics, EvaluationComparison, ThesisEvaluationResult
+
+
+BENCHMARK_PROVENANCE = {
+    "benchmark_id": "thesis_llm_golden_set",
+    "benchmark_version": "2026-04-05.v2",
+    "benchmark_fingerprint": "fingerprint",
+    "benchmark_manifest_path": "tests/fixtures/thesis_llm_golden_set.manifest.json",
+    "benchmark_sample_count": 64,
+    "ambiguous_scenarios": [
+        "b2b_in_disguise",
+        "ad_supported",
+        "employer_sponsored",
+        "two_sided_marketplace",
+        "gig_economy",
+        "creator_tools",
+    ],
+    "scenario_counts": {
+        "clear_consumer": 10,
+        "clear_b2b": 10,
+        "b2b_in_disguise": 11,
+    },
+}
 
 
 def _result(*, evaluator_type: str, accuracy: float) -> ThesisEvaluationResult:
@@ -34,12 +56,14 @@ def test_eval_gate_blocks_without_llm_result():
     artifact = build_eval_gate_artifact(
         comparison,
         proposed_changes=["add structured decomposition fields"],
+        benchmark_provenance=BENCHMARK_PROVENANCE,
     )
 
     assert artifact["decision"] == "no_go"
     assert artifact["authorized_changes"] == []
     assert artifact["deferred_changes"] == ["add structured decomposition fields"]
     assert artifact["blocked_reasons"]
+    assert artifact["benchmark_id"] == "thesis_llm_golden_set"
 
 
 def test_eval_gate_authorizes_changes_when_llm_clears_threshold():
@@ -53,6 +77,7 @@ def test_eval_gate_authorizes_changes_when_llm_clears_threshold():
     artifact = build_eval_gate_artifact(
         comparison,
         proposed_changes=["add structured decomposition fields"],
+        benchmark_provenance=BENCHMARK_PROVENANCE,
     )
 
     assert artifact["decision"] == "go"
@@ -73,8 +98,38 @@ def test_eval_gate_blocks_on_llm_execution_errors():
     artifact = build_eval_gate_artifact(
         comparison,
         proposed_changes=["add structured decomposition fields"],
+        benchmark_provenance=BENCHMARK_PROVENANCE,
     )
 
     assert artifact["decision"] == "no_go"
     assert artifact["authorized_changes"] == []
     assert artifact["blocked_reasons"]
+
+
+def test_build_rebaseline_artifact_defaults_to_keep_threshold():
+    comparison = EvaluationComparison(
+        keyword_result=_result(evaluator_type="keyword", accuracy=0.4),
+        llm_result=_result(evaluator_type="llm", accuracy=0.93),
+        accuracy_delta=0.53,
+        per_class_deltas={},
+    )
+    llm_records = [
+        {"scenario": "clear_consumer", "match": True},
+        {"scenario": "clear_b2b", "match": True},
+        {"scenario": "b2b_in_disguise", "match": True},
+        {"scenario": "b2b_in_disguise", "match": False},
+        {"scenario": "ad_supported", "match": True},
+        {"scenario": "employer_sponsored", "match": True},
+    ]
+
+    artifact = build_rebaseline_artifact(
+        comparison,
+        benchmark_provenance=BENCHMARK_PROVENANCE,
+        llm_records=llm_records,
+        previous_summary={"total_samples": 40},
+    )
+
+    assert artifact["pre_expansion_sample_count"] == 40
+    assert artifact["post_expansion_sample_count"] == 64
+    assert artifact["recommendation"] == "keep_0_90"
+    assert artifact["benchmark_id"] == "thesis_llm_golden_set"

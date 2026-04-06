@@ -22,6 +22,8 @@ from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
+from utils.db_path_helper import resolve_db_path_env
+
 
 async def generate_evidence_pack(db_path: str, out_dir: str) -> dict:
     """Generate all evidence artifacts and write to out_dir."""
@@ -205,7 +207,7 @@ def _write_decision_note(
 
 def main():
     parser = argparse.ArgumentParser(description="Generate Step 3B evidence pack")
-    parser.add_argument("--db", default=os.getenv("DISCOVERY_DB_PATH", "signals.db"))
+    parser.add_argument("--db", default=resolve_db_path_env())
     parser.add_argument("--out-dir", default="artifacts/step3b")
     args = parser.parse_args()
     asyncio.run(generate_evidence_pack(args.db, args.out_dir))
