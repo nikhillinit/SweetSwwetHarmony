@@ -149,6 +149,7 @@ class CapabilityRecommendation:
 
 @dataclass
 class PluginCommandInvocation:
+    plugin_identity: str
     plugin_name: str
     command_name: str
     invocation: str
@@ -160,6 +161,7 @@ class PluginCommandInvocation:
 
     def to_dict(self) -> dict[str, Any]:
         return {
+            "plugin_identity": self.plugin_identity,
             "plugin_name": self.plugin_name,
             "command_name": self.command_name,
             "invocation": self.invocation,
@@ -943,6 +945,7 @@ def _select_plugin_command(
         )
         invocation = f"/{asset.name}:{command_name} {task_and_prompt}".strip()
         command = PluginCommandInvocation(
+            plugin_identity=asset.id,
             plugin_name=asset.name,
             command_name=command_name,
             invocation=invocation,
@@ -1014,7 +1017,7 @@ def _build_execution_brief(
         lines.append("Suggested plugin invocations:")
         for item in plugins:
             if item.command:
-                lines.append(f"- {item.command.invocation}")
+                lines.append(f"- {item.command.plugin_identity} :: {item.command.invocation}")
     return "\n".join(lines)
 
 
@@ -1043,7 +1046,6 @@ def _plan_plugin_action(
         )
 
     plugin_identity = item.asset.id.lower()
-    plugin_name = item.asset.name.lower()
     command_name = item.command.command_name.lower()
     plugin_command_key = f"{plugin_identity}:{command_name}"
 
@@ -1088,7 +1090,7 @@ def _plan_plugin_action(
         item=item,
         disposition="approved_manual_invoke",
         runnable=False,
-        next_step=item.command.invocation,
+        next_step=f"{item.command.plugin_identity} :: {item.command.invocation}",
         policy_notes=[
             f"Approved for manual invocation via {approval_basis}.",
             "This router does not execute plugin slash commands directly.",
