@@ -35,6 +35,18 @@ class FeaturePromoteMetadata(BaseModel):
     )
     config_snapshot_hash: str = Field(..., min_length=1)
     config_snapshot_flags: Optional[Dict[str, Any]] = None
+    effective_at: Optional[str] = Field(
+        default=None,
+        description=(
+            "Actual promotion timestamp when recording a retroactive "
+            "repair for an earlier env-only activation"
+        ),
+    )
+    repair_source: Optional[str] = Field(
+        default=None,
+        min_length=1,
+        description="Artifact or note that supports a retroactive repair",
+    )
 
     @field_validator("from_state", "to_state")
     @classmethod

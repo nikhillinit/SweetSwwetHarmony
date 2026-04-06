@@ -183,6 +183,8 @@ class ThesisFilterResult:
     llm_primary_end_user: Optional[str] = None
     llm_paying_customer: Optional[str] = None
     llm_sells_to_or_operates_in: Optional[str] = None
+    llm_model: Optional[str] = None
+    llm_prompt_version: Optional[str] = None
     llm_skipped: bool = False
     confidence_adjustment: float = 0.0
     rejection_reason: Optional[str] = None
@@ -230,6 +232,8 @@ class ThesisFilterResult:
             "llm_primary_end_user": self.llm_primary_end_user,
             "llm_paying_customer": self.llm_paying_customer,
             "llm_sells_to_or_operates_in": self.llm_sells_to_or_operates_in,
+            "llm_model": self.llm_model,
+            "llm_prompt_version": self.llm_prompt_version,
             "llm_skipped": self.llm_skipped,
             "confidence_adjustment": self.confidence_adjustment,
             # Phase B additions
@@ -751,6 +755,8 @@ class ThesisFilter:
             llm_sells_to_or_operates_in=(
                 getattr(llm_result, "sells_to_or_operates_in", None) if llm_result else None
             ),
+            llm_model=getattr(llm_result, "model", None) if llm_result else None,
+            llm_prompt_version=getattr(llm_result, "prompt_version", None) if llm_result else None,
             llm_skipped=llm_skipped,
             confidence_adjustment=adjustment,
             # Phase B additions
@@ -858,8 +864,8 @@ class ThesisFilter:
         signal_id: int,
         canonical_key: str,
         classification: ThesisFilterResult,
-        model: str = "gemini-1.5-flash",
-        prompt_version: str = "v1",
+        model: Optional[str] = None,
+        prompt_version: Optional[str] = None,
     ) -> None:
         """
         Save thesis classification to thesis_classifications table.
@@ -886,6 +892,11 @@ class ThesisFilter:
             logger.warning("No signal_store available - skipping classification save")
             return
 
+        effective_model = model or classification.llm_model or "gemini-1.5-flash"
+        effective_prompt_version = (
+            prompt_version or classification.llm_prompt_version or "v1"
+        )
+
         await self.signal_store.save_thesis_classification(
             signal_id=signal_id,
             canonical_key=canonical_key,
@@ -904,8 +915,8 @@ class ThesisFilter:
             confidence=None,
             rationale=classification.llm_rationale,
             key_signals=classification.keyword_matches,
-            prompt_version=prompt_version,
-            model=model,
+            prompt_version=effective_prompt_version,
+            model=effective_model,
             classification_status=classification.llm_classification_status or "success",
         )
 

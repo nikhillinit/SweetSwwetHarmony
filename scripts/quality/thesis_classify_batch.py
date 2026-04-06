@@ -9,15 +9,14 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
-
 from ops.quality.db import quality_conn
 from ops.quality.thesis import batch_classify_missing_thesis
+from utils.db_path_helper import resolve_db_path_env
 
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--db", default=os.getenv("DISCOVERY_DB_PATH", "signals.db"))
+    ap.add_argument("--db", default=resolve_db_path_env())
     ap.add_argument("--days", type=int, default=30)
     ap.add_argument("--limit", type=int, default=200)
     ap.add_argument("--model", default="gemini-2.0-flash")

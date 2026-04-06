@@ -84,6 +84,23 @@ class TestRecordFeaturePromote:
         }
 
     @pytest.mark.asyncio
+    async def test_with_repair_metadata(self, store, operator):
+        await record_feature_promote(
+            store, operator,
+            feature_name="MERGE_WRITES_ENABLED",
+            from_state="shadow",
+            to_state="active",
+            regret_due_at="2026-04-18",
+            reason="Repair missing Step 4B governance event",
+            config_snapshot_hash="repair456",
+            effective_at="2026-04-04T00:00:00Z",
+            repair_source="artifacts/regret-check/step4b-baseline-2026-04-05/summary.md",
+        )
+        events = await get_events(store, action_type="feature_promote")
+        assert events[0].metadata["effective_at"] == "2026-04-04T00:00:00Z"
+        assert events[0].metadata["repair_source"].endswith("summary.md")
+
+    @pytest.mark.asyncio
     async def test_invalid_state_raises_validation_error(self, store, operator):
         with pytest.raises((ValidationError, GovernanceStatePolicyError)):
             await record_feature_promote(

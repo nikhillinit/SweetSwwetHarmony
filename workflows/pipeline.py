@@ -2102,6 +2102,10 @@ class DiscoveryPipeline:
                                 sells_to_or_operates_in=getattr(
                                     thesis_result, "llm_sells_to_or_operates_in", None
                                 ),
+                                prompt_version=getattr(
+                                    thesis_result, "llm_prompt_version", None
+                                ),
+                                model=getattr(thesis_result, "llm_model", None),
                                 rationale=thesis_result.llm_rationale,
                                 classification_status=(
                                     thesis_result.llm_classification_status or "success"
@@ -2155,6 +2159,10 @@ class DiscoveryPipeline:
                                 sells_to_or_operates_in=getattr(
                                     thesis_result, "llm_sells_to_or_operates_in", None
                                 ),
+                                prompt_version=getattr(
+                                    thesis_result, "llm_prompt_version", None
+                                ),
+                                model=getattr(thesis_result, "llm_model", None),
                                 rationale=thesis_result.llm_rationale,
                                 classification_status=(
                                     thesis_result.llm_classification_status or "success"
@@ -2217,6 +2225,10 @@ class DiscoveryPipeline:
                             sells_to_or_operates_in=getattr(
                                 thesis_result, "llm_sells_to_or_operates_in", None
                             ),
+                            prompt_version=getattr(
+                                thesis_result, "llm_prompt_version", None
+                            ),
+                            model=getattr(thesis_result, "llm_model", None),
                             rationale=thesis_result.llm_rationale,
                             classification_status=(
                                 thesis_result.llm_classification_status or "success"

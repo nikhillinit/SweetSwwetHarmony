@@ -180,6 +180,30 @@ class TestComputeCollectorVolume:
         result = aggregate_daily_metrics(db, "2026-02-10")
         assert result["collector_volume"]["value"] == 0.0
 
+    def test_zero_backfill_for_absent_collectors(self, db):
+        """Collectors with prior history get explicit zero rows when absent."""
+        from monitoring.daily_aggregator import aggregate_daily_metrics
+
+        # Day 1: github and sec_edgar both produce signals
+        for i in range(1, 4):
+            _insert_signal(db, i, "github", 0.5, "2026-02-09T12:00:00+00:00")
+        for i in range(4, 6):
+            _insert_signal(db, i, "sec_edgar", 0.6, "2026-02-09T12:00:00+00:00")
+        db.commit()
+        aggregate_daily_metrics(db, "2026-02-09")
+
+        # Day 2: only sec_edgar produces signals (github absent)
+        _insert_signal(db, 10, "sec_edgar", 0.6, "2026-02-10T12:00:00+00:00")
+        db.commit()
+        result = aggregate_daily_metrics(db, "2026-02-10")
+
+        # github should have an explicit zero row
+        assert "collector_volume:collector:github" in result
+        assert result["collector_volume:collector:github"]["value"] == 0.0
+        assert result["collector_volume:collector:github"]["n"] == 0
+        # sec_edgar should have its actual count
+        assert result["collector_volume:collector:sec_edgar"]["value"] == 1.0
+
 
 class TestComputeCalibration:
     """Test calibration ECE computation (D13)."""

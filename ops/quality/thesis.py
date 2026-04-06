@@ -43,6 +43,9 @@ class ThesisRunResult:
     classification_status: str = "success"
 
 
+THESIS_REFRESH_LATEST_V1_DAYS = 90
+
+
 def _iso_days_ago(days: int) -> str:
     return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
@@ -119,6 +122,7 @@ def store_thesis_classification(
     competitor_flag: bool = False,
     competitor_match: Optional[Dict[str, Any]] = None,
     classified_at: Optional[str] = None,
+    commit: bool = True,
 ) -> int:
     _ensure_thesis_table_exists(conn)
 
@@ -170,17 +174,20 @@ def store_thesis_classification(
             classified_at,
         ),
     )
-    conn.commit()
+    if commit:
+        conn.commit()
     return int(cur.lastrowid)
 
 
-def classify_signal_llm(
+def _classify_signal_llm_impl(
     conn: sqlite3.Connection,
     *,
     signal_id: int,
     model: str = "gemini-2.0-flash",
     prompt_version: str = "quality-ops-v1",
-) -> ThesisRunResult:
+    classified_at: Optional[str] = None,
+    commit: bool = True,
+) -> Tuple[ThesisRunResult, int]:
     """
     Runs keyword matcher + LLM classifier and stores result to thesis_classifications.
 
@@ -229,6 +236,8 @@ def classify_signal_llm(
     )
     latency_ms = int((time.time() - start) * 1000)
 
+    classified_at = classified_at or utc_now_iso()
+
     classification_id = store_thesis_classification(
         conn,
         signal_id=signal_id,
@@ -249,6 +258,8 @@ def classify_signal_llm(
         output_tokens=None,
         latency_ms=latency_ms,
         classification_status=str(classification.classification_status or "success"),
+        classified_at=classified_at,
+        commit=commit,
     )
 
     return ThesisRunResult(
@@ -263,11 +274,27 @@ def classify_signal_llm(
         stage_estimate=str(classification.stage_estimate or ""),
         confidence=str(classification.confidence or ""),
         latency_ms=latency_ms,
-        classified_at=utc_now_iso(),
+        classified_at=classified_at,
         model=model,
         prompt_version=prompt_version,
         classification_status=str(classification.classification_status or "success"),
+    ), classification_id
+
+
+def classify_signal_llm(
+    conn: sqlite3.Connection,
+    *,
+    signal_id: int,
+    model: str = "gemini-2.0-flash",
+    prompt_version: str = "quality-ops-v1",
+) -> ThesisRunResult:
+    result, _ = _classify_signal_llm_impl(
+        conn,
+        signal_id=signal_id,
+        model=model,
+        prompt_version=prompt_version,
     )
+    return result
 
 
 def iter_signals_missing_thesis(
@@ -287,9 +314,44 @@ def iter_signals_missing_thesis(
             FROM thesis_classifications
             GROUP BY signal_id
         ) tc ON tc.signal_id = s.id
-        WHERE s.detected_at >= ?
+        WHERE s.created_at >= ?
           AND tc.max_id IS NULL
-        ORDER BY s.detected_at DESC
+        ORDER BY s.created_at DESC, s.id DESC
+        LIMIT ?
+        """,
+        (since, limit),
+    ).fetchall()
+
+    return [int(r["signal_id"]) for r in rows]
+
+
+def iter_signals_stale_latest_missing_provenance(
+    conn: sqlite3.Connection,
+    *,
+    limit: int = 200,
+) -> List[int]:
+    since = _iso_days_ago(THESIS_REFRESH_LATEST_V1_DAYS)
+
+    rows = conn.execute(
+        """
+        WITH latest_tc AS (
+            SELECT tc.*
+            FROM thesis_classifications tc
+            JOIN (
+                SELECT signal_id, MAX(id) AS max_id
+                FROM thesis_classifications
+                GROUP BY signal_id
+            ) tmax ON tmax.signal_id = tc.signal_id AND tmax.max_id = tc.id
+        )
+        SELECT s.id AS signal_id
+        FROM signals s
+        JOIN latest_tc tc ON tc.signal_id = s.id
+        WHERE s.created_at >= ?
+          AND (
+            tc.model IS NULL OR tc.model = ''
+            OR tc.prompt_version IS NULL OR tc.prompt_version = ''
+          )
+        ORDER BY s.created_at DESC, s.id DESC
         LIMIT ?
         """,
         (since, limit),
@@ -326,6 +388,87 @@ def batch_classify_missing_thesis(
                 break
 
     return {"attempted": len(ids), "succeeded": len(results), "failed": len(errors), "results": results, "errors": errors}
+
+
+def _latest_thesis_row_ids(conn: sqlite3.Connection, signal_id: int) -> tuple[Optional[int], Optional[int]]:
+    latest_by_id_row = conn.execute(
+        """
+        SELECT id
+        FROM thesis_classifications
+        WHERE signal_id = ?
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (signal_id,),
+    ).fetchone()
+    latest_by_time_row = conn.execute(
+        """
+        SELECT id
+        FROM thesis_classifications
+        WHERE signal_id = ?
+        ORDER BY classified_at DESC, id DESC
+        LIMIT 1
+        """,
+        (signal_id,),
+    ).fetchone()
+    latest_by_id = int(latest_by_id_row["id"]) if latest_by_id_row else None
+    latest_by_time = int(latest_by_time_row["id"]) if latest_by_time_row else None
+    return latest_by_id, latest_by_time
+
+
+def batch_refresh_latest_missing_provenance(
+    conn: sqlite3.Connection,
+    *,
+    limit: int = 200,
+    model: str = "gemini-2.0-flash",
+    prompt_version: str = "quality-ops-v1",
+    stop_on_error: bool = False,
+) -> Dict[str, Any]:
+    ids = iter_signals_stale_latest_missing_provenance(conn, limit=limit)
+    results: List[Dict[str, Any]] = []
+    errors: List[Dict[str, Any]] = []
+
+    for sid in ids:
+        conn.execute("SAVEPOINT thesis_refresh_latest")
+        try:
+            result, classification_id = _classify_signal_llm_impl(
+                conn,
+                signal_id=sid,
+                model=model,
+                prompt_version=prompt_version,
+                commit=False,
+            )
+            latest_by_id, latest_by_time = _latest_thesis_row_ids(conn, sid)
+            if latest_by_id != classification_id or latest_by_time != classification_id:
+                raise RuntimeError(
+                    "Refresh row did not become latest by both id and classified_at ordering"
+                )
+            conn.execute("RELEASE SAVEPOINT thesis_refresh_latest")
+            conn.commit()
+            results.append(
+                {
+                    "signal_id": sid,
+                    "classification_id": classification_id,
+                    "thesis_match": result.thesis_match,
+                    "thesis_fit_score": result.thesis_fit_score,
+                    "classified_at": result.classified_at,
+                }
+            )
+        except Exception as e:
+            conn.execute("ROLLBACK TO SAVEPOINT thesis_refresh_latest")
+            conn.execute("RELEASE SAVEPOINT thesis_refresh_latest")
+            errors.append({"signal_id": sid, "error": str(e)})
+            if stop_on_error:
+                break
+
+    return {
+        "attempted": len(ids),
+        "succeeded": len(results),
+        "failed": len(errors),
+        "target_signal_ids": ids,
+        "results": results,
+        "errors": errors,
+    }
 
 
 def batch_classify_recent(

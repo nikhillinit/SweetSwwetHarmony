@@ -11,10 +11,13 @@ from unittest.mock import patch
 
 import pytest
 
+import ops.quality.thesis as thesis_module
 from ops.quality.thesis import (
+    batch_refresh_latest_missing_provenance,
     classify_signal_llm,
     generate_disagreement_report,
     iter_signals_missing_thesis,
+    iter_signals_stale_latest_missing_provenance,
     store_thesis_classification,
 )
 from tests.ops.quality.conftest import _insert_signal, _utc_iso
@@ -221,6 +224,28 @@ class TestIterSignalsMissingThesis:
 
         conn.close()
 
+    def test_iter_signals_missing_thesis_uses_created_at_window(self, quality_db):
+        """Recent ingests with older detected_at values are still eligible."""
+        db_path, _store = quality_db
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON;")
+
+        sid = _insert_signal(
+            conn,
+            source_api="greenhouse_jobs",
+            canonical_key="domain:mercari.com",
+            company_name="Mercari",
+            detected_at="2025-12-15T17:43:09-05:00",
+            created_at=_utc_iso(10),
+        )
+
+        missing = iter_signals_missing_thesis(conn, days=90, limit=100)
+
+        assert sid in missing
+
+        conn.close()
+
 
 class TestGenerateDisagreementReport:
     """Tests for generate_disagreement_report."""
@@ -319,6 +344,399 @@ class TestGenerateDisagreementReport:
         assert "**Total classified**: 2" in report
         assert "**Total disagreements**: 2" in report  # Both are disagreements
 
+        conn.close()
+
+
+class TestIterSignalsStaleLatestMissingProvenance:
+    """Tests for stale latest-row selector semantics."""
+
+    def test_selector_excludes_signal_with_no_thesis_row(self, quality_db):
+        db_path, _store = quality_db
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON;")
+
+        sid = _insert_signal(
+            conn,
+            source_api="github",
+            canonical_key="domain:no-thesis.com",
+            created_at=_utc_iso(5),
+        )
+
+        result = iter_signals_stale_latest_missing_provenance(conn, limit=100)
+
+        assert sid not in result
+        conn.close()
+
+    def test_selector_includes_stale_latest_row(self, quality_db):
+        db_path, _store = quality_db
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON;")
+
+        sid = _insert_signal(
+            conn,
+            source_api="github",
+            canonical_key="domain:stale-latest.com",
+            created_at=_utc_iso(5),
+        )
+        tc_id = _store_classification_for_signal(conn, sid, "domain:stale-latest.com")
+        conn.execute(
+            "UPDATE thesis_classifications SET model = NULL, prompt_version = NULL WHERE id = ?",
+            (tc_id,),
+        )
+        conn.commit()
+
+        result = iter_signals_stale_latest_missing_provenance(conn, limit=100)
+
+        assert sid in result
+        conn.close()
+
+    def test_selector_excludes_fresh_latest_row(self, quality_db):
+        db_path, _store = quality_db
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON;")
+
+        sid = _insert_signal(
+            conn,
+            source_api="github",
+            canonical_key="domain:fresh-latest.com",
+            created_at=_utc_iso(5),
+        )
+        _store_classification_for_signal(conn, sid, "domain:fresh-latest.com")
+
+        result = iter_signals_stale_latest_missing_provenance(conn, limit=100)
+
+        assert sid not in result
+        conn.close()
+
+    def test_selector_uses_created_at_window(self, quality_db):
+        db_path, _store = quality_db
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON;")
+
+        sid = _insert_signal(
+            conn,
+            source_api="greenhouse_jobs",
+            canonical_key="domain:recent-created.com",
+            company_name="Recent Created",
+            detected_at="2025-12-15T17:43:09-05:00",
+            created_at=_utc_iso(10),
+        )
+        tc_id = _store_classification_for_signal(conn, sid, "domain:recent-created.com")
+        conn.execute(
+            "UPDATE thesis_classifications SET model = NULL, prompt_version = NULL WHERE id = ?",
+            (tc_id,),
+        )
+        conn.commit()
+
+        result = iter_signals_stale_latest_missing_provenance(conn, limit=100)
+
+        assert sid in result
+        conn.close()
+
+    def test_selector_excludes_signals_outside_created_at_window(self, quality_db):
+        db_path, _store = quality_db
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON;")
+
+        sid = _insert_signal(
+            conn,
+            source_api="news_api",
+            canonical_key="domain:old-created.com",
+            created_at=_utc_iso(120),
+        )
+        tc_id = _store_classification_for_signal(conn, sid, "domain:old-created.com")
+        conn.execute(
+            "UPDATE thesis_classifications SET model = NULL, prompt_version = NULL WHERE id = ?",
+            (tc_id,),
+        )
+        conn.commit()
+
+        result = iter_signals_stale_latest_missing_provenance(conn, limit=100)
+
+        assert sid not in result
+        conn.close()
+
+
+class TestBatchRefreshLatestMissingProvenance:
+    """Tests for append-only latest-row refresh semantics."""
+
+    def test_batch_refresh_appends_new_latest_row(self, quality_db):
+        db_path, _store = quality_db
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON;")
+
+        sid = _insert_signal(
+            conn,
+            source_api="github",
+            canonical_key="domain:refresh-latest.com",
+            company_name="Refresh Latest",
+            raw_data=json.dumps(
+                {
+                    "title": "Refresh Latest",
+                    "description": "Consumer wellness app",
+                    "url": "https://refresh-latest.example",
+                }
+            ),
+            created_at=_utc_iso(5),
+        )
+        tc_id = _store_classification_for_signal(conn, sid, "domain:refresh-latest.com")
+        old = conn.execute(
+            "SELECT id, classified_at FROM thesis_classifications WHERE id = ?",
+            (tc_id,),
+        ).fetchone()
+        conn.execute(
+            "UPDATE thesis_classifications SET model = NULL, prompt_version = NULL, classified_at = ? WHERE id = ?",
+            (_utc_iso(30), tc_id),
+        )
+        conn.commit()
+
+        class FakeClassifier:
+            def __init__(self, model: str):
+                self.model = model
+
+            def classify_sync(self, signal_data):
+                return types.SimpleNamespace(
+                    thesis_match=True,
+                    thesis_fit_score=0.82,
+                    category="consumer_health_tech",
+                    stage_estimate="Seed",
+                    confidence="high",
+                    rationale="Refreshed classification",
+                    key_signals=["consumer", "wellness"],
+                    classification_status="success",
+                )
+
+        fake_module = types.SimpleNamespace(LLMClassifier=FakeClassifier)
+        original_module = sys.modules.get("consumer.thesis_filter.llm_classifier")
+        sys.modules["consumer.thesis_filter.llm_classifier"] = fake_module
+        try:
+            summary = batch_refresh_latest_missing_provenance(
+                conn,
+                limit=100,
+                model="test-model",
+                prompt_version="refresh-v1",
+            )
+        finally:
+            if original_module is None:
+                sys.modules.pop("consumer.thesis_filter.llm_classifier", None)
+            else:
+                sys.modules["consumer.thesis_filter.llm_classifier"] = original_module
+
+        assert summary["attempted"] == 1
+        assert summary["succeeded"] == 1
+        assert summary["failed"] == 0
+
+        rows = conn.execute(
+            "SELECT id, classified_at, model, prompt_version FROM thesis_classifications WHERE signal_id = ? ORDER BY id ASC",
+            (sid,),
+        ).fetchall()
+        assert len(rows) == 2
+        assert rows[-1]["id"] > old["id"]
+        assert rows[-1]["classified_at"] > old["classified_at"]
+        assert rows[-1]["model"] == "test-model"
+        assert rows[-1]["prompt_version"] == "refresh-v1"
+
+        latest_by_time = conn.execute(
+            "SELECT id FROM thesis_classifications WHERE signal_id = ? ORDER BY classified_at DESC, id DESC LIMIT 1",
+            (sid,),
+        ).fetchone()["id"]
+        latest_by_id = conn.execute(
+            "SELECT id FROM thesis_classifications WHERE signal_id = ? ORDER BY id DESC LIMIT 1",
+            (sid,),
+        ).fetchone()["id"]
+        assert latest_by_time == rows[-1]["id"]
+        assert latest_by_id == rows[-1]["id"]
+        conn.close()
+
+    def test_batch_refresh_is_idempotent_after_success(self, quality_db):
+        db_path, _store = quality_db
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON;")
+
+        sid = _insert_signal(conn, source_api="github", canonical_key="domain:idempotent.com", created_at=_utc_iso(5))
+        tc_id = _store_classification_for_signal(conn, sid, "domain:idempotent.com")
+        conn.execute(
+            "UPDATE thesis_classifications SET model = NULL, prompt_version = NULL WHERE id = ?",
+            (tc_id,),
+        )
+        conn.commit()
+
+        class FakeClassifier:
+            def __init__(self, model: str):
+                self.model = model
+
+            def classify_sync(self, signal_data):
+                return types.SimpleNamespace(
+                    thesis_match=True,
+                    thesis_fit_score=0.8,
+                    category="consumer_cpg",
+                    stage_estimate="Seed",
+                    confidence="high",
+                    rationale="Refreshed classification",
+                    key_signals=["consumer"],
+                    classification_status="success",
+                )
+
+        fake_module = types.SimpleNamespace(LLMClassifier=FakeClassifier)
+        original_module = sys.modules.get("consumer.thesis_filter.llm_classifier")
+        sys.modules["consumer.thesis_filter.llm_classifier"] = fake_module
+        try:
+            first = batch_refresh_latest_missing_provenance(conn, limit=100, model="test-model", prompt_version="refresh-v1")
+            second = batch_refresh_latest_missing_provenance(conn, limit=100, model="test-model", prompt_version="refresh-v1")
+        finally:
+            if original_module is None:
+                sys.modules.pop("consumer.thesis_filter.llm_classifier", None)
+            else:
+                sys.modules["consumer.thesis_filter.llm_classifier"] = original_module
+
+        assert first["attempted"] == 1
+        assert first["succeeded"] == 1
+        assert second["attempted"] == 0
+        assert second["succeeded"] == 0
+        conn.close()
+
+    def test_batch_refresh_partial_failure_accounting(self, quality_db):
+        db_path, _store = quality_db
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON;")
+
+        sid_ok = _insert_signal(conn, source_api="github", canonical_key="domain:ok.com", created_at=_utc_iso(5))
+        sid_fail = _insert_signal(conn, source_api="github", canonical_key="domain:fail.com", created_at=_utc_iso(5))
+        tc_ok = _store_classification_for_signal(conn, sid_ok, "domain:ok.com")
+        tc_fail = _store_classification_for_signal(conn, sid_fail, "domain:fail.com")
+        conn.execute(
+            "UPDATE thesis_classifications SET model = NULL, prompt_version = NULL WHERE id IN (?, ?)",
+            (tc_ok, tc_fail),
+        )
+        conn.commit()
+
+        class FakeClassifier:
+            def __init__(self, model: str):
+                self.model = model
+
+            def classify_sync(self, signal_data):
+                if signal_data["title"] == "Test Company":
+                    raise RuntimeError("boom")
+                return types.SimpleNamespace(
+                    thesis_match=True,
+                    thesis_fit_score=0.8,
+                    category="consumer_cpg",
+                    stage_estimate="Seed",
+                    confidence="high",
+                    rationale="Refreshed classification",
+                    key_signals=["consumer"],
+                    classification_status="success",
+                )
+
+        # Distinguish the second signal title
+        conn.execute("UPDATE signals SET company_name = 'Okay Co' WHERE id = ?", (sid_ok,))
+        conn.commit()
+
+        fake_module = types.SimpleNamespace(LLMClassifier=FakeClassifier)
+        original_module = sys.modules.get("consumer.thesis_filter.llm_classifier")
+        sys.modules["consumer.thesis_filter.llm_classifier"] = fake_module
+        try:
+            summary = batch_refresh_latest_missing_provenance(
+                conn,
+                limit=100,
+                model="test-model",
+                prompt_version="refresh-v1",
+            )
+        finally:
+            if original_module is None:
+                sys.modules.pop("consumer.thesis_filter.llm_classifier", None)
+            else:
+                sys.modules["consumer.thesis_filter.llm_classifier"] = original_module
+
+        assert summary["attempted"] == 2
+        assert summary["succeeded"] == 1
+        assert summary["failed"] == 1
+        assert any(err["signal_id"] == sid_fail for err in summary["errors"])
+
+        ok_count = conn.execute(
+            "SELECT COUNT(*) FROM thesis_classifications WHERE signal_id = ?",
+            (sid_ok,),
+        ).fetchone()[0]
+        fail_count = conn.execute(
+            "SELECT COUNT(*) FROM thesis_classifications WHERE signal_id = ?",
+            (sid_fail,),
+        ).fetchone()[0]
+        assert ok_count == 2
+        assert fail_count == 1
+        conn.close()
+
+    def test_batch_refresh_rejects_backdated_latest_row(self, quality_db):
+        db_path, _store = quality_db
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON;")
+
+        sid = _insert_signal(
+            conn,
+            source_api="github",
+            canonical_key="domain:future-latest.com",
+            created_at=_utc_iso(5),
+        )
+        tc_id = _store_classification_for_signal(conn, sid, "domain:future-latest.com")
+        conn.execute(
+            "UPDATE thesis_classifications SET model = NULL, prompt_version = NULL, classified_at = ? WHERE id = ?",
+            ("2099-01-01T00:00:00+00:00", tc_id),
+        )
+        conn.commit()
+
+        def fake_impl(conn, *, signal_id, model, prompt_version, classified_at=None, commit=True):
+            new_id = store_thesis_classification(
+                conn,
+                signal_id=signal_id,
+                canonical_key="domain:future-latest.com",
+                keyword_score=0.5,
+                keyword_category="consumer_cpg",
+                negative_keywords=[],
+                thesis_match=True,
+                thesis_fit_score=0.8,
+                category="consumer_cpg",
+                stage_estimate="Seed",
+                confidence="medium",
+                rationale="Backdated refresh",
+                key_signals=["consumer"],
+                prompt_version=prompt_version,
+                model=model,
+                input_tokens=None,
+                output_tokens=None,
+                latency_ms=10,
+                classified_at="2020-01-01T00:00:00+00:00",
+                commit=False,
+            )
+            return types.SimpleNamespace(
+                thesis_match=True,
+                thesis_fit_score=0.8,
+                classified_at="2020-01-01T00:00:00+00:00",
+            ), new_id
+
+        with patch.object(thesis_module, "_classify_signal_llm_impl", fake_impl):
+            summary = batch_refresh_latest_missing_provenance(
+                conn,
+                limit=100,
+                model="test-model",
+                prompt_version="refresh-v1",
+            )
+
+        assert summary["attempted"] == 1
+        assert summary["succeeded"] == 0
+        assert summary["failed"] == 1
+        row_count = conn.execute(
+            "SELECT COUNT(*) FROM thesis_classifications WHERE signal_id = ?",
+            (sid,),
+        ).fetchone()[0]
+        assert row_count == 1
         conn.close()
 
 

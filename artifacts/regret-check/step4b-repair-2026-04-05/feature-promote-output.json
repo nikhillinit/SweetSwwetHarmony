@@ -1,0 +1,6 @@
+{
+  "event_id": 21,
+  "action": "feature_promote",
+  "feature": "MERGE_WRITES_ENABLED",
+  "correlation_id": "gov-cli-82bbaf69621d"
+}

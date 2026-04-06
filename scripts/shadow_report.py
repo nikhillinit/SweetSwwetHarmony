@@ -38,6 +38,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from utils.db_path_helper import resolve_db_path_env
+
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -598,7 +600,7 @@ def main():
     export_parser.add_argument(
         "--db-path",
         type=str,
-        default="signals.db",
+        default=resolve_db_path_env(),
         help="Path to SignalStore database (default: signals.db)",
     )
 

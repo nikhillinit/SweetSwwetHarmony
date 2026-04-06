@@ -1,0 +1,20 @@
+﻿[
+  {
+    "id": 17,
+    "action_type": "regret_check",
+    "entity_type": "feature_flag",
+    "entity_id": "DELIVERY_MODE",
+    "reason": "batch_publish stable since 2026-03-16, obs window clean, thesis v1.6.0 merged, 0 drift alerts",
+    "metadata": "{\"action_type\": \"regret_check\", \"verdict\": \"pass\", \"canary_verdict\": \"pass\", \"drift_status\": \"in_control\", \"window_days\": 14}",
+    "created_at": "2026-04-04T07:20:49.900541+00:00"
+  },
+  {
+    "id": 16,
+    "action_type": "regret_check",
+    "entity_type": "feature_flag",
+    "entity_id": "LLM_THESIS_MODE",
+    "reason": "v1.6.0 merged with 100% golden set, provenance fix live, 0 drift alerts, canary passing",
+    "metadata": "{\"action_type\": \"regret_check\", \"verdict\": \"pass\", \"canary_verdict\": \"pass\", \"drift_status\": \"in_control\", \"window_days\": 14}",
+    "created_at": "2026-04-04T07:20:48.621984+00:00"
+  }
+]

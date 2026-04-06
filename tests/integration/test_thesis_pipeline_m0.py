@@ -50,6 +50,8 @@ def _make_thesis_result(routing: RoutingDecision) -> ThesisFilterResult:
         llm_score=0.3,
         llm_category="consumer_cpg",
         llm_rationale="test rationale",
+        llm_model="gemini-2.0-flash",
+        llm_prompt_version="v1.6.0",
         confidence_adjustment=0.05,
         intent_phrases_matched=["healthy food"],
         domain_match=False,
@@ -254,6 +256,8 @@ class TestThesisPipelineM0:
                     llm_score=0.20,
                     llm_category="excluded",
                     llm_rationale="test reject",
+                    llm_model="gemini-2.0-flash",
+                    llm_prompt_version="v1.6.0",
                     confidence_adjustment=-0.05,
                 )
             )
@@ -289,6 +293,8 @@ class TestThesisPipelineM0:
 
             classification = await pipeline._store.get_thesis_classification(signal.canonical_key)
             assert classification is not None
+            assert classification["model"] == "gemini-2.0-flash"
+            assert classification["prompt_version"] == "v1.6.0"
 
             logs = await pipeline._store.get_shadow_logs(
                 feature_name="thesis_match",
@@ -354,6 +360,8 @@ class TestThesisPipelineM0:
                     llm_score=0.15,
                     llm_category="excluded",
                     llm_rationale="test reject active",
+                    llm_model="gemini-2.0-flash",
+                    llm_prompt_version="v1.6.0",
                     confidence_adjustment=-0.05,
                 )
             )
@@ -390,6 +398,8 @@ class TestThesisPipelineM0:
 
             cls = await pipeline._store.get_thesis_classification(signal.canonical_key)
             assert cls is not None
+            assert cls["model"] == "gemini-2.0-flash"
+            assert cls["prompt_version"] == "v1.6.0"
 
             logs = await pipeline._store.get_shadow_logs(
                 feature_name="thesis_match",
@@ -402,6 +412,166 @@ class TestThesisPipelineM0:
             assert updated is not None
             assert updated.processing_status == "rejected"
 
+        finally:
+            await pipeline.close()
+
+    @pytest.mark.asyncio
+    async def test_active_held_persists_llm_provenance(self, tmp_path):
+        """Active HELD routing should persist llm model/prompt_version via the held save path."""
+        config = PipelineConfig(
+            db_path=str(tmp_path / "m0_active_held_provenance.db"),
+            warmup_suppression_cache=False,
+            use_thesis_filter=True,
+            use_competitor_detection=False,
+            use_founder_scoring=False,
+            use_velocity_tracking=False,
+            use_enrichment_boost=False,
+            use_consolidation=False,
+            use_gating=False,
+        )
+        pipeline = DiscoveryPipeline(config)
+        await pipeline.initialize()
+
+        try:
+            signal_id = await pipeline._store.save_signal(
+                signal_type="funding_event",
+                source_api="github",
+                canonical_key="domain:active-held.ai",
+                company_name="Active Held Co",
+                confidence=0.85,
+                raw_data={"description": "ambiguous employer-sponsored wellness app"},
+            )
+            signal = await pipeline._store.get_signal(signal_id)
+            assert signal is not None
+
+            consolidated = ConsolidatedSignal(
+                canonical_key=signal.canonical_key,
+                company_name=signal.company_name or "Active Held Co",
+                contributing_signal_ids=[signal.id],
+                signal_types=[signal.signal_type],
+                source_apis=[signal.source_api],
+                aggregated_confidence=signal.confidence,
+                earliest_detected_at=signal.detected_at,
+                latest_detected_at=signal.detected_at,
+                descriptions=["ambiguous employer-sponsored wellness app"],
+            )
+
+            pipeline._thesis_filter.classify = AsyncMock(
+                return_value=ThesisFilterResult(
+                    routing=RoutingDecision.HELD,
+                    keyword_score=0.10,
+                    keyword_category="consumer_health_tech",
+                    negative_keywords=[],
+                    llm_score=0.25,
+                    llm_category="consumer_health_tech",
+                    llm_rationale="test held active",
+                    llm_model="gemini-2.0-flash",
+                    llm_prompt_version="v1.6.0",
+                    confidence_adjustment=-0.05,
+                )
+            )
+
+            original_update_status = pipeline._store.update_signal_status
+            pipeline._store.update_signal_status = AsyncMock(wraps=original_update_status)
+
+            with patch.dict(os.environ, {"LLM_THESIS_MODE": "active"}):
+                result = await pipeline._process_company(
+                    [signal], dry_run=True, consolidated=consolidated,
+                )
+
+            assert result["decision"] == PushDecision.HOLD
+            cls = await pipeline._store.get_thesis_classification(signal.canonical_key)
+            assert cls is not None
+            assert cls["model"] == "gemini-2.0-flash"
+            assert cls["prompt_version"] == "v1.6.0"
+            pipeline._store.update_signal_status.assert_awaited_once()
+        finally:
+            await pipeline.close()
+
+    @pytest.mark.asyncio
+    async def test_qualified_path_persists_llm_provenance(self, tmp_path):
+        """Qualified routing should persist llm model/prompt_version via the qualified save path."""
+        config = PipelineConfig(
+            db_path=str(tmp_path / "m0_qualified_provenance.db"),
+            warmup_suppression_cache=False,
+            use_thesis_filter=True,
+            use_competitor_detection=False,
+            use_founder_scoring=False,
+            use_velocity_tracking=False,
+            use_enrichment_boost=False,
+            use_consolidation=False,
+            use_gating=False,
+        )
+        pipeline = DiscoveryPipeline(config)
+        await pipeline.initialize()
+
+        try:
+            signal_id = await pipeline._store.save_signal(
+                signal_type="funding_event",
+                source_api="github",
+                canonical_key="domain:qualified-provenance.ai",
+                company_name="Qualified Provenance Co",
+                confidence=0.85,
+                raw_data={"description": "consumer meal kit startup"},
+            )
+            signal = await pipeline._store.get_signal(signal_id)
+            assert signal is not None
+
+            consolidated = ConsolidatedSignal(
+                canonical_key=signal.canonical_key,
+                company_name=signal.company_name or "Qualified Provenance Co",
+                contributing_signal_ids=[signal.id],
+                signal_types=[signal.signal_type],
+                source_apis=[signal.source_api],
+                aggregated_confidence=signal.confidence,
+                earliest_detected_at=signal.detected_at,
+                latest_detected_at=signal.detected_at,
+                descriptions=["consumer meal kit startup"],
+            )
+
+            pipeline._thesis_filter.classify = AsyncMock(
+                return_value=ThesisFilterResult(
+                    routing=RoutingDecision.QUALIFIED,
+                    keyword_score=0.80,
+                    keyword_category="consumer_cpg",
+                    keyword_matches=["meal kit"],
+                    negative_keywords=[],
+                    llm_score=0.82,
+                    llm_category="consumer_cpg",
+                    llm_rationale="test qualified",
+                    llm_model="gemini-2.0-flash",
+                    llm_prompt_version="v1.6.0",
+                    confidence_adjustment=0.05,
+                )
+            )
+
+            pipeline._gate = MagicMock()
+            pipeline._gate.POLICY_VERSION = "test-policy"
+            pipeline._gate.HIGH_CONFIDENCE_THRESHOLD = 0.8
+            pipeline._gate.MEDIUM_CONFIDENCE_THRESHOLD = 0.5
+            pipeline._gate.score_recalibration_factor = 1.0
+            pipeline._gate.strict_mode = False
+            pipeline._gate.evaluate.return_value = VerificationResult(
+                decision=PushDecision.HOLD,
+                verification_status=VerificationStatus.SINGLE_SOURCE,
+                confidence_score=0.30,
+                confidence_breakdown={"overall": 0.30},
+                reason="test hold",
+                suggested_status="Tracking",
+                signals_used=[str(signal.id)],
+                sources_checked=[signal.source_api],
+                verification_details=[],
+            )
+
+            with patch.dict(os.environ, {"LLM_THESIS_MODE": "active"}):
+                await pipeline._process_company(
+                    [signal], dry_run=True, consolidated=consolidated,
+                )
+
+            cls = await pipeline._store.get_thesis_classification(signal.canonical_key)
+            assert cls is not None
+            assert cls["model"] == "gemini-2.0-flash"
+            assert cls["prompt_version"] == "v1.6.0"
         finally:
             await pipeline.close()
 

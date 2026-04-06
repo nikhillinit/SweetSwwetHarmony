@@ -19,6 +19,9 @@ import sqlite3
 import sys
 from pathlib import Path
 
+from utils.db_ops_ledger import append_db_ops_ledger
+from utils.db_tool_lock import DBToolLock
+
 
 def check_integrity(db_path: str) -> bool:
     """
@@ -184,40 +187,72 @@ def main():
         print(f"[ERROR] Database not found: {args.db_path}")
         sys.exit(1)
 
+    needs_lock = args.all or args.checkpoint or args.vacuum
+    lock = None
+    if needs_lock:
+        lock = DBToolLock(args.db_path, tool_name="db_maintenance")
+        if not lock.acquire(timeout_seconds=5):
+            holder = lock.get_holder_info()
+            append_db_ops_ledger(
+                tool_name="db_maintenance",
+                db_path=args.db_path,
+                action="maintenance",
+                status="lock_blocked",
+                details={"holder": holder},
+            )
+            print(f"[ERROR] Could not acquire DB tool lock. Holder: {holder}")
+            sys.exit(1)
+
     all_ok = True
+    actions = []
+    try:
+        # Run requested operations
+        if args.all or args.stats:
+            actions.append("stats")
+            print(f"\n=== Database Stats: {args.db_path} ===")
+            stats = get_db_stats(args.db_path)
+            for key, value in stats.items():
+                if isinstance(value, int) and key != "journal_mode":
+                    print(f"  {key}: {value:,}")
+                else:
+                    print(f"  {key}: {value}")
 
-    # Run requested operations
-    if args.all or args.stats:
-        print(f"\n=== Database Stats: {args.db_path} ===")
-        stats = get_db_stats(args.db_path)
-        for key, value in stats.items():
-            if isinstance(value, int) and key != "journal_mode":
-                print(f"  {key}: {value:,}")
-            else:
-                print(f"  {key}: {value}")
+        if args.all or args.integrity_check:
+            actions.append("integrity_check")
+            print(f"\n=== Integrity Check ===")
+            if not check_integrity(args.db_path):
+                all_ok = False
 
-    if args.all or args.integrity_check:
-        print(f"\n=== Integrity Check ===")
-        if not check_integrity(args.db_path):
-            all_ok = False
+        if args.all or args.checkpoint:
+            actions.append("checkpoint")
+            print(f"\n=== WAL Checkpoint ===")
+            if not checkpoint_wal(args.db_path):
+                all_ok = False
 
-    if args.all or args.checkpoint:
-        print(f"\n=== WAL Checkpoint ===")
-        if not checkpoint_wal(args.db_path):
-            all_ok = False
+        if args.vacuum:
+            actions.append("vacuum")
+            print(f"\n=== Vacuum ===")
+            if not vacuum_db(args.db_path):
+                all_ok = False
 
-    if args.vacuum:
-        print(f"\n=== Vacuum ===")
-        if not vacuum_db(args.db_path):
-            all_ok = False
+        append_db_ops_ledger(
+            tool_name="db_maintenance",
+            db_path=args.db_path,
+            action=",".join(actions) or "none",
+            status="success" if all_ok else "error",
+            details={"all": args.all},
+        )
 
-    # Exit with appropriate code
-    if not all_ok:
-        print("\n[WARN] Some operations failed")
-        sys.exit(1)
-    else:
-        print("\n[OK] All operations completed successfully")
-        sys.exit(0)
+        # Exit with appropriate code
+        if not all_ok:
+            print("\n[WARN] Some operations failed")
+            sys.exit(1)
+        else:
+            print("\n[OK] All operations completed successfully")
+            sys.exit(0)
+    finally:
+        if lock is not None:
+            lock.release()
 
 
 if __name__ == "__main__":

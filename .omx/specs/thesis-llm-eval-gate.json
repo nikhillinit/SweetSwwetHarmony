@@ -1,14 +1,18 @@
 {
-  "accuracy_delta": 0.6,
+  "accuracy_delta": 0.640625,
   "authorized_changes": [
     "Add B2B-in-disguise prompt guidance for sells-tools-to-industry vs operates-in-industry.",
     "Add only the minimum structured decomposition fields proven useful by the eval gate.",
     "Persist new prompt/schema fields only when they improve routing/reporting evidence."
   ],
+  "benchmark_fingerprint": "536e081d4ceec265a27cf037f7bb33ae88831895554bf8ebdbc29bf578d392fc",
+  "benchmark_id": "thesis_llm_golden_set",
+  "benchmark_manifest_path": "tests\\fixtures\\thesis_llm_golden_set.manifest.json",
+  "benchmark_version": "2026-04-05.v2",
   "blocked_reasons": [],
   "decision": "go",
   "deferred_changes": [],
-  "keyword_accuracy": 0.4,
+  "keyword_accuracy": 0.359375,
   "llm_accuracy": 1.0,
   "narrowed_changes": [
     "Keep operational truthfulness/routing fixes outside the prompt/schema gate.",

@@ -1,0 +1,51 @@
+{
+  "accuracy": 1.0,
+  "benchmark_fingerprint": "a767ff5d484324493ebabeb0bee0968b6653f9ae5dc9c26c61619ca30e24fa13",
+  "benchmark_id": "thesis_llm_golden_set",
+  "benchmark_manifest_path": "artifacts\\thesis_diagnostics\\thesis_llm_golden_set.2026-04-03.v1.manifest.json",
+  "benchmark_sample_count": 40,
+  "benchmark_version": "2026-04-03.v1",
+  "comparison": null,
+  "confusion_matrix": {
+    "HELD": {
+      "HELD": 4,
+      "QUALIFIED": 0,
+      "REJECTED": 0
+    },
+    "QUALIFIED": {
+      "HELD": 0,
+      "QUALIFIED": 20,
+      "REJECTED": 0
+    },
+    "REJECTED": {
+      "HELD": 0,
+      "QUALIFIED": 0,
+      "REJECTED": 16
+    }
+  },
+  "dataset_path": "tests\\fixtures\\thesis_llm_golden_set.jsonl",
+  "dry_run": true,
+  "error_count": 0,
+  "per_class_metrics": {
+    "HELD": {
+      "f1": 1.0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 4
+    },
+    "QUALIFIED": {
+      "f1": 1.0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 20
+    },
+    "REJECTED": {
+      "f1": 1.0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 16
+    }
+  },
+  "run_id": "smoke_validation_2",
+  "total_samples": 40
+}

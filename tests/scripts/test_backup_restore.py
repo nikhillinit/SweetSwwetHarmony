@@ -202,6 +202,36 @@ class TestRestoreBackup:
 
         assert _row_count(db) == 5
 
+    def test_resolves_target_sidecars_when_checkpointable(self, tmp_path):
+        db = _create_test_db(tmp_path / "signals.db")
+        backup_path = create_backup(db, tmp_path / "backups")
+        (tmp_path / "signals.db-wal").write_bytes(b"wal")
+        (tmp_path / "signals.db-shm").write_bytes(b"shm")
+
+        with patch("scripts.restore_db._check_api_reachable", return_value=False):
+            restore_backup(backup_path, db)
+
+        assert _row_count(db) == 5
+        assert not (tmp_path / "signals.db-wal").exists()
+        assert not (tmp_path / "signals.db-shm").exists()
+
+    def test_refuses_when_target_sidecars_owned_by_active_writer(self, tmp_path):
+        db = _create_test_db(tmp_path / "signals.db", wal=True)
+        backup_path = create_backup(db, tmp_path / "backups")
+
+        writer = sqlite3.connect(str(db), timeout=1)
+        try:
+            writer.execute("PRAGMA journal_mode=WAL")
+            writer.execute("BEGIN IMMEDIATE")
+            writer.execute("INSERT INTO data VALUES (100, 'wal-row')")
+
+            with patch("scripts.restore_db._check_api_reachable", return_value=False):
+                with pytest.raises(RuntimeError, match="active writer"):
+                    restore_backup(backup_path, db)
+        finally:
+            writer.rollback()
+            writer.close()
+
     def test_restore_to_new_path(self, tmp_path):
         """Restore works even if target DB doesn't exist yet."""
         db = _create_test_db(tmp_path / "original.db")

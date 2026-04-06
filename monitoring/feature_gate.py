@@ -171,7 +171,8 @@ def get_overdue_regret_checks(
             overdue = []
             for row in promotions:
                 entity_id = row["entity_id"]
-                promoted_at = row["created_at"]
+                recorded_at = row["created_at"]
+                promoted_at = recorded_at
 
                 # Prefer metadata.regret_due_at when available
                 regret_due_at = None
@@ -180,6 +181,7 @@ def get_overdue_regret_checks(
                     try:
                         meta = json.loads(raw_meta) if isinstance(raw_meta, str) else raw_meta
                         regret_due_at = meta.get("regret_due_at")
+                        promoted_at = meta.get("effective_at") or recorded_at
                     except (json.JSONDecodeError, TypeError):
                         pass
 
@@ -205,6 +207,7 @@ def get_overdue_regret_checks(
                     overdue.append({
                         "entity_id": entity_id,
                         "promoted_at": promoted_at,
+                        "recorded_at": recorded_at,
                         "due_at": due_at.isoformat(),
                     })
 
