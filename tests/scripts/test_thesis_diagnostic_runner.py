@@ -39,12 +39,12 @@ def _write_dataset(path: Path) -> Path:
     return path
 
 
-def _write_manifest(dataset_path: Path) -> Path:
+def _write_manifest(dataset_path: Path, *, manifest_dataset_path: str | None = None) -> Path:
     samples = load_evaluation_dataset(dataset_path)
     manifest = {
         "benchmark_id": "thesis_llm_golden_set",
         "benchmark_version": "test.v1",
-        "dataset_path": str(dataset_path),
+        "dataset_path": manifest_dataset_path or str(dataset_path),
         "dataset_fingerprint": compute_dataset_fingerprint(samples),
         "sample_count": len(samples),
         "scenario_counts": scenario_counts_for_samples(samples),
@@ -117,6 +117,34 @@ async def test_run_diagnostic_dry_run_writes_artifacts(tmp_path):
     summary = json.loads(summary_path.read_text(encoding="utf-8"))
     assert summary["accuracy"] == 1.0
     assert summary["error_count"] == 0
+    assert summary["benchmark_id"] == "thesis_llm_golden_set"
+    assert summary["benchmark_sample_count"] == 2
+
+
+@pytest.mark.asyncio
+async def test_run_diagnostic_loads_relative_manifest_dataset_path_outside_manifest_cwd(
+    tmp_path,
+    monkeypatch,
+):
+    dataset_dir = tmp_path / "fixtures"
+    dataset_dir.mkdir()
+    dataset = _write_dataset(dataset_dir / "dataset.jsonl")
+    _write_manifest(dataset, manifest_dataset_path=dataset.name)
+    output_dir = tmp_path / "artifacts"
+    other_cwd = tmp_path / "elsewhere"
+    other_cwd.mkdir()
+    monkeypatch.chdir(other_cwd)
+
+    artifact_path, summary_path = await runner.run_diagnostic(
+        dataset.resolve(),
+        output_dir,
+        run_id="relative-manifest",
+        dry_run=True,
+    )
+
+    assert artifact_path.exists()
+    assert summary_path.exists()
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
     assert summary["benchmark_id"] == "thesis_llm_golden_set"
     assert summary["benchmark_sample_count"] == 2
 
