@@ -1,0 +1,80 @@
+{
+  "ambiguous_slice_accuracy": 1.0,
+  "benchmark_fingerprint": "536e081d4ceec265a27cf037f7bb33ae88831895554bf8ebdbc29bf578d392fc",
+  "benchmark_id": "thesis_llm_golden_set",
+  "benchmark_manifest_path": "tests\\fixtures\\thesis_llm_golden_set.manifest.json",
+  "benchmark_version": "2026-04-05.v2",
+  "clear_control_miss_count": 0,
+  "justification": [
+    "Expanded benchmark still scores near-perfectly across the ambiguous slice."
+  ],
+  "keyword_accuracy": 0.359375,
+  "overall_llm_accuracy": 1.0,
+  "per_class_metrics": {
+    "HELD": {
+      "f1": 1.0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 9
+    },
+    "QUALIFIED": {
+      "f1": 1.0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 32
+    },
+    "REJECTED": {
+      "f1": 1.0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 23
+    }
+  },
+  "per_scenario_metrics": {
+    "ad_supported": {
+      "accuracy": 1.0,
+      "support": 7
+    },
+    "b2b_in_disguise": {
+      "accuracy": 1.0,
+      "support": 11
+    },
+    "clear_b2b": {
+      "accuracy": 1.0,
+      "support": 10
+    },
+    "clear_consumer": {
+      "accuracy": 1.0,
+      "support": 10
+    },
+    "creator_tools": {
+      "accuracy": 1.0,
+      "support": 6
+    },
+    "employer_sponsored": {
+      "accuracy": 1.0,
+      "support": 7
+    },
+    "gig_economy": {
+      "accuracy": 1.0,
+      "support": 6
+    },
+    "two_sided_marketplace": {
+      "accuracy": 1.0,
+      "support": 7
+    }
+  },
+  "post_expansion_sample_count": 64,
+  "pre_expansion_sample_count": 40,
+  "recommendation": "raise_threshold",
+  "scenario_counts": {
+    "ad_supported": 7,
+    "b2b_in_disguise": 11,
+    "clear_b2b": 10,
+    "clear_consumer": 10,
+    "creator_tools": 6,
+    "employer_sponsored": 7,
+    "gig_economy": 6,
+    "two_sided_marketplace": 7
+  }
+}

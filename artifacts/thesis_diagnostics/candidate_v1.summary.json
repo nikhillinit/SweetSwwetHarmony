@@ -1,5 +1,5 @@
 {
-  "accuracy": 0.975,
+  "accuracy": 0.875,
   "benchmark_fingerprint": "a767ff5d484324493ebabeb0bee0968b6653f9ae5dc9c26c61619ca30e24fa13",
   "benchmark_id": "thesis_llm_golden_set",
   "benchmark_manifest_path": "artifacts\\thesis_diagnostics\\thesis_llm_golden_set.2026-04-03.v1.manifest.json",
@@ -9,19 +9,16 @@
     "baseline_accuracy": 0.9,
     "baseline_only_sample_ids": [],
     "baseline_path": "artifacts\\thesis_diagnostics\\live_api_smoke_escalated.jsonl",
-    "candidate_accuracy": 0.975,
+    "candidate_accuracy": 0.875,
     "candidate_only_sample_ids": [],
-    "improved_sample_ids": [
-      "llm_employer_sponsored_01",
-      "llm_employer_sponsored_02",
-      "llm_employer_sponsored_03"
+    "improved_sample_ids": [],
+    "regressed_sample_ids": [
+      "llm_ad_supported_02"
     ],
-    "regressed_sample_ids": [],
     "shared_sample_count": 40,
     "status": "comparable",
     "unchanged_correct_sample_ids": [
       "llm_ad_supported_01",
-      "llm_ad_supported_02",
       "llm_ad_supported_03",
       "llm_b2b_disguise_01",
       "llm_b2b_disguise_02",
@@ -58,18 +55,21 @@
       "llm_marketplace_03"
     ],
     "unchanged_incorrect_sample_ids": [
+      "llm_employer_sponsored_01",
+      "llm_employer_sponsored_02",
+      "llm_employer_sponsored_03",
       "llm_gig_03"
     ]
   },
   "confusion_matrix": {
     "HELD": {
-      "HELD": 3,
+      "HELD": 0,
       "QUALIFIED": 1,
-      "REJECTED": 0
+      "REJECTED": 3
     },
     "QUALIFIED": {
-      "HELD": 0,
-      "QUALIFIED": 20,
+      "HELD": 1,
+      "QUALIFIED": 19,
       "REJECTED": 0
     },
     "REJECTED": {
@@ -83,24 +83,24 @@
   "error_count": 0,
   "per_class_metrics": {
     "HELD": {
-      "f1": 0.8571,
-      "precision": 1.0,
-      "recall": 0.75,
+      "f1": 0.0,
+      "precision": 0.0,
+      "recall": 0.0,
       "support": 4
     },
     "QUALIFIED": {
-      "f1": 0.9756,
-      "precision": 0.9524,
-      "recall": 1.0,
+      "f1": 0.95,
+      "precision": 0.95,
+      "recall": 0.95,
       "support": 20
     },
     "REJECTED": {
-      "f1": 1.0,
-      "precision": 1.0,
+      "f1": 0.9143,
+      "precision": 0.8421,
       "recall": 1.0,
       "support": 16
     }
   },
-  "run_id": "candidate_v2",
+  "run_id": "candidate_v1",
   "total_samples": 40
 }

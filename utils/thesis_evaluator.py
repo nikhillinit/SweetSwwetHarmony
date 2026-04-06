@@ -19,7 +19,6 @@ Usage:
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 import uuid
@@ -28,6 +27,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from utils.thesis_benchmark import load_evaluation_dataset
 from utils.thesis_matcher import ThesisMatcher, ThesisFit
 
 logger = logging.getLogger(__name__)
@@ -128,39 +128,6 @@ VALID_LABELS = {"QUALIFIED", "HELD", "REJECTED"}
 # Classification thresholds for keyword matcher
 KEYWORD_QUALIFIED_THRESHOLD = 0.3  # score >= 0.3 AND no negatives → QUALIFIED
 KEYWORD_HELD_THRESHOLD = 0.0  # score < 0.3 → HELD
-
-
-# =============================================================================
-# DATASET LOADING
-# =============================================================================
-
-def load_evaluation_dataset(path: str | Path) -> List[Dict[str, Any]]:
-    """
-    Load JSONL evaluation dataset.
-
-    Args:
-        path: Path to JSONL file
-
-    Returns:
-        List of sample dicts with input, target, id, metadata
-    """
-    path = Path(path)
-    if not path.exists():
-        raise FileNotFoundError(f"Dataset not found: {path}")
-
-    samples = []
-    with open(path, "r", encoding="utf-8") as f:
-        for line_num, line in enumerate(f, 1):
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                sample = json.loads(line)
-                samples.append(sample)
-            except json.JSONDecodeError as e:
-                raise ValueError(f"Invalid JSON on line {line_num}: {e}")
-
-    return samples
 
 
 # =============================================================================
@@ -490,8 +457,35 @@ class LLMEvaluator:
         self,
         dataset_path: str | Path,
     ) -> ThesisEvaluationResult:
+        """Evaluate LLM classifier on dataset using one authoritative sample pass."""
+        start_time = time.time()
+        samples, sample_evaluations = await self.evaluate_samples(dataset_path)
+        return self.build_result_from_samples(
+            dataset_path,
+            samples,
+            sample_evaluations,
+            total_latency_ms=int((time.time() - start_time) * 1000),
+        )
+
+    async def evaluate_samples(
+        self,
+        dataset_path: str | Path,
+    ) -> tuple[List[Dict[str, Any]], List[LLMSampleEvaluation]]:
+        """Evaluate all dataset rows and retain sample-level results."""
+        samples = load_evaluation_dataset(dataset_path)
+        sample_evaluations = [await self.evaluate_sample(sample) for sample in samples]
+        return samples, sample_evaluations
+
+    def build_result_from_samples(
+        self,
+        dataset_path: str | Path,
+        samples: List[Dict[str, Any]],
+        sample_evaluations: List[LLMSampleEvaluation],
+        *,
+        total_latency_ms: int | None = None,
+    ) -> ThesisEvaluationResult:
         """
-        Evaluate LLM classifier on dataset.
+        Build aggregate LLM metrics from authoritative sample evaluations.
 
         Args:
             dataset_path: Path to JSONL dataset
@@ -499,11 +493,7 @@ class LLMEvaluator:
         Returns:
             ThesisEvaluationResult with metrics
         """
-        start_time = time.time()
         run_id = f"llm_{uuid.uuid4().hex[:8]}"
-
-        # Load dataset
-        samples = load_evaluation_dataset(dataset_path)
 
         # Classify all samples
         predictions = []
@@ -513,8 +503,7 @@ class LLMEvaluator:
         total_output_tokens = 0
         sample_latencies = []
 
-        for sample in samples:
-            sample_eval = await self.evaluate_sample(sample)
+        for sample_eval in sample_evaluations:
             predictions.append(sample_eval.prediction)
             targets.append(sample_eval.target)
 
@@ -532,7 +521,6 @@ class LLMEvaluator:
         # Calculate metrics
         accuracy, per_class, confusion = calculate_metrics(predictions, targets)
 
-        latency_ms = int((time.time() - start_time) * 1000)
         avg_latency = sum(sample_latencies) / len(sample_latencies) if sample_latencies else None
 
         return ThesisEvaluationResult(
@@ -544,7 +532,7 @@ class LLMEvaluator:
             per_class_metrics=per_class,
             confusion_matrix=confusion,
             timestamp=datetime.now(timezone.utc).isoformat(),
-            latency_ms=latency_ms,
+            latency_ms=total_latency_ms,
             avg_latency_ms=avg_latency,
             token_usage={
                 "input_tokens": total_input_tokens,
