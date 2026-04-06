@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import sqlite3
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, Optional, Tuple
 
 from ops.quality.db import dumps_json, utc_now_iso
@@ -39,6 +40,27 @@ class UpsertResult:
     overwritten: bool
 
 
+@dataclass(frozen=True)
+class AdjReviewCandidate:
+    signal_id: int
+    queue_type: str
+    canonical_key: str
+    company_name: str
+    source_api: str
+    detected_at: str
+    priority_rank: int
+    reason_code: str
+    reason_summary: str
+    labeled_at: str
+    labeled_by: Optional[str]
+    confidence: float
+
+
+def _iso_days_ago(days: int) -> str:
+    dt = datetime.now(timezone.utc) - timedelta(days=days)
+    return dt.isoformat()
+
+
 def get_signal_canonical_key(conn: sqlite3.Connection, signal_id: int) -> str:
     row = conn.execute("SELECT canonical_key FROM signals WHERE id = ?", (signal_id,)).fetchone()
     if not row:
@@ -52,6 +74,58 @@ def has_manual_label(conn: sqlite3.Connection, signal_id: int) -> bool:
         (signal_id,),
     ).fetchone()
     return bool(row)
+
+
+def list_adj_review_candidates(
+    conn: sqlite3.Connection,
+    *,
+    days: int = 90,
+    limit: int = 50,
+) -> list[AdjReviewCandidate]:
+    """Return structured ADJ follow-up rows for operator review."""
+    since = _iso_days_ago(days)
+    rows = conn.execute(
+        """
+        SELECT
+            sqm.signal_id,
+            s.company_name,
+            s.source_api,
+            s.confidence,
+            s.canonical_key,
+            s.detected_at,
+            sqm.labeled_at,
+            sqm.labeled_by,
+            sqm.notes,
+            json_extract(sqm.metadata, '$.reason') AS reason
+        FROM signal_quality_metrics sqm
+        JOIN signals s ON s.id = sqm.signal_id
+        WHERE sqm.human_label = 'ADJ'
+          AND sqm.labeled_at >= ?
+        ORDER BY sqm.labeled_at DESC, sqm.signal_id DESC
+        LIMIT ?
+        """,
+        (since, limit),
+    ).fetchall()
+
+    candidates: list[AdjReviewCandidate] = []
+    for r in rows:
+        candidates.append(
+            AdjReviewCandidate(
+                signal_id=int(r["signal_id"]),
+                queue_type="adj",
+                canonical_key=str(r["canonical_key"] or ""),
+                company_name=str(r["company_name"] or ""),
+                source_api=str(r["source_api"] or ""),
+                detected_at=str(r["detected_at"] or ""),
+                priority_rank=50,
+                reason_code="adj_followup",
+                reason_summary=str(r["reason"] or r["notes"] or "adj_followup"),
+                labeled_at=str(r["labeled_at"] or ""),
+                labeled_by=str(r["labeled_by"]) if r["labeled_by"] is not None else None,
+                confidence=float(r["confidence"] or 0.0),
+            )
+        )
+    return candidates
 
 
 def upsert_resolved_label(

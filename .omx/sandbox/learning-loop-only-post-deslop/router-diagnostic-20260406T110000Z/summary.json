@@ -1,0 +1,49 @@
+{
+  "date": "2026-04-06",
+  "db_path": "signals.db",
+  "window_days": 90,
+  "quality_stats": {
+    "labeled": 210,
+    "decided": 205,
+    "tp": 19,
+    "fp": 186,
+    "unsure": 5,
+    "adj": 0,
+    "fp_rate": 0.9073170731707317
+  },
+  "join_coverage": {
+    "decisive_joined_rows": 205,
+    "tp_rows": 19,
+    "fp_rows": 186,
+    "latest_row_mismatches": 0
+  },
+  "discrimination": {
+    "auc": 0.9548670062252406,
+    "tp_mean": 0.8026315789473685,
+    "fp_mean": 0.1629032258064516,
+    "mean_separation": 0.6397283531409168,
+    "score_max": 0.9,
+    "threshold_0_7": {
+      "tp": 19,
+      "fp": 29,
+      "fn": 0,
+      "tn": 157
+    }
+  },
+  "branch_recommendation": {
+    "name": "no_routing_problem_detected",
+    "reason": [
+      "separation is acceptable and the threshold is reachable",
+      "mean_separation=0.639728",
+      "auc=0.954867",
+      "score_max=0.900000"
+    ]
+  },
+  "reproduction": {
+    "quality_stats_command": "python -m ops.cli quality --db signals.db stats --days 90",
+    "notes": [
+      "Metrics are based on the latest thesis_classifications row per signal_id.",
+      "Discrimination metrics are computed from TP/FP rows joined to latest thesis_fit_score values in the selected detected_at window."
+    ]
+  }
+}
