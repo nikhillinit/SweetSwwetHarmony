@@ -507,6 +507,17 @@ class TestProductionDbSignalCountGuard:
         base.update(overrides)
         return MagicMock(**base)
 
+    def test_read_current_signal_count_returns_error_on_forced_failure(self):
+        """Helper should surface a read error instead of raising."""
+        from run_pipeline import _read_current_signal_count
+
+        with patch("sqlite3.connect", side_effect=sqlite3.OperationalError("forced read failure")):
+            count, error = _read_current_signal_count("signals.db")
+
+        assert count is None
+        assert error is not None
+        assert "forced read failure" in error
+
     @pytest.mark.asyncio
     async def test_warns_and_continues_for_health(self, monkeypatch, tmp_path, capsys):
         prod_db = tmp_path / "signals.db"
@@ -531,6 +542,32 @@ class TestProductionDbSignalCountGuard:
         mock_cmd.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_warns_and_continues_for_health_on_signal_count_read_error(self, monkeypatch, tmp_path, capsys):
+        prod_db = tmp_path / "signals.db"
+        watermark = tmp_path / "watermark.json"
+        _create_signal_count_db(prod_db, 100)
+        watermark.write_text(json.dumps({"signal_count": 100, "recorded_at": "2026-04-04T00:00:00Z"}))
+        monkeypatch.setenv("DISCOVERY_DB_PATH", str(prod_db))
+
+        args = self._mock_args(command="health")
+
+        with patch("run_pipeline.get_signal_count_watermark_path", return_value=watermark), \
+             patch("run_pipeline._read_current_signal_count", return_value=(None, "forced read failure")), \
+             patch("run_pipeline.create_parser") as mock_parser, \
+             patch("run_pipeline.setup_logging"), \
+             patch("utils.config_validator.validate_config", return_value=[]), \
+             patch("utils.config_validator.print_config_report", return_value=False), \
+             patch("run_pipeline.cmd_health", new_callable=AsyncMock, return_value=0) as mock_cmd:
+            mock_parser.return_value.parse_args.return_value = args
+            from run_pipeline import main
+            await main()
+
+        stderr = capsys.readouterr().err
+        assert "WARNING:" in stderr
+        assert "forced read failure" in stderr
+        mock_cmd.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_blocks_write_command_on_catastrophic_drop(self, monkeypatch, tmp_path):
         prod_db = tmp_path / "signals.db"
         watermark = tmp_path / "watermark.json"
@@ -552,6 +589,32 @@ class TestProductionDbSignalCountGuard:
                 await main()
 
         assert exc_info.value.code == 2
+        mock_cmd.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_sync_blocks_on_signal_count_read_error_without_recovery_override(self, monkeypatch, tmp_path, capsys):
+        prod_db = tmp_path / "signals.db"
+        watermark = tmp_path / "watermark.json"
+        _create_signal_count_db(prod_db, 100)
+        watermark.write_text(json.dumps({"signal_count": 100, "recorded_at": "2026-04-04T00:00:00Z"}))
+        monkeypatch.setenv("DISCOVERY_DB_PATH", str(prod_db))
+
+        args = self._mock_args(command="sync")
+
+        with patch("run_pipeline.get_signal_count_watermark_path", return_value=watermark), \
+             patch("run_pipeline._read_current_signal_count", return_value=(None, "forced read failure")), \
+             patch("run_pipeline.create_parser") as mock_parser, \
+             patch("run_pipeline.setup_logging"), \
+             patch("utils.config_validator.validate_config", return_value=[]), \
+             patch("utils.config_validator.print_config_report", return_value=False), \
+             patch("run_pipeline.cmd_sync", new_callable=AsyncMock, return_value=None) as mock_cmd:
+            mock_parser.return_value.parse_args.return_value = args
+            from run_pipeline import main
+            with pytest.raises(SystemExit) as exc_info:
+                await main()
+
+        assert exc_info.value.code == 2
+        assert "forced read failure" in capsys.readouterr().err
         mock_cmd.assert_not_called()
 
     @pytest.mark.asyncio
