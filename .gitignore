@@ -87,6 +87,11 @@ shadow_logs.jsonl
 artifacts/shadow/
 datasets/thesis_ground_truth.jsonl
 
+# Red-team v2 Phase 0: shadow sidecar tree (data only; code is committed)
+data/shadow/*.db
+data/shadow/*.csv
+data/shadow/signals_snapshot*.db
+
 # OMX local runtime state
 .omx/context/
 .omx/drafts/

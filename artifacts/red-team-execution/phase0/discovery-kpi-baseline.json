@@ -1,0 +1,67 @@
+{
+  "computed_at": "2026-04-06T19:06:07.414107+00:00",
+  "window_days": 90,
+  "n_companies_promoted": 118,
+  "n_signals_in_window": 612,
+  "lead_time_median_days": null,
+  "lead_time_n_with_public_mention": 0,
+  "lead_time_n_without_public_mention": 20,
+  "queue_size": 20,
+  "precision_at_queue_n_labelled": 20,
+  "precision_at_queue_n_tp": 3,
+  "precision_at_queue_value": 0.15,
+  "notion_total": 589,
+  "notion_meeting_or_beyond": 58,
+  "meeting_rate": 0.09847198641765705,
+  "pre_launch_n_tp": 19,
+  "pre_launch_n_pre_ambient": 8,
+  "pre_launch_rate": 0.42105263157894735,
+  "pre_launch_caveat": "GNews-only baseline; Crunchbase not configured",
+  "convergence_n_promoted": 118,
+  "convergence_n_two_or_more_classes": 0,
+  "convergence_rate": 0.0,
+  "convergence_classifier": "production_evidence_family",
+  "signal_counts_by_source": {
+    "arxiv": 275,
+    "ashby_jobs": 4,
+    "github": 2,
+    "greenhouse_jobs": 13,
+    "hacker_news": 192,
+    "lever_jobs": 3,
+    "manual_seed_buzz": 20,
+    "news_api": 14,
+    "product_hunt": 2,
+    "rss_feeds": 87
+  },
+  "promoted_source_shapes": [
+    {
+      "source_apis": [
+        "hacker_news"
+      ],
+      "count": 98
+    },
+    {
+      "source_apis": [
+        "greenhouse_jobs",
+        "manual_seed"
+      ],
+      "count": 13
+    },
+    {
+      "source_apis": [
+        "ashby_jobs",
+        "manual_seed"
+      ],
+      "count": 4
+    },
+    {
+      "source_apis": [
+        "lever_jobs",
+        "manual_seed"
+      ],
+      "count": 3
+    }
+  ],
+  "promoted_sole_ambient_count": 98,
+  "promoted_with_any_discovery_class": 20
+}
