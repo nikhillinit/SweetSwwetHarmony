@@ -1,5 +1,10 @@
 {
   "accuracy": 1.0,
+  "benchmark_fingerprint": "a767ff5d484324493ebabeb0bee0968b6653f9ae5dc9c26c61619ca30e24fa13",
+  "benchmark_id": "thesis_llm_golden_set",
+  "benchmark_manifest_path": "artifacts\\thesis_diagnostics\\thesis_llm_golden_set.2026-04-03.v1.manifest.json",
+  "benchmark_sample_count": 40,
+  "benchmark_version": "2026-04-03.v1",
   "comparison": {
     "baseline_accuracy": 0.9,
     "baseline_only_sample_ids": [],
@@ -14,6 +19,7 @@
     ],
     "regressed_sample_ids": [],
     "shared_sample_count": 40,
+    "status": "comparable",
     "unchanged_correct_sample_ids": [
       "llm_ad_supported_01",
       "llm_ad_supported_02",

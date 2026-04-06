@@ -1,0 +1,70 @@
+{
+  "accuracy": 1.0,
+  "benchmark_fingerprint": "536e081d4ceec265a27cf037f7bb33ae88831895554bf8ebdbc29bf578d392fc",
+  "benchmark_id": "thesis_llm_golden_set",
+  "benchmark_manifest_path": "tests\\fixtures\\thesis_llm_golden_set.manifest.json",
+  "benchmark_sample_count": 64,
+  "benchmark_version": "2026-04-05.v2",
+  "comparison": {
+    "baseline_path": "artifacts\\thesis_diagnostics\\candidate_v3.jsonl",
+    "baseline_provenance": {
+      "benchmark_fingerprint": "a767ff5d484324493ebabeb0bee0968b6653f9ae5dc9c26c61619ca30e24fa13",
+      "benchmark_id": "thesis_llm_golden_set",
+      "benchmark_manifest_path": "artifacts\\thesis_diagnostics\\thesis_llm_golden_set.2026-04-03.v1.manifest.json",
+      "benchmark_version": "2026-04-03.v1"
+    },
+    "candidate_provenance": {
+      "benchmark_fingerprint": "536e081d4ceec265a27cf037f7bb33ae88831895554bf8ebdbc29bf578d392fc",
+      "benchmark_id": "thesis_llm_golden_set",
+      "benchmark_manifest_path": "tests\\fixtures\\thesis_llm_golden_set.manifest.json",
+      "benchmark_version": "2026-04-05.v2"
+    },
+    "reasons": [
+      "benchmark_version differs: baseline='2026-04-03.v1', candidate='2026-04-05.v2'",
+      "benchmark_fingerprint differs: baseline='a767ff5d484324493ebabeb0bee0968b6653f9ae5dc9c26c61619ca30e24fa13', candidate='536e081d4ceec265a27cf037f7bb33ae88831895554bf8ebdbc29bf578d392fc'"
+    ],
+    "status": "blocked_benchmark_mismatch"
+  },
+  "confusion_matrix": {
+    "HELD": {
+      "HELD": 9,
+      "QUALIFIED": 0,
+      "REJECTED": 0
+    },
+    "QUALIFIED": {
+      "HELD": 0,
+      "QUALIFIED": 32,
+      "REJECTED": 0
+    },
+    "REJECTED": {
+      "HELD": 0,
+      "QUALIFIED": 0,
+      "REJECTED": 23
+    }
+  },
+  "dataset_path": "tests\\fixtures\\thesis_llm_golden_set.jsonl",
+  "dry_run": true,
+  "error_count": 0,
+  "per_class_metrics": {
+    "HELD": {
+      "f1": 1.0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 9
+    },
+    "QUALIFIED": {
+      "f1": 1.0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 32
+    },
+    "REJECTED": {
+      "f1": 1.0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "support": 23
+    }
+  },
+  "run_id": "benchmark_expansion_check",
+  "total_samples": 64
+}

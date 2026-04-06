@@ -1,0 +1,32 @@
+{
+  "benchmark_id": "thesis_llm_golden_set",
+  "benchmark_version": "2026-04-05.v2",
+  "dataset_path": "tests/fixtures/thesis_llm_golden_set.jsonl",
+  "sample_count": 64,
+  "scenario_counts": {
+    "clear_consumer": 10,
+    "clear_b2b": 10,
+    "b2b_in_disguise": 11,
+    "ad_supported": 7,
+    "employer_sponsored": 7,
+    "two_sided_marketplace": 7,
+    "gig_economy": 6,
+    "creator_tools": 6
+  },
+  "ambiguous_scenarios": [
+    "b2b_in_disguise",
+    "ad_supported",
+    "employer_sponsored",
+    "two_sided_marketplace",
+    "gig_economy",
+    "creator_tools"
+  ],
+  "changelog": [
+    {
+      "version": "2026-04-05.v2",
+      "date": "2026-04-05",
+      "summary": "Expanded the thesis LLM golden set from 40 to 64 rows with 24 additional ambiguous edge cases and manifest-owned benchmark provenance."
+    }
+  ],
+  "dataset_fingerprint": "536e081d4ceec265a27cf037f7bb33ae88831895554bf8ebdbc29bf578d392fc"
+}

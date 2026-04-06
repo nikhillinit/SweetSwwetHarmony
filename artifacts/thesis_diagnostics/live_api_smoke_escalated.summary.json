@@ -1,5 +1,5 @@
 {
-  "accuracy": 1.0,
+  "accuracy": 0.9,
   "benchmark_fingerprint": "a767ff5d484324493ebabeb0bee0968b6653f9ae5dc9c26c61619ca30e24fa13",
   "benchmark_id": "thesis_llm_golden_set",
   "benchmark_manifest_path": "artifacts\\thesis_diagnostics\\thesis_llm_golden_set.2026-04-03.v1.manifest.json",
@@ -8,8 +8,8 @@
   "comparison": null,
   "confusion_matrix": {
     "HELD": {
-      "HELD": 4,
-      "QUALIFIED": 0,
+      "HELD": 0,
+      "QUALIFIED": 4,
       "REJECTED": 0
     },
     "QUALIFIED": {
@@ -24,18 +24,18 @@
     }
   },
   "dataset_path": "tests\\fixtures\\thesis_llm_golden_set.jsonl",
-  "dry_run": true,
+  "dry_run": false,
   "error_count": 0,
   "per_class_metrics": {
     "HELD": {
-      "f1": 1.0,
-      "precision": 1.0,
-      "recall": 1.0,
+      "f1": 0.0,
+      "precision": 0.0,
+      "recall": 0.0,
       "support": 4
     },
     "QUALIFIED": {
-      "f1": 1.0,
-      "precision": 1.0,
+      "f1": 0.9091,
+      "precision": 0.8333,
       "recall": 1.0,
       "support": 20
     },
@@ -46,6 +46,6 @@
       "support": 16
     }
   },
-  "run_id": "ralph_execute_check",
+  "run_id": "live_api_smoke_escalated",
   "total_samples": 40
 }

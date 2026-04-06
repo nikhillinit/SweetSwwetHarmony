@@ -14,6 +14,12 @@ from consumer.thesis_filter.llm_classifier import (
     ClassificationStatus,
     ThesisClassification,
 )
+from utils.thesis_benchmark import (
+    build_benchmark_provenance,
+    compare_provenance,
+    extract_artifact_provenance,
+    missing_provenance_fields,
+)
 from utils.thesis_evaluator import (
     LLMEvaluator,
     LLMSampleEvaluation,
@@ -80,7 +86,11 @@ def _build_dry_run_classification(target: str, prompt_version: str) -> ThesisCla
     )
 
 
-def _sample_record(sample: dict[str, Any], sample_eval: Any) -> dict[str, Any]:
+def _sample_record(
+    sample: dict[str, Any],
+    sample_eval: Any,
+    benchmark_provenance: dict[str, Any],
+) -> dict[str, Any]:
     classification = sample_eval.classification
     scenario = sample.get("metadata", {}).get("scenario")
 
@@ -120,6 +130,10 @@ def _sample_record(sample: dict[str, Any], sample_eval: Any) -> dict[str, Any]:
         "input_tokens": classification.input_tokens if classification else None,
         "output_tokens": classification.output_tokens if classification else None,
         "error": error,
+        "benchmark_id": benchmark_provenance["benchmark_id"],
+        "benchmark_version": benchmark_provenance["benchmark_version"],
+        "benchmark_fingerprint": benchmark_provenance["benchmark_fingerprint"],
+        "benchmark_manifest_path": benchmark_provenance["benchmark_manifest_path"],
     }
 
 
@@ -145,6 +159,26 @@ def _build_comparison_summary(
     candidate_records: list[dict[str, Any]],
     baseline_path: Path,
 ) -> dict[str, Any]:
+    baseline_provenance, baseline_reasons = _resolve_artifact_provenance(
+        baseline_records,
+        baseline_path,
+    )
+    candidate_provenance, candidate_reasons = _resolve_artifact_provenance(
+        candidate_records,
+        None,
+    )
+
+    mismatch_reasons = baseline_reasons + candidate_reasons
+    mismatch_reasons.extend(compare_provenance(baseline_provenance, candidate_provenance))
+    if mismatch_reasons:
+        return {
+            "status": "blocked_benchmark_mismatch",
+            "baseline_path": str(baseline_path),
+            "reasons": mismatch_reasons,
+            "baseline_provenance": baseline_provenance,
+            "candidate_provenance": candidate_provenance,
+        }
+
     baseline_by_id = {record["sample_id"]: record for record in baseline_records}
     candidate_by_id = {record["sample_id"]: record for record in candidate_records}
 
@@ -181,6 +215,7 @@ def _build_comparison_summary(
     )
 
     return {
+        "status": "comparable",
         "baseline_path": str(baseline_path),
         "baseline_accuracy": round(baseline_accuracy, 4),
         "candidate_accuracy": round(candidate_accuracy, 4),
@@ -194,6 +229,35 @@ def _build_comparison_summary(
     }
 
 
+def _resolve_artifact_provenance(
+    records: list[dict[str, Any]],
+    artifact_path: Path | None,
+) -> tuple[dict[str, Any], list[str]]:
+    provenance: dict[str, Any] = {}
+    reasons: list[str] = []
+
+    if not records:
+        label = str(artifact_path) if artifact_path is not None else "candidate artifact"
+        return provenance, [f"{label} has no records to inspect for benchmark provenance"]
+
+    first = records[0]
+    provenance = extract_artifact_provenance(first)
+    missing = missing_provenance_fields(first)
+    if missing:
+        label = str(artifact_path) if artifact_path is not None else "candidate artifact"
+        reasons.append(f"{label} is missing benchmark provenance fields: {', '.join(missing)}")
+
+    for record in records[1:]:
+        record_provenance = extract_artifact_provenance(record)
+        for field in provenance:
+            if record_provenance.get(field) != provenance.get(field):
+                label = str(artifact_path) if artifact_path is not None else "candidate artifact"
+                reasons.append(f"{label} has inconsistent {field} values across records")
+                break
+
+    return provenance, reasons
+
+
 def _build_summary(
     *,
     run_id: str,
@@ -201,6 +265,7 @@ def _build_summary(
     records: list[dict[str, Any]],
     dry_run: bool,
     comparison: dict[str, Any] | None,
+    benchmark_provenance: dict[str, Any],
 ) -> dict[str, Any]:
     predictions = [record["prediction"] for record in records]
     targets = [record["target"] for record in records]
@@ -217,6 +282,11 @@ def _build_summary(
         "confusion_matrix": confusion,
         "error_count": error_count,
         "comparison": comparison,
+        "benchmark_id": benchmark_provenance["benchmark_id"],
+        "benchmark_version": benchmark_provenance["benchmark_version"],
+        "benchmark_fingerprint": benchmark_provenance["benchmark_fingerprint"],
+        "benchmark_manifest_path": benchmark_provenance["benchmark_manifest_path"],
+        "benchmark_sample_count": benchmark_provenance["benchmark_sample_count"],
     }
 
 
@@ -228,10 +298,14 @@ def _print_summary(summary: dict[str, Any], artifact_path: Path, summary_path: P
 
     comparison = summary.get("comparison")
     if comparison:
-        print(f"baseline_accuracy: {comparison['baseline_accuracy']:.1%}")
-        print(f"candidate_accuracy: {comparison['candidate_accuracy']:.1%}")
-        print(f"improved: {len(comparison['improved_sample_ids'])}")
-        print(f"regressed: {len(comparison['regressed_sample_ids'])}")
+        print(f"comparison_status: {comparison['status']}")
+        if comparison["status"] == "comparable":
+            print(f"baseline_accuracy: {comparison['baseline_accuracy']:.1%}")
+            print(f"candidate_accuracy: {comparison['candidate_accuracy']:.1%}")
+            print(f"improved: {len(comparison['improved_sample_ids'])}")
+            print(f"regressed: {len(comparison['regressed_sample_ids'])}")
+        else:
+            print(f"comparison_blocked: {'; '.join(comparison['reasons'])}")
 
 
 async def run_diagnostic(
@@ -262,6 +336,7 @@ async def run_diagnostic(
         api_key = None
 
     samples = load_evaluation_dataset(dataset)
+    benchmark_provenance = build_benchmark_provenance(dataset)
     evaluator = LLMEvaluator(
         api_key=api_key,
         system_prompt=prompt_text,
@@ -291,7 +366,7 @@ async def run_diagnostic(
         else:
             sample_eval = await evaluator.evaluate_sample(sample)
 
-        records.append(_sample_record(sample, sample_eval))
+        records.append(_sample_record(sample, sample_eval, benchmark_provenance))
 
     output_dir.mkdir(parents=True, exist_ok=True)
     artifact_path = output_dir / f"{run_id}.jsonl"
@@ -311,6 +386,7 @@ async def run_diagnostic(
         records=records,
         dry_run=dry_run,
         comparison=comparison,
+        benchmark_provenance=benchmark_provenance,
     )
     summary_path = output_dir / f"{run_id}.summary.json"
     summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -345,6 +421,12 @@ def main() -> int:
             temperature=args.temperature,
         )
     )
+    summary_path = args.output_dir / f"{args.run_id}.summary.json"
+    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    comparison = summary.get("comparison")
+    if comparison and comparison.get("status") == "blocked_benchmark_mismatch":
+        print("benchmark comparison blocked", file=os.sys.stderr)
+        return 1
     return 0
 
 
