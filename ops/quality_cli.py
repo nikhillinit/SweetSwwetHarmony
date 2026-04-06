@@ -13,9 +13,9 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from ops.quality.db import quality_conn
-from ops.quality.labels import label_signal_manual
-from ops.quality.stats import get_overall_stats, get_stats_by_source_api
+from ops.quality.db import quality_conn, utc_now_iso
+from ops.quality.labels import label_signal_manual, list_adj_review_candidates
+from ops.quality.stats import build_router_diagnostic_summary, get_overall_stats, get_stats_by_source_api
 from ops.quality.status_events import sync_and_capture_status_events
 from ops.quality.outcomes import backfill_outcomes_from_events, backfill_from_snapshot_status
 from ops.quality.export import export_dataset_csv, export_dataset_jsonl
@@ -26,6 +26,10 @@ from ops.quality.thesis import (
     batch_classify_missing_thesis,
     batch_refresh_latest_missing_provenance,
     generate_disagreement_report,
+    iter_signal_ids_missing_latest_thesis_for_detected_window,
+    iter_signal_ids_stale_latest_missing_provenance_for_detected_window,
+    list_disagreement_candidates,
+    refresh_signal_ids_missing_provenance,
 )
 from ops.quality.keys import suggest_key_strengthening, suggestions_to_markdown
 from ops.quality.enrichment import enrich_signals_best_effort
@@ -187,6 +191,29 @@ def register_quality_commands(subparsers: argparse._SubParsersAction) -> None:
     p_adj.add_argument("--limit", type=int, default=50)
     p_adj.add_argument("--format", choices=["table", "json"], default="table", dest="out_format")
     p_adj.set_defaults(func=_cmd_adj_review)
+
+    # --------------------------------------------------------- learning-loop
+    p_loop = q.add_parser("learning-loop", help="Thin operator workflow for the learning-loop-only branch")
+    loop_subs = p_loop.add_subparsers(dest="learning_loop_cmd")
+
+    p_rs = loop_subs.add_parser("review-set", help="Build canonical review-set artifacts from disagreement + ADJ providers")
+    p_rs.add_argument("--days", type=int, default=30)
+    p_rs.add_argument("--adj-days", type=int, default=90)
+    p_rs.add_argument("--limit", type=int, default=200)
+    p_rs.add_argument("--out-json", required=True)
+    p_rs.add_argument("--out-md", default=None)
+    p_rs.set_defaults(func=_cmd_learning_loop_review_set)
+
+    p_al = loop_subs.add_parser("apply-labels", help="Apply a validated batch of manual labels from canonical JSON")
+    p_al.add_argument("--in-json", required=True)
+    p_al.set_defaults(func=_cmd_learning_loop_apply_labels)
+
+    p_rd = loop_subs.add_parser("rerun-diagnostic", help="Recompute the frozen router-diagnostic summary contract")
+    p_rd.add_argument("--days", type=int, default=90, choices=[90])
+    p_rd.add_argument("--out-dir", required=True)
+    p_rd.add_argument("--model", default="gemini-2.0-flash")
+    p_rd.add_argument("--prompt-version", default="quality-ops-v1")
+    p_rd.set_defaults(func=_cmd_learning_loop_rerun_diagnostic)
 
     # --------------------------------------------------------- explain-score
     p_es = q.add_parser("explain-score", help="Explain confidence score breakdown for a company")
@@ -403,51 +430,383 @@ def _cmd_enrich(args: argparse.Namespace) -> None:
 
 
 def _cmd_adj_review(args: argparse.Namespace) -> None:
-    from ops.quality.stats import _iso_days_ago
-
-    since = _iso_days_ago(args.days)
     with quality_conn(args.db_path) as conn:
-        rows = conn.execute(
-            """
-            SELECT
-                sqm.signal_id,
-                s.company_name,
-                s.source_api,
-                s.confidence,
-                s.canonical_key,
-                sqm.labeled_at,
-                sqm.labeled_by,
-                sqm.notes,
-                json_extract(sqm.metadata, '$.reason') AS reason
-            FROM signal_quality_metrics sqm
-            JOIN signals s ON s.id = sqm.signal_id
-            WHERE sqm.human_label = 'ADJ'
-              AND sqm.labeled_at >= ?
-            ORDER BY sqm.labeled_at DESC
-            LIMIT ?
-            """,
-            (since, args.limit),
-        ).fetchall()
+        candidates = list_adj_review_candidates(conn, days=args.days, limit=args.limit)
 
         if args.out_format == "json":
-            data = [dict(r) for r in rows]
+            data = [
+                {
+                    "signal_id": c.signal_id,
+                    "company_name": c.company_name,
+                    "source_api": c.source_api,
+                    "confidence": c.confidence,
+                    "canonical_key": c.canonical_key,
+                    "detected_at": c.detected_at,
+                    "labeled_at": c.labeled_at,
+                    "labeled_by": c.labeled_by,
+                    "reason": c.reason_summary,
+                }
+                for c in candidates
+            ]
             print(json.dumps(data, indent=2))
         else:
-            if not rows:
+            if not candidates:
                 print("No ADJ-labeled signals found in the last {} days.".format(args.days))
                 print("Tip: re-label with 'quality label <id> TP|FP' after review.")
                 return
             print(f"{'ID':>6}  {'Company':30s}  {'Source':16s}  {'Conf':>5}  {'Labeled At':25s}  {'By':10s}  {'Reason'}")
             print("-" * 120)  # table-width separator
-            for r in rows:
-                reason = r["reason"] or r["notes"] or ""
+            for c in candidates:
                 print(
-                    f"{r['signal_id']:>6}  {(r['company_name'] or '')[:30]:30s}  "
-                    f"{r['source_api']:16s}  {r['confidence']:5.2f}  "
-                    f"{(r['labeled_at'] or '')[:25]:25s}  {(r['labeled_by'] or '')[:10]:10s}  "
-                    f"{reason[:50]}"
+                    f"{c.signal_id:>6}  {c.company_name[:30]:30s}  "
+                    f"{c.source_api:16s}  {c.confidence:5.2f}  "
+                    f"{c.labeled_at[:25]:25s}  {(c.labeled_by or '')[:10]:10s}  "
+                    f"{c.reason_summary[:50]}"
                 )
-            print(f"\n{len(rows)} ADJ signal(s). Re-label with: quality label <id> TP|FP")
+            print(f"\n{len(candidates)} ADJ signal(s). Re-label with: quality label <id> TP|FP")
+
+
+def _build_review_set_payload(
+    *,
+    db_path: str,
+    disagreement_candidates: list[Any],
+    adj_candidates: list[Any],
+    window_days: int,
+) -> Dict[str, Any]:
+    items: list[Dict[str, Any]] = []
+    for c in disagreement_candidates:
+        items.append(
+            {
+                "signal_id": c.signal_id,
+                "queue_type": c.queue_type,
+                "canonical_key": c.canonical_key,
+                "company_name": c.company_name,
+                "source_api": c.source_api,
+                "detected_at": c.detected_at,
+                "priority_rank": c.priority_rank,
+                "reason_code": c.reason_code,
+                "reason_summary": c.reason_summary,
+            }
+        )
+    for c in adj_candidates:
+        items.append(
+            {
+                "signal_id": c.signal_id,
+                "queue_type": c.queue_type,
+                "canonical_key": c.canonical_key,
+                "company_name": c.company_name,
+                "source_api": c.source_api,
+                "detected_at": c.detected_at,
+                "priority_rank": c.priority_rank,
+                "reason_code": c.reason_code,
+                "reason_summary": c.reason_summary,
+            }
+        )
+
+    items.sort(key=lambda i: i["signal_id"], reverse=True)
+    items.sort(key=lambda i: i["detected_at"], reverse=True)
+    items.sort(key=lambda i: i["priority_rank"])
+    items.sort(key=lambda i: i["queue_type"])
+    return {
+        "schema_version": "learning_loop_review_set.v1",
+        "generated_at": utc_now_iso(),
+        "db_path": db_path,
+        "window_days": window_days,
+        "sort_key": ["queue_type", "priority_rank", "detected_at", "signal_id"],
+        "items": items,
+    }
+
+
+def _validate_review_set_payload(payload: Dict[str, Any]) -> None:
+    required_top = {"schema_version", "generated_at", "db_path", "window_days", "sort_key", "items"}
+    if set(payload.keys()) != required_top:
+        raise ValueError("review-set payload keys are invalid")
+    if payload["schema_version"] != "learning_loop_review_set.v1":
+        raise ValueError("review-set schema_version must be learning_loop_review_set.v1")
+    if payload["sort_key"] != ["queue_type", "priority_rank", "detected_at", "signal_id"]:
+        raise ValueError("review-set sort_key must be canonical")
+    items = payload["items"]
+    if not isinstance(items, list):
+        raise ValueError("review-set items must be a list")
+    required_item = {
+        "signal_id",
+        "queue_type",
+        "canonical_key",
+        "company_name",
+        "source_api",
+        "detected_at",
+        "priority_rank",
+        "reason_code",
+        "reason_summary",
+    }
+    for item in items:
+        if set(item.keys()) != required_item:
+            raise ValueError("review-set item keys are invalid")
+        if item["queue_type"] not in {"disagreement", "adj"}:
+            raise ValueError("review-set queue_type must be disagreement or adj")
+    canonical = list(items)
+    canonical.sort(key=lambda i: i["signal_id"], reverse=True)
+    canonical.sort(key=lambda i: i["detected_at"], reverse=True)
+    canonical.sort(key=lambda i: i["priority_rank"])
+    canonical.sort(key=lambda i: i["queue_type"])
+    if items != canonical:
+        raise ValueError("review-set items must be in canonical sort order")
+
+
+def _render_review_set_markdown(payload: Dict[str, Any]) -> str:
+    md = [
+        "# Learning Loop Review Set",
+        "",
+        f"- generated_at: `{payload['generated_at']}`",
+        f"- db_path: `{payload['db_path']}`",
+        f"- window_days: `{payload['window_days']}`",
+        f"- items: `{len(payload['items'])}`",
+        "",
+        "| signal_id | queue_type | priority_rank | source_api | canonical_key | reason_code | reason_summary |",
+        "|---:|---|---:|---|---|---|---|",
+    ]
+    for item in payload["items"]:
+        md.append(
+            f"| {item['signal_id']} | {item['queue_type']} | {item['priority_rank']} | "
+            f"{item['source_api']} | {item['canonical_key']} | {item['reason_code']} | {item['reason_summary']} |"
+        )
+    return "\n".join(md) + "\n"
+
+
+def _validate_apply_labels_payload(payload: Dict[str, Any]) -> None:
+    required_top = {"schema_version", "requested_by", "requested_at", "sort_key", "items"}
+    if set(payload.keys()) != required_top:
+        raise ValueError("apply-labels payload keys are invalid")
+    if payload["schema_version"] != "learning_loop_apply_labels.v1":
+        raise ValueError("apply-labels schema_version must be learning_loop_apply_labels.v1")
+    if payload["sort_key"] != ["signal_id"]:
+        raise ValueError("apply-labels sort_key must be canonical")
+    items = payload["items"]
+    if not isinstance(items, list):
+        raise ValueError("apply-labels items must be a list")
+    seen: set[int] = set()
+    last_signal_id: Optional[int] = None
+    for item in items:
+        if not {"signal_id", "label", "created_by", "reason"}.issubset(item.keys()):
+            raise ValueError("apply-labels item missing required fields")
+        sid = int(item["signal_id"])
+        if sid in seen:
+            raise ValueError("apply-labels contains duplicate signal_id values")
+        seen.add(sid)
+        if item["label"] not in {"TP", "FP", "UNSURE", "ADJ"}:
+            raise ValueError("apply-labels item label is invalid")
+        if last_signal_id is not None and sid < last_signal_id:
+            raise ValueError("apply-labels items must be sorted by signal_id ASC")
+        last_signal_id = sid
+
+
+def _cmd_learning_loop_review_set(args: argparse.Namespace) -> None:
+    with quality_conn(args.db_path) as conn:
+        disagreements = list_disagreement_candidates(conn, days=args.days, limit=args.limit)
+        adjs = list_adj_review_candidates(conn, days=args.adj_days, limit=args.limit)
+        payload = _build_review_set_payload(
+            db_path=args.db_path,
+            disagreement_candidates=disagreements,
+            adj_candidates=adjs,
+            window_days=max(args.days, args.adj_days),
+        )
+        _validate_review_set_payload(payload)
+
+    out_json = Path(args.out_json)
+    out_json.parent.mkdir(parents=True, exist_ok=True)
+    out_json.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    if args.out_md:
+        out_md = Path(args.out_md)
+        out_md.parent.mkdir(parents=True, exist_ok=True)
+        out_md.write_text(_render_review_set_markdown(payload), encoding="utf-8")
+    print(json.dumps({"out_json": str(out_json), "out_md": args.out_md, "items": len(payload["items"])}, indent=2))
+
+
+def _cmd_learning_loop_apply_labels(args: argparse.Namespace) -> None:
+    payload = json.loads(Path(args.in_json).read_text(encoding="utf-8"))
+    _validate_apply_labels_payload(payload)
+
+    applied: List[Dict[str, Any]] = []
+    errors: List[Dict[str, Any]] = []
+    with quality_conn(args.db_path) as conn:
+        for item in payload["items"]:
+            try:
+                feedback_id, upsert = label_signal_manual(
+                    conn,
+                    signal_id=int(item["signal_id"]),
+                    label=str(item["label"]),
+                    created_by=str(item["created_by"]),
+                    reason=str(item["reason"]),
+                    notes=str(item.get("notes")) if item.get("notes") is not None else None,
+                )
+                applied.append(
+                    {
+                        "signal_id": upsert.signal_id,
+                        "feedback_id": feedback_id,
+                        "label": upsert.human_label,
+                        "source": upsert.label_source,
+                        "overwritten": upsert.overwritten,
+                    }
+                )
+            except Exception as exc:
+                errors.append({"signal_id": int(item["signal_id"]), "error": str(exc)})
+
+    print(json.dumps({"attempted": len(payload["items"]), "succeeded": len(applied), "failed": len(errors), "applied": applied, "errors": errors}, indent=2))
+
+
+def _render_router_diagnostic_markdown(summary: Dict[str, Any]) -> str:
+    quality = summary["quality_stats"]
+    disc = summary["discrimination"]
+    branch = summary["branch_recommendation"]
+    lines = [
+        "# Router Diagnostic Rerun",
+        "",
+        f"- date: `{summary['date']}`",
+        f"- db_path: `{summary['db_path']}`",
+        f"- window_days: `{summary['window_days']}`",
+        f"- branch: `{branch['name']}`",
+        "",
+        "## Quality Stats",
+        "",
+        f"- labeled: `{int(quality['labeled'])}`",
+        f"- decided: `{int(quality['decided'])}`",
+        f"- tp: `{int(quality['tp'])}`",
+        f"- fp: `{int(quality['fp'])}`",
+        f"- unsure: `{int(quality['unsure'])}`",
+        f"- adj: `{int(quality['adj'])}`",
+        f"- fp_rate: `{quality['fp_rate']}`",
+        "",
+        "## Join Coverage",
+        "",
+        f"- decisive_joined_rows: `{summary['join_coverage']['decisive_joined_rows']}`",
+        f"- tp_rows: `{summary['join_coverage']['tp_rows']}`",
+        f"- fp_rows: `{summary['join_coverage']['fp_rows']}`",
+        f"- latest_row_mismatches: `{summary['join_coverage']['latest_row_mismatches']}`",
+        "",
+        "## Discrimination",
+        "",
+        f"- auc: `{disc['auc']}`",
+        f"- tp_mean: `{disc['tp_mean']}`",
+        f"- fp_mean: `{disc['fp_mean']}`",
+        f"- mean_separation: `{disc['mean_separation']}`",
+        f"- score_max: `{disc['score_max']}`",
+        f"- threshold_0_7: `{json.dumps(disc['threshold_0_7'])}`",
+        "",
+        "## Branch Recommendation",
+        "",
+    ]
+    for reason in branch["reason"]:
+        lines.append(f"- {reason}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _noncomputable_diagnostic_summary(
+    *,
+    db_path: str,
+    days: int,
+    quality_stats: Dict[str, Any],
+    reason: str,
+) -> Dict[str, Any]:
+    return {
+        "date": utc_now_iso()[:10],
+        "db_path": db_path,
+        "window_days": days,
+        "quality_stats": {
+            "labeled": int(quality_stats["labeled"]),
+            "decided": int(quality_stats["decided"]),
+            "tp": int(quality_stats["tp"]),
+            "fp": int(quality_stats["fp"]),
+            "unsure": int(quality_stats["unsure"]),
+            "adj": int(quality_stats["adj"]),
+            "fp_rate": float(quality_stats["fp_rate"]),
+        },
+        "join_coverage": {
+            "decisive_joined_rows": 0,
+            "tp_rows": 0,
+            "fp_rows": 0,
+            "latest_row_mismatches": 0,
+        },
+        "discrimination": {
+            "auc": None,
+            "tp_mean": None,
+            "fp_mean": None,
+            "mean_separation": None,
+            "score_max": None,
+            "threshold_0_7": {"tp": 0, "fp": 0, "fn": 0, "tn": 0},
+        },
+        "branch_recommendation": {
+            "name": "diagnostic_cannot_be_computed",
+            "reason": [reason],
+        },
+        "reproduction": {
+            "quality_stats_command": f"python -m ops.cli quality --db {db_path} stats --days {days}",
+            "notes": [
+                "Diagnostic failed closed before parity computation.",
+                "Resolve thesis provenance or integrity issues before inferring another branch.",
+            ],
+        },
+    }
+
+
+def _cmd_learning_loop_rerun_diagnostic(args: argparse.Namespace) -> None:
+    with quality_conn(args.db_path) as conn:
+        if args.days != 90:
+            raise ValueError("rerun-diagnostic is locked to the approved 90-day parity window")
+        missing_ids = iter_signal_ids_missing_latest_thesis_for_detected_window(conn, days=args.days, limit=None)
+        stale_ids = iter_signal_ids_stale_latest_missing_provenance_for_detected_window(conn, days=args.days, limit=None)
+        refresh_ids = sorted(set(missing_ids + stale_ids))
+        if refresh_ids:
+            if len(refresh_ids) > 200:
+                summary = _noncomputable_diagnostic_summary(
+                    db_path=args.db_path,
+                    days=args.days,
+                    quality_stats=get_overall_stats(conn, days=args.days),
+                    reason="missing or stale latest thesis provenance exceeds the bounded refresh set for a parity-safe rerun",
+                )
+            else:
+                try:
+                    refresh = refresh_signal_ids_missing_provenance(
+                        conn,
+                        signal_ids=refresh_ids,
+                        model=args.model,
+                        prompt_version=args.prompt_version,
+                        stop_on_error=False,
+                    )
+                except Exception as exc:
+                    summary = _noncomputable_diagnostic_summary(
+                        db_path=args.db_path,
+                        days=args.days,
+                        quality_stats=get_overall_stats(conn, days=args.days),
+                        reason=f"stale latest thesis provenance present and refresh failed: {exc}",
+                    )
+                else:
+                    remaining_stale = iter_signal_ids_stale_latest_missing_provenance_for_detected_window(
+                        conn,
+                        days=args.days,
+                        limit=1,
+                    )
+                    remaining_missing = iter_signal_ids_missing_latest_thesis_for_detected_window(
+                        conn,
+                        days=args.days,
+                        limit=1,
+                    )
+                    if refresh["failed"] > 0 or remaining_stale or remaining_missing:
+                        summary = _noncomputable_diagnostic_summary(
+                            db_path=args.db_path,
+                            days=args.days,
+                            quality_stats=get_overall_stats(conn, days=args.days),
+                            reason="missing or stale latest thesis provenance remained after bounded refresh; rerun failed closed",
+                        )
+                    else:
+                        summary = build_router_diagnostic_summary(conn, db_path=args.db_path, days=args.days)
+        else:
+            summary = build_router_diagnostic_summary(conn, db_path=args.db_path, days=args.days)
+    out_dir = Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
+    (out_dir / "summary.md").write_text(_render_router_diagnostic_markdown(summary), encoding="utf-8")
+    print(json.dumps({"out_dir": str(out_dir), "branch": summary["branch_recommendation"]["name"]}, indent=2))
 
 
 def _cmd_explain_score(args: argparse.Namespace) -> None:

@@ -1,0 +1,14 @@
+{
+  "schema_version": "learning_loop_apply_labels.v1",
+  "requested_by": "codex-smoke",
+  "requested_at": "2026-04-06T09:50:00Z",
+  "sort_key": ["signal_id"],
+  "items": [
+    {
+      "signal_id": 612,
+      "label": "ADJ",
+      "created_by": "codex-smoke",
+      "reason": "scratch smoke test"
+    }
+  ]
+}
