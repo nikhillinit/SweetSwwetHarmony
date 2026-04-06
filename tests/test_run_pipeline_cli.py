@@ -1,5 +1,4 @@
 """Tests for run_pipeline.py CLI flags."""
-import asyncio
 import json
 import sqlite3
 from types import SimpleNamespace
@@ -9,7 +8,37 @@ import pytest
 
 from run_pipeline import create_parser, cmd_collect, cmd_health
 from discovery_engine.mcp_server import CollectorResult, CollectorStatus
-from utils.signal_health import HealthReport, SourceHealth
+from utils.signal_health import HealthReport
+
+
+def _build_health_pipeline(
+    *,
+    notion_api_key=None,
+    notion_client=None,
+    db_connected=True,
+    stats=None,
+):
+    mock_pipeline = MagicMock()
+    mock_pipeline.initialize = AsyncMock()
+    mock_pipeline.close = AsyncMock()
+    mock_pipeline.config = MagicMock()
+    mock_pipeline.config.db_path = "signals.db"
+    mock_pipeline.config.notion_api_key = notion_api_key
+    mock_pipeline._store = MagicMock()
+    mock_pipeline._store._db = MagicMock() if db_connected else None
+    mock_pipeline._notion = notion_client
+    mock_pipeline.get_stats = AsyncMock(
+        return_value=stats or {"storage": {"active_suppression_entries": 1}}
+    )
+    return mock_pipeline
+
+
+def _build_health_report(*, status="HEALTHY", total_signals=None):
+    report = HealthReport()
+    report.overall_status = status
+    if total_signals is not None:
+        report.total_signals = total_signals
+    return report
 
 
 class TestCLIFlags:
@@ -100,21 +129,8 @@ class TestHealthCommand:
         args = MagicMock()
         args.db_path = None
 
-        # Mock pipeline - use MagicMock for sync properties, AsyncMock for async methods
-        mock_pipeline = MagicMock()
-        mock_pipeline.initialize = AsyncMock()
-        mock_pipeline.close = AsyncMock()
-        mock_pipeline.config = MagicMock()
-        mock_pipeline.config.db_path = "signals.db"
-        mock_pipeline.config.notion_api_key = None  # Skip Notion check
-        mock_pipeline._store = MagicMock()
-        mock_pipeline._store._db = MagicMock()  # DB connected
-        mock_pipeline._notion = None
-        mock_pipeline.get_stats = AsyncMock(return_value={"storage": {"active_suppression_entries": 1}})
-
-        # Mock health report
-        mock_report = HealthReport()
-        mock_report.overall_status = "HEALTHY"
+        mock_pipeline = _build_health_pipeline()
+        mock_report = _build_health_report()
 
         with patch("run_pipeline.DiscoveryPipeline", return_value=mock_pipeline):
             with patch("run_pipeline.SignalHealthMonitor") as mock_monitor_cls:
@@ -136,22 +152,13 @@ class TestHealthCommand:
         args = MagicMock()
         args.db_path = None
 
-        mock_pipeline = MagicMock()
-        mock_pipeline.initialize = AsyncMock()
-        mock_pipeline.close = AsyncMock()
-        mock_pipeline.config = MagicMock()
-        mock_pipeline.config.db_path = "signals.db"
-        mock_pipeline.config.notion_api_key = "test-key"  # Enable Notion check
-        mock_pipeline._store = MagicMock()
-        mock_pipeline._store._db = MagicMock()
-        mock_pipeline._notion = MagicMock()
-        mock_pipeline.get_stats = AsyncMock(return_value={"storage": {"active_suppression_entries": 1}})
-
-        # Mock Notion API check
-        mock_pipeline._notion.test_connection = AsyncMock(return_value=True)
-
-        mock_report = HealthReport()
-        mock_report.overall_status = "HEALTHY"
+        notion_client = MagicMock()
+        notion_client.test_connection = AsyncMock(return_value=True)
+        mock_pipeline = _build_health_pipeline(
+            notion_api_key="test-key",
+            notion_client=notion_client,
+        )
+        mock_report = _build_health_report()
 
         with patch("run_pipeline.DiscoveryPipeline", return_value=mock_pipeline):
             with patch("run_pipeline.SignalHealthMonitor") as mock_monitor_cls:
@@ -173,20 +180,8 @@ class TestHealthCommand:
         args = MagicMock()
         args.db_path = None
 
-        mock_pipeline = MagicMock()
-        mock_pipeline.initialize = AsyncMock()
-        mock_pipeline.close = AsyncMock()
-        mock_pipeline.config = MagicMock()
-        mock_pipeline.config.db_path = "signals.db"
-        mock_pipeline.config.notion_api_key = None  # Skip Notion check
-        mock_pipeline._store = MagicMock()
-        mock_pipeline._store._db = MagicMock()
-        mock_pipeline._notion = None
-        mock_pipeline.get_stats = AsyncMock(return_value={"storage": {"active_suppression_entries": 1}})
-
-        mock_report = HealthReport()
-        mock_report.overall_status = "HEALTHY"
-        mock_report.total_signals = 42
+        mock_pipeline = _build_health_pipeline()
+        mock_report = _build_health_report(total_signals=42)
 
         with patch("run_pipeline.DiscoveryPipeline", return_value=mock_pipeline):
             with patch("run_pipeline.SignalHealthMonitor") as mock_monitor_cls:
@@ -208,19 +203,8 @@ class TestHealthCommand:
         args = MagicMock()
         args.db_path = None
 
-        mock_pipeline = MagicMock()
-        mock_pipeline.initialize = AsyncMock()
-        mock_pipeline.close = AsyncMock()
-        mock_pipeline.config = MagicMock()
-        mock_pipeline.config.db_path = "signals.db"
-        mock_pipeline.config.notion_api_key = None  # Skip Notion check
-        mock_pipeline._store = MagicMock()
-        mock_pipeline._store._db = MagicMock()
-        mock_pipeline._notion = None
-        mock_pipeline.get_stats = AsyncMock(return_value={"storage": {"active_suppression_entries": 1}})
-
-        mock_report = HealthReport()
-        mock_report.overall_status = "HEALTHY"
+        mock_pipeline = _build_health_pipeline()
+        mock_report = _build_health_report()
 
         with patch("run_pipeline.DiscoveryPipeline", return_value=mock_pipeline):
             with patch("run_pipeline.SignalHealthMonitor") as mock_monitor_cls:
@@ -243,19 +227,8 @@ class TestHealthCommand:
         args = MagicMock()
         args.db_path = None
 
-        mock_pipeline = MagicMock()
-        mock_pipeline.initialize = AsyncMock()
-        mock_pipeline.close = AsyncMock()
-        mock_pipeline.config = MagicMock()
-        mock_pipeline.config.db_path = "signals.db"
-        mock_pipeline.config.notion_api_key = None  # Skip Notion check
-        mock_pipeline._store = MagicMock()
-        mock_pipeline._store._db = MagicMock()
-        mock_pipeline._notion = None
-        mock_pipeline.get_stats = AsyncMock(return_value={"storage": {"active_suppression_entries": 1}})
-
-        mock_report = HealthReport()
-        mock_report.overall_status = "DEGRADED"
+        mock_pipeline = _build_health_pipeline()
+        mock_report = _build_health_report(status="DEGRADED")
 
         with patch("run_pipeline.DiscoveryPipeline", return_value=mock_pipeline):
             with patch("run_pipeline.SignalHealthMonitor") as mock_monitor_cls:
@@ -275,19 +248,8 @@ class TestHealthCommand:
         args = MagicMock()
         args.db_path = None
 
-        mock_pipeline = MagicMock()
-        mock_pipeline.initialize = AsyncMock()
-        mock_pipeline.close = AsyncMock()
-        mock_pipeline.config = MagicMock()
-        mock_pipeline.config.db_path = "signals.db"
-        mock_pipeline.config.notion_api_key = None  # Skip Notion check
-        mock_pipeline._store = MagicMock()
-        mock_pipeline._store._db = MagicMock()
-        mock_pipeline._notion = None
-        mock_pipeline.get_stats = AsyncMock(return_value={"storage": {"active_suppression_entries": 1}})
-
-        mock_report = HealthReport()
-        mock_report.overall_status = "CRITICAL"
+        mock_pipeline = _build_health_pipeline()
+        mock_report = _build_health_report(status="CRITICAL")
 
         with patch("run_pipeline.DiscoveryPipeline", return_value=mock_pipeline):
             with patch("run_pipeline.SignalHealthMonitor") as mock_monitor_cls:
@@ -309,18 +271,8 @@ class TestHealthCommand:
         args.allow_external_failures = True
         args.core_only = False
 
-        mock_pipeline = MagicMock()
-        mock_pipeline.initialize = AsyncMock()
-        mock_pipeline.close = AsyncMock()
-        mock_pipeline.config = MagicMock()
-        mock_pipeline.config.db_path = "signals.db"
-        mock_pipeline.config.notion_api_key = None
-        mock_pipeline._store = MagicMock()
-        mock_pipeline._store._db = MagicMock()
-        mock_pipeline.get_stats = AsyncMock(return_value={"storage": {"active_suppression_entries": 1}})
-
-        mock_report = HealthReport()
-        mock_report.overall_status = "HEALTHY"
+        mock_pipeline = _build_health_pipeline()
+        mock_report = _build_health_report()
 
         with patch("run_pipeline.DiscoveryPipeline", return_value=mock_pipeline):
             with patch("run_pipeline.SignalHealthMonitor") as mock_monitor_cls:
@@ -342,18 +294,8 @@ class TestHealthCommand:
         args.core_only = True
         args.allow_external_failures = False
 
-        mock_pipeline = MagicMock()
-        mock_pipeline.initialize = AsyncMock()
-        mock_pipeline.close = AsyncMock()
-        mock_pipeline.config = MagicMock()
-        mock_pipeline.config.db_path = "signals.db"
-        mock_pipeline.config.notion_api_key = None
-        mock_pipeline._store = MagicMock()
-        mock_pipeline._store._db = MagicMock()
-        mock_pipeline.get_stats = AsyncMock(return_value={"storage": {"active_suppression_entries": 1}})
-
-        mock_report = HealthReport()
-        mock_report.overall_status = "HEALTHY"
+        mock_pipeline = _build_health_pipeline()
+        mock_report = _build_health_report()
 
         with patch("run_pipeline.DiscoveryPipeline", return_value=mock_pipeline):
             with patch("run_pipeline.SignalHealthMonitor") as mock_monitor_cls:
@@ -375,15 +317,7 @@ class TestHealthCommand:
         args = MagicMock()
         args.db_path = None
 
-        mock_pipeline = MagicMock()
-        mock_pipeline.initialize = AsyncMock()
-        mock_pipeline.close = AsyncMock()
-        mock_pipeline.config = MagicMock()
-        mock_pipeline.config.db_path = "signals.db"
-        mock_pipeline.config.notion_api_key = None  # Skip Notion check
-        mock_pipeline._store = MagicMock()
-        mock_pipeline._store._db = None  # DB NOT connected
-        mock_pipeline._notion = None
+        mock_pipeline = _build_health_pipeline(db_connected=False)
 
         with patch("run_pipeline.DiscoveryPipeline", return_value=mock_pipeline):
             with patch("run_pipeline.check_github_api", AsyncMock(return_value=(True, "OK"))):

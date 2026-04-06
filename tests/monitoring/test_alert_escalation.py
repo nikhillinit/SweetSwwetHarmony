@@ -45,7 +45,7 @@ async def store():
         pass
 
 
-async def _insert_alert(store, alert_id=None, status="open"):
+async def _insert_alert(store, status="open"):
     """Insert a test alert."""
     db = store._db
     await db.execute("PRAGMA foreign_keys = OFF")

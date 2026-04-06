@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import sys
 import json
 from pathlib import Path
-import sys
 
 import pytest
 
@@ -155,6 +155,8 @@ async def test_run_diagnostic_compare_against_reports_improvements(tmp_path):
     _write_manifest(dataset)
     output_dir = tmp_path / "artifacts"
     baseline_path = tmp_path / "baseline.jsonl"
+    benchmark_fingerprint = compute_dataset_fingerprint(load_evaluation_dataset(dataset))
+    benchmark_manifest_path = str(manifest_path_for_dataset(dataset))
     baseline_records = [
         {
             "sample_id": "sample_1",
@@ -163,8 +165,8 @@ async def test_run_diagnostic_compare_against_reports_improvements(tmp_path):
             "match": False,
             "benchmark_id": "thesis_llm_golden_set",
             "benchmark_version": "test.v1",
-            "benchmark_fingerprint": compute_dataset_fingerprint(load_evaluation_dataset(dataset)),
-            "benchmark_manifest_path": str(manifest_path_for_dataset(dataset)),
+            "benchmark_fingerprint": benchmark_fingerprint,
+            "benchmark_manifest_path": benchmark_manifest_path,
         },
         {
             "sample_id": "sample_2",
@@ -173,8 +175,8 @@ async def test_run_diagnostic_compare_against_reports_improvements(tmp_path):
             "match": True,
             "benchmark_id": "thesis_llm_golden_set",
             "benchmark_version": "test.v1",
-            "benchmark_fingerprint": compute_dataset_fingerprint(load_evaluation_dataset(dataset)),
-            "benchmark_manifest_path": str(manifest_path_for_dataset(dataset)),
+            "benchmark_fingerprint": benchmark_fingerprint,
+            "benchmark_manifest_path": benchmark_manifest_path,
         },
     ]
     with baseline_path.open("w", encoding="utf-8") as handle:
