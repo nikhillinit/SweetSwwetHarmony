@@ -28,7 +28,14 @@ ShadowSidecar):
 
   5. Cross-source convergence rate
      Of surfaced companies (status='promoted'), fraction with >= 2 distinct
-     non-ambient evidence classes. Computed via aggregate_company_evidence.
+     discovery evidence classes (excluding AMBIENT_CORROBORATION,
+     ANALYST_SEED, and UNKNOWN). Computed per-signal via
+     analytics.kg_bridge.class_for_signal_row, which routes through the
+     production-authoritative verification.evidence_families.get_family().
+     The source-shape distribution branch (sole_ambient/with_any_discovery
+     counts) intentionally still uses analytics.evidence_ontology.classify_source_api
+     because company_files.source_apis is a list of source-api strings only
+     and has no signal_type column.
 
 KPI 4 is GNews-only — Crunchbase data is not configured (per memory). The
 markdown report acknowledges this gap explicitly.
@@ -58,9 +65,9 @@ from typing import Any, Dict, List, Optional
 
 from analytics.evidence_ontology import (
     EvidenceClass,
-    aggregate_company_evidence,
     classify_source_api,
 )
+from analytics.kg_bridge import class_for_signal_row
 from analytics.shadow_sidecar import (
     DEFAULT_PRODUCTION_DB,
     ReadMode,
@@ -108,6 +115,10 @@ class KpiBaseline:
     convergence_n_promoted: int = 0
     convergence_n_two_or_more_classes: int = 0
     convergence_rate: Optional[float] = None
+    # E3: which classifier produced the convergence numbers
+    # ("production_evidence_family" via analytics.kg_bridge.class_for_signal_row,
+    # or "source_api_only" via analytics.evidence_ontology.classify_source_api).
+    convergence_classifier: str = "production_evidence_family"
 
     # Per-source counts (for sanity / debugging)
     signal_counts_by_source: Dict[str, int] = field(default_factory=dict)
@@ -393,24 +404,35 @@ def _compute_cross_source_convergence(conn) -> Dict[str, Any]:
         else:
             with_any_discovery += 1
     for p in promoted:
+        # E3: classify each signal row through the production-authoritative
+        # classifier (verification.evidence_families.get_family) by way of
+        # analytics.kg_bridge.class_for_signal_row, which uses BOTH
+        # signal_type and source_api. The previous (P0) path used only
+        # source_api which over-counted distinct discovery classes for
+        # promotions whose source_apis collapse to the same evidence family
+        # under the production taxonomy (e.g. linkedin_company web_presence
+        # and sec_edgar regulatory both → INFRASTRUCTURE_INTENT).
         signal_rows = conn.execute(
-            "SELECT source_api, detected_at FROM signals WHERE canonical_key = ?",
+            "SELECT signal_type, source_api, detected_at FROM signals "
+            "WHERE canonical_key = ?",
             (p["canonical_key"],),
         ).fetchall()
-        bundle = aggregate_company_evidence(
-            p["company_id"],
-            [{"source_api": r["source_api"], "detected_at": r["detected_at"]} for r in signal_rows],
-        )
+        signal_classes = {
+            class_for_signal_row(r["signal_type"], r["source_api"])
+            for r in signal_rows
+        }
         # Discovery classes only — exclude AMBIENT_CORROBORATION (popularity
-        # signals) AND ANALYST_SEED (analyst priors). A company with
-        # (analyst_seed + greenhouse_jobs) has only ONE discovery class.
+        # signals), ANALYST_SEED (analyst priors), and UNKNOWN (unmapped
+        # signal types). A company with (analyst_seed + greenhouse_jobs)
+        # has only ONE discovery class.
         discovery_classes = {
             c
-            for c in bundle.classes_present
+            for c in signal_classes
             if c
             not in (
                 EvidenceClass.AMBIENT_CORROBORATION,
                 EvidenceClass.ANALYST_SEED,
+                EvidenceClass.UNKNOWN,
             )
         }
         if len(discovery_classes) >= 2:
@@ -553,9 +575,42 @@ def render_markdown(baseline: KpiBaseline) -> str:
    headline. The labelling sprint (`p0.3`) is the primary remedy.
 
 3. **KPI 5 uses derived classes.** Computed via
-   `analytics.evidence_ontology.aggregate_company_evidence`. No schema
-   migration. The result will change when new collectors land in the
-   ontology table.
+   `analytics.kg_bridge.class_for_signal_row`, which defers to
+   `verification.evidence_families.get_family()` (the production-
+   authoritative classifier). No schema migration. The result will change
+   when new collectors land in the ontology table or when
+   `verification/evidence_families.py` adds new (signal_type, source_api)
+   mappings.
+
+## KPI 5 classifier provenance (E3)
+
+KPI 5 (cross-source convergence) is computed using the
+**`{baseline.convergence_classifier}`** path:
+
+- `production_evidence_family` *(default after E3)*: per-signal
+  classification via `analytics.kg_bridge.class_for_signal_row(signal_type,
+  source_api)`, which defers to the production-authoritative
+  `verification.evidence_families.get_family()`. This path uses BOTH
+  `signals.signal_type` and `signals.source_api`, so it correctly handles
+  source-API overrides for ambiguous signal types and collapses
+  `linkedin_company` (web_presence) and `incorporation` (regulatory) into
+  the same INFRASTRUCTURE_INTENT discovery class.
+
+- `source_api_only` *(pre-E3 path; preserved for the source-shape branch
+  at line ~380 because `company_files.source_apis` has only source-api
+  strings, no signal_type)*: classification via
+  `analytics.evidence_ontology.classify_source_api(source_api)`. This path
+  is what the `promoted_sole_ambient_count` and
+  `promoted_with_any_discovery_class` numbers above are computed under,
+  because the source-shape branch operates on a list of source-api strings
+  with no signal_type available.
+
+This means the report mixes two classifiers by design: the headline KPI 5
+uses the production classifier; the source-shape distribution uses the
+simpler source-api map. The two classifiers agree on most cases but
+disagree where the production taxonomy distinguishes signals that the
+simple map collapses (or vice versa). The disagreement is documented in
+`artifacts/red-team-execution/phase0/kg-enhancement-design.md` §4.
 
 ## Per-source signal counts (window)
 
