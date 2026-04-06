@@ -43,6 +43,24 @@ class ThesisRunResult:
     classification_status: str = "success"
 
 
+@dataclass(frozen=True)
+class DisagreementCandidate:
+    signal_id: int
+    queue_type: str
+    canonical_key: str
+    company_name: str
+    source_api: str
+    detected_at: str
+    priority_rank: int
+    reason_code: str
+    reason_summary: str
+    keyword_score: float
+    thesis_fit_score: float
+    keyword_category: str
+    thesis_category: str
+    llm_confidence: str
+
+
 THESIS_REFRESH_LATEST_V1_DAYS = 90
 
 
@@ -96,6 +114,98 @@ def _ensure_thesis_table_exists(conn: sqlite3.Connection) -> None:
         raise RuntimeError(
             "thesis_classifications table not found. Run the pipeline once to initialize the DB schema."
         )
+
+
+def _fetch_recent_latest_thesis_rows(
+    conn: sqlite3.Connection,
+    *,
+    days: int = 30,
+) -> list[sqlite3.Row]:
+    since = _iso_days_ago(days)
+    return conn.execute(
+        """
+        WITH latest_tc AS (
+            SELECT tc.*
+            FROM thesis_classifications tc
+            JOIN (
+                SELECT signal_id, MAX(id) AS max_id
+                FROM thesis_classifications
+                GROUP BY signal_id
+            ) tmax ON tmax.signal_id = tc.signal_id AND tmax.max_id = tc.id
+        )
+        SELECT
+            s.id AS signal_id,
+            s.source_api,
+            s.company_name,
+            s.detected_at,
+            s.canonical_key,
+            tc.keyword_score,
+            tc.keyword_category,
+            tc.thesis_match,
+            tc.thesis_fit_score,
+            tc.category AS thesis_category,
+            tc.confidence AS llm_confidence,
+            COALESCE(tc.disagreement_detected, 0) AS disagreement_detected
+        FROM signals s
+        JOIN latest_tc tc ON tc.signal_id = s.id
+        WHERE s.detected_at >= ?
+        ORDER BY s.detected_at DESC, s.id DESC
+        """,
+        (since,),
+    ).fetchall()
+
+
+def list_disagreement_candidates(
+    conn: sqlite3.Connection,
+    *,
+    days: int = 30,
+    limit: int = 200,
+) -> list[DisagreementCandidate]:
+    """Return structured thesis disagreement rows for operator review."""
+    rows = _fetch_recent_latest_thesis_rows(conn, days=days)
+    candidates: list[DisagreementCandidate] = []
+
+    for r in rows:
+        if int(r["disagreement_detected"] or 0) != 1:
+            continue
+
+        keyword_score = float(r["keyword_score"] or 0.0)
+        thesis_fit_score = float(r["thesis_fit_score"] or 0.0)
+        if keyword_score >= 0.7 and thesis_fit_score < 0.4:
+            reason_code = "kw_high_llm_low"
+            priority_rank = 10
+        elif keyword_score < 0.4 and thesis_fit_score >= 0.7:
+            reason_code = "kw_low_llm_high"
+            priority_rank = 20
+        else:
+            reason_code = "other_disagreement"
+            priority_rank = 30
+
+        candidates.append(
+            DisagreementCandidate(
+                signal_id=int(r["signal_id"]),
+                queue_type="disagreement",
+                canonical_key=str(r["canonical_key"] or ""),
+                company_name=str(r["company_name"] or ""),
+                source_api=str(r["source_api"] or ""),
+                detected_at=str(r["detected_at"] or ""),
+                priority_rank=priority_rank,
+                reason_code=reason_code,
+                reason_summary=(
+                    f"{reason_code}: keyword={keyword_score:.2f}, "
+                    f"llm_fit={thesis_fit_score:.2f}, "
+                    f"keyword_category={r['keyword_category'] or ''}, "
+                    f"llm_category={r['thesis_category'] or ''}"
+                ),
+                keyword_score=keyword_score,
+                thesis_fit_score=thesis_fit_score,
+                keyword_category=str(r["keyword_category"] or ""),
+                thesis_category=str(r["thesis_category"] or ""),
+                llm_confidence=str(r["llm_confidence"] or ""),
+            )
+        )
+
+    return candidates[:limit]
 
 
 def store_thesis_classification(
@@ -360,6 +470,78 @@ def iter_signals_stale_latest_missing_provenance(
     return [int(r["signal_id"]) for r in rows]
 
 
+def iter_signal_ids_stale_latest_missing_provenance_for_detected_window(
+    conn: sqlite3.Connection,
+    *,
+    days: int = THESIS_REFRESH_LATEST_V1_DAYS,
+    limit: Optional[int] = None,
+) -> List[int]:
+    """Return stale latest-row signal_ids within a detected_at window.
+
+    This is used by the learning-loop diagnostic rerun, which is anchored to
+    the diagnostic's detected_at-scoped 90-day contract rather than the
+    thesis-refresh-latest created_at cohort.
+    """
+    since = _iso_days_ago(days)
+    sql = """
+        WITH latest_tc AS (
+            SELECT tc.*
+            FROM thesis_classifications tc
+            JOIN (
+                SELECT signal_id, MAX(id) AS max_id
+                FROM thesis_classifications
+                GROUP BY signal_id
+            ) tmax ON tmax.signal_id = tc.signal_id AND tmax.max_id = tc.id
+        )
+        SELECT s.id AS signal_id
+        FROM signals s
+        JOIN latest_tc tc ON tc.signal_id = s.id
+        WHERE s.detected_at >= ?
+          AND (
+            tc.model IS NULL OR tc.model = ''
+            OR tc.prompt_version IS NULL OR tc.prompt_version = ''
+          )
+        ORDER BY s.detected_at DESC, s.id DESC
+    """
+    params: list[Any] = [since]
+    if limit is not None:
+        sql += "\nLIMIT ?"
+        params.append(limit)
+    rows = conn.execute(sql, params).fetchall()
+    return [int(r["signal_id"]) for r in rows]
+
+
+def iter_signal_ids_missing_latest_thesis_for_detected_window(
+    conn: sqlite3.Connection,
+    *,
+    days: int = THESIS_REFRESH_LATEST_V1_DAYS,
+    limit: Optional[int] = None,
+) -> List[int]:
+    """Return decisive TP/FP signals in-window that have no latest thesis row."""
+    since = _iso_days_ago(days)
+    sql = """
+        WITH latest_tc AS (
+            SELECT signal_id, MAX(id) AS max_id
+            FROM thesis_classifications
+            GROUP BY signal_id
+        )
+        SELECT s.id AS signal_id
+        FROM signals s
+        JOIN signal_quality_metrics sqm ON sqm.signal_id = s.id
+        LEFT JOIN latest_tc tc ON tc.signal_id = s.id
+        WHERE s.detected_at >= ?
+          AND sqm.human_label IN ('TP', 'FP')
+          AND tc.max_id IS NULL
+        ORDER BY s.detected_at DESC, s.id DESC
+    """
+    params: list[Any] = [since]
+    if limit is not None:
+        sql += "\nLIMIT ?"
+        params.append(limit)
+    rows = conn.execute(sql, params).fetchall()
+    return [int(r["signal_id"]) for r in rows]
+
+
 def batch_classify_missing_thesis(
     conn: sqlite3.Connection,
     *,
@@ -471,6 +653,62 @@ def batch_refresh_latest_missing_provenance(
     }
 
 
+def refresh_signal_ids_missing_provenance(
+    conn: sqlite3.Connection,
+    *,
+    signal_ids: Iterable[int],
+    model: str = "gemini-2.0-flash",
+    prompt_version: str = "quality-ops-v1",
+    stop_on_error: bool = False,
+) -> Dict[str, Any]:
+    """Refresh explicit signal ids whose latest thesis rows are stale."""
+    ids = [int(sid) for sid in signal_ids]
+    results: List[Dict[str, Any]] = []
+    errors: List[Dict[str, Any]] = []
+
+    for sid in ids:
+        conn.execute("SAVEPOINT thesis_refresh_explicit")
+        try:
+            result, classification_id = _classify_signal_llm_impl(
+                conn,
+                signal_id=sid,
+                model=model,
+                prompt_version=prompt_version,
+                commit=False,
+            )
+            latest_by_id, latest_by_time = _latest_thesis_row_ids(conn, sid)
+            if latest_by_id != classification_id or latest_by_time != classification_id:
+                raise RuntimeError(
+                    "Refresh row did not become latest by both id and classified_at ordering"
+                )
+            conn.execute("RELEASE SAVEPOINT thesis_refresh_explicit")
+            conn.commit()
+            results.append(
+                {
+                    "signal_id": sid,
+                    "classification_id": classification_id,
+                    "thesis_match": result.thesis_match,
+                    "thesis_fit_score": result.thesis_fit_score,
+                    "classified_at": result.classified_at,
+                }
+            )
+        except Exception as e:
+            conn.execute("ROLLBACK TO SAVEPOINT thesis_refresh_explicit")
+            conn.execute("RELEASE SAVEPOINT thesis_refresh_explicit")
+            errors.append({"signal_id": sid, "error": str(e)})
+            if stop_on_error:
+                break
+
+    return {
+        "attempted": len(ids),
+        "succeeded": len(results),
+        "failed": len(errors),
+        "target_signal_ids": ids,
+        "results": results,
+        "errors": errors,
+    }
+
+
 def batch_classify_recent(
     db_path: str,
     *,
@@ -528,74 +766,28 @@ def generate_disagreement_report(
     - Keyword says match (>= threshold) but LLM says no -> keyword false positives
     - Keyword says no (< threshold) but LLM says yes -> keyword false negatives
     """
-    since = _iso_days_ago(days)
-
-    # Query all classified signals
-    all_rows = conn.execute(
-        """
-        WITH latest_tc AS (
-            SELECT tc.*
-            FROM thesis_classifications tc
-            JOIN (
-                SELECT signal_id, MAX(id) AS max_id
-                FROM thesis_classifications
-                GROUP BY signal_id
-            ) tmax ON tmax.signal_id = tc.signal_id AND tmax.max_id = tc.id
-        )
-        SELECT
-            s.id AS signal_id,
-            s.source_api,
-            s.company_name,
-            s.detected_at,
-            tc.keyword_score,
-            tc.keyword_category,
-            tc.thesis_match,
-            tc.thesis_fit_score,
-            tc.category AS thesis_category,
-            tc.confidence AS llm_confidence,
-            COALESCE(tc.disagreement_detected, 0) AS disagreement_detected
-        FROM signals s
-        JOIN latest_tc tc ON tc.signal_id = s.id
-        WHERE s.detected_at >= ?
-        ORDER BY s.detected_at DESC
-        """,
-        (since,),
-    ).fetchall()
-
-    # Filter for disagreements using the column
-    disagreement_rows = [r for r in all_rows if r["disagreement_detected"] == 1]
-
-    # Categorize disagreements
-    kw_fp: List[sqlite3.Row] = []  # keyword high, LLM low
-    kw_fn: List[sqlite3.Row] = []  # keyword low, LLM high
-
-    for r in disagreement_rows:
-        kw = float(r["keyword_score"] or 0.0)
-        llm_fit = float(r["thesis_fit_score"] or 0.0)
-
-        if kw >= 0.7 and llm_fit < 0.4:
-            kw_fp.append(r)
-        elif kw < 0.4 and llm_fit >= 0.7:
-            kw_fn.append(r)
+    all_rows = _fetch_recent_latest_thesis_rows(conn, days=days)
+    disagreement_candidates = list_disagreement_candidates(conn, days=days, limit=10_000)
+    kw_fp: List[DisagreementCandidate] = [c for c in disagreement_candidates if c.reason_code == "kw_high_llm_low"]
+    kw_fn: List[DisagreementCandidate] = [c for c in disagreement_candidates if c.reason_code == "kw_low_llm_high"]
 
     # Compute statistics by category
     from collections import Counter
-    kw_fp_by_category = Counter(r["keyword_category"] for r in kw_fp if r["keyword_category"])
-    kw_fn_by_category = Counter(r["thesis_category"] for r in kw_fn if r["thesis_category"])
+    kw_fp_by_category = Counter(c.keyword_category for c in kw_fp if c.keyword_category)
+    kw_fn_by_category = Counter(c.thesis_category for c in kw_fn if c.thesis_category)
 
-    def _fmt_row(r: sqlite3.Row) -> str:
+    def _fmt_row(c: DisagreementCandidate) -> str:
         return (
-            f"- signal_id={int(r['signal_id'])} "
-            f"source_api={r['source_api']} "
-            f"kw={float(r['keyword_score'] or 0.0):.2f} "
-            f"llm_match={bool(r['thesis_match'])} "
-            f"llm_fit={float(r['thesis_fit_score'] or 0.0):.2f} "
-            f"company='{(r['company_name'] or '')[:80]}'"
+            f"- signal_id={c.signal_id} "
+            f"source_api={c.source_api} "
+            f"kw={c.keyword_score:.2f} "
+            f"llm_fit={c.thesis_fit_score:.2f} "
+            f"company='{c.company_name[:80]}'"
         )
 
     # Build report
     total_classified = len(all_rows)
-    total_disagreements = len(disagreement_rows)
+    total_disagreements = len(disagreement_candidates)
     disagreement_rate = (total_disagreements / total_classified * 100) if total_classified > 0 else 0.0
 
     md = []

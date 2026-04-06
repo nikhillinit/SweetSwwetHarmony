@@ -13,7 +13,10 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Dict, List, Optional, Tuple
+from statistics import mean
+from typing import Any, Dict, List
+
+from verification.verification_gate_v2 import VerificationGate
 
 
 @dataclass(frozen=True)
@@ -26,6 +29,206 @@ class CollectorStats:
     adj: int
     decided: int
     fp_rate: float
+
+
+def _frozen_quality_stats(overall: Dict[str, float]) -> Dict[str, Any]:
+    return {
+        "labeled": int(overall["labeled"]),
+        "decided": int(overall["decided"]),
+        "tp": int(overall["tp"]),
+        "fp": int(overall["fp"]),
+        "unsure": int(overall["unsure"]),
+        "adj": int(overall["adj"]),
+        "fp_rate": float(overall["fp_rate"]),
+    }
+
+
+def _latest_thesis_row_mismatches(conn: sqlite3.Connection, *, days: int) -> int:
+    since = _iso_days_ago(days)
+    row = conn.execute(
+        """
+        WITH by_id AS (
+            SELECT signal_id, id AS max_id
+            FROM (
+                SELECT
+                    signal_id,
+                    id,
+                    ROW_NUMBER() OVER (PARTITION BY signal_id ORDER BY id DESC) AS rn
+                FROM thesis_classifications
+            )
+            WHERE rn = 1
+        ),
+        by_time AS (
+            SELECT signal_id, id AS max_time_id
+            FROM (
+                SELECT
+                    signal_id,
+                    id,
+                    ROW_NUMBER() OVER (PARTITION BY signal_id ORDER BY classified_at DESC, id DESC) AS rn
+                FROM thesis_classifications
+            )
+            WHERE rn = 1
+        )
+        SELECT COUNT(*)
+        FROM by_id i
+        JOIN signals s ON s.id = i.signal_id
+        JOIN by_time t ON t.signal_id=i.signal_id
+        WHERE s.detected_at >= ?
+          AND i.max_id != t.max_time_id
+        """
+        ,
+        (since,),
+    ).fetchone()
+    return int(row[0] or 0)
+
+
+def _latest_decisive_thesis_rows(conn: sqlite3.Connection, *, days: int) -> list[sqlite3.Row]:
+    since = _iso_days_ago(days)
+    return conn.execute(
+        """
+        WITH latest_tc AS (
+            SELECT tc.*
+            FROM thesis_classifications tc
+            JOIN (
+                SELECT signal_id, MAX(id) AS max_id
+                FROM thesis_classifications
+                GROUP BY signal_id
+            ) tmax ON tmax.signal_id = tc.signal_id AND tmax.max_id = tc.id
+        )
+        SELECT sqm.signal_id, sqm.human_label, tc.thesis_fit_score, tc.thesis_match
+        FROM signal_quality_metrics sqm
+        JOIN latest_tc tc ON tc.signal_id = sqm.signal_id
+        JOIN signals s ON s.id = sqm.signal_id
+        WHERE s.detected_at >= ?
+          AND sqm.human_label IN ('TP', 'FP')
+          AND tc.thesis_fit_score IS NOT NULL
+        ORDER BY sqm.signal_id
+        """,
+        (since,),
+    ).fetchall()
+
+
+def _rank_auc(tp_scores: list[float], fp_scores: list[float]) -> float:
+    values = [(s, "TP") for s in tp_scores] + [(s, "FP") for s in fp_scores]
+    values.sort(key=lambda x: x[0])
+    rank_sum_pos = 0.0
+    i = 0
+    while i < len(values):
+        j = i
+        while j < len(values) and values[j][0] == values[i][0]:
+            j += 1
+        avg_rank = (i + 1 + j) / 2.0
+        for k in range(i, j):
+            if values[k][1] == "TP":
+                rank_sum_pos += avg_rank
+        i = j
+    n_pos = len(tp_scores)
+    n_neg = len(fp_scores)
+    return (rank_sum_pos - n_pos * (n_pos + 1) / 2.0) / (n_pos * n_neg)
+
+
+def build_router_diagnostic_summary(
+    conn: sqlite3.Connection,
+    *,
+    db_path: str,
+    days: int = 90,
+    high_confidence_threshold: float | None = None,
+) -> Dict[str, Any]:
+    """Build the frozen router-diagnostic summary contract for the learning loop."""
+    threshold = (
+        float(high_confidence_threshold)
+        if high_confidence_threshold is not None
+        else float(VerificationGate.HIGH_CONFIDENCE_THRESHOLD)
+    )
+    overall = get_overall_stats(conn, days=days)
+    mismatches = _latest_thesis_row_mismatches(conn, days=days)
+    rows = _latest_decisive_thesis_rows(conn, days=days)
+
+    tp_scores = [float(r["thesis_fit_score"]) for r in rows if r["human_label"] == "TP"]
+    fp_scores = [float(r["thesis_fit_score"]) for r in rows if r["human_label"] == "FP"]
+
+    summary: Dict[str, Any] = {
+        "date": datetime.now(timezone.utc).date().isoformat(),
+        "db_path": db_path,
+        "window_days": days,
+        "quality_stats": _frozen_quality_stats(overall),
+        "join_coverage": {
+            "decisive_joined_rows": len(rows),
+            "tp_rows": len(tp_scores),
+            "fp_rows": len(fp_scores),
+            "latest_row_mismatches": mismatches,
+        },
+        "discrimination": {
+            "auc": None,
+            "tp_mean": None,
+            "fp_mean": None,
+            "mean_separation": None,
+            "score_max": None,
+            "threshold_0_7": {"tp": 0, "fp": 0, "fn": 0, "tn": 0},
+        },
+        "branch_recommendation": {"name": "diagnostic_cannot_be_computed", "reason": []},
+        "reproduction": {
+            "quality_stats_command": f"python -m ops.cli quality --db {db_path} stats --days {days}",
+            "notes": [
+                "Metrics are based on the latest thesis_classifications row per signal_id.",
+                "Discrimination metrics are computed from TP/FP rows joined to latest thesis_fit_score values in the selected detected_at window.",
+            ],
+        },
+    }
+
+    decided = int(overall["decided"])
+    if mismatches != 0 or not tp_scores or not fp_scores or len(rows) != decided:
+        summary["branch_recommendation"]["reason"] = [
+            "decisive-label joins or latest-row integrity are not credible enough to evaluate branch predicates"
+        ]
+        return summary
+
+    tp_mean = mean(tp_scores)
+    fp_mean = mean(fp_scores)
+    auc = _rank_auc(tp_scores, fp_scores)
+    score_max = max(tp_scores + fp_scores)
+    threshold_counts = {
+        "tp": sum(1 for s in tp_scores if s >= threshold),
+        "fp": sum(1 for s in fp_scores if s >= threshold),
+        "fn": sum(1 for s in tp_scores if s < threshold),
+        "tn": sum(1 for s in fp_scores if s < threshold),
+    }
+    mean_sep = tp_mean - fp_mean
+
+    summary["discrimination"] = {
+        "auc": auc,
+        "tp_mean": tp_mean,
+        "fp_mean": fp_mean,
+        "mean_separation": mean_sep,
+        "score_max": score_max,
+        "threshold_0_7": threshold_counts,
+    }
+
+    if mean_sep < 0.05 or auc < 0.65:
+        branch = "score_collapse_confirmed"
+        reasons = [
+            "mean separation below 0.05 or AUC below 0.65",
+            f"mean_separation={mean_sep:.6f}",
+            f"auc={auc:.6f}",
+        ]
+    elif score_max < threshold:
+        branch = "threshold_ceiling_only"
+        reasons = [
+            "separation is acceptable but score_max is below the high-confidence threshold",
+            f"score_max={score_max:.6f}",
+            f"high_confidence_threshold={threshold:.6f}",
+        ]
+    else:
+        branch = "no_routing_problem_detected"
+        reasons = [
+            "separation is acceptable and the threshold is reachable",
+            f"mean_separation={mean_sep:.6f}",
+            f"auc={auc:.6f}",
+            f"score_max={score_max:.6f}",
+        ]
+
+    summary["branch_recommendation"] = {"name": branch, "reason": reasons}
+    return summary
 
 
 def _iso_days_ago(days: int) -> str:
