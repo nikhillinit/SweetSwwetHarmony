@@ -50,6 +50,7 @@
 | **R16** | Track E analyst can't or won't populate seed with real founder data | 3 | 3 | 9 | Monitor | Eng MUST NOT generate placeholder names; if analyst can't deliver, Track D is descoped | **MONITORING** — see `09-track-e-watchlist.md` §3 |
 | **R17** | Move 0 deliverables slip past 2026-04-19 due to over-planning | 3 | 3 | 9 | Monitor | 80% rule + day 12 hard freeze; ship at 80% completion or document gaps and ship anyway | **MITIGATING** — see `01-move-0-charter.md` §1 |
 | **R18** | The bounded-context map's 80% gap (TBC tables) hides a key invariant | 2 | 3 | 6 | Monitor | Day 11 final classification pass; trigger inventory captured in artifacts/ | **DEFERRED** — Move 0 day 11 |
+| **R19** | **Data collection pipeline silently frozen since 2026-03-01; Step 4B regret check (2026-04-18) will run on stale data** | 4 | 5 | **20** | **Showstopper** | Discovered 2026-04-08 by 5-agent codebase audit. Signal corpus = 612, max(detected_at) = 2026-03-01, last actual pipeline run = 2026-03-24 (run_id 44). MEMORY.md "X signals processed (2026-04-04)" entries were re-classifications of existing rows, not new ingest. **Decide before 2026-04-18:** (a) restart collection now and let ≥5 days of fresh data accrue before the regret check, (b) explicitly document that the regret check evaluates batch_publish/MERGE_WRITES_ENABLED stability against frozen data and adjust pass/fail criteria, or (c) postpone the regret check itself. | **OPEN — REQUIRES DECISION** |
 
 ---
 
@@ -69,11 +70,11 @@
 
 | # | Showstopper | Mitigation in place? | Mitigation verified? |
 |---|---|---|---|
-| R1 | Step 4B regret window contamination | YES — `check_protected_paths.sh` runs before commits; all Move 0 work on prep branch with paths in `docs/`, `data/shadow/`, `artifacts/`, `scripts/data/` | TBD — verify after Move 0 commit |
+| R1 | Step 4B regret window contamination | YES — `check_protected_paths.sh` runs before commits; all Move 0 work on prep branch with paths in `docs/`, `data/shadow/`, `artifacts/`, `scripts/data/`; `.claude/hooks/postedit_protected_paths.ps1` PostToolUse hook (commit 9da1d26) provides per-edit enforcement | PARTIAL — design mitigation in place; verify after Move 0 commit |
 | R2 | Engine-efficacy mechanism gap | YES — strategy reframed as substrate hardening; Tracks B/D/E run in parallel; Tier-2 eval gates each Move | TBD — verify Track B canary metric on day 12 |
+| **R19** | **Pipeline silently frozen — regret check has no fresh data** | **NO — DISCOVERED 2026-04-08, REQUIRES DECISION** | NO — see R19 row above for the three options |
 
-**Both showstoppers are mitigated in design.** Verification of execution
-happens at the end of Move 0.
+**R1 and R2 are mitigated in design. R19 is open and load-bearing for the 2026-04-18 regret check.** Verification of R1/R2 execution happens at the end of Move 0; R19 requires an explicit decision before then.
 
 ---
 
