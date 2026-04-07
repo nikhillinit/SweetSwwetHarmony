@@ -5,11 +5,12 @@ At the start of every new session or after a `/clear` command.
 
 ## Required Actions
 1. **Read CLAUDE.md** - Understand project context, available workflows, and integrations
-2. **Check for documented workflows** - Before interpreting user requests, cross-reference against:
+2. **Resolve the active plan** — if the current branch matches `prep/<topic>` or `release/<topic>`, immediately glob `docs/plans/*<topic>*/` and read its `00-strategy.md` or `README.md`. Treat that doc as canonical; treat sibling plan dirs from the same date as supplementary, not authoritative. Skipping this step has caused multi-message confusion.
+3. **Check for documented workflows** - Before interpreting user requests, cross-reference against:
    - `docs/claude/` reference docs
    - `integrations/` for automation
    - Available CLI commands
-3. **Use documented automation** - Prefer existing workflows over manual processes
+4. **Use documented automation** - Prefer existing workflows over manual processes
 
 ## Examples
 

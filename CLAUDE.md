@@ -12,6 +12,15 @@
 9. Schema preflight is mandatory before Notion operations.
 10. Monitoring/health checks protect signal quality and pipeline reliability.
 
+## Active Sprint
+
+- **Branch:** `prep/red-team-hybrid-prep` · **Move 0** ends 2026-04-19 · **Next gate:** Step 4B regret check 2026-04-18
+- **Canonical plan:** `docs/plans/2026-04-06-red-team-hybrid/00-strategy.md` (NOT the sibling `lob-progress-eval/`)
+- **Protected paths during Move 0** (enforced by `scripts/red-team-hybrid/check_protected_paths.sh`):
+  `collectors/` `workflows/` `governance/` `monitoring/` `connectors/` `storage/migrations/`
+- **Vocabulary + deeper state:** see `@docs/claude/active-sprint.md`
+- **Maintenance:** regenerate at the start of each new move via the `claude-md-improver` skill; press `#` mid-session to capture incremental learnings.
+
 ## Investment Thesis
 **One-liner:** Press On Ventures invests in Pre-Seed to Series A consumer companies in CPG (food, beverage, beauty), health tech (fitness, wellness, mental health), travel & hospitality, and consumer marketplaces — excluding B2B, enterprise SaaS, developer tools, crypto, and hardware.
 
@@ -82,6 +91,11 @@ After the task, remove those lines (or run `git restore CLAUDE.md`) so they don'
 
 ### Archive
 - `docs/archive/sprint-history.md` — Historical sprint notes
+
+
+## gstack
+
+Installed at `~/.claude/skills/gstack/` (33 skills). **For all web browsing, use the gstack `/browse` skill — never use `mcp__claude-in-chrome__*`.** Skill index + commands: `~/.claude/skills/gstack/README.md`. Highly relevant during Move 0: `/freeze` `/guard` `/unfreeze` (formalized protected-paths), `/investigate` (state mysteries), `/careful` (high-stakes), `/retro` (end-of-move). Note: `/codex` overlaps with `integrations/maestro.py`; resolve in Move 1+.
 
 
 ## API Key Coverage (Auto-Updated)
