@@ -1,0 +1,238 @@
+# Track D Design — CT-Log + DNS Shadow Collector
+
+**Date:** 2026-04-08
+**Status:** Design only — implementation blocks on 2026-04-19 protected-paths unfreeze
+**REQ:** REC-03
+**Phase:** 1 (Move 0 Prep + Liveness Prep); implementation lands in Phase 3 (Move 1 Substrate)
+
+---
+
+## Background
+
+Track D adds a "shadow collector" that watches Certificate Transparency
+(CT) logs and passive DNS data to detect stealth companies before they
+have a public website or signed product launch. Stealth companies today
+escape the Harmonic pipeline because every current operational collector
+requires a pre-existing surface (an arxiv paper, an HN post, a news
+article, an RSS feed) — CT and DNS give an earlier signal.
+
+This doc is the decision record for HOW Track D will work. Per
+CONTEXT.md D-18, Phase 1 is DOCS ONLY — no `collectors/`, no
+`storage/migrations/`, no `.github/workflows/` code changes. Phase 3
+implements the code after the 2026-04-19 protected-paths unfreeze.
+
+---
+
+## 1. CT-log source decision
+
+**Decision:** `crt.sh` (Sectigo's free public CT log aggregator) as the
+primary source for Phase 3 v1. Fallback: Google Argon/Xenon logs via
+`cert-spotter` open-source client if crt.sh rate-limits or drops.
+
+**Rationale:**
+- **crt.sh pros:** free, no API key required, accepts wildcard domain
+  queries (`https://crt.sh/?q=%.acme.ai&output=json`), returns historical
+  data back to log inception, aggregates all major public CT logs so
+  we don't have to pick between Google Argon/Xenon, Cloudflare Nimbus,
+  DigiCert Yeti, etc. individually.
+- **crt.sh cons:** no formal SLA, occasional downtime, rate-limited by
+  IP (~2-5 req/sec soft cap before HTTP 503s), query latency can spike
+  to 10+ seconds during peak.
+- **Why NOT Google Argon directly:** Google's CT API is low-level (log
+  indices, MMR proofs); crt.sh's JSON layer already does the parsing.
+  We'd duplicate crt.sh's work.
+- **Why NOT Censys or SecurityTrails for CT:** they charge for CT
+  access. crt.sh is free. Cost envelope in §5 makes the choice obvious.
+- **Fallback path:** if crt.sh becomes unreliable, switch to
+  `cert-spotter` (open source, Go, MIT license) which follows public
+  CT logs directly. Keeps us free-tier.
+
+**Query pattern:**
+- For each founder in the Track E watchlist with a known name, query
+  `%<founder_slug>%` and `%<company_name_hint>%` combinations.
+- For each canonical_key with domain prefix in signals.db, query
+  the domain wildcard to detect new subdomains.
+- Cadence: daily via cron, bounded by crt.sh's soft rate limit.
+
+**Deduplication:** use the certificate serial number + Subject
+Alternative Name list as the dedupe key. crt.sh returns duplicates
+across logs — we collapse on (serial, san_tuple).
+
+---
+
+## 2. DNS data source decision
+
+**Decision:** Hybrid — `certspotter` CT stream + free-tier DNS resolution
+via the project's existing `domain_whois.py` infrastructure + manual
+Censys community tier (optional, capped at 250 queries/month).
+
+**Rationale:**
+- **Why NOT Censys as the primary:** Censys charges for meaningful
+  volume. Community tier is 250 queries/month, which is enough for
+  spot-check lookups but not as the primary feed.
+- **Why NOT SecurityTrails:** similar cost profile — their free tier
+  is 50 queries/month. Not enough.
+- **Why NOT passive DNS providers (Farsight DNSDB, etc.):** enterprise
+  pricing. Out of budget envelope (§5).
+- **Primary feed:** CT logs themselves contain SAN entries which are
+  hostnames. Hostnames resolve via standard DNS — Python stdlib
+  `socket.gethostbyname_ex()` gives A records without any paid service.
+  PTR records (reverse DNS) similarly free.
+- **Secondary feed:** `domain_whois.py` (existing collector in the
+  repo's `collectors/` directory) gives registration data. Track D
+  reuses it rather than adding a new WHOIS path.
+- **Tertiary feed:** Censys community tier used for spot-verification
+  when a stealth candidate looks high-value — manual lookup only,
+  not automated.
+
+**Cadence:** DNS resolution is on-demand (when a CT hit is interesting);
+Track D does NOT bulk-resolve every hostname. Avoids flooding local DNS
+cache and reduces fingerprint surface (§4).
+
+---
+
+## 3. Canonical key strategy for stealth companies
+
+**Decision:** Two-tier canonical key with fallback chain:
+
+1. **Primary:** `domain:<root_domain>` when a DNS resolution succeeds
+   (A record or MX record returned). `<root_domain>` is the eTLD+1
+   extracted via the `tldextract` library (already in the project's
+   requirements.txt — verified).
+2. **Fallback:** `ct_cert:<certificate_serial>` when no DNS resolution
+   exists yet (the cert exists but the hostname is unresolvable —
+   typical for "parked" pre-launch stealth domains).
+3. **Cross-link:** when a `ct_cert:` canonical key later gets a
+   resolving hostname, a `canonical_key_aliases` row (per existing
+   storage schema) maps the `ct_cert:*` to the new `domain:*`. This
+   is the same alias pattern the `tier-2-recall-eval.md` §12
+   question 2 specifies.
+
+**Rationale:**
+- `domain:*` is the existing canonical key pattern used by news_api,
+  rss_feeds, and domain_whois. Track D's output plugs into the
+  existing entity-resolution machinery for free.
+- `ct_cert:*` is new but namespaced, so it never collides with existing
+  keys. It bridges the "cert exists, no DNS yet" window that is
+  specifically the stealth-detection sweet spot.
+- The alias pattern means a stealth company first appears as
+  `ct_cert:<serial>`, gets enriched with Track E founder data, and
+  then promotes to `domain:<root>` when DNS lights up — all without
+  losing signal history.
+
+**Schema note:** this may require a new row format in `canonical_key_aliases`
+or a new `canonical_key_v2` value pattern. Schema change lives in
+`storage/migrations/` (PROTECTED until 2026-04-19). Phase 3 day 1
+adds the migration.
+
+---
+
+## 4. Anti-fingerprinting posture
+
+**Decision:** Defensive — Track D queries MUST NOT leak "Harmonic is
+tracking startup X" to any third party, including the CT log services.
+
+**Concrete rules:**
+- **No direct per-founder queries against Censys or SecurityTrails.**
+  Their query logs are readable by the company being queried
+  (Censys offers this as a feature), and are a clear fingerprint.
+  Spot-check queries go through a VPN or are deferred until the
+  company has a public surface.
+- **crt.sh queries are acceptable** because crt.sh is a passive
+  aggregator and does not expose query logs to the targets.
+- **DNS resolution goes through local resolver only** (no
+  `dns.google`, `1.1.1.1`, or other centralized DoH) to minimize
+  query-log correlation.
+- **No User-Agent fingerprinting:** crt.sh requests use a generic
+  UA, not `Harmonic/1.0` or anything identifying.
+- **No correlation queries:** Track D never sends a query that combines
+  multiple founder names in one request. Each query is scoped to one
+  founder or one domain.
+- **LinkedIn scraping is OUT OF SCOPE** per CONTEXT.md D-11. Track D
+  does NOT touch LinkedIn even as a verification step.
+
+**Rationale:**
+- Stealth companies are specifically trying not to be tracked. Being
+  caught tracking them degrades trust with the target and is arguably
+  unethical without consent. The defensive posture protects Harmonic's
+  reputation AND avoids the category of failures the LOB.txt risk
+  analysis flagged.
+- crt.sh is on the permitted list because its data is public by design
+  (the companies chose to issue public certificates); watching public
+  CT data is not tracking.
+
+---
+
+## 5. Cost envelope
+
+**Decision:** Track D v1 target = **$0/month** for infrastructure.
+Hard cap: **$50/month** if Censys spot-verification becomes a bottleneck.
+
+**Breakdown:**
+| Component | Provider | Cost/month |
+|-----------|----------|------------|
+| CT log queries (primary) | crt.sh | $0 |
+| CT log queries (fallback) | certspotter / Google CT API | $0 |
+| DNS resolution | local resolver via Python stdlib | $0 |
+| WHOIS lookups | existing `domain_whois.py` | $0 (already in budget) |
+| Censys community tier | optional, 250 queries/month | $0 |
+| Censys paid tier | only if community tier exceeded | $0-$50 |
+| Storage | `signals.db` grows proportional to CT hits | Negligible |
+| **Total target** | | **$0** |
+| **Hard cap** | | **$50** |
+
+**Cost gate:** if Track D v1 monthly spend exceeds $50, escalate to a
+scoping review (reduce query cadence, narrow watchlist, or switch
+collectors). The hard cap is enforceable via Censys subscription
+tier, not via code.
+
+**Rationale:**
+- The strategy is ship-fast-and-learn. Paid CT/DNS feeds front-load
+  cost against unproven value. Free-tier-first is the right posture
+  until Track D shows it finds signals the other collectors miss.
+- $50/month is the minimum paid Censys tier that's worth enabling
+  (below that the query cap is similar to community tier).
+
+---
+
+## 6. Implementation gating
+
+**This document is DESIGN ONLY per CONTEXT.md D-18.**
+
+Code lives in paths that are PROTECTED during Move 0 (until 2026-04-19):
+- `collectors/` — Track D collector class
+- `storage/migrations/` — canonical_key_v2 schema change for `ct_cert:*`
+  pattern
+- `workflows/pipeline.py` — registering Track D in the pipeline
+  orchestrator
+- `monitoring/` — per-collector health metrics for Track D
+
+**Phase 3 (Move 1 Substrate, starts after 2026-04-19 unfreeze) ships:**
+1. `collectors/ct_log.py` — crt.sh client with rate-limit backoff
+2. `collectors/dns_shadow.py` — on-demand DNS resolution (read-only, local resolver)
+3. `storage/migrations/52_ct_cert_canonical_keys.py` — schema change for `ct_cert:*` alias
+4. `workflows/pipeline.py` — register Track D collectors
+5. Tests: `tests/collectors/test_ct_log.py`, `tests/collectors/test_dns_shadow.py`
+6. Docs: update `docs/claude/collectors-reference.md` with the two new collectors
+
+**Phase 1 ships ONLY this document.** Any Phase 1 plan proposing Track D
+code is rejected at plan review. `scripts/red-team-hybrid/check_protected_paths.sh`
+enforces at commit time.
+
+---
+
+## Appendix: links
+
+- `09-track-e-watchlist.md` — Track E founders feed Track D queries
+- `05-holdout-cohort-design.md` — hold-out cohort will include Track D
+  canonical keys once implementation ships (Phase 3 day 1)
+- `07-collector-audit.md` — existing collector audit; Track D joins the
+  audit surface once it exists
+- `.planning/ROADMAP.md` Phase 3 — Move 1 Substrate phase where Track D
+  implementation lands
+
+---
+
+*Phase: 01-move-0-prep-liveness-prep*
+*REQ: REC-03*
+*Status: Design only — Phase 1 docs-only deliverable per CONTEXT.md D-18*
