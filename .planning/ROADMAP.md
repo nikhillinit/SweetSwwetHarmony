@@ -55,7 +55,7 @@ Plans:
 - [x] 01-07-PLAN.md — REC-03: Track D CT-log + DNS shadow design doc (13-track-d-design.md, design-only) (Wave B)
 - [x] 01-08-PLAN.md — REC-01: Track B candidate seed via mine_track_b_candidates.py (30 stratified candidates) (Wave B)
 - [x] 01-09-PLAN.md — REC-04: Track E founder watchlist seed via extract_founder_candidates.py + reputation stub (Wave B)
-- [ ] 01-10-PLAN.md — SUB-01: Wave C synthesis — VERIFICATION.md + STATE.md updates + 7 hard rubric gates + 6 soft rubric gates (depends on all prior plans)
+- [x] 01-10-PLAN.md — SUB-01: Wave C synthesis — VERIFICATION.md + STATE.md updates + 7 hard rubric gates + 6 soft rubric gates (depends on all prior plans)
 - [x] 01-11-PLAN.md — OPTIONAL: fix 5 -v flag occurrences in .github/workflows/discovery-pipeline.yml (RESEARCH.md Finding 2; same R19 failure mode in CI lane) (Wave A)
 
 ### Phase 2: Move 0.5 Liveness Restoration
