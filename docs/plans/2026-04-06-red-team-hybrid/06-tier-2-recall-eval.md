@@ -71,7 +71,7 @@ A holdout episode counts as "missed" if:
 | Metric | Formula | Purpose |
 |---|---|---|
 | Lead time | mean(`first_signal_seen_at` - `episode_start`) for surfaced episodes | How early did we catch them? |
-| Precision-on-pushed | TPs / (TPs + FPs) on the train cohort | Sanity check against existing ~9% number |
+| Precision-on-pushed | TPs / (TPs + FPs) on the train cohort | ~~Sanity check against existing ~9% number~~ **Withdrawn 2026-04-08 (GOV-01):** 9% is selection bias per the 2026-04-06 bias audit; use precision-on-pushed as a directional indicator only, not as a baseline comparison. See `docs/plans/2026-04-06-lob-progress-eval/bias-audit.md`. |
 | Coverage by source_api | Surfaced episodes broken down by which collector found them first | Identifies which collectors are pulling weight |
 | Outcome-conditional recall | Recall conditioned on `outcome_label = meeting` vs `funded` vs `passed` | Are we missing the high-value episodes specifically? |
 
