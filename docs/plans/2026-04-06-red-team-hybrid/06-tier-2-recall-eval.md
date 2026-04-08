@@ -262,26 +262,59 @@ canary at 91.46% pass with SPC-baselined thresholds, not freshly-tuned).
 
 ---
 
-## 11. The relationship to the existing 9% precision number
+## 11. Why "9% precision" is not a valid baseline
 
-Per LOB.txt evaluation (Phase 0): the existing 211 labels show ~9% precision
-on what the pipeline surfaces. **Is Tier-2 going to land near 9%?**
+**Withdrawn 2026-04-08 (GOV-01).** The previous version of this section framed
+Tier-2 recall against the "9% precision" number from the LOB.txt (Phase 0)
+evaluation. Per the 2026-04-06 bias audit
+(`docs/plans/2026-04-06-lob-progress-eval/bias-audit.md`), the 9% number is
+**selection bias**, not a real pipeline metric:
 
-Probably not directly. The two metrics measure different things:
-- 9% = TP rate among signals pushed to Notion (precision of the surfaced set)
-- Tier-2 recall = fraction of *companies* that turned into outcomes that the
-  engine surfaced (recall over outcome-bearing entities)
+- The 211 labeled signals that produced the 9% number were an **opportunistic
+  sample of suspected false positives** selected for investigation by the
+  analyst. They are NOT a random sample of what the pipeline pushes.
+- Opportunistic samples of suspected FPs overweight the FP tail by
+  construction. Any precision number measured on such a sample tells you
+  about the sample, not about the pipeline.
+- The bias audit withdraws the claim as a pipeline-level metric. Actual
+  pipeline precision is **unknown** until a random-sampled labelling sprint
+  runs — which is a Phase 3+ deliverable per `.planning/ROADMAP.md`, not
+  Phase 1.
 
-A high Tier-2 recall with a low precision is consistent ("we surface lots of
-things including the right ones, just buried in noise"). A low Tier-2 recall
-with a high precision is also consistent ("we surface very few things and they
-are mostly right but we miss most of the wins").
+### Tier-2 recall is the primary substrate-quality metric
 
-The strategy's job is to move BOTH numbers in the right direction, but they
-move via different levers:
-- Precision improves when classification gets better (Tier-1 work, prompt tuning)
-- Recall improves when the substrate captures more, dedups better, holds
-  fewer false negatives, and the labelling cohort gets bigger (Tracks B/D/E)
+Going forward, **Tier-2 recall over the hold-out cohort is the primary
+substrate-quality metric for this strategy**, not a derivative of or
+comparison against the 9% number. Specifically:
+
+- Tier-2 recall is computed on the hold-out split (per §3 of this doc)
+- The metric is measured once per move at the gating contract checkpoint
+  (per §4) — never iterated on during a move (per §5)
+- Wilson confidence intervals are mandatory for every Tier-2 recall report
+  (per §9) so that small-sample noise is not confused with signal
+- The "do not iterate" rule is especially important because any temptation
+  to tune against the Tier-2 number is exactly the same failure mode that
+  produced the original selection-biased 9% claim
+
+### What the precision/recall dichotomy still tells us
+
+The pre-withdrawal text correctly noted that precision and recall measure
+different things and move via different levers. That observation is
+preserved:
+
+- **Precision** improves when classification gets better (Tier-1 work,
+  prompt tuning) — and its actual value is currently **unknown**, not 9%
+- **Recall** improves when the substrate captures more, dedups better,
+  holds fewer false negatives, and the labelling cohort gets bigger
+  (Tracks B/D/E)
+
+What changes is that we no longer have a baseline precision number to
+reference. Move 1 Tier-2 recall is the FIRST honest number this strategy
+produces. Any comparison to "9% precision" as a baseline is categorically
+wrong — they are not comparable, and the 9% number was never valid anyway.
+
+See the bias audit for the full reasoning:
+`docs/plans/2026-04-06-lob-progress-eval/bias-audit.md`.
 
 ---
 
