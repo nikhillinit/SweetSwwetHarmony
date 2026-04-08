@@ -105,7 +105,7 @@ jobs:
           DISCOVERY_DB_PATH: signals.db
         run: |
           echo "Syncing portfolio companies..."
-          python run_pipeline.py monitor sync-portfolio -v || echo "Portfolio sync completed with warnings"
+          python run_pipeline.py monitor sync-portfolio || echo "Portfolio sync completed with warnings"
 
       - name: Run portfolio monitoring
         if: ${{ github.event.inputs.skip_monitoring != 'true' }}
@@ -114,7 +114,7 @@ jobs:
           DISCOVERY_DB_PATH: signals.db
         run: |
           echo "Running portfolio monitoring..."
-          python run_pipeline.py monitor run --only-portfolio --limit 100 --no-embeddings -v || true
+          python run_pipeline.py monitor run --only-portfolio --limit 100 --no-embeddings || true
 
       - name: Dispatch monitoring alerts to Slack
         if: ${{ github.event.inputs.skip_monitoring != 'true' }}
@@ -135,7 +135,7 @@ jobs:
           DISCOVERY_DB_PATH: signals.db
         run: |
           echo "Syncing suppression cache..."
-          python run_pipeline.py sync -v || echo "Suppression sync completed with warnings"
+          python run_pipeline.py sync || echo "Suppression sync completed with warnings"
 
       - name: Run discovery collectors
         if: ${{ github.event.inputs.skip_discovery != 'true' }}
@@ -152,9 +152,9 @@ jobs:
           DRY_RUN="${{ github.event.inputs.dry_run || 'false' }}"
           echo "Running collectors: $COLLECTORS"
           if [ "$DRY_RUN" = "true" ]; then
-            python run_pipeline.py full --collectors "$COLLECTORS" --dry-run -v
+            python run_pipeline.py full --collectors "$COLLECTORS" --dry-run
           else
-            python run_pipeline.py full --collectors "$COLLECTORS" -v
+            python run_pipeline.py full --collectors "$COLLECTORS"
           fi
 
       - name: Show pipeline stats
