@@ -41,9 +41,16 @@ over a time window:
 | `labelled_at` | ISO 8601 |
 
 **Why episodes, not signals:** the engine's job is to find *companies*, not
-to classify individual signals. The 9% precision metric (per LOB.txt
+to classify individual signals. ~~The 9% precision metric (per LOB.txt
 evaluation) is on signals; the metric the strategy needs to move is on
-companies that turn into meetings/fundings.
+companies that turn into meetings/fundings.~~
+
+> **Withdrawn 2026-04-08 (GOV-01):** The "9% precision" claim is selection
+> bias per the 2026-04-06 bias audit (`docs/plans/2026-04-06-lob-progress-eval/bias-audit.md`).
+> The 211 labeled signals are an opportunistic sample of suspected FPs, not
+> a random sample. Actual pipeline precision is unknown. The metric the
+> strategy needs to move remains "companies that turn into meetings/fundings"
+> — that part of the original claim is preserved.
 
 **Source of episodes:** Track B labelling sprint (per `08-track-b-labelling.md`).
 Track B targets 30-50 episodes by 2026-04-19.
