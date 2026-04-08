@@ -18,6 +18,18 @@ See: `.planning/PROJECT.md` (last updated 2026-04-08 with synthesis findings)
 - See: `.planning/ROADMAP.md` Phase 1 details
 - Requirements in flight: LIV-01 to LIV-03, LIV-11, GOV-01 to GOV-04, SUB-01, REC-01 to REC-04
 
+## Phase 1 daily gate evaluations (D-34)
+
+Per CONTEXT.md D-34, executor MUST update this list when claiming a Wave complete. Each entry is a single line.
+
+Entries from Wave C synthesis (plan 01-10) on 2026-04-08:
+
+- **2026-04-08 day 1 check:** Wave A complete (6/6 plans landed: LIV-11/GOV-02 R20 row commit `07e9646`, GOV-04 framing correction commit `9c52f24`, GOV-01 9% withdrawal + §11 rewrite commit `458d95e`, LIV-03/GOV-03 14-step4b-preconditions.md commit `a014bd2`, D-22 keep-alive installer commit `878bea6`, R19 CI lane fix commit `ca2ae8a`). Hard gates 1, 3, 4, 6, 7 PASS. Hard gate 5 DEFERRED pending operator install from canonical repo path.
+- **2026-04-08 day 1 check:** Wave B complete (4/4 plans landed: REC-02 holdout split commit `2f30e44` (568 episodes), REC-03 Track D design commit `81a258c` (238 lines, 6 sections, 0 TBDs), REC-01 Track B seed commit `dad166e` (30 candidates from backup DB), REC-04 Track E founder seed commit `85f7086` (44 founders, 0 LinkedIn URLs)). Soft gates 8, 9, 10, 11 PASS.
+- **2026-04-08 day 1 check:** Wave C complete (SUB-01 charter rollup, 1-VERIFICATION.md shipped). All 12 charter deliverables (D1-D12) PASS. All 11 REQs traced to commits. Phase 1 substrate work is complete. **Phase 1 result: BLOCK** because Hard Gate 2 (freshness watchdog rc=0) FAILED — pre-existing signals.db truncation incident discovered during plan 01-08 execution. Live DB has 4 signals + 0 thesis_classifications; backup `signals.db.pre-step4b-promotion-20260404` (612 signals + 2593 classifications) is intact. Restoring DB resolves Hard Gate 2 → Phase 1 PASS. The 2026-04-18 Step 4B regret check should POSTPONE per LIV-03 until Hard Gate 2 PASSes.
+
+See `.planning/phases/01-move-0-prep-liveness-prep/1-VERIFICATION.md` for full audit + remediation steps.
+
 ## Critical context to inherit on session start
 
 1. **R19 (frozen pipeline)** is the highest-priority item. Pipeline frozen since 2026-03-01; discovered 2026-04-08; load-bearing for 2026-04-18 Step 4B regret check
