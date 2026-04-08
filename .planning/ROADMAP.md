@@ -34,14 +34,29 @@
 
 **Dependencies**: Move 0 protected paths active until 2026-04-19. All Phase 1 work happens in `scripts/`, `docs/`, `data/shadow/` (allowed paths only).
 
-**Success criteria** (5):
+**Success criteria** (7):
 1. **Pipeline freshness restored**: `python scripts/red-team-hybrid/freshness_watchdog.py` exits 0 by 2026-04-13 (R19 fix verified)
 2. **R20 in risk register**: `docs/plans/2026-04-06-red-team-hybrid/10-risk-register.md` contains R20 with severity 25 and Move 0.5 as mitigation
 3. **Track B 30+ episodes**: `data/shadow/track_b_episodes.csv` contains ≥30 labeled company-episodes by 2026-04-19
 4. **Track E 50+ founders**: `data/shadow/founder_watchlist.csv` contains ≥50 founder records by 2026-04-19
 5. **Strategy doc framing correction landed**: `docs/plans/2026-04-06-red-team-hybrid/00-strategy.md` §2 references Move 0.5 as a complement to (not substitute for) Track A
-6. **Step 4B regret check has freshness precondition**: documented in `docs/plans/2026-04-06-red-team-hybrid/02-bounded-context-map.md` or equivalent
+6. **Step 4B regret check has freshness precondition**: documented in `docs/plans/2026-04-06-red-team-hybrid/14-step4b-preconditions.md`
 7. **9% precision claim withdrawn**: no active doc quotes the number without the bias-audit caveat
+
+**Plans:** 11 plans (LIV-01 + LIV-02 already shipped in commit `4efe8cf`; this set covers the remaining 11 REQs across 3 waves per CONTEXT.md D-15)
+
+Plans:
+- [ ] 01-01-PLAN.md — LIV-11 + GOV-02: add R20 (Analyst abandonment, severity 25 Showstopper) row to risk register (Wave A)
+- [ ] 01-02-PLAN.md — GOV-04: prepend dated Framing Correction (2026-04-08) callout to 00-strategy.md (Wave A)
+- [ ] 01-03-PLAN.md — GOV-01: withdraw 9% precision claim from 4 known lines + REWRITE §11 of 06-tier-2-recall-eval.md (Wave A)
+- [ ] 01-04-PLAN.md — LIV-03 + GOV-03: ship 14-step4b-preconditions.md contract doc (Wave A, two REQs in one file per D-24)
+- [ ] 01-05-PLAN.md — D-22 R19 root-cause fix: install_keepalive_task.ps1 + ≥2 successful runs (Wave A)
+- [ ] 01-06-PLAN.md — REC-02: Track C hold-out cohort split via build_holdout_split.py (Wave B)
+- [ ] 01-07-PLAN.md — REC-03: Track D CT-log + DNS shadow design doc (13-track-d-design.md, design-only) (Wave B)
+- [ ] 01-08-PLAN.md — REC-01: Track B candidate seed via mine_track_b_candidates.py (30 stratified candidates) (Wave B)
+- [ ] 01-09-PLAN.md — REC-04: Track E founder watchlist seed via extract_founder_candidates.py + reputation stub (Wave B)
+- [ ] 01-10-PLAN.md — SUB-01: Wave C synthesis — VERIFICATION.md + STATE.md updates + 7 hard rubric gates + 6 soft rubric gates (depends on all prior plans)
+- [ ] 01-11-PLAN.md — OPTIONAL: fix 5 -v flag occurrences in .github/workflows/discovery-pipeline.yml (RESEARCH.md Finding 2; same R19 failure mode in CI lane) (Wave A)
 
 ### Phase 2: Move 0.5 Liveness Restoration
 
