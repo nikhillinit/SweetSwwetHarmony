@@ -7,6 +7,21 @@
 
 ---
 
+> **Framing Correction (2026-04-08):** The 2026-04-06 framing of this strategy
+> as "Track A is substrate hardening, not engine-efficacy improvement" is correct
+> but **incomplete**. The 2026-04-08 5-agent jarvis evaluation + R19 finding
+> proved that the binding constraint is **analyst engagement**, not substrate
+> quality. Substrate work (Tracks A/C/D — this strategy) and engagement work
+> (LIV-04..LIV-14, shipped in Move 0.5) are **complementary, not substitutive**.
+> Either alone fails. Move 0.5 (Liveness Restoration) is now a **hard
+> prerequisite to Move 1**, inserted between Move 0 (this prep window) and the
+> original Move 1. See `.planning/REQUIREMENTS.md` LIV category and
+> `.planning/ROADMAP.md` Phase 2 for the engagement plumbing scope. The §2
+> "honest version" goal framing below is preserved verbatim — this callout
+> annotates it; it does not replace it (per CONTEXT.md D-13).
+
+---
+
 ## 1. Naming correction
 
 This strategy is **NOT Direction A** as written in `cross_pollination_analysis.md`.
