@@ -46,17 +46,17 @@
 **Plans:** 11 plans (LIV-01 + LIV-02 already shipped in commit `4efe8cf`; this set covers the remaining 11 REQs across 3 waves per CONTEXT.md D-15)
 
 Plans:
-- [ ] 01-01-PLAN.md — LIV-11 + GOV-02: add R20 (Analyst abandonment, severity 25 Showstopper) row to risk register (Wave A)
-- [ ] 01-02-PLAN.md — GOV-04: prepend dated Framing Correction (2026-04-08) callout to 00-strategy.md (Wave A)
-- [ ] 01-03-PLAN.md — GOV-01: withdraw 9% precision claim from 4 known lines + REWRITE §11 of 06-tier-2-recall-eval.md (Wave A)
-- [ ] 01-04-PLAN.md — LIV-03 + GOV-03: ship 14-step4b-preconditions.md contract doc (Wave A, two REQs in one file per D-24)
-- [ ] 01-05-PLAN.md — D-22 R19 root-cause fix: install_keepalive_task.ps1 + ≥2 successful runs (Wave A)
+- [x] 01-01-PLAN.md — LIV-11 + GOV-02: add R20 (Analyst abandonment, severity 25 Showstopper) row to risk register (Wave A)
+- [x] 01-02-PLAN.md — GOV-04: prepend dated Framing Correction (2026-04-08) callout to 00-strategy.md (Wave A)
+- [x] 01-03-PLAN.md — GOV-01: withdraw 9% precision claim from 4 known lines + REWRITE §11 of 06-tier-2-recall-eval.md (Wave A)
+- [x] 01-04-PLAN.md — LIV-03 + GOV-03: ship 14-step4b-preconditions.md contract doc (Wave A, two REQs in one file per D-24)
+- [x] 01-05-PLAN.md — D-22 R19 root-cause fix: install_keepalive_task.ps1 + ≥2 successful runs (Wave A)
 - [ ] 01-06-PLAN.md — REC-02: Track C hold-out cohort split via build_holdout_split.py (Wave B)
 - [ ] 01-07-PLAN.md — REC-03: Track D CT-log + DNS shadow design doc (13-track-d-design.md, design-only) (Wave B)
 - [ ] 01-08-PLAN.md — REC-01: Track B candidate seed via mine_track_b_candidates.py (30 stratified candidates) (Wave B)
 - [ ] 01-09-PLAN.md — REC-04: Track E founder watchlist seed via extract_founder_candidates.py + reputation stub (Wave B)
 - [ ] 01-10-PLAN.md — SUB-01: Wave C synthesis — VERIFICATION.md + STATE.md updates + 7 hard rubric gates + 6 soft rubric gates (depends on all prior plans)
-- [ ] 01-11-PLAN.md — OPTIONAL: fix 5 -v flag occurrences in .github/workflows/discovery-pipeline.yml (RESEARCH.md Finding 2; same R19 failure mode in CI lane) (Wave A)
+- [x] 01-11-PLAN.md — OPTIONAL: fix 5 -v flag occurrences in .github/workflows/discovery-pipeline.yml (RESEARCH.md Finding 2; same R19 failure mode in CI lane) (Wave A)
 
 ### Phase 2: Move 0.5 Liveness Restoration
 
