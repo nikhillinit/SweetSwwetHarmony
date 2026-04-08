@@ -12,12 +12,13 @@ When tradeoffs hurt, choose the option that increases qualified TPs/week into No
 
 ## Success Metrics
 
-The product runs on a **two-tier metric** because the lagging indicator is too slow to steer with daily.
+The product runs on a **three-tier metric ladder** because the lagging indicator is too slow to steer with daily, and the original two-tier formulation missed analyst engagement as a leading indicator.
 
-- **North Star (lagging, 6-month horizon):** Investments closed where Discovery Engine signals are trace-attributed to a Press On deal (Initial Meeting → Funded). Requires CRM outcome backfill — itself an active workstream gap.
+- **North Star (lagging, 6-month horizon):** Investments closed where Discovery Engine signals are trace-attributed to a Press On deal (Initial Meeting → Funded). Requires CRM outcome backfill — and the underlying skills (`quality-backfill-notion-status-events` + `quality-backfill-outcomes`) **already exist in `.claude/skills/`**; they just need to be wired into a daily cron and surfaced in the digest.
 - **Operational proxy (leading, weekly):** Net new true-positive prospects routed to "Source" or "Tracking" that survive analyst review. Watched in tandem with Tier-2 recall (per `docs/plans/2026-04-06-red-team-hybrid/06-tier-2-recall-eval.md`).
+- **Engagement canary (early warning, daily):** `analyst_inbox_engagement_7d` = days in the prior week the analyst opened a non-empty Notion inbox view. **This is the binding-constraint canary.** R19 (38-day frozen pipeline going undetected 2026-03-01 → 2026-04-08) was empirical proof that the analyst was not engaging with the inbox; if engagement had been live, the freeze would have been detected on day 2.
 
-The two metrics will diverge. When they do, the lagging metric wins; the leading metric is the steering wheel, not the destination.
+When the three metrics diverge: engagement (canary) wins for daily decisions, leading metric wins for weekly decisions, lagging metric wins for the destination. **If engagement drops below 3 days/week for 2 consecutive weeks at any point, freeze substrate work and re-evaluate** — this is the kill criterion the original strategy doc lacked.
 
 ## Requirements
 
@@ -72,25 +73,36 @@ Inferred from `.planning/codebase/` maps (2026-04-08) — these are shipped, in 
 
 ### Active
 
-The current scope is the **Direction-A-derived hybrid** strategy at `docs/plans/2026-04-06-red-team-hybrid/`. This is imported as-is into the GSD roadmap (per /gsd-new-project Q2 answer) and decomposed in `.planning/ROADMAP.md`.
+The current scope is the **Direction-A-derived hybrid** strategy at `docs/plans/2026-04-06-red-team-hybrid/`, **revised by a 2026-04-08 5-agent jarvis evaluation that surfaced engagement (not substrate) as the binding constraint**. The original strategy is preserved but Move 0.5 (Liveness Restoration) is inserted as a hard prerequisite, and Move 3 (Postgres) is deferred indefinitely. Decomposed in `.planning/ROADMAP.md`.
 
-#### Track A — Substrate hardening (this branch)
+**Framing correction (load-bearing)**: substrate work (Track A) and engagement work (Move 0.5) are **complementary, not substitutive**. The original strategy framed substrate as a prerequisite for recall improvement; the synthesis frames engagement as a prerequisite for *anything*, because R19 proved the analyst was not engaged with the inbox. Both run in parallel.
+
+#### Move 0.5 — Liveness Restoration (NEW, hard prerequisite to Move 1)
+- [ ] **R19 P0**: Restart collection today; write `scripts/red-team-hybrid/freshness_watchdog.py`; add freshness precondition to 2026-04-18 regret check
+- [ ] **Wire existing closed-loop skills into weekly cron**: `quality-backfill-notion-status-events` + `quality-backfill-outcomes` + `tuning-proposal-writer` + `tuning-proposal-apply` + `fp-pattern-finder-signals`. **These skills already exist** — discovered via repo inventory 2026-04-08. The synthesis treated the OutcomeJoiner as missing infrastructure; it isn't, it's just unwired.
+- [ ] **Daily digest with empty-channel discipline** (wildfire lookout pattern): 9am Slack/email digest emitted regardless of content; "0 today + here's why + freshness OK" is the structurally different report from "0 today + freshness STALE." The act of emitting is the canary.
+- [ ] **Calibration positives** (canine handler pattern): weekly injection of known-good historical wins into the digest as labeled calibration items
+- [ ] **Permanent Hold-Review batch** (replaces sketched Track F4): cap 50 highest-confidence held signals into a Tracking review sub-view; rejection by analyst does NOT auto-suppress
+- [ ] **Pandora-lite digest column** (5 features extracted from existing dismissal labels via `thesis-disagreement-report`)
+- [ ] **Engagement metric**: `analyst_inbox_engagement_7d` query published daily; gates Move promotion decisions
+
+#### Track A — Substrate hardening (continues in parallel)
 - [ ] **Move 0 — Prep** (current, ends 2026-04-19): docs + designs + read-only audits, **0 edits to protected paths**
-- [ ] **Move 1 — Artifact capture**: top 3 collectors writing to `data/shadow/artifacts/`; analyst tooltip; Tier-1/2 baseline
-- [ ] **Move 2 — Golden-set advisory + bounded-context map**: 30+ days advisory mode; first Tier-2 recall vs baseline
-- [ ] **Move 3 — Postgres dual-write + quarantine**: ≥14 days dual-write; quarantine review cadence
-- [ ] **Move 4 — Re-evaluate binding constraint**: pivot to B/D/E if recall flat; continue if climbing
+- [ ] **Move 1 — Artifact capture**: top 3 collectors writing to `data/shadow/artifacts/`; **inbox explanation panel** (renamed from "tooltip" — promoted from R6 mitigation to first-class deliverable); Tier-1/2 baseline; **outcome-modulated dispatch** scaffolding (bee waggle dance pattern via `collector_health_score`)
+- [ ] **Move 2 — Golden-set advisory + bounded-context map**: 30+ days advisory mode; first Tier-2 recall vs baseline; Letterboxd pretotype (4 manual lists in Notion)
+- [ ] **Move 3 — DEFERRED**: Postgres dual-write defer indefinitely until Move 4 decision validates substrate-vs-engagement framing. The DB hardening incident `04a5e6e` is already addressed by watermark guards + DBToolLock; quarantine layer at Move 1 captures the rest. Postgres is insurance, not value.
+- [ ] **Move 4 — Co-canary decision gate**: fires on BOTH Tier-2 recall AND `analyst_inbox_engagement_7d`. If engagement < 3 days/week for 2 consecutive weeks at any point in Moves 1-3, freeze substrate and re-evaluate
 
-#### Parallel recall tracks (different owners, different commits)
-- [ ] **Track B — Company-episode labelling**: target 30–50 episodes by end of Move 0 (canary metric for whole framing)
+#### Parallel recall tracks
+- [ ] **Track B — Company-episode labelling** (NOW SECONDARY canary, was primary): target 30+ episodes by end of Move 0; builds the **random-sampled** labeled cohort needed to fix the selection-bias problem the bias audit caught
 - [ ] **Track C — Hold-out cohort split**: deterministic seed, file-based, used by Move 1+
 - [ ] **Track D — CT-log + DNS shadow collectors**: starts after 2026-04-19
-- [ ] **Track E — Founder watchlist**: ≥50 founders in `data/shadow/founder_watchlist.csv` by end of Move 0
+- [ ] **Track E — Founder watchlist**: ≥50 founders + **founder reputation scoring** (LOB.txt graft); Letterboxd centroid scorer (Move 1 conditional)
+- [ ] **NEW: Outreach narrative gen + traffic-light timing** (LOB.txt grafts) — Move 1 deliverable as digest annotations, not routing changes
 
-#### Cross-cutting active gaps (not in red-team-hybrid plan)
-- [ ] **CRM outcome backfill** — required for the lagging success metric. Without this, "investments closed" is unmeasurable.
-- [ ] **R19 resolution** — collection pipeline frozen since 2026-03-01; decision needed before 2026-04-18 regret check (see Context).
-- [ ] **API key provisioning** — 6 of 16 collectors disabled (companies_house, product_hunt, linkedin, crunchbase, opencorporates, uspto). Reduces source diversity 37.5%.
+#### Cross-cutting
+- [ ] **R20 (NEW, Showstopper, score 20): Analyst abandons inbox habit** — see Risk Register addition. Mitigation = Move 0.5 above.
+- [ ] **API key provisioning** — 6 of 16 collectors disabled (companies_house, product_hunt, linkedin, crunchbase, opencorporates, uspto). Opportunistic, not blocking.
 
 ### Out of Scope
 
@@ -164,8 +176,14 @@ The user explicitly declined to add engine-side scope cuts beyond the thesis exc
 | **Direction-A-derived hybrid strategy** (2026-04-06) | Substrate hardening before Postgres lock-in; Evidence Lake promoted to Move 1 because BlobStore + SourceAssetStore + ShadowSidecar already exist (60%+ of work done). | — Pending (Move 4 binding-constraint re-eval) |
 | **Soft schema-on-write, not strict Pydantic** (2026-04-06) | Strict schema fails asymmetrically — you miss precisely the early signals you care about when a source changes shape. Soft schema + quarantine + raw retention is the natural extension of the existing two-entity model. | — Pending (validates in Move 1) |
 | **Postgres deferred to Move 3** (2026-04-06) | Postgres alone improves nothing about classification quality. The DB hardening incident `04a5e6e` (WAL/SHM corruption) is the failure mode addressed by quarantine at lower cost than migration. | — Pending |
-| **Two-tier success metric: leading (leads/week) + lagging (investments closed)** (2026-04-08) | The lagging metric is too slow to steer daily. Leading metric is the steering wheel; lagging metric is the destination. | — Pending |
-| **Track B labelling cadence is the canary for the entire framing** (2026-04-06) | If parallel tracks B/D/E stall while Track A ships, Track A's value collapses. Watching Track B's cadence weekly forces honest reframing. | — Pending |
+| **Three-tier success metric: engagement (daily) + leading (weekly) + lagging (6-month)** (2026-04-08, REVISED) | Original two-tier metric missed analyst engagement as a leading indicator. R19 (38-day frozen pipeline going undetected) was empirical proof. The engagement canary (`analyst_inbox_engagement_7d`) gates Move promotion decisions. | — Pending |
+| **Track B labelling cadence is a SECONDARY canary, not primary** (2026-04-08, REVISED from 2026-04-06) | Original framing made Track B the primary canary. The synthesis found this lights green while the actual product (analyst engagement) dies. Engagement metric is now primary; Track B is the calibration substrate (random-sampled cohort that fixes the selection-bias problem the bias audit caught). | — Pending |
+| **Move 0.5 (Liveness Restoration) inserted as hard prerequisite to Move 1** (2026-04-08, NEW) | 5-agent jarvis evaluation found engagement is the binding constraint, not substrate quality. R19 went undetected for 38 days because the analyst was not engaged with the inbox. Move 0.5 restores collection, wires existing closed-loop skills into a daily cadence, ships daily digest with empty-channel discipline. | — Pending |
+| **Postgres dual-write (Move 3) deferred indefinitely** (2026-04-08, REVISED from 2026-04-06) | Original plan put Postgres at Move 3 (~month 5). Synthesis found Postgres alone improves nothing about classification quality (the strategy doc itself says this). DB hardening incident `04a5e6e` is already addressed by watermark guards + DBToolLock. Postgres revisits only if Move 4 decision validates substrate-vs-engagement framing. | — Pending |
+| **R20 (NEW): Analyst abandons inbox habit** (2026-04-08, severity 25, Showstopper) | Discovered via 5-agent evaluation. The risk register had 19 entries and zero rows for "the user stops using the product." R19 (frozen pipeline going undetected) was the empirical evidence that the failure mode is already in progress. | OPEN — load-bearing for Move 0.5 |
+| **Substrate work and engagement work are COMPLEMENTARY, not substitutive** (2026-04-08, framing correction) | The bias-audit doc warned the prior LOB analysis made the inverse error (treating governance as substitute for collector innovation when canonical strategy framed it as prerequisite). The synthesis caught itself sliding toward the same error in the opposite direction. Both tracks run in parallel; neither blocks the other. | — Pending |
+| **OutcomeJoiner / closed loop already exists as `.claude/skills/`** (2026-04-08, discovery) | Synthesis treated the OutcomeJoiner as ~200 lines of new code. Repo inventory found `quality-backfill-notion-status-events` + `quality-backfill-outcomes` + `quality-stats` + `tuning-proposal-writer` + `tuning-proposal-apply` + `fp-pattern-finder-signals` already implement the entire closed loop. The work is wiring + display, not building. Estimate dropped from ~1 week to ~2 days. | — Pending |
+| **Withdraw "9% pipeline precision" claim** (2026-04-08, bias correction) | Steelman agent in 5-agent eval quoted "9%" as fact. The 2026-04-06 bias audit had already flagged this as selection bias (the 211 labels are an opportunistic sample of suspected FPs, not random). Actual pipeline precision is unknown until a randomly-sampled labeling sprint is run. Track B's purpose is now explicitly to build that random sample. | ✓ Corrected |
 | **LLM_THESIS_MODE = active** (2026-03-25, governance event #16) | Pipeline-bug-fixed `ThesisFilterConfig.from_env()` (PR#127); HN false positives 98.69% → 100% rejection of B2B/dev tools; sandbox validator built first. | ✓ Good (regret check cleared 2026-04-04) |
 | **Step 4A DELIVERY_MODE = batch_publish** (2026-03-16, governance event #17) | 5-day observation window (Mar 19–23) all passed; canary stable; batch commit verified. | ✓ Good (regret check cleared 2026-04-04) |
 | **Step 4B MERGE_WRITES_ENABLED = active** (2026-04-04, governance event #21) | Step 4A clean for 19 days; SPC stable; merge cascade governance debt cleared. | ⚠️ Revisit (regret check 2026-04-18; load-bearing on frozen data per R19) |
