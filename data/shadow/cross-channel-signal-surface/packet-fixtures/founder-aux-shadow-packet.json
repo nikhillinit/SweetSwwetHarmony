@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "canonical_key": "domain:example-founder.ai",
+  "company_name": "Example Founder Co",
+  "source_family": "founder_aux",
+  "signal_ids": [
+    412,
+    418
+  ],
+  "provenance_summary": "Founder watchlist activity and bounded negative-space evidence suggested renewed stealth-company formation signals.",
+  "score_rationale": "Founder-linked evidence is interesting enough to keep in shadow review, but remains gated on watchlist readiness before first-wave activation.",
+  "family_mode": "shadow",
+  "review_endpoint": "dashboard_projection",
+  "created_at": "2026-04-08T18:27:09Z",
+  "source_links": [
+    "watchlist://founder/example-founder",
+    "github://example-founder"
+  ],
+  "supporting_quotes": [],
+  "comparable_surface_summary": "Comparable founder-linked packet last seen 21 days ago.",
+  "freshness_context": "Operational collectors fresh within threshold.",
+  "engagement_context": "analyst_inbox_engagement_7d=4"
+}

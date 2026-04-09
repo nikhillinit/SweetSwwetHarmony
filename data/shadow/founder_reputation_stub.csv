@@ -1,0 +1,11 @@
+# Phase 1 founder reputation scoring stub (REC-04 / D-10).
+# V2-05 placeholder — full reputation scoring deferred per .planning/REQUIREMENTS.md.
+# Methodology (V2-05 spec, NOT implemented in Phase 1):
+#   reputation_score in [0, 1]
+#   weighted aggregate of: prior funded companies, investor warmth signals,
+#   technical credibility (papers, repos, talks), reverse-citation network density.
+#   Each component cited explicitly (no black-box ML) per LOB.txt requirement.
+# This file is keyed on founder_id from data/shadow/founder_watchlist.csv.
+# Phase 1 ships the schema and methodology comment ONLY. Real scoring is V2-05.
+founder_id,reputation_score,methodology_note
+PLACEHOLDER,,V2-05 stub — see header comment for methodology spec
