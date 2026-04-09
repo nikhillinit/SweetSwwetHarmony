@@ -91,6 +91,12 @@ datasets/thesis_ground_truth.jsonl
 data/shadow/*.db
 data/shadow/*.csv
 data/shadow/signals_snapshot*.db
+# Phase 1 Track B/C/E exceptions: explicitly versioned per CONTEXT.md D-05/D-09/D-17
+!data/shadow/track_b_episodes.csv
+!data/shadow/founder_watchlist.csv
+!data/shadow/founder_reputation_stub.csv
+!data/shadow/holdout_split/
+!data/shadow/holdout_split/*.csv
 
 # OMX local runtime state
 .omx/context/

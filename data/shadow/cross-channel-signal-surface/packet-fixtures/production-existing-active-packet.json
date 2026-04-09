@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "canonical_key": "domain:existing-production.ai",
+  "company_name": "Existing Production Co",
+  "source_family": "production_existing",
+  "signal_ids": [
+    12,
+    44,
+    89
+  ],
+  "provenance_summary": "Existing production collectors produced multiple corroborating signals from news and launch surfaces.",
+  "score_rationale": "Current production evidence cleared the existing routing floor and would project into the packet envelope once runtime ownership is implemented.",
+  "family_mode": "active",
+  "review_endpoint": "review_item",
+  "created_at": "2026-04-08T18:27:09Z",
+  "source_links": [
+    "https://example-production.ai",
+    "news://existing-production"
+  ],
+  "supporting_quotes": [],
+  "comparable_surface_summary": "Comparable surfaced packet last seen 5 days ago.",
+  "freshness_context": "Operational collectors fresh within threshold.",
+  "engagement_context": "analyst_inbox_engagement_7d=4"
+}

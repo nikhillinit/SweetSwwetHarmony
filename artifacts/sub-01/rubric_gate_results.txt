@@ -1,0 +1,264 @@
+Phase 1 Rubric Gate Results
+Generated: 2026-04-08T05:56:25Z
+Branch: prep/red-team-hybrid-prep
+Head SHA: e53a3cc
+
+================================================================
+HARD GATES (1-7)
+================================================================
+
+=== HARD GATE 1: check_protected_paths.sh ===
+OK: main...HEAD changes do not touch protected paths.
+
+Changed files (vs main):
+  .claude/archive/README.md
+  .claude/archive/agents/collector_specialist.md
+  .claude/archive/agents/crm_specialist.md
+  .claude/archive/agents/due_diligence_coordinator.md
+  .claude/archive/agents/market_intelligence.md
+  .claude/archive/agents/ranking_specialist.md
+  .claude/archive/agents/research_analyst.md
+  .claude/archive/agents/secops_governor.md
+  .claude/archive/skills/airflow-dag-patterns.md
+  .claude/archive/skills/data-transformers.md
+  .claude/archive/skills/founder_evaluation.md
+  .claude/archive/skills/investment_memo.md
+  .claude/archive/skills/technical_due_diligence.md
+  .claude/hooks/inject_context.ps1
+  .claude/hooks/postedit_protected_paths.ps1
+  .claude/hooks/stop_verify.ps1
+  .claude/rules/session-start.md
+  .claude/settings.json
+  .github/workflows/discovery-pipeline.yml
+  .gitignore
+  .planning/PROJECT.md
+  .planning/REQUIREMENTS.md
+  .planning/ROADMAP.md
+  .planning/STATE.md
+  .planning/codebase/ARCHITECTURE.md
+  .planning/codebase/CONCERNS.md
+  .planning/codebase/CONVENTIONS.md
+  .planning/codebase/INTEGRATIONS.md
+  .planning/codebase/STACK.md
+  .planning/codebase/STRUCTURE.md
+  .planning/codebase/TESTING.md
+  .planning/config.json
+  .planning/phases/01-move-0-prep-liveness-prep/01-01-PLAN.md
+  .planning/phases/01-move-0-prep-liveness-prep/01-01-SUMMARY.md
+  .planning/phases/01-move-0-prep-liveness-prep/01-02-PLAN.md
+  .planning/phases/01-move-0-prep-liveness-prep/01-02-SUMMARY.md
+  .planning/phases/01-move-0-prep-liveness-prep/01-03-PLAN.md
+  .planning/phases/01-move-0-prep-liveness-prep/01-03-SUMMARY.md
+  .planning/phases/01-move-0-prep-liveness-prep/01-04-PLAN.md
+  .planning/phases/01-move-0-prep-liveness-prep/01-04-SUMMARY.md
+  .planning/phases/01-move-0-prep-liveness-prep/01-05-PLAN.md
+  .planning/phases/01-move-0-prep-liveness-prep/01-05-SUMMARY.md
+  .planning/phases/01-move-0-prep-liveness-prep/01-06-PLAN.md
+  .planning/phases/01-move-0-prep-liveness-prep/01-06-SUMMARY.md
+  .planning/phases/01-move-0-prep-liveness-prep/01-07-PLAN.md
+  .planning/phases/01-move-0-prep-liveness-prep/01-07-SUMMARY.md
+  .planning/phases/01-move-0-prep-liveness-prep/01-08-PLAN.md
+  .planning/phases/01-move-0-prep-liveness-prep/01-08-SUMMARY.md
+  .planning/phases/01-move-0-prep-liveness-prep/01-09-PLAN.md
+  .planning/phases/01-move-0-prep-liveness-prep/01-09-SUMMARY.md
+  .planning/phases/01-move-0-prep-liveness-prep/01-10-PLAN.md
+  .planning/phases/01-move-0-prep-liveness-prep/01-11-PLAN.md
+  .planning/phases/01-move-0-prep-liveness-prep/01-11-SUMMARY.md
+  .planning/phases/01-move-0-prep-liveness-prep/1-CONTEXT.md
+  .planning/phases/01-move-0-prep-liveness-prep/1-RESEARCH.md
+  .planning/phases/01-move-0-prep-liveness-prep/KEEPALIVE-INSTALL-DEFERRED.md
+  .planning/research/ARCHITECTURE.md
+  .planning/research/FEATURES.md
+  .planning/research/PITFALLS.md
+  .planning/research/STACK.md
+  CLAUDE.md
+  artifacts/gov-01/grep_9pct_sweep.txt
+  artifacts/keepalive/.gitkeep
+  artifacts/rec-04/founder_candidates_raw.csv
+  artifacts/sub-01/rubric_gate_results.txt
+  backups/signals-20260404-072102.db-shm
+  backups/signals-20260404-072102.db-wal
+  data/shadow/founder_reputation_stub.csv
+  data/shadow/founder_watchlist.csv
+  data/shadow/holdout_split/episodes_v1.csv
+  data/shadow/track_b_episodes.csv
+  docs/claude/active-sprint.md
+  docs/plans/2026-04-06-lob-progress-eval/README.md
+  docs/plans/2026-04-06-lob-progress-eval/bias-audit.md
+  docs/plans/2026-04-06-red-team-hybrid/00-strategy.md
+  docs/plans/2026-04-06-red-team-hybrid/01-move-0-charter.md
+  docs/plans/2026-04-06-red-team-hybrid/02-bounded-context-map.md
+  docs/plans/2026-04-06-red-team-hybrid/03-dead-letter-contract.md
+  docs/plans/2026-04-06-red-team-hybrid/04-llm-failure-mode.md
+  docs/plans/2026-04-06-red-team-hybrid/05-holdout-cohort-design.md
+  docs/plans/2026-04-06-red-team-hybrid/06-tier-2-recall-eval.md
+  docs/plans/2026-04-06-red-team-hybrid/07-collector-audit.md
+  docs/plans/2026-04-06-red-team-hybrid/08-track-b-labelling.md
+  docs/plans/2026-04-06-red-team-hybrid/09-track-e-watchlist.md
+  docs/plans/2026-04-06-red-team-hybrid/10-risk-register.md
+  docs/plans/2026-04-06-red-team-hybrid/13-track-d-design.md
+  docs/plans/2026-04-06-red-team-hybrid/14-step4b-preconditions.md
+  docs/plans/2026-04-06-red-team-hybrid/README.md
+  docs/plans/README.md
+  gsd.pre-extricate-2026-04-07.tar.gz
+  scripts/data/founder_watchlist_manual_seed.csv
+  scripts/red-team-hybrid/README.md
+  scripts/red-team-hybrid/build_holdout_split.py
+  scripts/red-team-hybrid/check_protected_paths.sh
+  scripts/red-team-hybrid/extract_founder_candidates.py
+  scripts/red-team-hybrid/freshness_watchdog.py
+  scripts/red-team-hybrid/install_keepalive_task.ps1
+  scripts/red-team-hybrid/mine_track_b_candidates.py
+  scripts/red-team-hybrid/track_b_episodes.template.csv
+rc=0
+
+=== HARD GATE 2: freshness_watchdog.py --json ===
+{
+  "checked_at": "2026-04-08T05:56:26.497682+00:00",
+  "threshold_hours": 36,
+  "exit_code": 1,
+  "status": "FAIL",
+  "collectors": [
+    {
+      "source_api": "arxiv",
+      "category": "operational",
+      "last_created": null,
+      "age_hours": null,
+      "status": "MISSING"
+    },
+    {
+      "source_api": "github",
+      "category": "informational",
+      "last_created": "2026-01-10T12:18:09.019836+00:00",
+      "age_hours": 2105.64,
+      "status": "UNKNOWN"
+    },
+    {
+      "source_api": "hacker_news",
+      "category": "operational",
+      "last_created": null,
+      "age_hours": null,
+      "status": "MISSING"
+    },
+    {
+      "source_api": "news_api",
+      "category": "operational",
+      "last_created": null,
+      "age_hours": null,
+      "status": "MISSING"
+    },
+    {
+      "source_api": "product_hunt",
+      "category": "informational",
+      "last_created": "2026-01-10T12:18:09.035890+00:00",
+      "age_hours": 2105.64,
+      "status": "UNKNOWN"
+    },
+    {
+      "source_api": "rss_feeds",
+      "category": "operational",
+      "last_created": null,
+      "age_hours": null,
+      "status": "MISSING"
+    }
+  ],
+  "failures": [
+    "arxiv: no signals in DB (operational collector)",
+    "hacker_news: no signals in DB (operational collector)",
+    "news_api: no signals in DB (operational collector)",
+    "rss_feeds: no signals in DB (operational collector)"
+  ]
+}
+rc=1
+
+=== HARD GATE 3: R20 row in 10-risk-register.md ===
+2
+| **R20** | **Analyst abandonment — engagement loop already broken; R19's 38-day silent freeze was empirical proof. Without the analyst opening the inbox the engine has no feedback signal regardless
+1
+
+=== HARD GATE 4: 14-step4b-preconditions.md exists ===
+exists=0
+8
+5
+3
+
+=== HARD GATE 5: keep-alive installer ===
+installer_exists=0
+evidence_dir_exists=0
+0
+DEFERRED-NOTE-PRESENT
+
+=== HARD GATE 6: 00-strategy.md framing correction ===
+1
+> (LIV-04..LIV-14, shipped in Move 0.5) are **complementary, not substitutive**.
+
+=== HARD GATE 7: 9% withdrawal ===
+1
+1
+2
+sweep_exists=0
+
+================================================================
+SOFT GATES (8-13)
+================================================================
+
+=== SOFT GATE 8: track_b_episodes.csv ===
+30
+
+=== SOFT GATE 9: founder_watchlist.csv ===
+44
+44
+0
+linkedin_count above
+
+=== SOFT GATE 10: holdout_split ===
+data/shadow/holdout_split/episodes_v1.csv
+574 data/shadow/holdout_split/episodes_v1.csv
+
+=== SOFT GATE 11: 13-track-d-design.md ===
+exists=0
+6
+0
+
+=== SOFT GATE 12: STATE.md Phase 1 mentions ===
+4
+
+=== SOFT GATE 13: D-31 handoff inputs ===
+watchdog_rc=1
+track_b=present
+founder=present
+preconditions=present
+
+================================================================
+REQ TRACEABILITY (last commit per plan)
+================================================================
+=== plan 01-01 ===
+07e9646 docs(01-01): SUMMARY for plan 01-01 (R20 risk register, LIV-11 + GOV-02)
+summary=present
+=== plan 01-02 ===
+9c52f24 docs(01-02): plan 01-02 SUMMARY (GOV-04 framing correction complete)
+summary=present
+=== plan 01-03 ===
+458d95e docs(01-03): SUMMARY for GOV-01 9%% precision withdrawal plan
+summary=present
+=== plan 01-04 ===
+a014bd2 docs(01-04): plan 04 SUMMARY (Step 4B preconditions + LIV-03 + GOV-03)
+summary=present
+=== plan 01-05 ===
+878bea6 docs(01-05): SUMMARY -- complete keep-alive installer plan (LIV-11)
+summary=present
+=== plan 01-06 ===
+2f30e44 docs(01-06): SUMMARY for plan 01-06 (REC-02 Track C hold-out split)
+summary=present
+=== plan 01-07 ===
+81a258c docs(01-07): SUMMARY for plan 01-07 (Track D design doc, REC-03)
+summary=present
+=== plan 01-08 ===
+dad166e docs(01-08): SUMMARY for plan 01-08 (Track B seed + DB truncation incident report)
+summary=present
+=== plan 01-09 ===
+85f7086 docs(01-09): SUMMARY for plan 01-09 (Track E founder seed, REC-04)
+summary=present
+=== plan 01-11 ===
+ca2ae8a docs(01-11): plan 01-11 SUMMARY (CI -v flag fix)
+summary=present

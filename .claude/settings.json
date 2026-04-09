@@ -1,0 +1,38 @@
+{
+  "_comment": "Project-level hooks for Harmonic Discovery Engine. All hooks are gated on branch=prep/red-team-hybrid-prep inside the script bodies, so they no-op on other branches. Run /hooks in Claude Code to verify they are loaded.",
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"C:\\dev\\Harmonic\\.claude\\hooks\\inject_context.ps1\""
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"C:\\dev\\Harmonic\\.claude\\hooks\\postedit_protected_paths.ps1\""
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"C:\\dev\\Harmonic\\.claude\\hooks\\stop_verify.ps1\""
+          }
+        ]
+      }
+    ]
+  }
+}
