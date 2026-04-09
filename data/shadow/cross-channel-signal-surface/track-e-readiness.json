@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-04-09T02:25:12Z",
+  "source_csv": "data/shadow/founder_watchlist.csv",
+  "total_csv_lines": 45,
+  "founder_rows": 44,
+  "first_wave_threshold": 50,
+  "first_wave_eligible": false,
+  "family": "founder_aux",
+  "fallback_disposition": "Remain auxiliary; do not block ct_dns first-wave activation.",
+  "notes": "Current planning-time founder count is below threshold."
+}

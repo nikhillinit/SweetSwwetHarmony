@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "packet_contract_file": "docs/plans/cross-channel-signal-surface/evidence-packet-contract.md",
+  "fixture_dir": "data/shadow/cross-channel-signal-surface/packet-fixtures",
+  "watchlist_readiness_threshold": 50,
+  "current_known_watchlist_count": 44,
+  "approved_first_wave_families": [
+    "ct_dns"
+  ],
+  "auxiliary_families": [
+    "founder_aux"
+  ],
+  "deferred_families": [
+    "pattern_search"
+  ],
+  "fixtures": [
+    "ct-dns-shadow-packet.json",
+    "ct-dns-active-packet.json",
+    "founder-aux-shadow-packet.json",
+    "production-existing-active-packet.json",
+    "invalid-missing-provenance-packet.json"
+  ],
+  "notes": [
+    "Track E remains auxiliary until the founder watchlist reaches threshold.",
+    "review_items.evidence_bundle is the planned runtime owner after post-freeze implementation."
+  ]
+}

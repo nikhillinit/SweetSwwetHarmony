@@ -1,158 +1,113 @@
-# Harmonic Discovery Engine — ROADMAP
+# Harmonic Discovery Engine - Roadmap
 
-> **Source**: derived from `.planning/PROJECT.md` + `.planning/REQUIREMENTS.md` + the 2026-04-08 5-agent jarvis evaluation + cross-pollination + six-thinking-hats + LOB.txt comparison. Reflects all discovered improvements.
->
-> **Granularity**: Coarse — 5 phases, 1-3 plans each.
->
-> **Strategy anchor**: Direction-A-derived hybrid (`docs/plans/2026-04-06-red-team-hybrid/00-strategy.md`) **revised** to insert Move 0.5 (Liveness Restoration) as a hard prerequisite to Move 1, defer Move 3 (Postgres) indefinitely, and replace Track B as primary canary with engagement metrics.
-
----
+> Strategy anchor: `docs/plans/2026-04-06-red-team-hybrid/00-strategy.md`, revised so Move 0.5 remains the hard prerequisite for activation and the existing Move 1 branch is refined into a **Cross-Channel Signal Surface** with a human-review endpoint.
 
 ## Phase Summary
 
-**5 phases** | **42 v1 requirements mapped** | All v1 requirements covered ✓
-
 | # | Phase | Goal | REQ-IDs | Success Criteria |
 |---|-------|------|---------|------------------|
-| 1 | **Move 0 Prep + Liveness Prep** | Document the revised strategy, restart collection, prepare engagement plumbing infrastructure | LIV-01 to LIV-03, LIV-11, GOV-01 to GOV-04, SUB-01, REC-01 to REC-04 | 7 |
-| 2 | **Move 0.5 Liveness Restoration** | Ship the analyst-visible engagement plumbing — daily digest, calibration positives, OutcomeJoiner wiring | LIV-04 to LIV-10, LIV-12 to LIV-14, REC-05 | 6 |
-| 3 | **Move 1 Substrate + UX** | Top 3 collectors writing artifacts, Tier-1/2 baselines, UX surface (provenance, outreach, confessions) | SUB-02 to SUB-04, REC-06, REC-07, UX-01 to UX-04 | 5 |
+| 1 | **Move 0 Prep + Liveness Prep** | Resolve R19, document the refined branch model, and prepare allowed-path inputs without touching protected paths | LIV-01 to LIV-03, LIV-11, GOV-01 to GOV-04, SUB-01, REC-01 to REC-04 | 7 |
+| 2 | **Move 0.5 Liveness Restoration** | Ship the analyst-visible engagement plumbing and prove the activation gate is green | LIV-04 to LIV-10, LIV-12 to LIV-14, REC-05 | 7 |
+| 3 | **Move 1 Cross-Channel Signal Surface (Refined)** | Land top-3 artifact capture, packet contract, Track D first activation, and packet-visible review surfaces while keeping action surfaces deferred | SUB-02 to SUB-04, REC-06 to REC-07, UX-03 to UX-04, PKT-01 to PKT-05, MOD-01 to MOD-04 | 7 |
 | 4 | **Move 2 Advisory + Audit** | Golden-set advisory mode 30+ days, first Tier-2 recall vs baseline, collector-correctness fixes | SUB-05 to SUB-07 | 4 |
 | 5 | **Move 4 Co-Canary Decision Gate** | Decision gate fires on engagement + Tier-2 recall co-canaries; pivot or continue | SUB-09 | 3 |
 
-**Note**: Move 3 (Postgres dual-write) is intentionally absent — deferred to v2.
-
----
+**Note**: Move 3 (Postgres dual-write) remains intentionally absent from v1.
 
 ## Phase Details
 
 ### Phase 1: Move 0 Prep + Liveness Prep
 
-**Goal**: Resolve R19 (frozen pipeline), document the revised strategy in canonical plan files, prepare the infrastructure scaffolding for Move 0.5 ship without touching protected paths.
+**Goal**: Resolve R19, codify the refined Move 1 branch in canonical planning files, and prepare allowed-path inputs for later activation without touching protected paths.
 
-**Requirements delivered**: LIV-01 (R19 restart), LIV-02 (freshness watchdog script), LIV-03 (regret check precondition), LIV-11 (R20 in risk register), GOV-01 (withdraw 9% precision claim), GOV-02 (R20 governance), GOV-03 (freshness precondition for all gates), GOV-04 (framing correction in strategy doc), SUB-01 (Move 0 charter deliverables), REC-01 (Track B 30 episodes), REC-02 (Track C cohort split), REC-03 (Track D design only), REC-04 (Track E watchlist + reputation scoring stub)
+**Requirements delivered**: LIV-01, LIV-02, LIV-03, LIV-11, GOV-01, GOV-02, GOV-03, GOV-04, SUB-01, REC-01, REC-02, REC-03 (design prep), REC-04 (watchlist prep)
 
-**Dependencies**: Move 0 protected paths active until 2026-04-19. All Phase 1 work happens in `scripts/`, `docs/`, `data/shadow/` (allowed paths only).
+**Dependencies**: Move 0 protected paths active until 2026-04-19. All work must stay in `scripts/`, `docs/`, and `data/shadow/`.
 
-**Success criteria** (7):
-1. **Pipeline freshness restored**: `python scripts/red-team-hybrid/freshness_watchdog.py` exits 0 by 2026-04-13 (R19 fix verified)
-2. **R20 in risk register**: `docs/plans/2026-04-06-red-team-hybrid/10-risk-register.md` contains R20 with severity 25 and Move 0.5 as mitigation
-3. **Track B 30+ episodes**: `data/shadow/track_b_episodes.csv` contains ≥30 labeled company-episodes by 2026-04-19
-4. **Track E 50+ founders**: `data/shadow/founder_watchlist.csv` contains ≥50 founder records by 2026-04-19
-5. **Strategy doc framing correction landed**: `docs/plans/2026-04-06-red-team-hybrid/00-strategy.md` §2 references Move 0.5 as a complement to (not substitute for) Track A
-6. **Step 4B regret check has freshness precondition**: documented in `docs/plans/2026-04-06-red-team-hybrid/14-step4b-preconditions.md`
-7. **9% precision claim withdrawn**: no active doc quotes the number without the bias-audit caveat
-
-**Plans:** 11 plans (LIV-01 + LIV-02 already shipped in commit `4efe8cf`; this set covers the remaining 11 REQs across 3 waves per CONTEXT.md D-15)
-
-Plans:
-- [x] 01-01-PLAN.md — LIV-11 + GOV-02: add R20 (Analyst abandonment, severity 25 Showstopper) row to risk register (Wave A)
-- [x] 01-02-PLAN.md — GOV-04: prepend dated Framing Correction (2026-04-08) callout to 00-strategy.md (Wave A)
-- [x] 01-03-PLAN.md — GOV-01: withdraw 9% precision claim from 4 known lines + REWRITE §11 of 06-tier-2-recall-eval.md (Wave A)
-- [x] 01-04-PLAN.md — LIV-03 + GOV-03: ship 14-step4b-preconditions.md contract doc (Wave A, two REQs in one file per D-24)
-- [x] 01-05-PLAN.md — D-22 R19 root-cause fix: install_keepalive_task.ps1 + ≥2 successful runs (Wave A)
-- [x] 01-06-PLAN.md — REC-02: Track C hold-out cohort split via build_holdout_split.py (Wave B)
-- [x] 01-07-PLAN.md — REC-03: Track D CT-log + DNS shadow design doc (13-track-d-design.md, design-only) (Wave B)
-- [x] 01-08-PLAN.md — REC-01: Track B candidate seed via mine_track_b_candidates.py (30 stratified candidates) (Wave B)
-- [x] 01-09-PLAN.md — REC-04: Track E founder watchlist seed via extract_founder_candidates.py + reputation stub (Wave B)
-- [x] 01-10-PLAN.md — SUB-01: Wave C synthesis — VERIFICATION.md + STATE.md updates + 7 hard rubric gates + 6 soft rubric gates (depends on all prior plans)
-- [x] 01-11-PLAN.md — OPTIONAL: fix 5 -v flag occurrences in .github/workflows/discovery-pipeline.yml (RESEARCH.md Finding 2; same R19 failure mode in CI lane) (Wave A)
+**Success criteria**:
+1. **Pipeline freshness restored**: `python scripts/red-team-hybrid/freshness_watchdog.py` exits 0 by the Move 0 closeout.
+2. **R20 in risk register**: the active risk register records analyst abandonment as a showstopper.
+3. **Track B cohort ready**: `data/shadow/track_b_episodes.csv` contains at least 30 labeled company-episodes.
+4. **Track E readiness assessed**: `data/shadow/founder_watchlist.csv` exists and readiness is explicit - >=50 founders enables first-wave founder activation, otherwise Track E remains auxiliary. Current known state is 44 founders.
+5. **Canonical docs rewritten**: `.planning/PROJECT.md`, `.planning/ROADMAP.md`, and `.planning/REQUIREMENTS.md` all reflect the refined Move 1 branch.
+6. **Step 4B regret check has freshness precondition**: stale-data execution is explicitly blocked.
+7. **9% precision claim withdrawn**: no active doc treats it as a factual precision metric.
 
 ### Phase 2: Move 0.5 Liveness Restoration
 
-**Goal**: Ship the analyst-visible engagement plumbing. This is the load-bearing phase — every recommendation from the synthesis converges here. Phase 2 starts after the protected-paths freeze ends (2026-04-19) but the design + script work happens in Phase 1.
+**Goal**: Ship the analyst-visible engagement plumbing. This remains the load-bearing phase and the activation gate for any protected-path cross-channel rollout.
 
-**Requirements delivered**: LIV-04 to LIV-10 (cron wiring + digest + engagement metric), LIV-12 (permanent Hold-Review batch), LIV-13 (Pandora-lite digest column), LIV-14 (inbox explanation panel), REC-05 (Letterboxd pretotype)
+**Requirements delivered**: LIV-04 to LIV-10, LIV-12, LIV-13, LIV-14, REC-05
 
-**Dependencies**: Phase 1 complete (specifically R19 fixed). Some sub-tasks need `monitoring/` or `connectors/` paths which unfreeze 2026-04-19.
+**Dependencies**: Phase 1 complete, specifically with R19 fixed and allowed-path prep finished.
 
-**Success criteria** (6):
-1. **Daily digest emits**: 9am Slack/email digest delivers 7 consecutive days, including at least one "0 today" structurally distinct empty-channel message
-2. **OutcomeJoiner cron live**: `quality-backfill-notion-status-events` + `quality-backfill-outcomes` run on daily schedule; `signal_quality_metrics` table receives new rows daily
-3. **Calibration positives delivered**: at least 1 known-good historical win injected into the digest per week, labeled as calibration
-4. **Engagement metric published**: `analyst_inbox_engagement_7d` query result visible in the daily digest
-5. **Permanent Hold-Review batch live**: weekly cadence routes top-50 held signals to a Tracking sub-view; analyst dismissals do NOT auto-suppress
-6. **Pandora-lite digest column shipped**: 5-feature breakdown visible in the digest's per-signal annotation
-7. **Inbox explanation panel live**: digest contains the structured "X ingested today, Y held, Z forwarded" report on every emission
+**Success criteria**:
+1. **Daily digest emits**: 9am digest delivers for 7 consecutive days.
+2. **OutcomeJoiner cron live**: outcome/status backfill jobs run on schedule.
+3. **Calibration positives delivered**: at least one known-good historical win is injected weekly.
+4. **Engagement metric published**: `analyst_inbox_engagement_7d` is visible daily.
+5. **Permanent Hold-Review batch live**: top-50 held signals route to the review surface without auto-suppression.
+6. **Pandora-lite digest column shipped**: 5-feature explanatory annotation is visible.
+7. **Inbox explanation panel live**: digest emits the structured "ingested / held / forwarded" explanation block.
 
-### Phase 3: Move 1 Substrate + UX
+### Phase 3: Move 1 Cross-Channel Signal Surface (Refined)
 
-**Goal**: Substrate hardening (top 3 collectors writing to BlobStore artifacts; Tier-1/2 baselines) running in parallel with the analyst-visible UX surface (Why-Now provenance, outreach narrative gen, traffic-light timing, engine confessions).
+**Goal**: Refine the original Move 1 into a cross-channel packet surface: top 3 collectors writing artifacts, Track D CT/DNS as the first required new family, packet contract runtime ownership, Why-Now packet rendering, and shadow-only dispatch evaluation. Outreach narrative and timing stay deferred.
 
-**Requirements delivered**: SUB-02 (top 3 collectors → artifacts), SUB-03 (Tier-1 baseline), SUB-04 (Tier-2 baseline), REC-06 (Letterboxd centroid scorer, conditional), REC-07 (outcome-modulated dispatch), UX-01 (outreach narrative gen), UX-02 (outreach traffic light), UX-03 (Why Now provenance block), UX-04 (engine confessions weekly)
+**Requirements delivered**: SUB-02, SUB-03, SUB-04, REC-06, REC-07, UX-03, UX-04, PKT-01 to PKT-05, MOD-01 to MOD-04
 
-**Dependencies**: Phase 2 complete; protected paths unfrozen; engagement metric > 3 days/week (Phase 2 success criterion 4 holds).
+**Prep inputs consumed from Phase 1**:
+- REC-03 Track D design artifact
+- REC-04 founder watchlist input, only if readiness threshold clears
 
-**Success criteria** (5):
-1. **Top 3 collectors writing to artifact store**: `data/shadow/artifacts/` contains BlobStore-addressed entries from at least 3 collectors over 7 consecutive days
-2. **Tier-1 golden set baseline measured**: no regression vs pre-Move-1 baseline
-3. **Tier-2 hold-out cohort produces a baseline recall number**: first quantitative measurement (with Wilson CI noted)
-4. **UX surface live in digest**: Why-Now provenance + outreach narrative gen + traffic light all visible in the digest as annotations on each pushed signal
-5. **Engine confessions weekly report shipped**: at least 1 weekly report published showing signals the engine missed that the analyst found via warm intros
-6. **Letterboxd pretotype validated**: REC-05 lists were maintained for 2 weeks → REC-06 centroid scorer ships in Move 1 week 2 (or REC-05 not maintained → REC-06 killed and the decision documented)
+**Dependencies**:
+- Phase 2 complete
+- protected paths unfrozen
+- engagement metric > 3 days/week
+- liveness gate green: freshness watchdog passing, digest cadence proven, and engagement metric publishing
+
+**Success criteria**:
+1. **Top 3 collectors writing to artifact store**: `data/shadow/artifacts/` contains BlobStore-addressed entries from at least 3 collectors over 7 consecutive days.
+2. **Tier-1 baseline measured**: no regression vs pre-Move-1 baseline.
+3. **Tier-2 baseline measured**: first quantitative hold-out recall number is recorded.
+4. **Runtime packet contract live**: `review_items.evidence_bundle` stores the canonical packet shape for active families.
+5. **Packet surface live**: UX-03 Why-Now provenance and related packet fields are visible in digest/review surfaces without outreach narrative or timing fields.
+6. **Track D first activation complete**: CT/DNS packets emit behind explicit family-mode controls; Track E only activates if the founder watchlist reaches >=50 founders, otherwise it stays auxiliary.
+7. **Engine confessions weekly report shipped**: UX-04 lands as an evidence/reporting surface after packet transport exists.
 
 ### Phase 4: Move 2 Advisory + Audit
 
-**Goal**: Golden-set advisory mode runs ≥30 days; first Tier-2 recall number vs Move 1 baseline; collector audit fixes shipped.
+**Goal**: Run golden-set advisory mode for 30+ days, measure first Tier-2 recall vs baseline, and ship the top collector-correctness fixes.
 
-**Requirements delivered**: SUB-05 (golden-set advisory 30+ days), SUB-06 (Tier-2 recall vs baseline), SUB-07 (collector-correctness fixes)
+**Requirements delivered**: SUB-05, SUB-06, SUB-07
 
-**Dependencies**: Phase 3 complete with success criteria met. Specifically, Phase 3 success criterion 3 (Tier-2 baseline) must exist before Phase 4 can measure delta.
+**Dependencies**: Phase 3 complete and packet/reporting surfaces stable.
 
-**Success criteria** (4):
-1. **Golden-set gate has 30+ days of advisory mode data**: false-fail rate documented
-2. **First Tier-2 recall delta vs Move 1 baseline measured**: with statistical caveat (Wilson CI per `06-tier-2-recall-eval.md` §9)
-3. **Collector audit findings remediated**: top 3-5 issues from `07-collector-audit.md` fixed
-4. **Engagement co-canary still green**: `analyst_inbox_engagement_7d` ≥ 3 days/week throughout Phase 4 (else trigger Phase 5 early)
+**Success criteria**:
+1. **Advisory mode runs for 30+ days** with false-fail rate documented.
+2. **First recall-vs-baseline decision** is recorded with confidence interval notes.
+3. **Top collector audit fixes land** for the most important findings from `07-collector-audit.md`.
+4. **Family-level observability remains intact** throughout the advisory window.
 
 ### Phase 5: Move 4 Co-Canary Decision Gate
 
-**Goal**: Make the binding-constraint pivot decision based on BOTH Tier-2 recall AND analyst engagement. Either continue substrate work, pivot to recall (Tracks B/D/E), or freeze and re-evaluate.
+**Goal**: Decide whether to continue, pivot, or freeze based on BOTH Tier-2 recall and analyst engagement.
 
-**Requirements delivered**: SUB-09 (co-canary decision gate)
+**Requirements delivered**: SUB-09
 
-**Dependencies**: Phase 4 complete OR engagement canary breach trigger (engagement < 3 days/week for 2 consecutive weeks at any point).
+**Dependencies**: Phase 4 complete or engagement canary breach.
 
-**Success criteria** (3):
-1. **Decision gate fires on co-canaries**: gate evaluates BOTH Tier-2 recall (climbing/flat/declining) AND `analyst_inbox_engagement_7d` (≥3/<3 days/week)
-2. **Decision documented in `docs/plans/2026-04-06-red-team-hybrid/12-move-4-decision.md`** (new file): one of {continue substrate, pivot to recall tracks, freeze and reframe}
-3. **If pivot is chosen**: the next milestone's REQUIREMENTS.md is generated and the v2-deferred items (Postgres, Twitch trust transfer, full Pandora, etc.) are re-evaluated against the new framing
+**Success criteria**:
+1. **Decision gate evaluates both co-canaries**: engagement and recall.
+2. **Pivot/continue decision is documented** with evidence.
+3. **If engagement is red, substrate work freezes** until re-evaluation completes.
 
----
+## Notes
 
-## Cross-cutting requirements not in any phase
-
-These are referenced in REQUIREMENTS.md but are continuous, not phase-bound:
-
-- **GOV-01 to GOV-04**: governance corrections (bias audit + R20 + freshness preconditions + framing correction). Land in Phase 1 but apply for the lifetime of the project.
-- **API key provisioning** (PROJECT.md Active gap): opportunistic, not phase-blocking.
-- **Track B labelling cadence**: continues across all phases as the secondary canary + random-sample substrate.
+- `UX-01` and `UX-02` are not part of the refined Move 1 first wave. They remain post-packet candidates for a later lane.
+- `REC-07` remains shadow-only in refined Move 1; active dispatch changes happen later.
+- Track E is not allowed to block Track D first activation.
 
 ---
 
-## Deferred (v2) — explicitly not in v1
-
-- **V2-01**: Twitch trust transfer with anti-amplification (deferred until labeled cohort + demographic guardrail exist)
-- **V2-02**: Competitive intelligence mode (Move 2+ stretch)
-- **V2-03**: Postgres dual-write (originally Move 3 — only revisited if Move 4 decision validates substrate framing)
-- **V2-04**: Pandora at full scale (50+ features) — only after Pandora-lite proves analyst trust impact
-- **V2-05**: Founder reputation scoring at full scale
-- **V2-06**: Bird-banding "rare-event session log" pattern
-
----
-
-## Coverage check
-
-Total v1 REQs: 42
-- LIVENESS: 14 (LIV-01 to LIV-14)
-- SUBSTRATE: 9 (SUB-01 to SUB-09; SUB-08 deferred)
-- RECALL: 7 (REC-01 to REC-07)
-- UX: 4 (UX-01 to UX-04)
-- GOVERNANCE: 4 (GOV-01 to GOV-04)
-
-Mapped to phases: 41 (SUB-08 intentionally unmapped — Postgres deferred)
-Coverage: 41 / 41 effective REQs = 100% ✓
-
----
-
-*Generated: 2026-04-08, after the 5-agent jarvis evaluation + cross-pollination + six-hats passes + LOB.txt comparison. Reflects all discovered improvements through the resume of the GSD workflow.*
+*Last updated: 2026-04-08 during canonical roadmap rewrite for the refined Move 1 cross-channel packet surface.*
