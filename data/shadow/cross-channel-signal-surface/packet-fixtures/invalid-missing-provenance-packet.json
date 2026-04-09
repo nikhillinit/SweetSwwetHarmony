@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "canonical_key": "domain:invalid-packet.ai",
+  "company_name": "Invalid Packet Co",
+  "source_family": "ct_dns",
+  "signal_ids": [
+    999
+  ],
+  "score_rationale": "This fixture intentionally omits provenance_summary and must fail validation.",
+  "family_mode": "shadow",
+  "review_endpoint": "dashboard_projection",
+  "created_at": "2026-04-08T18:27:09Z"
+}
