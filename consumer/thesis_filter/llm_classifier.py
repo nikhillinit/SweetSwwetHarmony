@@ -22,13 +22,31 @@ import re
 import time
 from collections import deque
 from dataclasses import dataclass
+from email.utils import parsedate_to_datetime
 from enum import Enum
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
+from collectors.retry_strategy import RateLimitError, RetryConfig, with_retry
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from telemetry.thesis_tracing import (
+    create_thesis_tracer,
+    redact_error_message,
+    should_include_raw_traces,
+    summarize_text_payload,
+)
 from utils.circuit_breaker import CircuitBreaker, CircuitOpenError
 
 logger = logging.getLogger(__name__)
+
+GEMINI_RATE_LIMIT_RETRY_CONFIG = RetryConfig(
+    max_retries=2,
+    backoff_base=2.0,
+    backoff_max=8.0,
+    jitter=False,
+)
+DEFAULT_GEMINI_RETRY_AFTER_SECONDS = 5.0
 
 
 # =============================================================================
@@ -67,6 +85,109 @@ def _normalize_choice(value: Any, allowed: set[str], default: str = "unclear") -
     return normalized if normalized in allowed else default
 
 
+def _coerce_bool(value: Any) -> bool:
+    """Parse permissive boolean values without treating arbitrary strings as truthy."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "1", "yes"}:
+            return True
+        if lowered in {"false", "0", "no"}:
+            return False
+    return False
+
+
+def _coerce_float(value: Any, *, default: float = 0.0) -> float:
+    """Convert model output to a bounded score."""
+    try:
+        score = float(value)
+    except (TypeError, ValueError):
+        return default
+    return max(0.0, min(1.0, score))
+
+
+def _coerce_string(value: Any, *, default: str = "") -> str:
+    """Coerce provider output into a string field."""
+    return value if isinstance(value, str) else default
+
+
+def _coerce_optional_string(value: Any) -> Optional[str]:
+    """Preserve optional string fields without forcing non-strings into text."""
+    return value if isinstance(value, str) else None
+
+
+def _coerce_string_list(value: Any) -> List[str]:
+    """Normalize list-like string fields to a list of strings."""
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, str)]
+    if isinstance(value, str):
+        return [value]
+    return []
+
+
+def _exception_type(exc: Exception) -> str:
+    """Return a redaction-safe exception label."""
+    return type(exc).__name__
+
+
+def _is_rate_limit_exception(exc: Exception) -> bool:
+    """Return whether an exception represents an upstream rate-limit/quota response."""
+    response = getattr(exc, "response", None)
+    status_code = getattr(response, "status_code", None)
+    if status_code == 429:
+        return True
+
+    message = getattr(exc, "message", "")
+    if isinstance(message, str):
+        message_lower = message.lower()
+        if "resource exhausted" in message_lower or "rate limit" in message_lower:
+            return True
+
+    error_text = str(exc).lower()
+    return "429" in error_text or "resource_exhausted" in error_text or "rate limit" in error_text
+
+
+def _extract_retry_after_seconds(exc: Exception) -> Optional[float]:
+    """Best-effort parse of Retry-After from provider exceptions."""
+    response = getattr(exc, "response", None)
+    headers = getattr(response, "headers", None)
+    if not headers or not hasattr(headers, "get"):
+        return None
+
+    retry_after = headers.get("Retry-After")
+    if retry_after is None:
+        return None
+
+    try:
+        return max(0.0, float(retry_after))
+    except (TypeError, ValueError):
+        pass
+
+    try:
+        target = parsedate_to_datetime(retry_after)
+        if target.tzinfo is None:
+            target = target.replace(tzinfo=timezone.utc)
+        return max(0.0, (target - datetime.now(timezone.utc)).total_seconds())
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
+def _as_rate_limit_error(exc: Exception) -> RateLimitError:
+    """Normalize provider-specific quota errors into the shared retry type."""
+    response = getattr(exc, "response", None)
+    status_code = getattr(response, "status_code", 429) or 429
+    return RateLimitError(
+        "Gemini rate limit exceeded",
+        wait_seconds=_extract_retry_after_seconds(exc) or DEFAULT_GEMINI_RETRY_AFTER_SECONDS,
+        status_code=status_code,
+        endpoint="gemini.generate_content",
+        response_summary=str(status_code),
+    )
+
+
 class ClassificationStatus(str, Enum):
     """Operational outcome for a classification attempt."""
     SUCCESS = "success"
@@ -74,6 +195,59 @@ class ClassificationStatus(str, Enum):
     ERROR_PARSE = "error_parse"
     ERROR_RATE_LIMIT = "error_rate_limit"
     ERROR_CIRCUIT_BREAKER = "error_circuit_breaker"
+
+
+class _ThesisClassifierResponse(BaseModel):
+    """Internal schema for provider responses before dataclass adaptation."""
+
+    model_config = ConfigDict(extra="allow", str_strip_whitespace=True)
+
+    thesis_match: bool = False
+    thesis_fit_score: float = 0.0
+    category: str = "other"
+    stage_estimate: str = "unknown"
+    confidence: str = "low"
+    company_name: str | None = None
+    rationale: str = ""
+    key_signals: List[str] = Field(default_factory=list)
+    reasoning_steps: List[str] = Field(default_factory=list)
+    primary_end_user: str = "unclear"
+    paying_customer: str = "unclear"
+    sells_to_or_operates_in: str = "unclear"
+
+    @field_validator("thesis_match", mode="before")
+    @classmethod
+    def _validate_thesis_match(cls, value: Any) -> bool:
+        return _coerce_bool(value)
+
+    @field_validator("thesis_fit_score", mode="before")
+    @classmethod
+    def _validate_score(cls, value: Any) -> float:
+        return _coerce_float(value)
+
+    @field_validator(
+        "category",
+        "stage_estimate",
+        "confidence",
+        "rationale",
+        "primary_end_user",
+        "paying_customer",
+        "sells_to_or_operates_in",
+        mode="before",
+    )
+    @classmethod
+    def _validate_string_field(cls, value: Any) -> str:
+        return _coerce_string(value)
+
+    @field_validator("company_name", mode="before")
+    @classmethod
+    def _validate_company_name(cls, value: Any) -> Optional[str]:
+        return _coerce_optional_string(value)
+
+    @field_validator("key_signals", "reasoning_steps", mode="before")
+    @classmethod
+    def _validate_string_list(cls, value: Any) -> List[str]:
+        return _coerce_string_list(value)
 
 CLASSIFIER_SYSTEM_PROMPT = """You are a venture capital analyst evaluating early-stage consumer startups.
 
@@ -328,6 +502,7 @@ class LLMClassifier:
         prompt_version: Optional[str] = None,
         rate_limiter: Optional[RateLimiter] = None,
         circuit_breaker: Optional[CircuitBreaker] = None,
+        tracer: Any = None,
     ):
         """
         Initialize Gemini classifier.
@@ -354,6 +529,7 @@ class LLMClassifier:
             prompt_version if prompt_version is not None else CLASSIFIER_PROMPT_VERSION
         )
         self._client = None
+        self._tracer = tracer or create_thesis_tracer()
         # Chain-of-thought: enabled via param or env var
         if cot_enabled is None:
             self.cot_enabled = os.environ.get("ENABLE_COT_REASONING", "").lower() in ("true", "1", "yes")
@@ -396,10 +572,30 @@ class LLMClassifier:
         Returns:
             ThesisClassification result
         """
+        include_raw = should_include_raw_traces()
+        title = signal_data.get("title", "N/A")
+        url = signal_data.get("url", "N/A")
+        source = signal_data.get("source_api", "unknown")
+        context = signal_data.get("source_context", "")
+        context_truncated = bool(context and len(context) > 500)
+        trace_span = self._tracer.start_span(
+            "thesis.llm.classify",
+            component="thesis_filter_llm_classifier",
+            model=self.model_name,
+            prompt_version=self.prompt_version,
+            cot_enabled=self.cot_enabled,
+            source_api=source,
+            signal_has_url=bool(url and url != "N/A"),
+            context_truncated=context_truncated,
+            title_summary=summarize_text_payload(title, include_raw=include_raw),
+            context_summary=summarize_text_payload(context, include_raw=include_raw),
+        )
+        classify_start = time.perf_counter()
+
         # Phase 9: Check circuit breaker
         if self._circuit_breaker.state == "open":
             logger.warning("LLM circuit breaker OPEN, skipping classification")
-            return ThesisClassification(
+            result = ThesisClassification(
                 thesis_match=False,
                 thesis_fit_score=0.0,
                 category="excluded",
@@ -412,13 +608,21 @@ class LLMClassifier:
                 model=self.model_name,
                 classification_status=ClassificationStatus.ERROR_CIRCUIT_BREAKER.value,
             )
+            self._trace_result(
+                trace_span,
+                result,
+                error_kind="circuit_breaker",
+                error_message=result.rationale,
+                classify_latency_ms=(time.perf_counter() - classify_start) * 1000,
+            )
+            return result
 
         # Phase 9: Rate limiting
         try:
             await self._rate_limiter.acquire()
         except RuntimeError as e:
             logger.error(f"Rate limit exceeded: {e}")
-            return ThesisClassification(
+            result = ThesisClassification(
                 thesis_match=False,
                 thesis_fit_score=0.0,
                 category="excluded",
@@ -431,15 +635,18 @@ class LLMClassifier:
                 model=self.model_name,
                 classification_status=ClassificationStatus.ERROR_RATE_LIMIT.value,
             )
+            self._trace_result(
+                trace_span,
+                result,
+                error_kind="rate_limit",
+                error_message=str(e),
+                classify_latency_ms=(time.perf_counter() - classify_start) * 1000,
+            )
+            return result
 
         # Build user prompt
-        title = signal_data.get("title", "N/A")
-        url = signal_data.get("url", "N/A")
-        source = signal_data.get("source_api", "unknown")
-        context = signal_data.get("source_context", "")
-
         # Truncate context to avoid excessive tokens
-        if context and len(context) > 500:
+        if context_truncated:
             context = context[:500] + "..."
 
         # Build prompt with optional chain-of-thought
@@ -480,7 +687,7 @@ Respond with JSON classification only."""
             response_text = response.text
         except CircuitOpenError as e:
             logger.warning(f"Circuit breaker rejected call: {e}")
-            return ThesisClassification(
+            result = ThesisClassification(
                 thesis_match=False,
                 thesis_fit_score=0.0,
                 category="excluded",
@@ -493,21 +700,51 @@ Respond with JSON classification only."""
                 model=self.model_name,
                 classification_status=ClassificationStatus.ERROR_CIRCUIT_BREAKER.value,
             )
+            self._trace_result(
+                trace_span,
+                result,
+                error_kind="circuit_breaker",
+                error_message=str(e),
+                classify_latency_ms=(time.perf_counter() - classify_start) * 1000,
+            )
+            return result
         except Exception as e:
-            logger.error(f"Gemini API error: {e}")
-            return ThesisClassification(
+            error_type = _exception_type(e)
+            is_rate_limited = _is_rate_limit_exception(e)
+            logger.error(
+                "Gemini API error: error_type=%s error_summary=%s",
+                error_type,
+                summarize_text_payload(str(e)),
+            )
+            result = ThesisClassification(
                 thesis_match=False,
                 thesis_fit_score=0.0,
                 category="excluded",
                 stage_estimate="unknown",
                 confidence="low",
                 company_name=None,
-                rationale=f"Classification failed: {str(e)}",
+                rationale=(
+                    f"Rate limit exceeded: {error_type}"
+                    if is_rate_limited
+                    else f"Classification failed: {error_type}"
+                ),
                 key_signals=[],
                 prompt_version=self.prompt_version,
                 model=self.model_name,
-                classification_status=ClassificationStatus.ERROR_API.value,
+                classification_status=(
+                    ClassificationStatus.ERROR_RATE_LIMIT.value
+                    if is_rate_limited
+                    else ClassificationStatus.ERROR_API.value
+                ),
             )
+            self._trace_result(
+                trace_span,
+                result,
+                error_kind="rate_limit" if is_rate_limited else "api",
+                error_message=error_type,
+                classify_latency_ms=(time.perf_counter() - classify_start) * 1000,
+            )
+            return result
 
         latency_ms = int((time.time() - start_time) * 1000)
 
@@ -534,20 +771,37 @@ Respond with JSON classification only."""
             if not isinstance(result, dict):
                 raise ValueError(f"Expected JSON object, got {type(result).__name__}")
         except (json.JSONDecodeError, ValueError, TypeError) as e:
-            logger.error(f"Failed to parse Gemini response: {e}\nResponse: {response_text[:200]}")
-            return ThesisClassification(
+            error_type = _exception_type(e)
+            logger.error(
+                "Failed to parse Gemini response: error_type=%s response_summary=%s",
+                error_type,
+                summarize_text_payload(response_text),
+            )
+            result = ThesisClassification(
                 thesis_match=False,
                 thesis_fit_score=0.0,
                 category="excluded",
                 stage_estimate="unknown",
                 confidence="low",
                 company_name=None,
-                rationale=f"Failed to parse response: {response_text[:100]}",
+                rationale=f"Failed to parse response: {error_type}",
                 key_signals=[],
                 prompt_version=self.prompt_version,
                 model=self.model_name,
                 classification_status=ClassificationStatus.ERROR_PARSE.value,
             )
+            self._tracer.annotate(
+                trace_span,
+                response_summary=summarize_text_payload(response_text, include_raw=include_raw),
+            )
+            self._trace_result(
+                trace_span,
+                result,
+                error_kind="parse",
+                error_message=error_type,
+                classify_latency_ms=(time.perf_counter() - classify_start) * 1000,
+            )
+            return result
 
         # Extract usage info if available
         input_tokens = None
@@ -559,46 +813,92 @@ Respond with JSON classification only."""
         except Exception:
             pass
 
+        try:
+            validated_response = _ThesisClassifierResponse.model_validate(result)
+        except ValidationError as exc:
+            error_type = _exception_type(exc)
+            logger.error(
+                "Failed to validate Gemini response: error_type=%s response_summary=%s",
+                error_type,
+                summarize_text_payload(response_text),
+            )
+            result = ThesisClassification(
+                thesis_match=False,
+                thesis_fit_score=0.0,
+                category="excluded",
+                stage_estimate="unknown",
+                confidence="low",
+                company_name=None,
+                rationale=f"Failed to validate response: {error_type}",
+                key_signals=[],
+                prompt_version=self.prompt_version,
+                model=self.model_name,
+                classification_status=ClassificationStatus.ERROR_PARSE.value,
+            )
+            self._tracer.annotate(
+                trace_span,
+                response_summary=summarize_text_payload(response_text, include_raw=include_raw),
+            )
+            self._trace_result(
+                trace_span,
+                result,
+                error_kind="parse",
+                error_message=error_type,
+                classify_latency_ms=(time.perf_counter() - classify_start) * 1000,
+            )
+            return result
+        raw_response_payload = validated_response.model_dump()
+
         # Build reasoning trace if CoT enabled
         reasoning_trace = None
         if self.cot_enabled:
             reasoning_trace = {
                 "cot_enabled": True,
-                "raw_response_text": response_text[:2000] if response_text else None,
-                "reasoning_steps": result.get("reasoning_steps", []),
+                "raw_response_text": (
+                    response_text[:2000]
+                    if include_raw and response_text
+                    else None
+                ),
+                "reasoning_steps": raw_response_payload.get("reasoning_steps", []),
             }
 
-        return ThesisClassification(
-            thesis_match=result.get("thesis_match", False),
-            thesis_fit_score=float(result.get("thesis_fit_score", 0.0)),
-            category=result.get("category", "other"),
-            stage_estimate=result.get("stage_estimate", "unknown"),
-            confidence=result.get("confidence", "low"),
-            company_name=result.get("company_name"),
-            rationale=result.get("rationale", ""),
-            key_signals=result.get("key_signals", []),
+        result = ThesisClassification(
+            thesis_match=validated_response.thesis_match,
+            thesis_fit_score=validated_response.thesis_fit_score,
+            category=validated_response.category,
+            stage_estimate=validated_response.stage_estimate,
+            confidence=validated_response.confidence,
+            company_name=validated_response.company_name,
+            rationale=validated_response.rationale,
+            key_signals=validated_response.key_signals,
             prompt_version=self.prompt_version,
             model=self.model_name,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
             latency_ms=latency_ms,
-            raw_response=result,
+            raw_response=raw_response_payload,
             cot_enabled=self.cot_enabled,
             reasoning_trace=reasoning_trace,
             classification_status=ClassificationStatus.SUCCESS.value,
             primary_end_user=_normalize_choice(
-                result.get("primary_end_user"),
+                validated_response.primary_end_user,
                 VALID_PRIMARY_END_USERS,
             ),
             paying_customer=_normalize_choice(
-                result.get("paying_customer"),
+                validated_response.paying_customer,
                 VALID_PAYING_CUSTOMERS,
             ),
             sells_to_or_operates_in=_normalize_choice(
-                result.get("sells_to_or_operates_in"),
+                validated_response.sells_to_or_operates_in,
                 VALID_SELLS_TO_OR_OPERATES_IN,
             ),
         )
+        self._trace_result(
+            trace_span,
+            result,
+            classify_latency_ms=(time.perf_counter() - classify_start) * 1000,
+        )
+        return result
 
     def classify_sync(
         self,
@@ -628,17 +928,71 @@ Respond with JSON classification only."""
 
         Separated for circuit breaker wrapping.
         """
-        from google.genai import types
+        async def _call_once():
+            try:
+                structured_response = self._call_gemini_api_with_instructor(user_prompt)
+                if structured_response is not None:
+                    return structured_response
 
-        return self.client.models.generate_content(
-            model=self.model_name,
-            contents=user_prompt,
-            config=types.GenerateContentConfig(
-                temperature=self.temperature,
-                max_output_tokens=self.max_tokens,
-                response_mime_type="application/json",
-            ),
+                from google.genai import types
+
+                return self.client.models.generate_content(
+                    model=self.model_name,
+                    contents=user_prompt,
+                    config=types.GenerateContentConfig(
+                        temperature=self.temperature,
+                        max_output_tokens=self.max_tokens,
+                        response_mime_type="application/json",
+                    ),
+                )
+            except Exception as exc:
+                if _is_rate_limit_exception(exc):
+                    raise _as_rate_limit_error(exc) from exc
+                raise
+
+        return await with_retry(
+            _call_once,
+            GEMINI_RATE_LIMIT_RETRY_CONFIG,
+            retry_on=(RateLimitError,),
         )
+
+    def _call_gemini_api_with_instructor(self, user_prompt: str) -> Any | None:
+        """Best-effort Instructor path that falls back cleanly to the legacy Gemini call."""
+        try:
+            import instructor
+            from google.genai import types
+        except ImportError:
+            return None
+
+        try:
+            wrapped_client = instructor.from_genai(
+                self.client,
+                mode=instructor.Mode.GENAI_STRUCTURED_OUTPUTS,
+            )
+            response_model, completion = wrapped_client.create_with_completion(
+                messages=[{"role": "user", "content": user_prompt}],
+                response_model=_ThesisClassifierResponse,
+                model=self.model_name,
+                config=types.GenerateContentConfig(
+                    temperature=self.temperature,
+                    max_output_tokens=self.max_tokens,
+                    response_mime_type="application/json",
+                ),
+            )
+            return SimpleNamespace(
+                text=json.dumps(response_model.model_dump()),
+                usage_metadata=getattr(completion, "usage_metadata", None),
+            )
+        except Exception as exc:
+            if _is_rate_limit_exception(exc):
+                raise
+            logger.warning(
+                "Instructor structured call failed, falling back to legacy Gemini parsing: "
+                "error_type=%s error_summary=%s",
+                _exception_type(exc),
+                summarize_text_payload(str(exc)),
+            )
+            return None
 
     def estimate_cost(self, signal_count: int) -> float:
         """
@@ -655,6 +1009,39 @@ Respond with JSON classification only."""
     def circuit_breaker_stats(self) -> dict:
         """Get circuit breaker statistics."""
         return self._circuit_breaker.stats()
+
+    def _trace_result(
+        self,
+        span: Any,
+        result: ThesisClassification,
+        *,
+        error_kind: Optional[str] = None,
+        error_message: Optional[str] = None,
+        classify_latency_ms: Optional[float] = None,
+    ) -> None:
+        """Finalize tracing for a classifier result without changing business behavior."""
+        if error_kind:
+            self._tracer.record_error(
+                span,
+                error_kind=error_kind,
+                message=redact_error_message(error_message or result.rationale),
+            )
+        self._tracer.finish(
+            span,
+            backend=getattr(self._tracer, "backend", "noop"),
+            classification_status=result.classification_status,
+            category=result.category,
+            thesis_fit_score=result.thesis_fit_score,
+            confidence=result.confidence,
+            primary_end_user=result.primary_end_user,
+            paying_customer=result.paying_customer,
+            sells_to_or_operates_in=result.sells_to_or_operates_in,
+            input_tokens=result.input_tokens,
+            output_tokens=result.output_tokens,
+            latency_ms=result.latency_ms,
+            classify_latency_ms=round(classify_latency_ms, 2) if classify_latency_ms is not None else None,
+            reasoning_trace_present=bool(result.reasoning_trace),
+        )
 
 
 # =============================================================================
