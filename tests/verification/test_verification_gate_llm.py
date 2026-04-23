@@ -3,8 +3,39 @@
 import os
 import pytest
 from datetime import datetime, timezone
+from unittest.mock import patch
 
-from verification.verification_gate_v2 import VerificationGate, Signal, PushDecision
+from verification.verification_gate_v2 import (
+    ConfidenceBreakdown,
+    PushDecision,
+    Signal,
+    VerificationGate,
+    VerificationStatus,
+)
+
+
+def _make_breakdown(overall: float) -> ConfidenceBreakdown:
+    return ConfidenceBreakdown(
+        overall=overall,
+        base_score=overall,
+        multi_source_boost=1.0,
+        convergence_boost=0.0,
+        signals_contributing=1,
+        sources_checked=1,
+        sources=["companies_house"],
+        signal_details=[],
+        raw_overall=overall,
+    )
+
+
+def _make_signal() -> Signal:
+    return Signal(
+        id="sig-1",
+        signal_type="incorporation",
+        confidence=0.9,
+        source_api="companies_house",
+        detected_at=datetime.now(timezone.utc),
+    )
 
 
 class TestVerificationGateLLMAdjustment:
@@ -137,16 +168,7 @@ class TestVerificationGateLLMAdjustment:
         monkeypatch.setenv("LLM_THESIS_MODE", "active")
 
         gate = VerificationGate()
-
-        signals = [
-            Signal(
-                id="sig-1",
-                signal_type="incorporation",
-                confidence=0.9,
-                source_api="companies_house",
-                detected_at=datetime.now(timezone.utc)
-            )
-        ]
+        signals = [_make_signal()]
 
         # Should not raise, and should use scores for adjustment
         result = gate.evaluate(
@@ -157,3 +179,56 @@ class TestVerificationGateLLMAdjustment:
 
         assert result.confidence_score is not None
         # Confidence should be adjusted (can't predict exact value without full calculation)
+
+    def test_evaluate_routes_from_adjusted_confidence(self, monkeypatch):
+        """Agreement boosts must affect the actual routing decision, not just the score field."""
+        monkeypatch.setenv("LLM_THESIS_MODE", "active")
+        monkeypatch.setenv("LLM_AGREEMENT_THRESHOLD", "0.7")
+        monkeypatch.setenv("CONFIDENCE_BOOST_AGREEMENT", "0.10")
+
+        gate = VerificationGate()
+        signals = [_make_signal()]
+
+        with patch.object(gate, "_calculate_confidence", return_value=_make_breakdown(0.65)):
+            with patch.object(
+                gate,
+                "_assess_verification_status",
+                return_value=VerificationStatus.SINGLE_SOURCE,
+            ):
+                result = gate.evaluate(
+                    signals=signals,
+                    keyword_score=0.9,
+                    llm_score=0.9,
+                )
+
+        assert result.confidence_score == 0.75
+        assert result.confidence_breakdown["overall"] == 0.75
+        assert result.decision == PushDecision.AUTO_PUSH
+        assert "0.75" in result.reason
+
+    def test_evaluate_downgrades_decision_after_disagreement_penalty(self, monkeypatch):
+        """Disagreement penalties must demote routing when the adjusted score crosses a threshold."""
+        monkeypatch.setenv("LLM_THESIS_MODE", "active")
+        monkeypatch.setenv("LLM_AGREEMENT_THRESHOLD", "0.7")
+        monkeypatch.setenv("LLM_DISAGREEMENT_THRESHOLD", "0.4")
+        monkeypatch.setenv("CONFIDENCE_PENALTY_DISAGREEMENT", "0.15")
+
+        gate = VerificationGate()
+        signals = [_make_signal()]
+
+        with patch.object(gate, "_calculate_confidence", return_value=_make_breakdown(0.72)):
+            with patch.object(
+                gate,
+                "_assess_verification_status",
+                return_value=VerificationStatus.SINGLE_SOURCE,
+            ):
+                result = gate.evaluate(
+                    signals=signals,
+                    keyword_score=0.9,
+                    llm_score=0.2,
+                )
+
+        assert result.confidence_score == 0.57
+        assert result.confidence_breakdown["overall"] == 0.57
+        assert result.decision == PushDecision.NEEDS_REVIEW
+        assert "0.57" in result.reason
