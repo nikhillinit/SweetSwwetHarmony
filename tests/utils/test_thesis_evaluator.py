@@ -666,6 +666,56 @@ class TestThesisEvaluator:
         assert comparison.accuracy_delta is None
 
     @pytest.mark.asyncio
+    async def test_evaluate_both_preserves_blocked_llm_result_without_logging_failure(
+        self,
+        minimal_dataset,
+        caplog,
+    ):
+        """Blocked LLM runs should not hit the generic evaluate_both error path."""
+        evaluator = ThesisEvaluator()
+        keyword_result = ThesisEvaluationResult(
+            run_id="kw_run",
+            evaluator_type="keyword",
+            dataset_path=str(minimal_dataset),
+            total_samples=3,
+            accuracy=2 / 3,
+            per_class_metrics={},
+            confusion_matrix={},
+            timestamp="2026-04-22T00:00:00Z",
+        )
+        llm_result = ThesisEvaluationResult(
+            run_id="llm_run",
+            evaluator_type="llm",
+            dataset_path=str(minimal_dataset),
+            total_samples=3,
+            accuracy=None,
+            per_class_metrics={},
+            confusion_matrix={},
+            timestamp="2026-04-22T00:00:00Z",
+            errors=["Sample 1: Rate limit exceeded"],
+            run_state="blocked_execution",
+            llm_execution_error_count=1,
+            attempted_sample_count=1,
+            blocked_reason=(
+                "LLM preflight hit Gemini rate limiting/quota before the full benchmark "
+                "evaluation; keep the gate blocked until quota recovers or billing changes."
+            ),
+        )
+        evaluator.keyword_evaluator.evaluate = AsyncMock(return_value=keyword_result)
+        evaluator.llm_evaluator.evaluate = AsyncMock(return_value=llm_result)
+
+        with caplog.at_level("ERROR"):
+            comparison = await evaluator.evaluate_both(minimal_dataset)
+
+        assert comparison.llm_result is llm_result
+        assert comparison.llm_result.run_state == "blocked_execution"
+        assert comparison.llm_result.blocked_reason == llm_result.blocked_reason
+        assert comparison.llm_result.attempted_sample_count == 1
+        assert comparison.accuracy_delta is None
+        assert comparison.per_class_deltas == {}
+        assert "LLM evaluation failed" not in caplog.text
+
+    @pytest.mark.asyncio
     async def test_evaluate_llm_records_graceful_classifier_failures(self, minimal_dataset):
         """Aggregate LLM evaluation should retain classifier-level operational errors."""
         evaluator = ThesisEvaluator()
