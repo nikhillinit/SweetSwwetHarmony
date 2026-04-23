@@ -6,6 +6,7 @@ threshold boundary semantics, and Phase 6 field population.
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from consumer.thesis_filter.llm_classifier import LLMClassifier
 from utils.thesis_filter import (
     ThesisFilter,
     ThesisFilterConfig,
@@ -162,6 +163,67 @@ class TestLLMRoutingChain:
         result = await filter_instance.classify(_CONSUMER_TEXT)
         assert result.llm_skipped is True
         assert result.llm_classification_status == "error_api"
+
+    @pytest.mark.asyncio
+    async def test_thesis_filter_falls_back_when_real_classifier_parse_returns_error_parse(
+        self,
+        filter_instance,
+        monkeypatch,
+    ):
+        """Real classifier parse failures should still trigger keyword-only fallback."""
+        monkeypatch.setenv("GOOGLE_API_KEY", "test_key")
+        classifier = LLMClassifier(api_key="test_key")
+        mock_response = MagicMock()
+        mock_response.text = "not-json"
+        mock_response.usage_metadata = None
+
+        with patch.object(classifier, "_call_gemini_api", new_callable=AsyncMock) as mock_call:
+            mock_call.return_value = mock_response
+            filter_instance._llm_classifier = classifier
+            result = await filter_instance.classify(_CONSUMER_TEXT)
+
+        assert result.llm_classification_status == "error_parse"
+        assert result.llm_skipped is True
+        assert result.routing == RoutingDecision.QUALIFIED
+
+    @pytest.mark.asyncio
+    async def test_thesis_filter_uses_real_classifier_parsed_structured_fields(
+        self,
+        filter_instance,
+        monkeypatch,
+    ):
+        """Real classifier success payloads should propagate parsed structured fields into ThesisFilter."""
+        monkeypatch.setenv("GOOGLE_API_KEY", "test_key")
+        classifier = LLMClassifier(api_key="test_key")
+        mock_response = MagicMock()
+        mock_response.text = """
+        {
+          "thesis_match": true,
+          "thesis_fit_score": 0.76,
+          "category": "consumer_marketplace",
+          "stage_estimate": "seed",
+          "confidence": "high",
+          "company_name": "LessonLane",
+          "rationale": "Consumer marketplace for parents booking local activities.",
+          "key_signals": ["parents", "marketplace"],
+          "primary_end_user": "individual_consumer",
+          "paying_customer": "individual_consumer",
+          "sells_to_or_operates_in": "operates_in_industry_for_consumers"
+        }
+        """
+        mock_response.usage_metadata = None
+
+        with patch.object(classifier, "_call_gemini_api", new_callable=AsyncMock) as mock_call:
+            mock_call.return_value = mock_response
+            filter_instance._llm_classifier = classifier
+            result = await filter_instance.classify(_CONSUMER_TEXT)
+
+        assert result.llm_skipped is False
+        assert result.llm_classification_status == "success"
+        assert result.routing == RoutingDecision.QUALIFIED
+        assert result.llm_primary_end_user == "individual_consumer"
+        assert result.llm_paying_customer == "individual_consumer"
+        assert result.llm_sells_to_or_operates_in == "operates_in_industry_for_consumers"
 
     @pytest.mark.asyncio
     async def test_operational_failure_fallback(self, filter_instance):
