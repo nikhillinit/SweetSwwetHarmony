@@ -61,7 +61,7 @@ class ThesisEvaluationResult:
     evaluator_type: str  # "keyword" or "llm"
     dataset_path: str
     total_samples: int
-    accuracy: float
+    accuracy: Optional[float]
     per_class_metrics: Dict[str, ClassMetrics]  # QUALIFIED/HELD/REJECTED
     confusion_matrix: Dict[str, Dict[str, int]]  # {actual: {predicted: count}}
     timestamp: str
@@ -69,6 +69,10 @@ class ThesisEvaluationResult:
     avg_latency_ms: Optional[float] = None  # Per-sample latency (for LLM)
     token_usage: Optional[Dict[str, int]] = None  # {input_tokens, output_tokens}
     errors: List[str] = field(default_factory=list)
+    run_state: str = "completed"
+    llm_execution_error_count: int = 0
+    attempted_sample_count: Optional[int] = None
+    blocked_reason: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -76,7 +80,7 @@ class ThesisEvaluationResult:
             "evaluator_type": self.evaluator_type,
             "dataset_path": self.dataset_path,
             "total_samples": self.total_samples,
-            "accuracy": round(self.accuracy, 4),
+            "accuracy": round(self.accuracy, 4) if self.accuracy is not None else None,
             "per_class_metrics": {
                 k: v.to_dict() for k, v in self.per_class_metrics.items()
             },
@@ -86,6 +90,10 @@ class ThesisEvaluationResult:
             "avg_latency_ms": round(self.avg_latency_ms, 2) if self.avg_latency_ms else None,
             "token_usage": self.token_usage,
             "errors": self.errors,
+            "run_state": self.run_state,
+            "llm_execution_error_count": self.llm_execution_error_count,
+            "attempted_sample_count": self.attempted_sample_count,
+            "blocked_reason": self.blocked_reason,
         }
 
 
@@ -124,6 +132,11 @@ class EvaluationComparison:
 # =============================================================================
 
 VALID_LABELS = {"QUALIFIED", "HELD", "REJECTED"}
+OPERATIONAL_FAILURE_STATUSES = {
+    "error_api",
+    "error_circuit_breaker",
+    "error_rate_limit",
+}
 
 # Classification thresholds for keyword matcher
 KEYWORD_QUALIFIED_THRESHOLD = 0.3  # score >= 0.3 AND no negatives → QUALIFIED
@@ -470,11 +483,100 @@ class LLMEvaluator:
     async def evaluate_samples(
         self,
         dataset_path: str | Path,
+        *,
+        fail_fast_on_operational_failure: bool = False,
     ) -> tuple[List[Dict[str, Any]], List[LLMSampleEvaluation]]:
         """Evaluate all dataset rows and retain sample-level results."""
         samples = load_evaluation_dataset(dataset_path)
-        sample_evaluations = [await self.evaluate_sample(sample) for sample in samples]
+        sample_evaluations: List[LLMSampleEvaluation] = []
+        for sample in samples:
+            sample_eval = await self.evaluate_sample(sample)
+            sample_evaluations.append(sample_eval)
+            if fail_fast_on_operational_failure and self._is_operational_failure(sample_eval):
+                break
         return samples, sample_evaluations
+
+    def _sample_classification_status(
+        self,
+        sample_eval: LLMSampleEvaluation,
+    ) -> Optional[str]:
+        """Return the normalized classification status for a sample result."""
+        classification = sample_eval.classification
+        if classification is None:
+            return None
+        status = getattr(classification, "classification_status", None)
+        if hasattr(status, "value"):
+            status = status.value
+        return status if isinstance(status, str) else None
+
+    def _is_operational_failure(
+        self,
+        sample_eval: LLMSampleEvaluation,
+    ) -> bool:
+        """Return whether a sample failed due to execution health, not model quality."""
+        status = self._sample_classification_status(sample_eval)
+        if status in OPERATIONAL_FAILURE_STATUSES:
+            return True
+        return sample_eval.classification is None and bool(sample_eval.error)
+
+    def _blocked_execution_reason(
+        self,
+        sample_evaluations: List[LLMSampleEvaluation],
+        total_samples: int,
+    ) -> Optional[str]:
+        """Return a concrete blocked-execution reason when the run stops early for ops health."""
+        attempted_sample_count = len(sample_evaluations)
+        if attempted_sample_count == 0 or attempted_sample_count >= total_samples:
+            return None
+
+        first_operational_failure = next(
+            (sample_eval for sample_eval in sample_evaluations if self._is_operational_failure(sample_eval)),
+            None,
+        )
+        if first_operational_failure is None:
+            return None
+
+        failure_status = self._sample_classification_status(first_operational_failure)
+        if failure_status is None:
+            error_text = (first_operational_failure.error or "").lower()
+            if "rate limit" in error_text or "resource exhausted" in error_text:
+                failure_status = "error_rate_limit"
+            elif "circuit breaker" in error_text:
+                failure_status = "error_circuit_breaker"
+            else:
+                failure_status = "error_api"
+        preflight_only = attempted_sample_count == 1
+        if failure_status == "error_rate_limit":
+            if preflight_only:
+                return (
+                    "LLM preflight hit Gemini rate limiting/quota before the full benchmark "
+                    "evaluation; keep the gate blocked until quota recovers or billing changes."
+                )
+            return (
+                f"LLM evaluation hit Gemini rate limiting/quota after {attempted_sample_count} attempted "
+                "samples; keep the gate blocked until quota recovers or billing changes."
+            )
+        if failure_status == "error_circuit_breaker":
+            if preflight_only:
+                return (
+                    "LLM preflight found the Gemini circuit breaker already open before the full "
+                    "benchmark evaluation; keep the gate blocked until the evaluation environment is healthy."
+                )
+            return (
+                f"LLM evaluation hit the Gemini circuit breaker after {attempted_sample_count} attempted "
+                "samples; keep the gate blocked until the evaluation environment is healthy."
+            )
+        if failure_status == "error_api":
+            if preflight_only:
+                return (
+                    "LLM preflight hit a Gemini API/transport failure before the full benchmark "
+                    "evaluation; keep the gate blocked until the evaluation environment is healthy."
+                )
+            return (
+                f"LLM evaluation hit a Gemini API/transport failure after {attempted_sample_count} attempted "
+                "samples; keep the gate blocked until the evaluation environment is healthy."
+            )
+        return None
 
     def build_result_from_samples(
         self,
@@ -502,6 +604,8 @@ class LLMEvaluator:
         total_input_tokens = 0
         total_output_tokens = 0
         sample_latencies = []
+        llm_execution_error_count = 0
+        attempted_sample_count = len(sample_evaluations)
 
         for sample_eval in sample_evaluations:
             predictions.append(sample_eval.prediction)
@@ -509,6 +613,8 @@ class LLMEvaluator:
 
             if sample_eval.error:
                 errors.append(f"Sample {sample_eval.sample_id}: {sample_eval.error}")
+            if self._is_operational_failure(sample_eval):
+                llm_execution_error_count += 1
 
             if sample_eval.classification is not None:
                 if sample_eval.latency_ms is not None:
@@ -518,10 +624,25 @@ class LLMEvaluator:
                 if sample_eval.classification.output_tokens:
                     total_output_tokens += sample_eval.classification.output_tokens
 
-        # Calculate metrics
-        accuracy, per_class, confusion = calculate_metrics(predictions, targets)
-
         avg_latency = sum(sample_latencies) / len(sample_latencies) if sample_latencies else None
+        blocked_execution = (
+            attempted_sample_count > 0
+            and llm_execution_error_count == attempted_sample_count
+        ) or (
+            attempted_sample_count < len(samples)
+            and llm_execution_error_count > 0
+        )
+        blocked_reason = None
+        if blocked_execution:
+            accuracy = None
+            per_class = {}
+            confusion = {}
+            blocked_reason = self._blocked_execution_reason(
+                sample_evaluations,
+                len(samples),
+            )
+        else:
+            accuracy, per_class, confusion = calculate_metrics(predictions, targets)
 
         return ThesisEvaluationResult(
             run_id=run_id,
@@ -539,6 +660,10 @@ class LLMEvaluator:
                 "output_tokens": total_output_tokens,
             },
             errors=errors,
+            run_state="blocked_execution" if blocked_execution else "completed",
+            llm_execution_error_count=llm_execution_error_count,
+            attempted_sample_count=attempted_sample_count,
+            blocked_reason=blocked_reason,
         )
 
 
@@ -608,8 +733,15 @@ class ThesisEvaluator:
             try:
                 llm_result = await self.llm_evaluator.evaluate(dataset_path)
 
-                # Calculate deltas
-                accuracy_delta = llm_result.accuracy - keyword_result.accuracy
+            except Exception as e:
+                logger.error(f"LLM evaluation failed: {e}")
+                # Continue with keyword-only results
+            else:
+                if (
+                    llm_result.accuracy is not None
+                    and keyword_result.accuracy is not None
+                ):
+                    accuracy_delta = llm_result.accuracy - keyword_result.accuracy
 
                 for label in VALID_LABELS:
                     kw_metrics = keyword_result.per_class_metrics.get(label)
@@ -621,10 +753,6 @@ class ThesisEvaluator:
                             "recall": llm_metrics.recall - kw_metrics.recall,
                             "f1": llm_metrics.f1 - kw_metrics.f1,
                         }
-
-            except Exception as e:
-                logger.error(f"LLM evaluation failed: {e}")
-                # Continue with keyword-only results
 
         return EvaluationComparison(
             keyword_result=keyword_result,
@@ -640,6 +768,7 @@ class ThesisEvaluator:
 
 def format_evaluation_result(result: ThesisEvaluationResult) -> str:
     """Format evaluation result as human-readable text."""
+    accuracy_display = f"{result.accuracy:.1%}" if result.accuracy is not None else "N/A"
     lines = [
         f"Thesis Evaluation Results ({result.evaluator_type.upper()})",
         "=" * 50,
@@ -647,7 +776,7 @@ def format_evaluation_result(result: ThesisEvaluationResult) -> str:
         f"Samples: {result.total_samples}",
         f"Timestamp: {result.timestamp}",
         f"",
-        f"Overall Accuracy: {result.accuracy:.1%}",
+        f"Overall Accuracy: {accuracy_display}",
         f"",
         "Per-Class Metrics:",
     ]
@@ -710,9 +839,11 @@ def format_comparison(comparison: EvaluationComparison) -> str:
     # Overall accuracy
     kw_acc = f"{kw.accuracy:.1%}"
     if llm:
-        llm_acc = f"{llm.accuracy:.1%}"
-        delta = comparison.accuracy_delta or 0
-        delta_str = f"{delta:+.1%}" if delta else "N/A"
+        llm_acc = f"{llm.accuracy:.1%}" if llm.accuracy is not None else "N/A"
+        if comparison.accuracy_delta is None:
+            delta_str = "N/A"
+        else:
+            delta_str = f"{comparison.accuracy_delta:+.1%}"
     else:
         llm_acc = "N/A"
         delta_str = "N/A"

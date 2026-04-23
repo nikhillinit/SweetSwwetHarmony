@@ -87,11 +87,27 @@ def _display_path(path: Path) -> str:
         return str(path)
 
 
-def _resolve_manifest_dataset_path(raw_path: str, manifest_path: Path) -> Path:
+def _resolve_manifest_dataset_path(
+    raw_path: str,
+    manifest_path: Path,
+    *,
+    dataset_path: Path | None = None,
+) -> Path:
     candidate = Path(raw_path)
     if candidate.is_absolute():
         return candidate.resolve()
-    return (manifest_path.parent / candidate).resolve()
+
+    manifest_relative = (manifest_path.parent / candidate).resolve()
+    cwd_relative = candidate.resolve()
+    if dataset_path is not None:
+        resolved_dataset = dataset_path.resolve()
+        if resolved_dataset == manifest_relative:
+            return manifest_relative
+        if resolved_dataset == cwd_relative:
+            return cwd_relative
+    if manifest_relative.exists():
+        return manifest_relative
+    return cwd_relative
 
 
 def load_benchmark_manifest(
@@ -119,7 +135,11 @@ def load_benchmark_manifest(
     computed_counts = scenario_counts_for_samples(samples)
     computed_fingerprint = compute_dataset_fingerprint(samples)
 
-    manifest_dataset_path = _resolve_manifest_dataset_path(data["dataset_path"], manifest)
+    manifest_dataset_path = _resolve_manifest_dataset_path(
+        data["dataset_path"],
+        manifest,
+        dataset_path=dataset,
+    )
     errors: list[str] = []
     if manifest_dataset_path != dataset:
         errors.append(

@@ -49,7 +49,9 @@ def _build_comparison(
     keyword_result,
     llm_result,
 ) -> EvaluationComparison:
-    accuracy_delta = llm_result.accuracy - keyword_result.accuracy
+    accuracy_delta = None
+    if llm_result.accuracy is not None and keyword_result.accuracy is not None:
+        accuracy_delta = llm_result.accuracy - keyword_result.accuracy
     per_class_deltas: dict[str, dict[str, float]] = {}
     for label in VALID_LABELS:
         kw_metrics = keyword_result.per_class_metrics.get(label)
@@ -93,7 +95,10 @@ async def run_eval_gate(
             per_class_deltas={},
         )
     else:
-        samples, sample_evaluations = await evaluator.llm_evaluator.evaluate_samples(dataset)
+        samples, sample_evaluations = await evaluator.llm_evaluator.evaluate_samples(
+            dataset,
+            fail_fast_on_operational_failure=True,
+        )
         llm_result = evaluator.llm_evaluator.build_result_from_samples(
             dataset,
             samples,
