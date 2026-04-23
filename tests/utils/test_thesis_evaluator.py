@@ -525,6 +525,120 @@ class TestLLMEvaluator:
         assert result.match is True
         assert result.error == "Classification failed: upstream error"
 
+    @pytest.mark.asyncio
+    async def test_evaluate_samples_fail_fast_on_operational_preflight(self, minimal_dataset):
+        """Preflight operational failures should stop the LLM pass after the first sample."""
+        evaluator = LLMEvaluator()
+        mock_classifier = Mock()
+        mock_result = Mock()
+        mock_result.thesis_match = False
+        mock_result.thesis_fit_score = 0.0
+        mock_result.category = "excluded"
+        mock_result.input_tokens = None
+        mock_result.output_tokens = None
+        mock_result.classification_status = "error_rate_limit"
+        mock_result.rationale = "Rate limit exceeded: ClientError"
+        mock_classifier.classify = AsyncMock(return_value=mock_result)
+        evaluator._classifier = mock_classifier
+
+        samples, sample_evaluations = await evaluator.evaluate_samples(
+            minimal_dataset,
+            fail_fast_on_operational_failure=True,
+        )
+        result = evaluator.build_result_from_samples(
+            minimal_dataset,
+            samples,
+            sample_evaluations,
+        )
+
+        assert len(samples) == 3
+        assert len(sample_evaluations) == 1
+        assert mock_classifier.classify.await_count == 1
+        assert result.total_samples == 3
+        assert result.attempted_sample_count == 1
+        assert result.run_state == "blocked_execution"
+        assert result.llm_execution_error_count == 1
+        assert result.accuracy is None
+        assert result.blocked_reason is not None
+        assert "rate limiting/quota" in result.blocked_reason.lower()
+
+    @pytest.mark.asyncio
+    async def test_evaluate_samples_stops_after_first_operational_failure(self, minimal_dataset):
+        """A partial run with later operational failure should still be treated as blocked execution."""
+        evaluator = LLMEvaluator()
+        mock_classifier = Mock()
+
+        success_result = Mock()
+        success_result.thesis_match = True
+        success_result.thesis_fit_score = 0.8
+        success_result.category = "consumer_cpg"
+        success_result.input_tokens = 10
+        success_result.output_tokens = 5
+        success_result.classification_status = "success"
+        success_result.rationale = "Strong consumer fit"
+
+        rate_limited_result = Mock()
+        rate_limited_result.thesis_match = False
+        rate_limited_result.thesis_fit_score = 0.0
+        rate_limited_result.category = "excluded"
+        rate_limited_result.input_tokens = None
+        rate_limited_result.output_tokens = None
+        rate_limited_result.classification_status = "error_rate_limit"
+        rate_limited_result.rationale = "Rate limit exceeded: RateLimitError"
+
+        mock_classifier.classify = AsyncMock(
+            side_effect=[success_result, rate_limited_result]
+        )
+        evaluator._classifier = mock_classifier
+
+        samples, sample_evaluations = await evaluator.evaluate_samples(
+            minimal_dataset,
+            fail_fast_on_operational_failure=True,
+        )
+        result = evaluator.build_result_from_samples(
+            minimal_dataset,
+            samples,
+            sample_evaluations,
+        )
+
+        assert len(samples) == 3
+        assert len(sample_evaluations) == 2
+        assert mock_classifier.classify.await_count == 2
+        assert result.run_state == "blocked_execution"
+        assert result.attempted_sample_count == 2
+        assert result.llm_execution_error_count == 1
+        assert result.accuracy is None
+        assert result.blocked_reason is not None
+        assert "after 2 attempted samples" in result.blocked_reason.lower()
+
+    def test_build_result_from_samples_derives_blocked_reason_from_error_text(self, minimal_dataset):
+        """Fallback-only operational failures should still produce a specific blocked reason."""
+        evaluator = LLMEvaluator()
+        samples = load_evaluation_dataset(minimal_dataset)
+        sample_evaluations = [
+            LLMSampleEvaluation(
+                sample_id="1",
+                target="QUALIFIED",
+                prediction="HELD",
+                match=False,
+                signal_data={},
+                classification=None,
+                error="Rate limit exceeded: RateLimitError",
+                latency_ms=1,
+            ),
+        ]
+
+        result = evaluator.build_result_from_samples(
+            minimal_dataset,
+            samples,
+            sample_evaluations,
+        )
+
+        assert result.run_state == "blocked_execution"
+        assert result.attempted_sample_count == 1
+        assert result.blocked_reason is not None
+        assert "rate limiting/quota" in result.blocked_reason.lower()
+
 
 # =============================================================================
 # TESTS: THESIS EVALUATOR (ORCHESTRATOR)
@@ -570,6 +684,52 @@ class TestThesisEvaluator:
 
         assert len(result.errors) == 3
         assert all("Classification failed: upstream error" in err for err in result.errors)
+        assert result.run_state == "blocked_execution"
+        assert result.llm_execution_error_count == 3
+        assert result.accuracy is None
+        assert result.per_class_metrics == {}
+        assert result.confusion_matrix == {}
+
+    @pytest.mark.asyncio
+    async def test_evaluate_llm_parse_failures_do_not_mark_blocked_execution(self, minimal_dataset):
+        """Model/output parse failures should not be treated as execution-blocked runs."""
+        evaluator = ThesisEvaluator()
+        mock_result = Mock()
+        mock_result.thesis_match = False
+        mock_result.thesis_fit_score = 0.0
+        mock_result.category = "excluded"
+        mock_result.input_tokens = None
+        mock_result.output_tokens = None
+        mock_result.classification_status = "error_parse"
+        mock_result.rationale = "Failed to parse response: JSONDecodeError"
+        evaluator.llm_evaluator._classifier = Mock()
+        evaluator.llm_evaluator._classifier.classify = AsyncMock(return_value=mock_result)
+
+        result = await evaluator.evaluate_llm(minimal_dataset)
+
+        assert len(result.errors) == 3
+        assert result.run_state == "completed"
+        assert result.llm_execution_error_count == 0
+
+    @pytest.mark.asyncio
+    async def test_evaluate_llm_success_preserves_completed_run_state(self, minimal_dataset):
+        """Healthy runs should keep the normal completed state with zero execution errors."""
+        evaluator = ThesisEvaluator()
+        mock_result = Mock()
+        mock_result.thesis_match = True
+        mock_result.thesis_fit_score = 0.8
+        mock_result.category = "consumer_cpg"
+        mock_result.input_tokens = 10
+        mock_result.output_tokens = 5
+        mock_result.classification_status = "success"
+        mock_result.rationale = "Strong consumer fit"
+        evaluator.llm_evaluator._classifier = Mock()
+        evaluator.llm_evaluator._classifier.classify = AsyncMock(return_value=mock_result)
+
+        result = await evaluator.evaluate_llm(minimal_dataset)
+
+        assert result.run_state == "completed"
+        assert result.llm_execution_error_count == 0
 
 
 # =============================================================================

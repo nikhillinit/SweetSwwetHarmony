@@ -94,6 +94,25 @@ def test_load_benchmark_manifest_resolves_relative_dataset_path_from_manifest_di
     assert manifest["benchmark_manifest_path"].endswith("dataset.manifest.json")
 
 
+def test_load_benchmark_manifest_resolves_repo_root_relative_dataset_path(
+    tmp_path,
+    monkeypatch,
+):
+    dataset_dir = tmp_path / "fixtures"
+    dataset_dir.mkdir()
+    dataset = _write_dataset(dataset_dir / "dataset.jsonl")
+    manifest_path = _write_manifest(
+        dataset,
+        manifest_dataset_path="fixtures/dataset.jsonl",
+    )
+    monkeypatch.chdir(tmp_path)
+
+    manifest = load_benchmark_manifest(dataset.resolve(), manifest_path=manifest_path)
+
+    assert manifest["benchmark_fingerprint"] == manifest["dataset_fingerprint"]
+    assert manifest["dataset_path"].endswith("fixtures\\dataset.jsonl") or manifest["dataset_path"].endswith("fixtures/dataset.jsonl")
+
+
 def test_load_benchmark_manifest_fails_on_drift(tmp_path):
     dataset = _write_dataset(tmp_path / "dataset.jsonl")
     manifest_path = _write_manifest(dataset)
