@@ -126,8 +126,49 @@ class ThesisFilterPipeline:
     def llm_classifier(self) -> LLMClassifier:
         """Lazy-load LLM classifier."""
         if self._llm_classifier is None:
-            self._llm_classifier = LLMClassifier()
+            self._llm_classifier = LLMClassifier(tracer=self._tracer)
         return self._llm_classifier
+
+    def _finish_route_span(
+        self,
+        route_span: Any,
+        *,
+        disqualify_result: Optional[DisqualifyResult],
+        llm_stage_ran: bool,
+        result: Optional[FilterResult] = None,
+        classification: Optional[ThesisClassification] = None,
+        error_kind: Optional[str] = None,
+        error_message: Optional[str] = None,
+    ) -> None:
+        """Finalize pipeline tracing for both success and exception paths."""
+        if error_kind:
+            self._tracer.record_error(
+                route_span,
+                error_kind=error_kind,
+                message=str(error_message or ""),
+            )
+        self._tracer.finish(
+            route_span,
+            stage1_passed=(disqualify_result.passed if disqualify_result else None),
+            stage1_category=(disqualify_result.category if disqualify_result else None),
+            stage1_reason=(disqualify_result.reason if disqualify_result else None),
+            llm_stage_ran=llm_stage_ran,
+            result_type=(result.result_type.value if result else None),
+            passed=(result.passed if result else None),
+            score=(result.score if result else None),
+            category=(result.category if result else None),
+            classification_status=(
+                getattr(classification, "classification_status", None)
+                if classification
+                else None
+            ),
+            llm_model=(getattr(classification, "model", None) if classification else None),
+            llm_prompt_version=(
+                getattr(classification, "prompt_version", None)
+                if classification
+                else None
+            ),
+        )
 
     async def filter(
         self,
@@ -152,111 +193,107 @@ class ThesisFilterPipeline:
             signal_has_url=bool(url),
             skip_llm=self.skip_llm,
         )
+        disqualify_result: Optional[DisqualifyResult] = None
 
-        # =================================================================
-        # STAGE 1: Hard Disqualifiers (FREE)
-        # =================================================================
-        disqualify_result = self.hard_disqualifiers.check(
-            title=title,
-            description=source_context,
-            url=url,
-        )
+        try:
+            # =============================================================
+            # STAGE 1: Hard Disqualifiers (FREE)
+            # =============================================================
+            disqualify_result = self.hard_disqualifiers.check(
+                title=title,
+                description=source_context,
+                url=url,
+            )
 
-        if not disqualify_result.passed:
-            logger.debug(f"Hard disqualified: {disqualify_result.reason}")
+            if not disqualify_result.passed:
+                logger.debug(f"Hard disqualified: {disqualify_result.reason}")
+                result = FilterResult(
+                    result_type=FilterResultType.AUTO_REJECT,
+                    passed=False,
+                    stage="hard_disqualifier",
+                    disqualify_result=disqualify_result,
+                    reason=disqualify_result.reason,
+                    score=0.0,
+                    category="excluded",
+                )
+                self._finish_route_span(
+                    route_span,
+                    disqualify_result=disqualify_result,
+                    llm_stage_ran=False,
+                    result=result,
+                )
+                return result
+
+            # =============================================================
+            # STAGE 2: LLM Classification (~$0.002)
+            # =============================================================
+            if self.skip_llm:
+                # Skip LLM for testing - pass everything that cleared Stage 1
+                result = FilterResult(
+                    result_type=FilterResultType.LLM_REVIEW,
+                    passed=True,
+                    stage="llm_classifier_skipped",
+                    reason="LLM skipped for testing",
+                    score=0.5,
+                    category="unknown",
+                )
+                self._finish_route_span(
+                    route_span,
+                    disqualify_result=disqualify_result,
+                    llm_stage_ran=False,
+                    result=result,
+                )
+                return result
+
+            classification = await self.llm_classifier.classify(signal_data)
+
+            # Route based on score and confidence
+            score = classification.thesis_fit_score
+            confidence = classification.confidence
+
+            if score >= self.auto_approve_threshold and confidence == "high":
+                result_type = FilterResultType.LLM_AUTO_APPROVE
+                passed = True
+            elif score >= self.review_threshold:
+                result_type = FilterResultType.LLM_REVIEW
+                passed = True
+            else:
+                result_type = FilterResultType.LLM_REJECT
+                passed = False
+
+            logger.debug(
+                f"LLM classified: score={score:.2f}, confidence={confidence}, "
+                f"result={result_type.value}"
+            )
+
             result = FilterResult(
-                result_type=FilterResultType.AUTO_REJECT,
-                passed=False,
-                stage="hard_disqualifier",
+                result_type=result_type,
+                passed=passed,
+                stage="llm_classifier",
+                classification=classification,
+                reason=classification.rationale,
+                score=score,
+                category=classification.category,
+            )
+            self._finish_route_span(
+                route_span,
                 disqualify_result=disqualify_result,
-                reason=disqualify_result.reason,
-                score=0.0,
-                category="excluded",
-            )
-            self._tracer.finish(
-                route_span,
-                stage1_passed=False,
-                stage1_category=disqualify_result.category,
-                stage1_reason=disqualify_result.reason,
-                llm_stage_ran=False,
-                result_type=result.result_type.value,
-                passed=result.passed,
-                score=result.score,
-                category=result.category,
+                llm_stage_ran=True,
+                result=result,
+                classification=classification,
             )
             return result
-
-        # =================================================================
-        # STAGE 2: LLM Classification (~$0.002)
-        # =================================================================
-        if self.skip_llm:
-            # Skip LLM for testing - pass everything that cleared Stage 1
-            result = FilterResult(
-                result_type=FilterResultType.LLM_REVIEW,
-                passed=True,
-                stage="llm_classifier_skipped",
-                reason="LLM skipped for testing",
-                score=0.5,
-                category="unknown",
-            )
-            self._tracer.finish(
+        except Exception as exc:
+            llm_stage_ran = bool(disqualify_result and disqualify_result.passed and not self.skip_llm)
+            error_kind = "llm" if llm_stage_ran else "stage1"
+            self._finish_route_span(
                 route_span,
-                stage1_passed=True,
-                stage1_category=disqualify_result.category,
-                stage1_reason=disqualify_result.reason,
-                llm_stage_ran=False,
-                result_type=result.result_type.value,
-                passed=result.passed,
-                score=result.score,
-                category=result.category,
+                disqualify_result=disqualify_result,
+                llm_stage_ran=llm_stage_ran,
+                error_kind=error_kind,
+                error_message=str(exc),
             )
-            return result
-
-        classification = await self.llm_classifier.classify(signal_data)
-
-        # Route based on score and confidence
-        score = classification.thesis_fit_score
-        confidence = classification.confidence
-
-        if score >= self.auto_approve_threshold and confidence == "high":
-            result_type = FilterResultType.LLM_AUTO_APPROVE
-            passed = True
-        elif score >= self.review_threshold:
-            result_type = FilterResultType.LLM_REVIEW
-            passed = True
-        else:
-            result_type = FilterResultType.LLM_REJECT
-            passed = False
-
-        logger.debug(
-            f"LLM classified: score={score:.2f}, confidence={confidence}, "
-            f"result={result_type.value}"
-        )
-
-        result = FilterResult(
-            result_type=result_type,
-            passed=passed,
-            stage="llm_classifier",
-            classification=classification,
-            reason=classification.rationale,
-            score=score,
-            category=classification.category,
-        )
-        self._tracer.finish(
-            route_span,
-            stage1_passed=True,
-            stage1_category=disqualify_result.category,
-            stage1_reason=disqualify_result.reason,
-            llm_stage_ran=True,
-            result_type=result.result_type.value,
-            passed=result.passed,
-            score=result.score,
-            category=result.category,
-            classification_status=getattr(classification, "classification_status", None),
-            llm_model=getattr(classification, "model", None),
-            llm_prompt_version=getattr(classification, "prompt_version", None),
-        )
-        return result
+            raise
 
     async def filter_batch(
         self,
