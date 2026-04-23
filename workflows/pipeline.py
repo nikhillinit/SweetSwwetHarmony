@@ -2348,6 +2348,8 @@ class DiscoveryPipeline:
             velocity_boost=velocity_boost,
             momentum_score=momentum_score,
             enrichment_boost=enrichment_boost,
+            keyword_score=thesis_result.keyword_score if thesis_result else None,
+            llm_score=thesis_result.llm_score if thesis_result else None,
         )
 
         logger.info(
