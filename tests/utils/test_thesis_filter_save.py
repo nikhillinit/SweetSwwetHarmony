@@ -13,6 +13,7 @@ import pytest_asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from storage.signal_store import SignalStore
+from telemetry.thesis_tracing import MemoryThesisTracer
 from utils.thesis_filter import (
     ThesisFilter,
     ThesisFilterConfig,
@@ -356,3 +357,54 @@ class TestSaveClassificationRoundTrip:
         )
         after_count = (await cursor.fetchone())[0]
         assert after_count == before_count
+
+
+class TestSaveClassificationTracing:
+    @pytest.mark.asyncio
+    async def test_save_classification_records_persist_span(self, store, signal_id):
+        tracer = MemoryThesisTracer()
+        classification = _make_classification(
+            llm_model="gemini-2.0-flash",
+            llm_prompt_version="v1.6.0",
+            llm_classification_status="success",
+        )
+
+        tf = ThesisFilter(ThesisFilterConfig(), signal_store=store, tracer=tracer)
+        await tf.save_classification(
+            signal_id=signal_id,
+            canonical_key="domain:acme.ai",
+            classification=classification,
+        )
+
+        assert len(tracer.finished_spans) == 1
+        span = tracer.finished_spans[0]
+        assert span.name == "thesis.storage.persist"
+        assert span.attributes["component"] == "thesis_filter"
+        assert span.attributes["signal_id"] == signal_id
+        assert span.attributes["canonical_key"] == "domain:acme.ai"
+        assert span.attributes["routing"] == "qualified"
+        assert span.attributes["llm_prompt_version"] == "v1.6.0"
+        assert span.attributes["llm_model"] == "gemini-2.0-flash"
+        assert span.attributes["row_id"] > 0
+        assert span.errors == []
+
+    @pytest.mark.asyncio
+    async def test_save_classification_records_persist_error_then_raises(self, store, signal_id):
+        tracer = MemoryThesisTracer()
+        classification = _make_classification()
+        tf = ThesisFilter(ThesisFilterConfig(), signal_store=store, tracer=tracer)
+
+        await store._db.execute("DROP TABLE thesis_classifications")
+        await store._db.commit()
+
+        with pytest.raises(Exception):
+            await tf.save_classification(
+                signal_id=signal_id,
+                canonical_key="domain:acme.ai",
+                classification=classification,
+            )
+
+        assert len(tracer.finished_spans) == 1
+        span = tracer.finished_spans[0]
+        assert span.name == "thesis.storage.persist"
+        assert span.errors[0]["error_kind"] == "persist"

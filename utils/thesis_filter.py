@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
+from telemetry.thesis_tracing import create_thesis_tracer
 from utils.thesis_matcher import (
     ThesisMatcher,
     CONSUMER_SIGNAL_KEYWORDS,
@@ -298,6 +299,7 @@ class ThesisFilter:
         self,
         config: Optional[ThesisFilterConfig] = None,
         signal_store: Optional["SignalStore"] = None,
+        tracer: Any = None,
     ):
         """
         Initialize thesis filter.
@@ -308,6 +310,7 @@ class ThesisFilter:
         """
         self.config = config or ThesisFilterConfig()
         self.signal_store = signal_store
+        self._tracer = tracer or create_thesis_tracer()
         self._keyword_matcher = ThesisMatcher()
         self._web3_detector = Web3Detector()
         self._llm_classifier = None  # Lazy load
@@ -896,28 +899,64 @@ class ThesisFilter:
         effective_prompt_version = (
             prompt_version or classification.llm_prompt_version or "v1"
         )
-
-        await self.signal_store.save_thesis_classification(
+        classification_status = classification.llm_classification_status or "success"
+        thesis_match = (
+            classification.llm_score is not None and classification.llm_score > 0.5
+        )
+        persist_span = self._tracer.start_span(
+            "thesis.storage.persist",
+            component="thesis_filter",
             signal_id=signal_id,
             canonical_key=canonical_key,
+            routing=classification.routing.value,
+            llm_classification_status=classification_status,
+            llm_prompt_version=effective_prompt_version,
+            llm_model=effective_model,
+        )
+        persist_start = time.perf_counter()
+
+        try:
+            row_id = await self.signal_store.save_thesis_classification(
+                signal_id=signal_id,
+                canonical_key=canonical_key,
+                keyword_score=classification.keyword_score,
+                keyword_category=classification.keyword_category,
+                negative_keywords=classification.negative_keywords,
+                thesis_match=thesis_match,
+                thesis_fit_score=classification.llm_score,
+                category=classification.llm_category,
+                primary_end_user=classification.llm_primary_end_user,
+                paying_customer=classification.llm_paying_customer,
+                sells_to_or_operates_in=classification.llm_sells_to_or_operates_in,
+                stage_estimate=None,
+                confidence=None,
+                rationale=classification.llm_rationale,
+                key_signals=classification.keyword_matches,
+                prompt_version=effective_prompt_version,
+                model=effective_model,
+                classification_status=classification_status,
+            )
+        except Exception as exc:
+            self._tracer.record_error(
+                persist_span,
+                error_kind="persist",
+                message=str(exc),
+            )
+            self._tracer.finish(
+                persist_span,
+                latency_ms=round((time.perf_counter() - persist_start) * 1000, 2),
+            )
+            raise
+
+        self._tracer.finish(
+            persist_span,
+            row_id=row_id,
             keyword_score=classification.keyword_score,
-            keyword_category=classification.keyword_category,
-            negative_keywords=classification.negative_keywords,
-            thesis_match=(
-                classification.llm_score is not None and classification.llm_score > 0.5
-            ),
-            thesis_fit_score=classification.llm_score,
+            llm_score=classification.llm_score,
             category=classification.llm_category,
-            primary_end_user=classification.llm_primary_end_user,
-            paying_customer=classification.llm_paying_customer,
-            sells_to_or_operates_in=classification.llm_sells_to_or_operates_in,
-            stage_estimate=None,
-            confidence=None,
-            rationale=classification.llm_rationale,
-            key_signals=classification.keyword_matches,
-            prompt_version=effective_prompt_version,
-            model=effective_model,
-            classification_status=classification.llm_classification_status or "success",
+            negative_keyword_count=len(classification.negative_keywords),
+            keyword_match_count=len(classification.keyword_matches),
+            latency_ms=round((time.perf_counter() - persist_start) * 1000, 2),
         )
 
         logger.debug(
