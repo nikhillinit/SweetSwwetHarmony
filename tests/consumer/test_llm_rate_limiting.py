@@ -3,6 +3,7 @@
 import pytest
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, Mock, patch
+from pydantic import ValidationError
 
 from consumer.thesis_filter.llm_classifier import (
     CLASSIFIER_PROMPT_VERSION,
@@ -11,6 +12,7 @@ from consumer.thesis_filter.llm_classifier import (
     LLMClassifier,
     RateLimiter,
 )
+from telemetry.thesis_tracing import MemoryThesisTracer
 from utils.circuit_breaker import CircuitBreaker, CircuitOpenError
 
 
@@ -205,6 +207,57 @@ class TestLLMClassifierCircuitBreaker:
         assert result.classification_status == ClassificationStatus.ERROR_API.value
 
     @pytest.mark.asyncio
+    async def test_llm_classifier_marks_upstream_429_as_rate_limit(self, monkeypatch):
+        """Gemini 429 responses should surface as error_rate_limit, not error_api."""
+        monkeypatch.setenv("GOOGLE_API_KEY", "test_key")
+        classifier = LLMClassifier(api_key="test_key")
+
+        class FakeClientError(Exception):
+            def __init__(self):
+                super().__init__("429 RESOURCE_EXHAUSTED")
+                self.message = "Resource exhausted. Please try again later."
+                self.response = Mock(status_code=429)
+
+        with patch.object(classifier, "_call_gemini_api", new_callable=AsyncMock) as mock_call:
+            mock_call.side_effect = FakeClientError()
+            result = await classifier.classify({"title": "Test signal", "source_api": "test"})
+
+        assert result.thesis_match is False
+        assert result.classification_status == ClassificationStatus.ERROR_RATE_LIMIT.value
+        assert "rate limit" in result.rationale.lower()
+
+    @pytest.mark.asyncio
+    async def test_call_gemini_api_retries_upstream_429_then_succeeds(self, monkeypatch):
+        """Provider 429s should use the shared retry path before surfacing failure."""
+        monkeypatch.setenv("GOOGLE_API_KEY", "test_key")
+        classifier = LLMClassifier(api_key="test_key")
+
+        class FakeClientError(Exception):
+            def __init__(self):
+                super().__init__("429 RESOURCE_EXHAUSTED")
+                self.message = "Resource exhausted. Please try again later."
+                self.response = Mock(status_code=429, headers={})
+
+        response = Mock()
+        response.text = '{"thesis_match": true}'
+        response.usage_metadata = None
+
+        classifier._client = Mock()
+        classifier._client.models.generate_content = Mock(
+            side_effect=[FakeClientError(), response]
+        )
+
+        with patch(
+            "collectors.retry_strategy.asyncio.sleep",
+            new_callable=AsyncMock,
+        ) as mock_sleep:
+            result = await classifier._call_gemini_api("prompt")
+
+        assert result is response
+        assert classifier._client.models.generate_content.call_count == 2
+        mock_sleep.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_llm_classifier_marks_parse_errors(self, monkeypatch):
         """Malformed JSON responses should surface as error_parse."""
         monkeypatch.setenv("GOOGLE_API_KEY", "test_key")
@@ -218,6 +271,31 @@ class TestLLMClassifierCircuitBreaker:
 
         assert result.thesis_match is False
         assert result.classification_status == ClassificationStatus.ERROR_PARSE.value
+
+    @pytest.mark.asyncio
+    async def test_llm_classifier_marks_validation_errors(self, monkeypatch):
+        """Structured validation failures should soft-fail as error_parse instead of raising."""
+        monkeypatch.setenv("GOOGLE_API_KEY", "test_key")
+        classifier = LLMClassifier(api_key="test_key")
+        mock_response = Mock()
+        mock_response.text = '{"thesis_match": true}'
+        mock_response.usage_metadata = None
+        validation_error = ValidationError.from_exception_data(
+            "ThesisClassifierResponse",
+            [{"type": "string_type", "loc": ("category",), "input": 123}],
+        )
+
+        with patch.object(classifier, "_call_gemini_api", new_callable=AsyncMock) as mock_call:
+            mock_call.return_value = mock_response
+            with patch(
+                "consumer.thesis_filter.llm_classifier._ThesisClassifierResponse.model_validate",
+                side_effect=validation_error,
+            ):
+                result = await classifier.classify({"title": "Test signal", "source_api": "test"})
+
+        assert result.thesis_match is False
+        assert result.classification_status == ClassificationStatus.ERROR_PARSE.value
+        assert "Failed to validate response" in result.rationale
 
     @pytest.mark.asyncio
     async def test_llm_classifier_parses_minimal_step3_fields(self, monkeypatch):
@@ -296,6 +374,131 @@ class TestLLMClassifierCircuitBreaker:
         assert "state" in stats
         assert "failure_count" in stats
         assert stats["name"] == "gemini_llm"
+
+
+class TestLLMClassifierTracing:
+    @pytest.mark.asyncio
+    async def test_success_records_trace_span(self, monkeypatch):
+        monkeypatch.setenv("GOOGLE_API_KEY", "test_key")
+        tracer = MemoryThesisTracer()
+        classifier = LLMClassifier(api_key="test_key", tracer=tracer)
+
+        mock_response = Mock()
+        mock_response.text = """
+        {
+          "thesis_match": true,
+          "thesis_fit_score": 0.91,
+          "category": "travel_hospitality",
+          "stage_estimate": "seed",
+          "confidence": "high",
+          "company_name": "DineDesk",
+          "rationale": "Consumer reservation app for diners.",
+          "key_signals": ["reservation", "diners"],
+          "primary_end_user": "individual_consumer",
+          "paying_customer": "individual_consumer",
+          "sells_to_or_operates_in": "operates_in_industry_for_consumers"
+        }
+        """
+        mock_response.usage_metadata = None
+
+        with patch.object(classifier, "_call_gemini_api", new_callable=AsyncMock) as mock_call:
+            mock_call.return_value = mock_response
+            result = await classifier.classify({"title": "Test signal", "source_api": "test"})
+
+        assert result.classification_status == ClassificationStatus.SUCCESS.value
+        assert len(tracer.finished_spans) == 1
+        span = tracer.finished_spans[0]
+        assert span.name == "thesis.llm.classify"
+        assert span.attributes["component"] == "thesis_filter_llm_classifier"
+        assert span.attributes["classification_status"] == ClassificationStatus.SUCCESS.value
+        assert span.attributes["category"] == "travel_hospitality"
+        assert span.attributes["source_api"] == "test"
+        assert "response_summary" not in span.attributes
+        assert span.errors == []
+
+    @pytest.mark.asyncio
+    async def test_cot_reasoning_trace_redacts_raw_response_by_default(self, monkeypatch):
+        monkeypatch.setenv("GOOGLE_API_KEY", "test_key")
+        monkeypatch.delenv("LLM_TRACE_INCLUDE_RAW", raising=False)
+        tracer = MemoryThesisTracer()
+        classifier = LLMClassifier(api_key="test_key", tracer=tracer, cot_enabled=True)
+
+        mock_response = Mock()
+        mock_response.text = """
+        {
+          "thesis_match": true,
+          "thesis_fit_score": 0.91,
+          "category": "travel_hospitality",
+          "stage_estimate": "seed",
+          "confidence": "high",
+          "company_name": "DineDesk",
+          "rationale": "Consumer reservation app for diners.",
+          "key_signals": ["reservation", "diners"],
+          "reasoning_steps": ["consumer end user", "travel booking flow"],
+          "primary_end_user": "individual_consumer",
+          "paying_customer": "individual_consumer",
+          "sells_to_or_operates_in": "operates_in_industry_for_consumers"
+        }
+        """
+        mock_response.usage_metadata = None
+
+        with patch.object(classifier, "_call_gemini_api", new_callable=AsyncMock) as mock_call:
+            mock_call.return_value = mock_response
+            result = await classifier.classify({"title": "Test signal", "source_api": "test"})
+
+        assert result.reasoning_trace is not None
+        assert result.reasoning_trace["raw_response_text"] is None
+        assert result.reasoning_trace["reasoning_steps"] == [
+            "consumer end user",
+            "travel booking flow",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_parse_failure_records_parse_error_trace(self, monkeypatch):
+        monkeypatch.setenv("GOOGLE_API_KEY", "test_key")
+        tracer = MemoryThesisTracer()
+        classifier = LLMClassifier(api_key="test_key", tracer=tracer)
+
+        mock_response = Mock()
+        mock_response.text = "not-json"
+        mock_response.usage_metadata = None
+
+        with patch.object(classifier, "_call_gemini_api", new_callable=AsyncMock) as mock_call:
+            mock_call.return_value = mock_response
+            result = await classifier.classify({"title": "Parse fail signal", "source_api": "test"})
+
+        assert result.classification_status == ClassificationStatus.ERROR_PARSE.value
+        assert len(tracer.finished_spans) == 1
+        span = tracer.finished_spans[0]
+        assert span.attributes["classification_status"] == ClassificationStatus.ERROR_PARSE.value
+        assert span.errors[0]["error_kind"] == "parse"
+        assert "response_summary" in span.attributes
+        assert "preview" not in span.attributes["response_summary"]
+
+    @pytest.mark.asyncio
+    async def test_circuit_open_records_circuit_breaker_trace(self, monkeypatch):
+        monkeypatch.setenv("GOOGLE_API_KEY", "test_key")
+        tracer = MemoryThesisTracer()
+
+        breaker = CircuitBreaker(name="test_llm", failure_threshold=1, recovery_timeout=60)
+        breaker._state = "open"
+        import time
+        breaker._opened_at = time.monotonic()
+
+        classifier = LLMClassifier(
+            api_key="test_key",
+            tracer=tracer,
+            rate_limiter=RateLimiter(rpm=100, rpd=1000),
+            circuit_breaker=breaker,
+        )
+
+        result = await classifier.classify({"title": "Test signal", "source_api": "test"})
+
+        assert result.classification_status == ClassificationStatus.ERROR_CIRCUIT_BREAKER.value
+        assert len(tracer.finished_spans) == 1
+        span = tracer.finished_spans[0]
+        assert span.attributes["classification_status"] == ClassificationStatus.ERROR_CIRCUIT_BREAKER.value
+        assert span.errors[0]["error_kind"] == "circuit_breaker"
 
 
 class TestThesisFilterErrorHandling:

@@ -568,6 +568,10 @@ class TestThesisPipelineM0:
                     [signal], dry_run=True, consolidated=consolidated,
                 )
 
+            gate_kwargs = pipeline._gate.evaluate.call_args.kwargs
+            assert gate_kwargs["keyword_score"] == 0.80
+            assert gate_kwargs["llm_score"] == 0.82
+
             cls = await pipeline._store.get_thesis_classification(signal.canonical_key)
             assert cls is not None
             assert cls["model"] == "gemini-2.0-flash"

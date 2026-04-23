@@ -25,7 +25,7 @@ Harmonic-level enhancements:
 - Enhanced confidence scoring
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Optional, List, Dict, Any
@@ -367,9 +367,11 @@ class VerificationGate:
             llm_score=llm_score
         )
 
+        adjusted_breakdown = replace(breakdown, overall=final_confidence)
+
         # Make push decision (using adjusted confidence)
         decision, reason, suggested_status = self._make_decision(
-            breakdown, verification_status, signals
+            adjusted_breakdown, verification_status, signals
         )
 
         # Build verification details for audit
@@ -385,7 +387,7 @@ class VerificationGate:
         ]
 
         # Add LLM adjustment to verification details if applied
-        if llm_adjustment_reason != "llm_inactive" and llm_adjustment_reason != "llm_data_missing":
+        if llm_adjustment_reason not in {"llm_inactive", "llm_data_missing"}:
             verification_details.append({
                 "source": "llm_adjustment",
                 "reason": llm_adjustment_reason,
@@ -399,7 +401,7 @@ class VerificationGate:
             decision=decision,
             verification_status=verification_status,
             confidence_score=final_confidence,  # Use adjusted confidence
-            confidence_breakdown=breakdown.to_dict(),
+            confidence_breakdown=adjusted_breakdown.to_dict(),
             reason=reason,
             suggested_status=suggested_status,
             signals_used=[s.id for s in signals],
