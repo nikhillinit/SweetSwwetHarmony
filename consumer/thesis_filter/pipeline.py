@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, Optional
 
+from telemetry.thesis_tracing import create_thesis_tracer
 from .hard_disqualifiers import HardDisqualifiers, DisqualifyResult
 from .llm_classifier import LLMClassifier, ThesisClassification
 
@@ -103,6 +104,7 @@ class ThesisFilterPipeline:
         review_threshold: float = REVIEW_THRESHOLD,
         auto_approve_threshold: float = AUTO_APPROVE_THRESHOLD,
         skip_llm: bool = False,
+        tracer: Any = None,
     ):
         """
         Initialize filter pipeline.
@@ -118,6 +120,7 @@ class ThesisFilterPipeline:
 
         self.hard_disqualifiers = HardDisqualifiers()
         self._llm_classifier: Optional[LLMClassifier] = None
+        self._tracer = tracer or create_thesis_tracer()
 
     @property
     def llm_classifier(self) -> LLMClassifier:
@@ -142,6 +145,13 @@ class ThesisFilterPipeline:
         title = signal_data.get("title", "")
         source_context = signal_data.get("source_context", "")
         url = signal_data.get("url")
+        route_span = self._tracer.start_span(
+            "thesis.pipeline.route",
+            component="thesis_filter_pipeline",
+            source_api=signal_data.get("source_api", "unknown"),
+            signal_has_url=bool(url),
+            skip_llm=self.skip_llm,
+        )
 
         # =================================================================
         # STAGE 1: Hard Disqualifiers (FREE)
@@ -154,7 +164,7 @@ class ThesisFilterPipeline:
 
         if not disqualify_result.passed:
             logger.debug(f"Hard disqualified: {disqualify_result.reason}")
-            return FilterResult(
+            result = FilterResult(
                 result_type=FilterResultType.AUTO_REJECT,
                 passed=False,
                 stage="hard_disqualifier",
@@ -163,13 +173,25 @@ class ThesisFilterPipeline:
                 score=0.0,
                 category="excluded",
             )
+            self._tracer.finish(
+                route_span,
+                stage1_passed=False,
+                stage1_category=disqualify_result.category,
+                stage1_reason=disqualify_result.reason,
+                llm_stage_ran=False,
+                result_type=result.result_type.value,
+                passed=result.passed,
+                score=result.score,
+                category=result.category,
+            )
+            return result
 
         # =================================================================
         # STAGE 2: LLM Classification (~$0.002)
         # =================================================================
         if self.skip_llm:
             # Skip LLM for testing - pass everything that cleared Stage 1
-            return FilterResult(
+            result = FilterResult(
                 result_type=FilterResultType.LLM_REVIEW,
                 passed=True,
                 stage="llm_classifier_skipped",
@@ -177,6 +199,18 @@ class ThesisFilterPipeline:
                 score=0.5,
                 category="unknown",
             )
+            self._tracer.finish(
+                route_span,
+                stage1_passed=True,
+                stage1_category=disqualify_result.category,
+                stage1_reason=disqualify_result.reason,
+                llm_stage_ran=False,
+                result_type=result.result_type.value,
+                passed=result.passed,
+                score=result.score,
+                category=result.category,
+            )
+            return result
 
         classification = await self.llm_classifier.classify(signal_data)
 
@@ -199,7 +233,7 @@ class ThesisFilterPipeline:
             f"result={result_type.value}"
         )
 
-        return FilterResult(
+        result = FilterResult(
             result_type=result_type,
             passed=passed,
             stage="llm_classifier",
@@ -208,6 +242,21 @@ class ThesisFilterPipeline:
             score=score,
             category=classification.category,
         )
+        self._tracer.finish(
+            route_span,
+            stage1_passed=True,
+            stage1_category=disqualify_result.category,
+            stage1_reason=disqualify_result.reason,
+            llm_stage_ran=True,
+            result_type=result.result_type.value,
+            passed=result.passed,
+            score=result.score,
+            category=result.category,
+            classification_status=getattr(classification, "classification_status", None),
+            llm_model=getattr(classification, "model", None),
+            llm_prompt_version=getattr(classification, "prompt_version", None),
+        )
+        return result
 
     async def filter_batch(
         self,
