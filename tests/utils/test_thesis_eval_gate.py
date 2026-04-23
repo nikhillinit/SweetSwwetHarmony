@@ -204,3 +204,38 @@ def test_build_rebaseline_artifact_marks_blocked_execution():
     assert artifact["recommendation"] == "blocked_execution"
     assert artifact["clear_control_miss_count"] is None
     assert "rate limiting/quota" in artifact["justification"][0].lower()
+
+
+def test_build_rebaseline_artifact_marks_partial_blocked_execution_truthfully():
+    llm_result = _result(evaluator_type="llm", accuracy=0.93)
+    llm_result.accuracy = None
+    llm_result.run_state = "blocked_execution"
+    llm_result.llm_execution_error_count = 1
+    llm_result.attempted_sample_count = 2
+    llm_result.blocked_reason = (
+        "LLM evaluation hit Gemini rate limiting/quota after 2 attempted "
+        "samples; keep the gate blocked until quota recovers or billing changes."
+    )
+    comparison = EvaluationComparison(
+        keyword_result=_result(evaluator_type="keyword", accuracy=0.4),
+        llm_result=llm_result,
+        accuracy_delta=None,
+        per_class_deltas={},
+    )
+
+    artifact = build_rebaseline_artifact(
+        comparison,
+        benchmark_provenance=BENCHMARK_PROVENANCE,
+        llm_records=[
+            {"scenario": "clear_consumer", "match": True},
+            {"scenario": "clear_b2b", "match": False},
+        ],
+    )
+
+    assert artifact["run_state"] == "blocked_execution"
+    assert artifact["llm_execution_error_count"] == 1
+    assert artifact["llm_attempted_sample_count"] == 2
+    assert artifact["recommendation"] == "blocked_execution"
+    assert "after 2 attempted samples" in artifact["justification"][0].lower()
+    assert "not fully quality-evaluable" in artifact["justification"][1].lower()
+    assert "all attempted llm samples failed operationally" not in artifact["justification"][1].lower()

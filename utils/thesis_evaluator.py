@@ -733,8 +733,15 @@ class ThesisEvaluator:
             try:
                 llm_result = await self.llm_evaluator.evaluate(dataset_path)
 
-                # Calculate deltas
-                accuracy_delta = llm_result.accuracy - keyword_result.accuracy
+            except Exception as e:
+                logger.error(f"LLM evaluation failed: {e}")
+                # Continue with keyword-only results
+            else:
+                if (
+                    llm_result.accuracy is not None
+                    and keyword_result.accuracy is not None
+                ):
+                    accuracy_delta = llm_result.accuracy - keyword_result.accuracy
 
                 for label in VALID_LABELS:
                     kw_metrics = keyword_result.per_class_metrics.get(label)
@@ -746,10 +753,6 @@ class ThesisEvaluator:
                             "recall": llm_metrics.recall - kw_metrics.recall,
                             "f1": llm_metrics.f1 - kw_metrics.f1,
                         }
-
-            except Exception as e:
-                logger.error(f"LLM evaluation failed: {e}")
-                # Continue with keyword-only results
 
         return EvaluationComparison(
             keyword_result=keyword_result,

@@ -138,6 +138,9 @@ def build_rebaseline_artifact(
     llm_result = comparison.llm_result
     blocked_execution = _is_blocked_execution(llm_result)
     attempted_sample_count = getattr(llm_result, "attempted_sample_count", None) if llm_result else None
+    llm_execution_error_count = (
+        getattr(llm_result, "llm_execution_error_count", 0) if llm_result else 0
+    )
     ambiguous_scenarios = set(benchmark_provenance.get("ambiguous_scenarios", []))
     ambiguous_records = [
         record for record in llm_records
@@ -165,9 +168,19 @@ def build_rebaseline_artifact(
         blocked_reason = getattr(llm_result, "blocked_reason", None)
         if blocked_reason:
             justification.append(blocked_reason)
-        justification.append(
-            "Threshold review is unavailable because all attempted LLM samples failed operationally."
-        )
+        if (
+            attempted_sample_count is not None
+            and attempted_sample_count > 0
+            and llm_execution_error_count == attempted_sample_count
+        ):
+            justification.append(
+                "Threshold review is unavailable because all attempted LLM samples failed operationally."
+            )
+        else:
+            justification.append(
+                "Threshold review is unavailable because the blocked LLM run terminated early "
+                "and is not fully quality-evaluable."
+            )
         scenario_metrics = {}
         ambiguous_accuracy = None
         clear_control_miss_count = None
@@ -238,11 +251,7 @@ def build_rebaseline_artifact(
         **(
             {
                 "run_state": "blocked_execution",
-                "llm_execution_error_count": getattr(
-                    llm_result,
-                    "llm_execution_error_count",
-                    0,
-                ),
+                "llm_execution_error_count": llm_execution_error_count,
             }
             if blocked_execution
             else {}
