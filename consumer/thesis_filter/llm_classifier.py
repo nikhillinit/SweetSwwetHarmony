@@ -28,6 +28,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
+from consumer._gemini_instructor import load_instructor_genai
 from collectors.retry_strategy import RateLimitError, RetryConfig, with_retry
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 from telemetry.thesis_tracing import (
@@ -958,22 +959,20 @@ Respond with JSON classification only."""
 
     def _call_gemini_api_with_instructor(self, user_prompt: str) -> Any | None:
         """Best-effort Instructor path that falls back cleanly to the legacy Gemini call."""
-        try:
-            import instructor
-            from google.genai import types
-        except ImportError:
+        deps = load_instructor_genai()
+        if deps is None:
             return None
 
         try:
-            wrapped_client = instructor.from_genai(
+            wrapped_client = deps.instructor.from_genai(
                 self.client,
-                mode=instructor.Mode.GENAI_STRUCTURED_OUTPUTS,
+                mode=deps.instructor.Mode.GENAI_STRUCTURED_OUTPUTS,
             )
             response_model, completion = wrapped_client.create_with_completion(
                 messages=[{"role": "user", "content": user_prompt}],
                 response_model=_ThesisClassifierResponse,
                 model=self.model_name,
-                config=types.GenerateContentConfig(
+                config=deps.types.GenerateContentConfig(
                     temperature=self.temperature,
                     max_output_tokens=self.max_tokens,
                     response_mime_type="application/json",
