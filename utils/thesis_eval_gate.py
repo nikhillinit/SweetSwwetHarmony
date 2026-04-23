@@ -12,6 +12,11 @@ from utils.thesis_evaluator import EvaluationComparison
 DEFAULT_LLM_ACCURACY_THRESHOLD = 0.90
 
 
+def _is_blocked_execution(llm_result: Any | None) -> bool:
+    """Whether the LLM run was execution-blocked rather than quality-evaluable."""
+    return llm_result is not None and getattr(llm_result, "run_state", None) == "blocked_execution"
+
+
 def build_eval_gate_artifact(
     comparison: EvaluationComparison,
     *,
@@ -29,22 +34,39 @@ def build_eval_gate_artifact(
     ]
 
     llm_result = comparison.llm_result
+    blocked_execution = _is_blocked_execution(llm_result)
+    attempted_sample_count = getattr(llm_result, "attempted_sample_count", None) if llm_result else None
     if llm_result is None:
         blocked_reasons.append(
             "LLM evaluation did not run successfully; keep prompt/schema expansion blocked."
         )
     else:
-        if llm_result.errors:
+        if blocked_execution:
+            blocked_reason = getattr(llm_result, "blocked_reason", None)
+            if blocked_reason:
+                blocked_reasons.append(blocked_reason)
+            else:
+                blocked_reasons.append(
+                    f"LLM evaluation reported blocked execution across "
+                    f"{getattr(llm_result, 'llm_execution_error_count', 0)} attempted samples; "
+                    "treat the gate as blocked until the evaluation environment is healthy."
+                )
+        elif llm_result.errors:
             blocked_reasons.append(
                 f"LLM evaluation reported {len(llm_result.errors)} execution errors; "
                 "treat the gate as blocked until the evaluation environment is healthy."
+            )
+        elif llm_result.accuracy is None:
+            blocked_reasons.append(
+                "LLM evaluation did not produce valid quality metrics; keep prompt/schema expansion blocked."
             )
         elif llm_result.accuracy < threshold:
             blocked_reasons.append(
                 f"LLM accuracy {llm_result.accuracy:.1%} is below the {threshold:.0%} gate."
             )
         if (
-            not llm_result.errors
+            not blocked_execution
+            and not llm_result.errors
             and comparison.accuracy_delta is not None
             and comparison.accuracy_delta < 0
         ):
@@ -59,13 +81,22 @@ def build_eval_gate_artifact(
         "decision": "go" if not blocked_reasons else "no_go",
         "threshold": threshold,
         "keyword_accuracy": comparison.keyword_result.accuracy,
-        "llm_accuracy": llm_result.accuracy if llm_result else None,
-        "accuracy_delta": comparison.accuracy_delta,
+        "llm_accuracy": None if blocked_execution else (llm_result.accuracy if llm_result else None),
+        "accuracy_delta": None if blocked_execution else comparison.accuracy_delta,
         "authorized_changes": authorized_changes,
         "narrowed_changes": narrowed_changes,
         "deferred_changes": [] if authorized_changes else list(proposed_changes),
         "blocked_reasons": blocked_reasons,
     }
+    if attempted_sample_count is not None:
+        artifact["llm_attempted_sample_count"] = attempted_sample_count
+    if blocked_execution:
+        artifact["run_state"] = "blocked_execution"
+        artifact["llm_execution_error_count"] = getattr(
+            llm_result,
+            "llm_execution_error_count",
+            0,
+        )
     if benchmark_provenance:
         artifact.update({
             "benchmark_id": benchmark_provenance["benchmark_id"],
@@ -105,6 +136,8 @@ def build_rebaseline_artifact(
 ) -> Dict[str, Any]:
     """Build the benchmark re-baseline artifact for threshold review."""
     llm_result = comparison.llm_result
+    blocked_execution = _is_blocked_execution(llm_result)
+    attempted_sample_count = getattr(llm_result, "attempted_sample_count", None) if llm_result else None
     ambiguous_scenarios = set(benchmark_provenance.get("ambiguous_scenarios", []))
     ambiguous_records = [
         record for record in llm_records
@@ -127,6 +160,24 @@ def build_rebaseline_artifact(
     justification: list[str] = []
     if llm_result is None:
         justification.append("LLM evaluation did not run; threshold recommendation is unavailable.")
+    elif blocked_execution:
+        recommendation = "blocked_execution"
+        blocked_reason = getattr(llm_result, "blocked_reason", None)
+        if blocked_reason:
+            justification.append(blocked_reason)
+        justification.append(
+            "Threshold review is unavailable because all attempted LLM samples failed operationally."
+        )
+        scenario_metrics = {}
+        ambiguous_accuracy = None
+        clear_control_miss_count = None
+        per_class_metrics = {}
+    elif llm_result.accuracy is None:
+        justification.append("LLM evaluation did not produce valid quality metrics; threshold recommendation is unavailable.")
+        scenario_metrics = {}
+        ambiguous_accuracy = None
+        clear_control_miss_count = None
+        per_class_metrics = {}
     else:
         scenario_floor_scores = [
             metrics["accuracy"]
@@ -172,13 +223,30 @@ def build_rebaseline_artifact(
         "post_expansion_sample_count": benchmark_provenance["benchmark_sample_count"],
         "scenario_counts": benchmark_provenance["scenario_counts"],
         "keyword_accuracy": comparison.keyword_result.accuracy,
-        "overall_llm_accuracy": llm_result.accuracy if llm_result else None,
+        "overall_llm_accuracy": None if blocked_execution else (llm_result.accuracy if llm_result else None),
         "ambiguous_slice_accuracy": round(ambiguous_accuracy, 4) if ambiguous_accuracy is not None else None,
         "clear_control_miss_count": clear_control_miss_count,
         "per_class_metrics": per_class_metrics,
         "per_scenario_metrics": scenario_metrics,
         "recommendation": recommendation,
         "justification": justification,
+        **(
+            {"llm_attempted_sample_count": attempted_sample_count}
+            if attempted_sample_count is not None
+            else {}
+        ),
+        **(
+            {
+                "run_state": "blocked_execution",
+                "llm_execution_error_count": getattr(
+                    llm_result,
+                    "llm_execution_error_count",
+                    0,
+                ),
+            }
+            if blocked_execution
+            else {}
+        ),
     }
 
 

@@ -87,7 +87,15 @@ def test_eval_gate_authorizes_changes_when_llm_clears_threshold():
 
 def test_eval_gate_blocks_on_llm_execution_errors():
     llm_result = _result(evaluator_type="llm", accuracy=0.97)
+    llm_result.accuracy = None
     llm_result.errors = ["Sample x: GOOGLE_API_KEY not set"]
+    llm_result.run_state = "blocked_execution"
+    llm_result.llm_execution_error_count = 30
+    llm_result.attempted_sample_count = 1
+    llm_result.blocked_reason = (
+        "LLM preflight hit Gemini rate limiting/quota before the full benchmark "
+        "evaluation; keep the gate blocked until quota recovers or billing changes."
+    )
     comparison = EvaluationComparison(
         keyword_result=_result(evaluator_type="keyword", accuracy=0.8),
         llm_result=llm_result,
@@ -104,6 +112,31 @@ def test_eval_gate_blocks_on_llm_execution_errors():
     assert artifact["decision"] == "no_go"
     assert artifact["authorized_changes"] == []
     assert artifact["blocked_reasons"]
+    assert artifact["run_state"] == "blocked_execution"
+    assert artifact["llm_execution_error_count"] == 30
+    assert artifact["llm_attempted_sample_count"] == 1
+    assert artifact["llm_accuracy"] is None
+    assert artifact["accuracy_delta"] is None
+    assert "rate limiting/quota" in artifact["blocked_reasons"][0].lower()
+
+
+def test_eval_gate_healthy_run_preserves_quality_fields():
+    comparison = EvaluationComparison(
+        keyword_result=_result(evaluator_type="keyword", accuracy=0.8),
+        llm_result=_result(evaluator_type="llm", accuracy=0.93),
+        accuracy_delta=0.13,
+        per_class_deltas={},
+    )
+
+    artifact = build_eval_gate_artifact(
+        comparison,
+        proposed_changes=["add structured decomposition fields"],
+        benchmark_provenance=BENCHMARK_PROVENANCE,
+    )
+
+    assert artifact["llm_accuracy"] == 0.93
+    assert artifact["accuracy_delta"] == 0.13
+    assert "run_state" not in artifact
 
 
 def test_build_rebaseline_artifact_defaults_to_keep_threshold():
@@ -133,3 +166,41 @@ def test_build_rebaseline_artifact_defaults_to_keep_threshold():
     assert artifact["post_expansion_sample_count"] == 64
     assert artifact["recommendation"] == "keep_0_90"
     assert artifact["benchmark_id"] == "thesis_llm_golden_set"
+
+
+def test_build_rebaseline_artifact_marks_blocked_execution():
+    llm_result = _result(evaluator_type="llm", accuracy=0.93)
+    llm_result.accuracy = None
+    llm_result.run_state = "blocked_execution"
+    llm_result.llm_execution_error_count = 30
+    llm_result.attempted_sample_count = 1
+    llm_result.blocked_reason = (
+        "LLM preflight hit Gemini rate limiting/quota before the full benchmark "
+        "evaluation; keep the gate blocked until quota recovers or billing changes."
+    )
+    comparison = EvaluationComparison(
+        keyword_result=_result(evaluator_type="keyword", accuracy=0.4),
+        llm_result=llm_result,
+        accuracy_delta=0.53,
+        per_class_deltas={},
+    )
+
+    artifact = build_rebaseline_artifact(
+        comparison,
+        benchmark_provenance=BENCHMARK_PROVENANCE,
+        llm_records=[
+            {"scenario": "clear_consumer", "match": False},
+            {"scenario": "clear_b2b", "match": False},
+        ],
+    )
+
+    assert artifact["run_state"] == "blocked_execution"
+    assert artifact["llm_execution_error_count"] == 30
+    assert artifact["llm_attempted_sample_count"] == 1
+    assert artifact["overall_llm_accuracy"] is None
+    assert artifact["ambiguous_slice_accuracy"] is None
+    assert artifact["per_class_metrics"] == {}
+    assert artifact["per_scenario_metrics"] == {}
+    assert artifact["recommendation"] == "blocked_execution"
+    assert artifact["clear_control_miss_count"] is None
+    assert "rate limiting/quota" in artifact["justification"][0].lower()
