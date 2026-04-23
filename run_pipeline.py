@@ -111,10 +111,10 @@ from workflows.pipeline import (
     PipelineStats,
 )
 from utils.db_path_helper import (
-    get_signal_count_watermark_path,
     is_production_db_path,
     resolve_db_path,
 )
+import utils.db_guard as db_guard
 from utils.signal_health import SignalHealthMonitor
 from utils.cli_format import (
     BANNER_SEP, SECTION_SEP,
@@ -131,8 +131,6 @@ except ImportError:
     httpx = None
 
 
-_DB_GUARD_MIN_BASELINE = 10
-_DB_GUARD_DROP_RATIO = 0.90
 _DB_GUARD_BLOCK_EXIT_CODE = 2
 
 
@@ -184,24 +182,28 @@ def setup_logging(verbose: bool = False):
 
 
 def _db_guard_mode(args: argparse.Namespace) -> Optional[str]:
-    """Return guard mode for commands that operate on the production signals DB."""
+    """Return guard command type ('read' or 'write') for commands that operate on the production signals DB."""
     command = getattr(args, "command", None)
     if command in {"health", "health-json-pure"}:
-        return "warn"
+        return "read"
     if command == "pipeline" and getattr(args, "pipeline_cmd", None) == "status":
-        return "warn"
-    if command == "sync":
-        return "recovery"
+        return "read"
+    if command == "export-queue":
+        return "read"
+    if command == "triage" and getattr(args, "triage_cmd", None) == "list":
+        return "read"
     if command in {"full", "collect", "process", "push"}:
-        return "block"
+        return "write"
     if command == "pipeline" and getattr(args, "pipeline_cmd", None) == "push":
-        return "block"
+        return "write"
     if command == "publish" and getattr(args, "publish_cmd", None) == "commit":
-        return "block"
+        return "write"
     if command == "triage" and getattr(args, "triage_cmd", None) in {"approve", "reject", "defer"}:
-        return "block"
+        return "write"
     if command == "outbox" and getattr(args, "outbox_cmd", None) == "drain":
-        return "block"
+        return "write"
+    if command == "sync":
+        return "write"
     return None
 
 
@@ -216,126 +218,51 @@ def _guard_db_path(args: argparse.Namespace) -> Optional[str]:
         return getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH") or "signals.db"
 
 
-def _read_signal_count_watermark(path: Path) -> Optional[dict]:
-    """Load external signal-count watermark metadata."""
-    if not path.exists():
-        return None
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-
-
-def _write_signal_count_watermark(path: Path, db_path: str, signal_count: int) -> None:
-    """Persist the latest healthy production signal-count watermark."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "db_path": str(Path(db_path).resolve()),
-        "signal_count": signal_count,
-        "recorded_at": datetime.now(timezone.utc).isoformat(),
-    }
-    path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-
-
 def _read_current_signal_count(db_path: str) -> tuple[Optional[int], Optional[str]]:
-    """Return the current signal count or a read error for *db_path*."""
-    import sqlite3
+    """Return the current signal count or a read error for *db_path*.
 
-    try:
-        conn = sqlite3.connect(f"file:{Path(db_path).resolve()}?mode=ro", uri=True, timeout=1)
-        try:
-            count = conn.execute("SELECT COUNT(*) FROM signals").fetchone()[0]
-            return int(count), None
-        finally:
-            conn.close()
-    except Exception as exc:  # pragma: no cover - surfaced through guard tests
-        return None, str(exc)
-
-
-def _format_db_guard_message(db_path: str, baseline: Optional[int], current: Optional[int], error: Optional[str]) -> str:
-    """Format the operator-facing catastrophic-drop message."""
-    if error:
-        return (
-            f"Production DB guard could not read signal count for {db_path}: {error}. "
-            "This command is blocked until the DB is verified or an allowed recovery override is used."
-        )
-    if baseline is None or current is None:
-        return f"Production DB guard has insufficient signal-count data for {db_path}."
-    drop_ratio = 1 - (current / baseline) if baseline else 1.0
-    drop_pct = max(0.0, drop_ratio * 100)
-    return (
-        f"Production DB guard detected a catastrophic signal-count drop for {db_path}: "
-        f"current={current}, baseline={baseline}, drop={drop_pct:.1f}%."
-    )
-
-
-def _update_watermark_if_healthy(
-    db_path: str,
-    current_count: Optional[int],
-    watermark: Optional[dict],
-    *,
-    allow_seed: bool = False,
-) -> None:
-    """Raise the production watermark after a healthy count read."""
-    if current_count is None or current_count <= 0:
-        return
-    watermark_path = get_signal_count_watermark_path()
-    baseline = watermark.get("signal_count") if watermark else None
-    if baseline is None and not allow_seed and current_count < _DB_GUARD_MIN_BASELINE:
-        return
-    if baseline is None or current_count > int(baseline):
-        _write_signal_count_watermark(watermark_path, db_path, current_count)
+    Thin wrapper retained for backward compatibility with existing tests.
+    """
+    return db_guard.read_current_signal_count(db_path)
 
 
 def _enforce_signal_count_guard(args: argparse.Namespace) -> None:
     """Warn or fail closed when the production DB signal count collapses."""
-    mode = _db_guard_mode(args)
-    if mode is None:
+    command_type = _db_guard_mode(args)
+    if command_type is None:
         return
 
     db_path = _guard_db_path(args)
     if not db_path or not is_production_db_path(db_path):
         return
 
-    watermark_path = get_signal_count_watermark_path()
-    watermark = _read_signal_count_watermark(watermark_path)
-    baseline = int(watermark["signal_count"]) if watermark and watermark.get("signal_count") is not None else None
-    current_count, read_error = _read_current_signal_count(db_path)
     recovery_override = bool(getattr(args, "recovery_override", False))
 
-    if not read_error and current_count is not None:
-        _update_watermark_if_healthy(
-            db_path,
-            current_count,
-            watermark,
-            allow_seed=(mode == "recovery" and recovery_override),
-        )
+    # Operator-facing messaging before delegating to guard_command
+    ok, message = db_guard.check_db_health(db_path)
+    if not ok:
+        if command_type == "read":
+            print(
+                f"WARNING: DB guard {message} on {db_path}. Allowing read command.",
+                file=sys.stderr,
+            )
+        elif recovery_override:
+            print(
+                f"WARNING: DB guard {message} on {db_path}. "
+                "Proceeding because --recovery-override was supplied.",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                f"ERROR: DB guard {message} on {db_path}. Command blocked.",
+                file=sys.stderr,
+            )
 
-    catastrophic_drop = False
-    if read_error:
-        catastrophic_drop = baseline is not None
-    elif baseline is not None and baseline >= _DB_GUARD_MIN_BASELINE:
-        catastrophic_drop = current_count <= max(1, int(baseline * (1 - _DB_GUARD_DROP_RATIO)))
-
-    if not catastrophic_drop:
-        return
-
-    message = _format_db_guard_message(db_path, baseline, current_count, read_error)
-    if mode == "warn":
-        print(f"WARNING: {message}", file=sys.stderr)
-        logging.warning(message)
-        return
-    if mode == "recovery" and recovery_override:
-        override_message = f"{message} Proceeding because --recovery-override was supplied for the recovery sync path."
-        print(f"WARNING: {override_message}", file=sys.stderr)
-        logging.warning(override_message)
-        return
-    if mode == "recovery":
-        detail = f"{message} Use --recovery-override to continue the audited recovery sync path."
-    else:
-        detail = message
-    print(f"ERROR: {detail}", file=sys.stderr)
-    raise SystemExit(_DB_GUARD_BLOCK_EXIT_CODE)
+    allowed = db_guard.guard_command(
+        db_path, command_type, allow_override=recovery_override
+    )
+    if not allowed:
+        raise SystemExit(_DB_GUARD_BLOCK_EXIT_CODE)
 
 
 # =============================================================================
@@ -2639,6 +2566,11 @@ Environment variables:
         action="store_true",
         help="Enable debug logging",
     )
+    parser.add_argument(
+        "--recovery-override",
+        action="store_true",
+        help="Allow audited recovery path to proceed even when the DB guard detects a catastrophic drop",
+    )
 
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
 
@@ -4536,6 +4468,17 @@ Examples:
     dns_guard_parser.add_argument(
         "--alias-threshold", type=int, default=100,
         help="Max aliases allowed before breach (default: 100)",
+    )
+
+    # init-watermark command
+    init_watermark_parser = subparsers.add_parser(
+        "init-watermark",
+        help="Initialize the external DB watermark from the current signal count",
+    )
+    init_watermark_parser.add_argument(
+        "--db-path",
+        type=str,
+        help="Path to SQLite database",
     )
 
     return parser
@@ -8171,6 +8114,22 @@ async def main():
             exit_code = await cmd_health_json_pure(args)
         elif args.command == "dns-phase2-guardrails":
             exit_code = await cmd_dns_phase2_guardrails(args)
+        elif args.command == "init-watermark":
+            db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+            try:
+                count, error = db_guard.read_current_signal_count(db_path)
+                if error:
+                    print(f"ERROR: Could not read signal count: {error}", file=sys.stderr)
+                    sys.exit(1)
+                db_guard.save_watermark(
+                    signal_count=count,
+                    schema_version=CURRENT_SCHEMA_VERSION,
+                    timestamp=datetime.now(timezone.utc).isoformat(),
+                )
+                print(f"Watermark initialized: signal_count={count}, schema_version={CURRENT_SCHEMA_VERSION}")
+            except Exception as exc:
+                print(f"ERROR: Could not initialize watermark: {exc}", file=sys.stderr)
+                sys.exit(1)
         else:
             print(f"Unknown command: {args.command}")
             parser.print_help()

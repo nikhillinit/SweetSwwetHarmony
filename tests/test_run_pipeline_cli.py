@@ -443,10 +443,10 @@ class TestProductionDbSignalCountGuard:
 
     def test_read_current_signal_count_returns_error_on_forced_failure(self):
         """Helper should surface a read error instead of raising."""
-        from run_pipeline import _read_current_signal_count
+        from utils.db_guard import read_current_signal_count
 
         with patch("sqlite3.connect", side_effect=sqlite3.OperationalError("forced read failure")):
-            count, error = _read_current_signal_count("signals.db")
+            count, error = read_current_signal_count("signals.db")
 
         assert count is None
         assert error is not None
@@ -462,7 +462,7 @@ class TestProductionDbSignalCountGuard:
 
         args = self._mock_args(command="health")
 
-        with patch("run_pipeline.get_signal_count_watermark_path", return_value=watermark), \
+        with patch("utils.db_guard.WATERMARK_PATH", watermark), \
              patch("run_pipeline.create_parser") as mock_parser, \
              patch("run_pipeline.setup_logging"), \
              patch("utils.config_validator.validate_config", return_value=[]), \
@@ -485,8 +485,8 @@ class TestProductionDbSignalCountGuard:
 
         args = self._mock_args(command="health")
 
-        with patch("run_pipeline.get_signal_count_watermark_path", return_value=watermark), \
-             patch("run_pipeline._read_current_signal_count", return_value=(None, "forced read failure")), \
+        with patch("utils.db_guard.WATERMARK_PATH", watermark), \
+             patch("utils.db_guard.read_current_signal_count", return_value=(None, "forced read failure")), \
              patch("run_pipeline.create_parser") as mock_parser, \
              patch("run_pipeline.setup_logging"), \
              patch("utils.config_validator.validate_config", return_value=[]), \
@@ -511,7 +511,7 @@ class TestProductionDbSignalCountGuard:
 
         args = self._mock_args(command="process")
 
-        with patch("run_pipeline.get_signal_count_watermark_path", return_value=watermark), \
+        with patch("utils.db_guard.WATERMARK_PATH", watermark), \
              patch("run_pipeline.create_parser") as mock_parser, \
              patch("run_pipeline.setup_logging"), \
              patch("utils.config_validator.validate_config", return_value=[]), \
@@ -535,8 +535,8 @@ class TestProductionDbSignalCountGuard:
 
         args = self._mock_args(command="sync")
 
-        with patch("run_pipeline.get_signal_count_watermark_path", return_value=watermark), \
-             patch("run_pipeline._read_current_signal_count", return_value=(None, "forced read failure")), \
+        with patch("utils.db_guard.WATERMARK_PATH", watermark), \
+             patch("utils.db_guard.read_current_signal_count", return_value=(None, "forced read failure")), \
              patch("run_pipeline.create_parser") as mock_parser, \
              patch("run_pipeline.setup_logging"), \
              patch("utils.config_validator.validate_config", return_value=[]), \
@@ -563,7 +563,7 @@ class TestProductionDbSignalCountGuard:
 
         args = self._mock_args(command="process", db_path=str(scratch_db))
 
-        with patch("run_pipeline.get_signal_count_watermark_path", return_value=watermark), \
+        with patch("utils.db_guard.WATERMARK_PATH", watermark), \
              patch("run_pipeline.create_parser") as mock_parser, \
              patch("run_pipeline.setup_logging"), \
              patch("utils.config_validator.validate_config", return_value=[]), \
@@ -585,7 +585,7 @@ class TestProductionDbSignalCountGuard:
 
         args = self._mock_args(command="sync")
 
-        with patch("run_pipeline.get_signal_count_watermark_path", return_value=watermark), \
+        with patch("utils.db_guard.WATERMARK_PATH", watermark), \
              patch("run_pipeline.create_parser") as mock_parser, \
              patch("run_pipeline.setup_logging"), \
              patch("utils.config_validator.validate_config", return_value=[]), \
@@ -609,7 +609,7 @@ class TestProductionDbSignalCountGuard:
 
         args = self._mock_args(command="sync", recovery_override=True)
 
-        with patch("run_pipeline.get_signal_count_watermark_path", return_value=watermark), \
+        with patch("utils.db_guard.WATERMARK_PATH", watermark), \
              patch("run_pipeline.create_parser") as mock_parser, \
              patch("run_pipeline.setup_logging"), \
              patch("utils.config_validator.validate_config", return_value=[]), \
@@ -631,7 +631,7 @@ class TestProductionDbSignalCountGuard:
 
         args = self._mock_args(command="health")
 
-        with patch("run_pipeline.get_signal_count_watermark_path", return_value=watermark), \
+        with patch("utils.db_guard.WATERMARK_PATH", watermark), \
              patch("run_pipeline.create_parser") as mock_parser, \
              patch("run_pipeline.setup_logging"), \
              patch("utils.config_validator.validate_config", return_value=[]), \
@@ -645,7 +645,8 @@ class TestProductionDbSignalCountGuard:
         assert payload["signal_count"] == 612
 
     @pytest.mark.asyncio
-    async def test_health_does_not_seed_missing_watermark(self, monkeypatch, tmp_path):
+    async def test_health_seeds_missing_watermark_even_with_low_count(self, monkeypatch, tmp_path):
+        """New guard auto-initializes watermark regardless of count."""
         prod_db = tmp_path / "signals.db"
         watermark = tmp_path / "watermark.json"
         _create_signal_count_db(prod_db, 4)
@@ -653,7 +654,7 @@ class TestProductionDbSignalCountGuard:
 
         args = self._mock_args(command="health")
 
-        with patch("run_pipeline.get_signal_count_watermark_path", return_value=watermark), \
+        with patch("utils.db_guard.WATERMARK_PATH", watermark), \
              patch("run_pipeline.create_parser") as mock_parser, \
              patch("run_pipeline.setup_logging"), \
              patch("utils.config_validator.validate_config", return_value=[]), \
@@ -663,7 +664,9 @@ class TestProductionDbSignalCountGuard:
             from run_pipeline import main
             await main()
 
-        assert not watermark.exists()
+        assert watermark.exists()
+        payload = json.loads(watermark.read_text())
+        assert payload["signal_count"] == 4
         mock_cmd.assert_called_once()
 
     @pytest.mark.asyncio
@@ -675,7 +678,7 @@ class TestProductionDbSignalCountGuard:
 
         args = self._mock_args(command="sync", recovery_override=True)
 
-        with patch("run_pipeline.get_signal_count_watermark_path", return_value=watermark), \
+        with patch("utils.db_guard.WATERMARK_PATH", watermark), \
              patch("run_pipeline.create_parser") as mock_parser, \
              patch("run_pipeline.setup_logging"), \
              patch("utils.config_validator.validate_config", return_value=[]), \
