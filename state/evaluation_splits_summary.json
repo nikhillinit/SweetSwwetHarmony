@@ -1,0 +1,39 @@
+{
+  "fractions": {
+    "calibration": 0.2,
+    "holdout": 0.2,
+    "train": 0.6
+  },
+  "generated_at": "2026-04-27T17:06:17.274968+00:00",
+  "label_source": "signal_quality_metrics.human_label",
+  "overall_stratification": {
+    "by_label": {
+      "FP": 187,
+      "TP": 19,
+      "UNSURE": 5
+    },
+    "by_source_api": {
+      "ashby_jobs": 4,
+      "github": 2,
+      "greenhouse_jobs": 11,
+      "hacker_news": 157,
+      "news_api": 7,
+      "product_hunt": 2,
+      "rss_feeds": 28
+    },
+    "by_year_month": {
+      "2025-12": 1,
+      "2026-01": 7,
+      "2026-02": 201,
+      "2026-03": 2
+    }
+  },
+  "schema_version": 1,
+  "seed": 42,
+  "sizes": {
+    "calibration": 40,
+    "holdout": 47,
+    "train": 124
+  },
+  "total_rows": 211
+}

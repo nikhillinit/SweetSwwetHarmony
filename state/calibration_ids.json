@@ -1,0 +1,73 @@
+{
+  "fractions": {
+    "calibration": 0.2,
+    "holdout": 0.2,
+    "train": 0.6
+  },
+  "generated_at": "2026-04-27T17:06:17.274968+00:00",
+  "label_source": "signal_quality_metrics.human_label",
+  "schema_version": 1,
+  "seed": 42,
+  "signal_ids": [
+    15,
+    16,
+    19,
+    23,
+    26,
+    27,
+    30,
+    32,
+    33,
+    34,
+    35,
+    40,
+    46,
+    48,
+    49,
+    62,
+    68,
+    90,
+    93,
+    97,
+    98,
+    99,
+    102,
+    110,
+    112,
+    117,
+    119,
+    122,
+    196,
+    200,
+    202,
+    408,
+    434,
+    435,
+    445,
+    582,
+    587,
+    591,
+    593,
+    606
+  ],
+  "size": 40,
+  "split": "calibration",
+  "stratification": {
+    "by_label": {
+      "FP": 36,
+      "TP": 3,
+      "UNSURE": 1
+    },
+    "by_source_api": {
+      "ashby_jobs": 1,
+      "greenhouse_jobs": 2,
+      "hacker_news": 31,
+      "news_api": 1,
+      "rss_feeds": 5
+    },
+    "by_year_month": {
+      "2026-01": 1,
+      "2026-02": 39
+    }
+  }
+}
