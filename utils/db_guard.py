@@ -57,11 +57,17 @@ def read_current_signal_count(db_path: str) -> tuple[int | None, str | None]:
 def check_db_health(db_path: str) -> tuple[bool, str]:
     """Compare current DB signal count against watermark.
 
+    Strict explicit-init contract (Phase 2 hotfix Day 2.5): a missing watermark
+    is reported as unhealthy and is **never** auto-initialized from the live
+    DB. The only path that creates ``WATERMARK_PATH`` is the
+    ``init-watermark`` operator command (``run_pipeline.py:8117-8132``). See
+    ``.omx/wave6/db_guard_runbook.md``.
+
     Returns:
         ``(ok, message)`` where *message* is one of:
 
-        - ``"watermark_missing"`` – watermark did not exist and was
-          auto-initialized from the current DB count.
+        - ``"watermark_missing"`` – watermark file absent; operator must run
+          ``python run_pipeline.py init-watermark``.
         - ``"healthy"`` – current count >= 50 % of watermark count.
         - ``"catastrophic_drop_detected"`` – current count < 50 % of
           watermark count.
@@ -69,15 +75,7 @@ def check_db_health(db_path: str) -> tuple[bool, str]:
     """
     watermark = load_watermark()
     if not watermark:
-        count, error = read_current_signal_count(db_path)
-        if error:
-            return True, "watermark_missing"
-        save_watermark(
-            signal_count=count,
-            schema_version=0,
-            timestamp=datetime.now(timezone.utc).isoformat(),
-        )
-        return True, "watermark_missing"
+        return False, "watermark_missing"
 
     baseline = watermark.get("signal_count", 0)
     current, error = read_current_signal_count(db_path)
@@ -94,11 +92,19 @@ def guard_command(
 ) -> bool:
     """Check DB health and allow/deny command based on type.
 
+    Strict explicit-init contract (Phase 2 hotfix Day 2.5): missing watermark
+    blocks writes regardless of ``allow_override``. The override path is
+    scoped to ``catastrophic_drop_detected`` — i.e. an existing watermark
+    whose baseline has been tripped — and is the documented escape hatch for
+    controlled incident response. Bootstrapping a missing watermark is a
+    separate operator action (``init-watermark``) that emits an audit record.
+
     Args:
         db_path: Path to the SQLite database.
         command_type: ``"read"`` or ``"write"``.
-        allow_override: If ``True``, allows write commands through even
-            when the guard is tripped.
+        allow_override: If ``True``, allows write commands through when the
+            guard is tripped on a catastrophic drop. Has no effect on
+            ``watermark_missing`` or ``db_read_error`` states.
 
     Returns:
         ``True`` if the command should proceed, ``False`` if blocked.
@@ -116,7 +122,7 @@ def guard_command(
         return True
 
     if command_type == "write":
-        if allow_override:
+        if allow_override and message == "catastrophic_drop_detected":
             logger.warning(
                 "DB guard AUDIT (%s): allowing write command on %s "
                 "with --recovery-override",
@@ -124,6 +130,14 @@ def guard_command(
                 db_path,
             )
             return True
+        if message == "watermark_missing":
+            logger.error(
+                "DB guard blocked (watermark_missing): write command on %s "
+                "denied. Run `python run_pipeline.py init-watermark` to "
+                "bootstrap.",
+                db_path,
+            )
+            return False
         logger.error(
             "DB guard blocked (%s): write command on %s denied",
             message,
