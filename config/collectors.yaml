@@ -1,0 +1,111 @@
+schema_version: 1
+# Static collector registry for heartbeat / health tooling.
+# configured_status values:
+#   enabled | disabled_missing_key | disabled_intentional | blocked_access
+# Runtime heartbeat writes must never overwrite disabled_intentional or blocked_access.
+collectors:
+  github:
+    configured_status: enabled
+    expected_cadence_hours: 24
+    required_env: [GITHUB_TOKEN]
+    description: GitHub trending repositories and thesis-matching repo metadata.
+  sec_edgar:
+    configured_status: enabled
+    expected_cadence_hours: 24
+    description: SEC EDGAR Form D filings.
+  companies_house:
+    configured_status: enabled
+    expected_cadence_hours: 24
+    required_env: [COMPANIES_HOUSE_API_KEY]
+    description: UK Companies House registry signals.
+  domain_whois:
+    configured_status: enabled
+    expected_cadence_hours: 168
+    description: Domain WHOIS/RDAP and registration-age signals.
+  product_hunt:
+    configured_status: enabled
+    expected_cadence_hours: 24
+    required_env: [PH_API_KEY]
+    description: Product Hunt launches.
+  hacker_news:
+    configured_status: enabled
+    expected_cadence_hours: 6
+    description: Hacker News launch and discussion signals.
+  arxiv:
+    configured_status: enabled
+    expected_cadence_hours: 24
+    description: arXiv research and founder/technology signals.
+  job_postings:
+    configured_status: enabled
+    expected_cadence_hours: 24
+    required_env: [JOB_POSTING_DOMAINS]
+    description: Job posting / hiring-signal scans for configured domains.
+  github_activity:
+    configured_status: enabled
+    expected_cadence_hours: 24
+    required_env:
+      any_of: [GITHUB_ACTIVITY_USERNAMES, GITHUB_ACTIVITY_ORGS]
+    description: GitHub activity scans for configured users or organizations.
+  linkedin:
+    configured_status: enabled
+    expected_cadence_hours: 168
+    required_env: [PROXYCURL_API_KEY]
+    description: LinkedIn/Proxycurl company and founder enrichment.
+  crunchbase:
+    configured_status: enabled
+    expected_cadence_hours: 168
+    required_env: [CRUNCHBASE_API_KEY]
+    description: Crunchbase enrichment.
+  uspto:
+    configured_status: enabled
+    expected_cadence_hours: 168
+    description: USPTO patent search signals; PATENTSVIEW_API_KEY is optional.
+  opencorporates:
+    configured_status: enabled
+    expected_cadence_hours: 168
+    description: OpenCorporates registry signals; OPENCORPORATES_API_KEY is optional.
+  telegram:
+    configured_status: enabled
+    expected_cadence_hours: 6
+    required_env: [TELEGRAM_API_ID, TELEGRAM_API_HASH]
+    description: Telegram channel/community signals.
+  discord:
+    configured_status: enabled
+    expected_cadence_hours: 6
+    required_env: [DISCORD_BOT_TOKEN]
+    description: Discord guild/community signals.
+  news_api:
+    configured_status: enabled
+    expected_cadence_hours: 6
+    required_env: [GNEWS_API_KEY]
+    description: GNews/news API search signals.
+  rss_feeds:
+    configured_status: enabled
+    expected_cadence_hours: 6
+    description: RSS feed signals.
+  changedetection:
+    configured_status: enabled
+    expected_cadence_hours: 6
+    required_env: [CHANGEDETECTION_URL]
+    description: changedetection.io watch/change signals; API key is instance-dependent.
+  brand_launch:
+    configured_status: enabled
+    expected_cadence_hours: 24
+    description: Consumer brand launch source scans.
+  capterra:
+    configured_status: enabled
+    expected_cadence_hours: 168
+    description: Capterra category/product signals.
+  g2crowd:
+    configured_status: enabled
+    expected_cadence_hours: 168
+    description: G2 category/product signals.
+  plugandplay:
+    configured_status: enabled
+    expected_cadence_hours: 168
+    description: Plug and Play accelerator portfolio scans.
+  community_keywords:
+    configured_status: disabled_intentional
+    expected_cadence_hours: 168
+    disabled_reason: Keyword taxonomy module; not a runnable collector.
+    description: Shared keyword module, intentionally excluded from heartbeat runtime.
