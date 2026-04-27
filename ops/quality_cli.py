@@ -600,6 +600,18 @@ def _validate_apply_labels_payload(payload: Dict[str, Any]) -> None:
         last_signal_id = sid
 
 
+def _resolve_gp_runner() -> str:
+    runner = os.getenv("GP_RUNNER")
+    if runner:
+        return runner
+    try:
+        import getpass
+
+        return getpass.getuser() or "unknown"
+    except Exception:
+        return "unknown"
+
+
 def _cmd_learning_loop_review_set(args: argparse.Namespace) -> None:
     with quality_conn(args.db_path) as conn:
         disagreements = list_disagreement_candidates(conn, days=args.days, limit=args.limit)
@@ -619,6 +631,17 @@ def _cmd_learning_loop_review_set(args: argparse.Namespace) -> None:
         out_md = Path(args.out_md)
         out_md.parent.mkdir(parents=True, exist_ok=True)
         out_md.write_text(_render_review_set_markdown(payload), encoding="utf-8")
+    # GP workload logging — best-effort, never fail the CLI.
+    try:
+        from ops.gp_workload import log_review_set_generated
+
+        log_review_set_generated(
+            items_count=len(payload["items"]),
+            window_days=max(args.days, args.adj_days),
+            runner=_resolve_gp_runner(),
+        )
+    except Exception:
+        pass
     print(json.dumps({"out_json": str(out_json), "out_md": args.out_md, "items": len(payload["items"])}, indent=2))
 
 
@@ -651,6 +674,18 @@ def _cmd_learning_loop_apply_labels(args: argparse.Namespace) -> None:
             except Exception as exc:
                 errors.append({"signal_id": int(item["signal_id"]), "error": str(exc)})
 
+    # GP workload logging — best-effort, never fail the CLI.
+    try:
+        from ops.gp_workload import log_labels_applied
+
+        log_labels_applied(
+            attempted=len(payload["items"]),
+            succeeded=len(applied),
+            failed=len(errors),
+            runner=_resolve_gp_runner(),
+        )
+    except Exception:
+        pass
     print(json.dumps({"attempted": len(payload["items"]), "succeeded": len(applied), "failed": len(errors), "applied": applied, "errors": errors}, indent=2))
 
 
