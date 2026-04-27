@@ -71,6 +71,7 @@ SPLIT_FILENAMES: dict[str, str] = {
 EXIT_OK = 0
 EXIT_SCHEMA_FAILED = 2
 EXIT_NO_LABELED_DATA = 4
+EXIT_INVARIANT_FAILED = 5
 EXIT_INVALID_ARGS = 64
 
 
@@ -172,26 +173,58 @@ def load_labeled_rows(
     label_source: LabelSource = LabelSource.SIGNAL_QUALITY_METRICS,
     time_window_months: Optional[int] = None,
 ) -> list[LabeledRow]:
-    """Read labeled rows joined with signals metadata."""
+    """Read labeled rows joined with signals metadata.
+
+    Deduplicates by ``signal_id``: when multiple labels exist for the same
+    signal, the most-recently-recorded one wins. Tiebreakers:
+
+    * ``signal_quality_metrics`` — ``ORDER BY labeled_at DESC, rowid DESC``
+    * ``quality_feedback``       — ``ORDER BY created_at DESC, rowid DESC``
+
+    Without this, a signal that was relabeled (e.g., FP → ADJ after a manual
+    revisit) would appear twice in the source population and could land in
+    multiple splits — silently breaking the holdout-protection contract.
+    """
     if label_source is LabelSource.SIGNAL_QUALITY_METRICS:
+        # ROW_NUMBER CTE: take latest label per signal_id by labeled_at, then rowid.
         sql = """
-            SELECT m.signal_id AS signal_id,
-                   m.human_label AS label,
+            WITH latest AS (
+                SELECT m.signal_id,
+                       m.human_label,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY m.signal_id
+                           ORDER BY COALESCE(m.labeled_at, '') DESC, m.rowid DESC
+                       ) AS rn
+                FROM signal_quality_metrics m
+                WHERE m.human_label IS NOT NULL
+            )
+            SELECT latest.signal_id AS signal_id,
+                   latest.human_label AS label,
                    s.source_api AS source_api,
                    substr(s.detected_at, 1, 7) AS year_month
-            FROM signal_quality_metrics m
-            JOIN signals s ON m.signal_id = s.id
-            WHERE m.human_label IS NOT NULL
+            FROM latest
+            JOIN signals s ON latest.signal_id = s.id
+            WHERE latest.rn = 1
         """
     elif label_source is LabelSource.QUALITY_FEEDBACK:
         sql = """
-            SELECT q.signal_id AS signal_id,
-                   q.label AS label,
+            WITH latest AS (
+                SELECT q.signal_id,
+                       q.label,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY q.signal_id
+                           ORDER BY COALESCE(q.created_at, '') DESC, q.rowid DESC
+                       ) AS rn
+                FROM quality_feedback q
+                WHERE q.label IS NOT NULL
+            )
+            SELECT latest.signal_id AS signal_id,
+                   latest.label AS label,
                    s.source_api AS source_api,
                    substr(s.detected_at, 1, 7) AS year_month
-            FROM quality_feedback q
-            JOIN signals s ON q.signal_id = s.id
-            WHERE q.label IS NOT NULL
+            FROM latest
+            JOIN signals s ON latest.signal_id = s.id
+            WHERE latest.rn = 1
         """
     else:
         raise ValueError(f"unsupported label_source: {label_source!r}")
@@ -221,6 +254,47 @@ def load_labeled_rows(
             )
         )
     return out
+
+
+class SplitInvariantError(AssertionError):
+    """Raised when post-split sanity checks fail.
+
+    A failure here indicates a bug in ``deterministic_split`` (or upstream
+    duplication that slipped past the dedup CTE), not an operator error.
+    """
+
+
+def assert_split_invariants(
+    rows: Sequence[LabeledRow],
+    splits: Mapping[str, Sequence[int]],
+) -> None:
+    """Defense-in-depth: each split is internally unique, splits are pairwise
+    disjoint, and the union equals the labeled population.
+    """
+    expected = {r.signal_id for r in rows}
+
+    seen: dict[int, str] = {}
+    for split_name, ids in splits.items():
+        ids_list = list(ids)
+        if len(ids_list) != len(set(ids_list)):
+            dupes = sorted({i for i in ids_list if ids_list.count(i) > 1})
+            raise SplitInvariantError(
+                f"split '{split_name}' contains duplicate signal_ids: {dupes}"
+            )
+        for sid in ids_list:
+            if sid in seen:
+                raise SplitInvariantError(
+                    f"signal_id={sid} appears in both '{seen[sid]}' and '{split_name}'"
+                )
+            seen[sid] = split_name
+
+    union = set(seen.keys())
+    if union != expected:
+        missing = expected - union
+        extra = union - expected
+        raise SplitInvariantError(
+            f"split union mismatch: missing={sorted(missing)} extra={sorted(extra)}"
+        )
 
 
 def _stratification_breakdown(rows: Iterable[LabeledRow]) -> dict[str, dict[str, int]]:
@@ -415,6 +489,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         return EXIT_NO_LABELED_DATA
 
     splits = deterministic_split(rows, fractions=fractions, seed=args.seed)
+
+    try:
+        assert_split_invariants(rows, splits)
+    except SplitInvariantError as exc:
+        sys.stderr.write(f"split invariant failed: {exc}\n")
+        return EXIT_INVARIANT_FAILED
 
     if not args.dry_run:
         write_split_artifacts(
