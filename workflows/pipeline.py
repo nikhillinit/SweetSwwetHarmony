@@ -112,6 +112,7 @@ from workflows.thin_file_manager import run_promotion_sweep
 # Phase C: HTTP primitive + run tracking
 from collectors.http_client import CollectorHttpClient, RunContext
 from workflows.run_manager import create_run, start_run, complete_run, fail_run
+from ops.collector_heartbeat import initialize_collector_state, record_collector_heartbeat
 
 logger = logging.getLogger(__name__)
 
@@ -1328,6 +1329,17 @@ class DiscoveryPipeline:
             logger.warning("No collectors specified")
             return []
 
+        # Materialize configured collectors before runtime updates.  This keeps
+        # missing-key / intentionally disabled collectors visible to health
+        # tooling even when they are not part of the current run.
+        try:
+            initialize_collector_state(runner="pipeline")
+        except Exception as heartbeat_error:
+            logger.warning(
+                "Collector state bootstrap failed before collector stage: %s",
+                heartbeat_error,
+            )
+
         # Reset per-run HTTP counters so previous runs don't bleed through
         self._http_counters.clear()
 
@@ -1389,6 +1401,12 @@ class DiscoveryPipeline:
             started_at=datetime.now(timezone.utc),
         )
         collector = None
+        result: Optional[CollectorResult] = None
+
+        def _make_result(**kwargs: Any) -> CollectorResult:
+            nonlocal result
+            result = CollectorResult(**kwargs)
+            return result
 
         # Set ContextVar so httpx event hooks attribute requests to this collector
         token = _current_collector.set(collector_name)
@@ -1448,7 +1466,7 @@ class DiscoveryPipeline:
                 job_domains = [d.strip() for d in job_domains if d.strip()]
                 if not job_domains:
                     metrics.status = "skipped"
-                    return CollectorResult(
+                    return _make_result(
                         collector=collector_name,
                         status=CollectorStatus.SKIPPED,
                         error_message="No JOB_POSTING_DOMAINS configured",
@@ -1464,7 +1482,7 @@ class DiscoveryPipeline:
                 gh_orgs = [o.strip() for o in gh_orgs if o.strip()]
                 if not gh_usernames and not gh_orgs:
                     metrics.status = "skipped"
-                    return CollectorResult(
+                    return _make_result(
                         collector=collector_name,
                         status=CollectorStatus.SKIPPED,
                         error_message="No GITHUB_ACTIVITY_USERNAMES or GITHUB_ACTIVITY_ORGS configured",
@@ -1480,7 +1498,7 @@ class DiscoveryPipeline:
                 linkedin_key = os.getenv("PROXYCURL_API_KEY")
                 if not linkedin_key:
                     metrics.status = "skipped"
-                    return CollectorResult(
+                    return _make_result(
                         collector=collector_name,
                         status=CollectorStatus.SKIPPED,
                         error_message="No PROXYCURL_API_KEY configured",
@@ -1499,7 +1517,7 @@ class DiscoveryPipeline:
                 cb_key = os.getenv("CRUNCHBASE_API_KEY")
                 if not cb_key:
                     metrics.status = "skipped"
-                    return CollectorResult(
+                    return _make_result(
                         collector=collector_name,
                         status=CollectorStatus.SKIPPED,
                         error_message="No CRUNCHBASE_API_KEY configured",
@@ -1524,7 +1542,7 @@ class DiscoveryPipeline:
                 telegram_api_hash = os.getenv("TELEGRAM_API_HASH")
                 if not telegram_api_id or not telegram_api_hash:
                     metrics.status = "skipped"
-                    return CollectorResult(
+                    return _make_result(
                         collector=collector_name,
                         status=CollectorStatus.SKIPPED,
                         error_message="No TELEGRAM_API_ID or TELEGRAM_API_HASH configured",
@@ -1544,7 +1562,7 @@ class DiscoveryPipeline:
                 discord_token = os.getenv("DISCORD_BOT_TOKEN")
                 if not discord_token:
                     metrics.status = "skipped"
-                    return CollectorResult(
+                    return _make_result(
                         collector=collector_name,
                         status=CollectorStatus.SKIPPED,
                         error_message="No DISCORD_BOT_TOKEN configured",
@@ -1563,7 +1581,7 @@ class DiscoveryPipeline:
                 gnews_key = os.getenv("GNEWS_API_KEY")
                 if not gnews_key:
                     metrics.status = "skipped"
-                    return CollectorResult(
+                    return _make_result(
                         collector=collector_name,
                         status=CollectorStatus.SKIPPED,
                         error_message="No GNEWS_API_KEY configured",
@@ -1585,7 +1603,7 @@ class DiscoveryPipeline:
             else:
                 metrics.status = "error"
                 metrics.error_messages = [f"Unknown collector: {collector_name}"]
-                return CollectorResult(
+                return _make_result(
                     collector=collector_name,
                     status=CollectorStatus.ERROR,
                     error_message=f"Unknown collector: {collector_name}",
@@ -1622,7 +1640,7 @@ class DiscoveryPipeline:
             # Try to capture retry count from collector if it was created
             if collector is not None:
                 metrics.retries = getattr(collector, '_retry_count', 0)
-            return CollectorResult(
+            return _make_result(
                 collector=collector_name,
                 status=CollectorStatus.ERROR,
                 error_message=str(e),
@@ -1632,6 +1650,26 @@ class DiscoveryPipeline:
             _current_collector.reset(token)
             # Always capture timing
             metrics.complete()
+            if result is not None:
+                try:
+                    record_collector_heartbeat(
+                        result=result,
+                        started_at=metrics.started_at,
+                        finished_at=metrics.completed_at,
+                        duration_seconds=metrics.duration_seconds,
+                        api_calls=metrics.api_calls,
+                        rate_limit_hits=metrics.rate_limit_hits,
+                        retries=metrics.retries,
+                        errors=metrics.errors,
+                        error_messages=metrics.error_messages,
+                        runner="pipeline",
+                    )
+                except Exception as heartbeat_error:
+                    logger.warning(
+                        "Collector heartbeat update failed for %s: %s",
+                        collector_name,
+                        heartbeat_error,
+                    )
             self._collector_metrics.append(metrics)
 
     async def _process_signals_stage(self, dry_run: bool, source_api: Optional[str] = None) -> Dict[str, int]:
