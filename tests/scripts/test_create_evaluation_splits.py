@@ -8,8 +8,11 @@ import pytest
 
 from scripts.create_evaluation_splits import (
     DEFAULT_FRACTIONS,
+    EXIT_OK,
     LabelSource,
     LabeledRow,
+    SplitInvariantError,
+    assert_split_invariants,
     deterministic_split,
     load_labeled_rows,
     main,
@@ -33,7 +36,8 @@ def _create_schema(db_path: Path) -> None:
             CREATE TABLE quality_feedback (
                 id INTEGER PRIMARY KEY,
                 signal_id INTEGER,
-                label TEXT
+                label TEXT,
+                created_at TEXT
             );
             CREATE TABLE signal_quality_metrics (
                 id INTEGER PRIMARY KEY,
@@ -136,7 +140,93 @@ def test_load_labeled_rows_supports_quality_feedback_label_source(tmp_path):
             "INSERT INTO signals(id, canonical_key, source_api, signal_type, detected_at, confidence) "
             "VALUES(1, 'k', 'hn', 'x', '2026-02-15T12:00:00+00:00', 0.5)"
         )
-        con.execute("INSERT INTO quality_feedback(signal_id, label) VALUES(1, 'TP')")
+        con.execute(
+            "INSERT INTO quality_feedback(signal_id, label, created_at) "
+            "VALUES(1, 'TP', '2026-02-15T12:00:00+00:00')"
+        )
+        con.commit()
+    finally:
+        con.close()
+
+    rows = load_labeled_rows(db_path, label_source=LabelSource.QUALITY_FEEDBACK)
+    assert len(rows) == 1
+    assert rows[0].label == "TP"
+
+
+def test_load_labeled_rows_dedups_quality_feedback_by_created_at(tmp_path):
+    """Relabel scenario: same signal_id, two rows, latest created_at wins.
+
+    Without dedup, the same signal would appear twice and could land in
+    multiple splits, silently breaking the holdout-protection contract.
+    """
+    db_path = tmp_path / "signals.db"
+    _create_schema(db_path)
+    con = sqlite3.connect(db_path)
+    try:
+        con.execute(
+            "INSERT INTO signals(id, canonical_key, source_api, signal_type, detected_at, confidence) "
+            "VALUES(7, 'k', 'hn', 'x', '2026-02-15T12:00:00+00:00', 0.5)"
+        )
+        con.execute(
+            "INSERT INTO quality_feedback(signal_id, label, created_at) "
+            "VALUES(7, 'FP', '2026-02-15T12:00:00+00:00')"
+        )
+        # Later relabel — should win.
+        con.execute(
+            "INSERT INTO quality_feedback(signal_id, label, created_at) "
+            "VALUES(7, 'ADJ', '2026-03-20T09:00:00+00:00')"
+        )
+        con.commit()
+    finally:
+        con.close()
+
+    rows = load_labeled_rows(db_path, label_source=LabelSource.QUALITY_FEEDBACK)
+    assert len(rows) == 1
+    assert rows[0].signal_id == 7
+    assert rows[0].label == "ADJ"
+
+
+def test_load_labeled_rows_dedups_signal_quality_metrics_by_labeled_at(tmp_path):
+    """Same dedup contract for signal_quality_metrics, keyed on labeled_at."""
+    db_path = tmp_path / "signals.db"
+    _create_schema(db_path)
+    con = sqlite3.connect(db_path)
+    try:
+        con.execute(
+            "INSERT INTO signals(id, canonical_key, source_api, signal_type, detected_at, confidence) "
+            "VALUES(11, 'k', 'hn', 'x', '2026-02-15T12:00:00+00:00', 0.5)"
+        )
+        con.execute(
+            "INSERT INTO signal_quality_metrics(signal_id, canonical_key, human_label, label_source, labeled_at) "
+            "VALUES(11, 'k', 'TP', 'manual', '2026-02-15T12:00:00+00:00')"
+        )
+        con.execute(
+            "INSERT INTO signal_quality_metrics(signal_id, canonical_key, human_label, label_source, labeled_at) "
+            "VALUES(11, 'k', 'FP', 'manual', '2026-04-01T09:00:00+00:00')"
+        )
+        con.commit()
+    finally:
+        con.close()
+
+    rows = load_labeled_rows(db_path, label_source=LabelSource.SIGNAL_QUALITY_METRICS)
+    assert len(rows) == 1
+    assert rows[0].signal_id == 11
+    assert rows[0].label == "FP"
+
+
+def test_load_labeled_rows_dedup_falls_back_to_rowid_when_timestamps_tie(tmp_path):
+    """COALESCE handles missing/NULL timestamps; rowid DESC breaks the tie."""
+    db_path = tmp_path / "signals.db"
+    _create_schema(db_path)
+    con = sqlite3.connect(db_path)
+    try:
+        con.execute(
+            "INSERT INTO signals(id, canonical_key, source_api, signal_type, detected_at, confidence) "
+            "VALUES(13, 'k', 'hn', 'x', '2026-02-15T12:00:00+00:00', 0.5)"
+        )
+        # Both rows have NULL created_at — last-inserted (highest rowid) wins.
+        con.execute("INSERT INTO quality_feedback(signal_id, label) VALUES(13, 'FP')")
+        con.execute("INSERT INTO quality_feedback(signal_id, label) VALUES(13, 'TP')")
         con.commit()
     finally:
         con.close()
@@ -366,3 +456,101 @@ def test_main_does_not_modify_database(tmp_path):
     )
     assert db_path.stat().st_size == before_size
     assert db_path.stat().st_mtime_ns == before_mtime
+
+
+# ---- Split invariants -------------------------------------------------------
+
+
+def _two_class_rows(n: int) -> list[LabeledRow]:
+    return [
+        LabeledRow(
+            signal_id=i,
+            label=("FP" if i % 2 == 0 else "TP"),
+            source_api="hn",
+            year_month="2026-02",
+        )
+        for i in range(n)
+    ]
+
+
+def test_assert_split_invariants_passes_for_valid_split():
+    rows = _two_class_rows(40)
+    splits = deterministic_split(rows, fractions=DEFAULT_FRACTIONS, seed=42)
+    # Should not raise.
+    assert_split_invariants(rows, splits)
+
+
+def test_assert_split_invariants_detects_duplicate_within_split():
+    rows = _two_class_rows(10)
+    bad = {
+        "train": [0, 0, 2, 4, 6, 8],  # 0 appears twice
+        "calibration": [1],
+        "holdout": [3, 5, 7, 9],
+    }
+    with pytest.raises(SplitInvariantError, match="duplicate"):
+        assert_split_invariants(rows, bad)
+
+
+def test_assert_split_invariants_detects_overlap_between_splits():
+    rows = _two_class_rows(10)
+    bad = {
+        "train": [0, 2, 4, 6, 8],
+        "calibration": [1, 4],  # 4 is also in train
+        "holdout": [3, 5, 7, 9],
+    }
+    with pytest.raises(SplitInvariantError, match="appears in both"):
+        assert_split_invariants(rows, bad)
+
+
+def test_assert_split_invariants_detects_missing_signal_id():
+    rows = _two_class_rows(10)
+    bad = {
+        "train": [0, 2, 4, 6, 8],
+        "calibration": [1],
+        "holdout": [3, 5, 7],  # missing 9
+    }
+    with pytest.raises(SplitInvariantError, match="missing"):
+        assert_split_invariants(rows, bad)
+
+
+def test_main_returns_invariant_failed_when_assertion_fires(tmp_path, monkeypatch):
+    """If deterministic_split ever produces a broken partition, main exits 5."""
+    db_path = _populated_db(tmp_path, total=30)
+    contract_path = tmp_path / "contract.json"
+    contract_path.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "required_tables": {
+                    "signals": {"required_columns": ["id"]},
+                    "signal_quality_metrics": {
+                        "required_columns": ["signal_id", "human_label"]
+                    },
+                },
+                "forbidden_references": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    import scripts.create_evaluation_splits as ces
+
+    def _broken_split(rows, *, fractions, seed):
+        # Drop a row to violate the union invariant.
+        return {"train": [r.signal_id for r in rows[1:]], "calibration": [], "holdout": []}
+
+    monkeypatch.setattr(ces, "deterministic_split", _broken_split)
+
+    exit_code = ces.main(
+        [
+            "--db", str(db_path),
+            "--out-dir", str(tmp_path / "state"),
+            "--contract", str(contract_path),
+            "--seed", "42",
+        ]
+    )
+    assert exit_code == 5
+    # No state files written when invariant fails.
+    state_dir = tmp_path / "state"
+    if state_dir.exists():
+        assert not list(state_dir.glob("*ids.json"))
