@@ -226,3 +226,21 @@ class TestGuardCommand:
             assert db_guard.guard_command(str(db_path), "write", allow_override=True) is False
 
         assert not watermark.exists()
+
+    def test_db_read_error_with_override_still_blocks_write(self, tmp_path):
+        """Override path is scoped to catastrophic_drop_detected, not db_read_error.
+
+        If the DB cannot be read, we cannot trust any health verdict — bypassing
+        on override would silently allow writes against an unreadable DB. The
+        operator must investigate before resuming, not paper over with --recovery-override.
+        """
+        db_path = tmp_path / "signals.db"
+        watermark = tmp_path / "watermark.json"
+        watermark.write_text(json.dumps({"signal_count": 100}))
+
+        with patch.object(db_guard, "WATERMARK_PATH", watermark), \
+             patch.object(db_guard, "read_current_signal_count",
+                          return_value=(None, "forced read failure")):
+            assert db_guard.guard_command(
+                str(db_path), "write", allow_override=True
+            ) is False
