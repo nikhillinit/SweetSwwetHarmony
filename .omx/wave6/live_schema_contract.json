@@ -1,0 +1,67 @@
+{
+  "version": 1,
+  "description": "Phase 2 live-schema contract. Required tables and columns for evaluation, learning-loop, and quality work. Forbidden references must NOT appear in active Phase 2 scripts.",
+  "verified_against": "signals.db on phase2/instrumentation@6333bf6 (2026-04-27)",
+  "required_tables": {
+    "signals": {
+      "required_columns": [
+        "id",
+        "canonical_key",
+        "source_api",
+        "signal_type",
+        "detected_at",
+        "confidence"
+      ],
+      "notes": "Confidence lives here as REAL NOT NULL. Defined in storage/signal_store.py:100. UNIQUE(canonical_key, signal_type, source_api, detected_at)."
+    },
+    "quality_feedback": {
+      "required_columns": [
+        "signal_id",
+        "label"
+      ],
+      "notes": "Column is named `label`, NOT `human_label`. Enum: TP/FP/UNSURE/ADJ. Defined in storage/migrations/quality_tables.py."
+    },
+    "signal_quality_metrics": {
+      "required_columns": [
+        "signal_id",
+        "canonical_key",
+        "human_label",
+        "label_source",
+        "labeled_at",
+        "status_event_id"
+      ],
+      "notes": "This table DOES use `human_label` (unlike quality_feedback). Joins to notion_status_events via status_event_id, and to signals via signal_id."
+    },
+    "signal_processing": {
+      "required_columns": [
+        "signal_id",
+        "status"
+      ],
+      "notes": "Status enum: pending/queued/pushed/rejected. Inferred router state lives here."
+    },
+    "thesis_ml_predictions": {
+      "required_columns": [
+        "signal_id",
+        "ml_enablement"
+      ],
+      "notes": "ml_enablement enum: shadow/live. Day 8-10 calibration depends on this table."
+    },
+    "notion_status_events": {
+      "required_columns": [
+        "id",
+        "canonical_key",
+        "old_status",
+        "new_status",
+        "observed_at"
+      ],
+      "notes": "Joined via canonical_key, NOT signal_id. The plan's earlier contract used signal_id which does not exist on this table. Drives signal_quality_metrics.label_source = 'notion_status_event'."
+    }
+  },
+  "forbidden_references": [
+    "signal_events",
+    "quality_feedback.human_label",
+    "signal_quality_metrics.confidence_score",
+    "router_decisions"
+  ],
+  "forbidden_reference_notes": "These strings must NOT appear in active Phase 2 scripts (under scripts/, ops/, workflows/). Historical references in archived docs and tests of forbidden-detection logic are tolerated. Note: `state/collectors.json` IS the canonical heartbeat-v2 state path; the v3 plan's two-file `state/collectors.config.json` + `state/collectors.runtime.json` split was replaced during implementation by a single file with separated fields (configured_status sticky, last_run_status mutable, effective_status derived). See ops/collector_heartbeat.py."
+}
