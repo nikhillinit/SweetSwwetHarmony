@@ -246,7 +246,13 @@ def _enforce_signal_count_guard(args: argparse.Namespace) -> None:
                 f"WARNING: DB guard {message} on {db_path}. Allowing read command.",
                 file=sys.stderr,
             )
-        elif recovery_override:
+        elif message == "watermark_missing":
+            print(
+                f"ERROR: DB guard watermark_missing on {db_path}. "
+                "Run `python run_pipeline.py init-watermark` to bootstrap.",
+                file=sys.stderr,
+            )
+        elif recovery_override and message == "catastrophic_drop_detected":
             print(
                 f"WARNING: DB guard {message} on {db_path}. "
                 "Proceeding because --recovery-override was supplied.",

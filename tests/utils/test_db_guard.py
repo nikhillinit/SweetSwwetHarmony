@@ -1,4 +1,10 @@
-"""Tests for utils.db_guard — the external watermark guard."""
+"""Tests for utils.db_guard — the external watermark guard.
+
+Phase 2 hotfix Day 2.5: the guard no longer auto-initializes a missing
+watermark. A missing watermark blocks writes by default. Operator must run
+``python run_pipeline.py init-watermark`` to bootstrap. See
+``.omx/wave6/db_guard_runbook.md`` for the canonical contract.
+"""
 
 import json
 import sqlite3
@@ -74,7 +80,8 @@ class TestReadCurrentSignalCount:
 
 
 class TestCheckDbHealth:
-    def test_missing_watermark_auto_initializes(self, tmp_path):
+    def test_missing_watermark_reports_unhealthy_without_mutating(self, tmp_path):
+        """Strict contract: missing watermark is a real state, not a soft-init opportunity."""
         db_path = tmp_path / "signals.db"
         watermark = tmp_path / "watermark.json"
         _create_signals_db(db_path, 200)
@@ -82,22 +89,21 @@ class TestCheckDbHealth:
         with patch.object(db_guard, "WATERMARK_PATH", watermark):
             ok, message = db_guard.check_db_health(str(db_path))
 
-        assert ok is True
+        assert ok is False
         assert message == "watermark_missing"
-        payload = json.loads(watermark.read_text())
-        assert payload["signal_count"] == 200
+        # Filesystem must remain untouched — only `init-watermark` writes the file.
+        assert not watermark.exists()
 
-    def test_missing_watermark_auto_initializes_even_with_low_count(self, tmp_path):
-        db_path = tmp_path / "signals.db"
+    def test_missing_watermark_with_unreadable_db(self, tmp_path):
+        db_path = tmp_path / "missing.db"
         watermark = tmp_path / "watermark.json"
-        _create_signals_db(db_path, 4)
 
         with patch.object(db_guard, "WATERMARK_PATH", watermark):
             ok, message = db_guard.check_db_health(str(db_path))
 
-        assert ok is True
+        assert ok is False
         assert message == "watermark_missing"
-        assert watermark.exists()
+        assert not watermark.exists()
 
     def test_healthy_db_passes(self, tmp_path):
         db_path = tmp_path / "signals.db"
@@ -187,12 +193,36 @@ class TestGuardCommand:
         with patch.object(db_guard, "WATERMARK_PATH", watermark):
             assert db_guard.guard_command(str(db_path), "write", allow_override=True) is True
 
-    def test_missing_watermark_auto_initializes_and_allows(self, tmp_path):
+    def test_missing_watermark_blocks_write(self, tmp_path):
+        """Strict contract: writes blocked until operator runs init-watermark."""
         db_path = tmp_path / "signals.db"
         watermark = tmp_path / "watermark.json"
         _create_signals_db(db_path, 75)
 
         with patch.object(db_guard, "WATERMARK_PATH", watermark):
-            assert db_guard.guard_command(str(db_path), "write") is True
+            assert db_guard.guard_command(str(db_path), "write") is False
 
-        assert watermark.exists()
+        # Filesystem must remain untouched.
+        assert not watermark.exists()
+
+    def test_missing_watermark_allows_read_with_warning(self, tmp_path, caplog):
+        """Reads on a missing watermark surface diagnostic state without mutation."""
+        db_path = tmp_path / "signals.db"
+        watermark = tmp_path / "watermark.json"
+        _create_signals_db(db_path, 75)
+
+        with patch.object(db_guard, "WATERMARK_PATH", watermark):
+            assert db_guard.guard_command(str(db_path), "read") is True
+
+        assert not watermark.exists()
+
+    def test_missing_watermark_with_override_still_blocks_write(self, tmp_path):
+        """Recovery override is for tripped baselines, not for bootstrapping a missing watermark."""
+        db_path = tmp_path / "signals.db"
+        watermark = tmp_path / "watermark.json"
+        _create_signals_db(db_path, 75)
+
+        with patch.object(db_guard, "WATERMARK_PATH", watermark):
+            assert db_guard.guard_command(str(db_path), "write", allow_override=True) is False
+
+        assert not watermark.exists()

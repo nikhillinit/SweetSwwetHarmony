@@ -623,7 +623,8 @@ class TestProductionDbSignalCountGuard:
         mock_cmd.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_healthy_read_seeds_missing_watermark(self, monkeypatch, tmp_path):
+    async def test_health_read_with_missing_watermark_warns_without_mutating(self, monkeypatch, tmp_path, capsys):
+        """Strict explicit-init contract: read commands warn but do NOT auto-create the watermark."""
         prod_db = tmp_path / "signals.db"
         watermark = tmp_path / "watermark.json"
         _create_signal_count_db(prod_db, 612)
@@ -636,17 +637,19 @@ class TestProductionDbSignalCountGuard:
              patch("run_pipeline.setup_logging"), \
              patch("utils.config_validator.validate_config", return_value=[]), \
              patch("utils.config_validator.print_config_report", return_value=False), \
-             patch("run_pipeline.cmd_health", new_callable=AsyncMock, return_value=0):
+             patch("run_pipeline.cmd_health", new_callable=AsyncMock, return_value=0) as mock_cmd:
             mock_parser.return_value.parse_args.return_value = args
             from run_pipeline import main
             await main()
 
-        payload = json.loads(watermark.read_text())
-        assert payload["signal_count"] == 612
+        stderr = capsys.readouterr().err
+        assert "watermark_missing" in stderr
+        assert not watermark.exists()
+        mock_cmd.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_health_seeds_missing_watermark_even_with_low_count(self, monkeypatch, tmp_path):
-        """New guard auto-initializes watermark regardless of count."""
+    async def test_health_read_with_missing_watermark_low_count_still_warns(self, monkeypatch, tmp_path, capsys):
+        """Strict contract holds for low signal counts too — no implicit baseline anchoring."""
         prod_db = tmp_path / "signals.db"
         watermark = tmp_path / "watermark.json"
         _create_signal_count_db(prod_db, 4)
@@ -664,13 +667,18 @@ class TestProductionDbSignalCountGuard:
             from run_pipeline import main
             await main()
 
-        assert watermark.exists()
-        payload = json.loads(watermark.read_text())
-        assert payload["signal_count"] == 4
+        stderr = capsys.readouterr().err
+        assert "watermark_missing" in stderr
+        assert not watermark.exists()
         mock_cmd.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_sync_override_seeds_missing_watermark(self, monkeypatch, tmp_path):
+    async def test_sync_with_missing_watermark_blocks_even_with_override(self, monkeypatch, tmp_path, capsys):
+        """Recovery override is for tripped baselines, not for bootstrapping a missing watermark.
+
+        Operator must run ``python run_pipeline.py init-watermark`` explicitly. See
+        ``.omx/wave6/db_guard_runbook.md``.
+        """
         prod_db = tmp_path / "signals.db"
         watermark = tmp_path / "watermark.json"
         _create_signal_count_db(prod_db, 612)
@@ -686,8 +694,12 @@ class TestProductionDbSignalCountGuard:
              patch("run_pipeline.cmd_sync", new_callable=AsyncMock, return_value=None) as mock_cmd:
             mock_parser.return_value.parse_args.return_value = args
             from run_pipeline import main
-            await main()
+            with pytest.raises(SystemExit) as exc_info:
+                await main()
 
-        payload = json.loads(watermark.read_text())
-        assert payload["signal_count"] == 612
-        mock_cmd.assert_called_once()
+        assert exc_info.value.code == 2
+        stderr = capsys.readouterr().err
+        assert "watermark_missing" in stderr
+        assert "init-watermark" in stderr
+        assert not watermark.exists()
+        mock_cmd.assert_not_called()
