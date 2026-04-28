@@ -401,6 +401,194 @@ collectors:
     assert before == after, "Health CLI must not modify the signals database"
 
 
+def test_build_health_report_marks_override_when_state_overrides_yaml(tmp_path):
+    """YAML says enabled, state stickily flipped to disabled_intentional → override_active=True."""
+    config_path = _write_collectors_yaml(
+        tmp_path / "collectors.yaml",
+        """
+schema_version: 1
+collectors:
+  arxiv:
+    configured_status: enabled
+    expected_cadence_hours: 24
+""",
+    )
+    state_path = tmp_path / "collectors.json"
+    # Hand-craft a state that has stickily flipped arxiv to disabled_intentional.
+    # In production this happens via heartbeat preserving sticky operator state.
+    state_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "updated_at": "2026-04-27T00:00:00+00:00",
+                "collectors": {
+                    "arxiv": {
+                        "schema_version": 2,
+                        "collector": "arxiv",
+                        "configured_status": "disabled_intentional",
+                        "configured_status_reason": "operator paused upstream API issue",
+                        "expected_cadence_hours": 24,
+                        "last_run_status": "not_run",
+                        "effective_status": "disabled_intentional",
+                        "health": "disabled",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    from ops.collector_heartbeat import load_collector_state
+
+    state = load_collector_state(state_path, config_path=config_path)
+    report = build_health_report(
+        state,
+        signal_counts=[],
+        config_path=config_path,
+        expected_source_apis_by_collector={"arxiv": ("arxiv",)},
+    )
+
+    arxiv = next(c for c in report["collectors"] if c["name"] == "arxiv")
+    assert arxiv["override_active"] is True
+    assert report["summary"]["override_active_count"] == 1
+    assert "arxiv" in report["summary"]["override_active_collectors"]
+    assert any("operator override active" in w for w in report["summary"]["warnings"])
+
+
+def test_build_health_report_no_override_when_state_matches_yaml(tmp_path):
+    """YAML says disabled_intentional, state matches → override_active=False."""
+    config_path = _write_collectors_yaml(
+        tmp_path / "collectors.yaml",
+        """
+schema_version: 1
+collectors:
+  community_keywords:
+    configured_status: disabled_intentional
+    expected_cadence_hours: 168
+    disabled_reason: Module-only collector.
+""",
+    )
+    state_path = tmp_path / "collectors.json"
+    from ops.collector_heartbeat import initialize_collector_state
+
+    state = initialize_collector_state(state_path, config_path=config_path, runner="test")
+    report = build_health_report(
+        state,
+        signal_counts=[],
+        config_path=config_path,
+        expected_source_apis_by_collector={"community_keywords": ()},
+    )
+
+    ck = next(c for c in report["collectors"] if c["name"] == "community_keywords")
+    assert ck["configured_status"] == "disabled_intentional"
+    assert ck["override_active"] is False
+    assert report["summary"]["override_active_count"] == 0
+
+
+def test_build_health_report_no_override_when_state_is_enabled(tmp_path):
+    config_path = _write_collectors_yaml(
+        tmp_path / "collectors.yaml",
+        """
+schema_version: 1
+collectors:
+  arxiv:
+    configured_status: enabled
+    expected_cadence_hours: 24
+""",
+    )
+    state_path = tmp_path / "collectors.json"
+    from ops.collector_heartbeat import initialize_collector_state
+
+    state = initialize_collector_state(state_path, config_path=config_path, runner="test")
+    report = build_health_report(
+        state,
+        signal_counts=[],
+        config_path=config_path,
+        expected_source_apis_by_collector={"arxiv": ("arxiv",)},
+    )
+
+    arxiv = next(c for c in report["collectors"] if c["name"] == "arxiv")
+    assert arxiv["override_active"] is False
+
+
+def test_build_health_report_no_override_when_yaml_blocked_state_blocked(tmp_path):
+    """Both YAML and state declare blocked_access — that's intent matching, not override."""
+    config_path = _write_collectors_yaml(
+        tmp_path / "collectors.yaml",
+        """
+schema_version: 1
+collectors:
+  linkedin:
+    configured_status: blocked_access
+    expected_cadence_hours: 168
+    disabled_reason: Anti-scraping defenses tripped 2026-03-01.
+""",
+    )
+    state_path = tmp_path / "collectors.json"
+    from ops.collector_heartbeat import initialize_collector_state
+
+    state = initialize_collector_state(state_path, config_path=config_path, runner="test")
+    report = build_health_report(
+        state,
+        signal_counts=[],
+        config_path=config_path,
+        expected_source_apis_by_collector={"linkedin": ("linkedin",)},
+    )
+
+    li = next(c for c in report["collectors"] if c["name"] == "linkedin")
+    assert li["configured_status"] == "blocked_access"
+    assert li["override_active"] is False
+
+
+def test_render_table_shows_override_flag(tmp_path):
+    """OVERRIDE flag should appear in the flags column when override_active is true."""
+    config_path = _write_collectors_yaml(
+        tmp_path / "collectors.yaml",
+        """
+schema_version: 1
+collectors:
+  github:
+    configured_status: enabled
+    expected_cadence_hours: 24
+""",
+    )
+    state_path = tmp_path / "collectors.json"
+    state_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "updated_at": "2026-04-27T00:00:00+00:00",
+                "collectors": {
+                    "github": {
+                        "schema_version": 2,
+                        "collector": "github",
+                        "configured_status": "blocked_access",
+                        "expected_cadence_hours": 24,
+                        "last_run_status": "not_run",
+                        "effective_status": "blocked_access",
+                        "health": "disabled",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    from ops.collector_heartbeat import load_collector_state
+
+    state = load_collector_state(state_path, config_path=config_path)
+    report = build_health_report(
+        state,
+        signal_counts=[],
+        config_path=config_path,
+        expected_source_apis_by_collector={"github": ("github",)},
+    )
+
+    rendered = render_table(report)
+    assert "OVERRIDE" in rendered
+    assert "override_active=1" in rendered
+
+
 def test_default_mapping_covers_known_collectors():
     # Sanity: the registry knows about the collectors most likely to be silent.
     assert "sec_edgar" in DEFAULT_EXPECTED_SOURCE_APIS_BY_COLLECTOR

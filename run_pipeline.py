@@ -236,7 +236,14 @@ def _enforce_signal_count_guard(args: argparse.Namespace) -> None:
     if not db_path or not is_production_db_path(db_path):
         return
 
-    recovery_override = bool(getattr(args, "recovery_override", False))
+    # Scope strictly to ``sync``: the audited override exists only for the
+    # catastrophic-drop recovery sync path. Non-sync callers (process/full/collect/push)
+    # must never bypass the write guard, even if a synthesized Namespace carries
+    # recovery_override=True. See .omx/wave6/db_guard_runbook.md.
+    recovery_override = (
+        getattr(args, "command", None) == "sync"
+        and bool(getattr(args, "recovery_override", False))
+    )
 
     # Operator-facing messaging before delegating to guard_command
     ok, message = db_guard.check_db_health(db_path)
@@ -246,7 +253,13 @@ def _enforce_signal_count_guard(args: argparse.Namespace) -> None:
                 f"WARNING: DB guard {message} on {db_path}. Allowing read command.",
                 file=sys.stderr,
             )
-        elif recovery_override:
+        elif message == "watermark_missing":
+            print(
+                f"ERROR: DB guard watermark_missing on {db_path}. "
+                "Run `python run_pipeline.py init-watermark` to bootstrap.",
+                file=sys.stderr,
+            )
+        elif recovery_override and message == "catastrophic_drop_detected":
             print(
                 f"WARNING: DB guard {message} on {db_path}. "
                 "Proceeding because --recovery-override was supplied.",
@@ -2565,11 +2578,6 @@ Environment variables:
         "-v", "--verbose",
         action="store_true",
         help="Enable debug logging",
-    )
-    parser.add_argument(
-        "--recovery-override",
-        action="store_true",
-        help="Allow audited recovery path to proceed even when the DB guard detects a catastrophic drop",
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
