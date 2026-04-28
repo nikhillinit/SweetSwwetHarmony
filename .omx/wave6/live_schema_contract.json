@@ -17,9 +17,10 @@
     "quality_feedback": {
       "required_columns": [
         "signal_id",
-        "label"
+        "label",
+        "created_at"
       ],
-      "notes": "Column is named `label`, NOT `human_label`. Enum: TP/FP/UNSURE/ADJ. Defined in storage/migrations/quality_tables.py."
+      "notes": "Column is named `label`, NOT `human_label`. Enum: TP/FP/UNSURE/ADJ. `created_at` is NOT NULL (used as dedup tiebreaker by scripts/create_evaluation_splits.py). Defined in storage/migrations/quality_tables.py."
     },
     "signal_quality_metrics": {
       "required_columns": [

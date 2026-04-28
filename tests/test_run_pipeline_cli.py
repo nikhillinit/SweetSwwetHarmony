@@ -102,6 +102,38 @@ class TestCLIFlags:
         args = parser.parse_args(["sync", "--recovery-override"])
         assert args.recovery_override is True
 
+    def test_root_recovery_override_is_not_registered(self):
+        """P1 remediation: --recovery-override must NOT live on the root parser.
+
+        Defining it at root let `python run_pipeline.py --recovery-override <subcmd>`
+        set Namespace.recovery_override=True for any subcommand, opening a write
+        bypass through _enforce_signal_count_guard's allow_override path. The flag
+        is now scoped strictly to the ``sync`` subcommand.
+        """
+        parser = create_parser()
+        root_options: set[str] = set()
+        for action in parser._actions:
+            root_options.update(action.option_strings)
+        assert "--recovery-override" not in root_options
+
+    def test_root_position_recovery_override_is_rejected(self):
+        """argparse must reject ``--recovery-override`` placed before a subcommand."""
+        parser = create_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args(["--recovery-override", "sync"])
+
+    def test_process_recovery_override_is_rejected(self):
+        """process subcommand must NOT accept --recovery-override."""
+        parser = create_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args(["process", "--recovery-override"])
+
+    def test_full_recovery_override_is_rejected(self):
+        """full subcommand must NOT accept --recovery-override."""
+        parser = create_parser()
+        with pytest.raises(SystemExit):
+            parser.parse_args(["full", "--recovery-override"])
+
 
 class TestHealthCommand:
     """Test health check CLI command."""
@@ -623,7 +655,8 @@ class TestProductionDbSignalCountGuard:
         mock_cmd.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_healthy_read_seeds_missing_watermark(self, monkeypatch, tmp_path):
+    async def test_health_read_with_missing_watermark_warns_without_mutating(self, monkeypatch, tmp_path, capsys):
+        """Strict explicit-init contract: read commands warn but do NOT auto-create the watermark."""
         prod_db = tmp_path / "signals.db"
         watermark = tmp_path / "watermark.json"
         _create_signal_count_db(prod_db, 612)
@@ -636,17 +669,19 @@ class TestProductionDbSignalCountGuard:
              patch("run_pipeline.setup_logging"), \
              patch("utils.config_validator.validate_config", return_value=[]), \
              patch("utils.config_validator.print_config_report", return_value=False), \
-             patch("run_pipeline.cmd_health", new_callable=AsyncMock, return_value=0):
+             patch("run_pipeline.cmd_health", new_callable=AsyncMock, return_value=0) as mock_cmd:
             mock_parser.return_value.parse_args.return_value = args
             from run_pipeline import main
             await main()
 
-        payload = json.loads(watermark.read_text())
-        assert payload["signal_count"] == 612
+        stderr = capsys.readouterr().err
+        assert "watermark_missing" in stderr
+        assert not watermark.exists()
+        mock_cmd.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_health_seeds_missing_watermark_even_with_low_count(self, monkeypatch, tmp_path):
-        """New guard auto-initializes watermark regardless of count."""
+    async def test_health_read_with_missing_watermark_low_count_still_warns(self, monkeypatch, tmp_path, capsys):
+        """Strict contract holds for low signal counts too — no implicit baseline anchoring."""
         prod_db = tmp_path / "signals.db"
         watermark = tmp_path / "watermark.json"
         _create_signal_count_db(prod_db, 4)
@@ -664,13 +699,18 @@ class TestProductionDbSignalCountGuard:
             from run_pipeline import main
             await main()
 
-        assert watermark.exists()
-        payload = json.loads(watermark.read_text())
-        assert payload["signal_count"] == 4
+        stderr = capsys.readouterr().err
+        assert "watermark_missing" in stderr
+        assert not watermark.exists()
         mock_cmd.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_sync_override_seeds_missing_watermark(self, monkeypatch, tmp_path):
+    async def test_sync_with_missing_watermark_blocks_even_with_override(self, monkeypatch, tmp_path, capsys):
+        """Recovery override is for tripped baselines, not for bootstrapping a missing watermark.
+
+        Operator must run ``python run_pipeline.py init-watermark`` explicitly. See
+        ``.omx/wave6/db_guard_runbook.md``.
+        """
         prod_db = tmp_path / "signals.db"
         watermark = tmp_path / "watermark.json"
         _create_signal_count_db(prod_db, 612)
@@ -686,8 +726,73 @@ class TestProductionDbSignalCountGuard:
              patch("run_pipeline.cmd_sync", new_callable=AsyncMock, return_value=None) as mock_cmd:
             mock_parser.return_value.parse_args.return_value = args
             from run_pipeline import main
-            await main()
+            with pytest.raises(SystemExit) as exc_info:
+                await main()
 
-        payload = json.loads(watermark.read_text())
-        assert payload["signal_count"] == 612
-        mock_cmd.assert_called_once()
+        assert exc_info.value.code == 2
+        stderr = capsys.readouterr().err
+        assert "watermark_missing" in stderr
+        assert "init-watermark" in stderr
+        assert not watermark.exists()
+        mock_cmd.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_legacy_process_args_with_recovery_override_do_not_bypass_guard(
+        self, monkeypatch, tmp_path
+    ):
+        """A synthesized Namespace with command='process' AND recovery_override=True
+        must STILL be blocked by the catastrophic-drop guard. Override is scoped
+        strictly to command=='sync'; non-sync writes never bypass.
+        """
+        prod_db = tmp_path / "signals.db"
+        watermark = tmp_path / "watermark.json"
+        _create_signal_count_db(prod_db, 4)
+        watermark.write_text(
+            json.dumps({"signal_count": 100, "recorded_at": "2026-04-04T00:00:00Z"})
+        )
+        monkeypatch.setenv("DISCOVERY_DB_PATH", str(prod_db))
+
+        args = self._mock_args(command="process", recovery_override=True)
+
+        with patch("utils.db_guard.WATERMARK_PATH", watermark), \
+             patch("run_pipeline.create_parser") as mock_parser, \
+             patch("run_pipeline.setup_logging"), \
+             patch("utils.config_validator.validate_config", return_value=[]), \
+             patch("utils.config_validator.print_config_report", return_value=False), \
+             patch("run_pipeline.cmd_process", new_callable=AsyncMock, return_value=0) as mock_cmd:
+            mock_parser.return_value.parse_args.return_value = args
+            from run_pipeline import main
+            with pytest.raises(SystemExit) as exc_info:
+                await main()
+
+        assert exc_info.value.code == 2
+        mock_cmd.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_legacy_full_args_with_recovery_override_do_not_bypass_guard(
+        self, monkeypatch, tmp_path
+    ):
+        """Same scope-to-sync invariant for command='full'."""
+        prod_db = tmp_path / "signals.db"
+        watermark = tmp_path / "watermark.json"
+        _create_signal_count_db(prod_db, 4)
+        watermark.write_text(
+            json.dumps({"signal_count": 100, "recorded_at": "2026-04-04T00:00:00Z"})
+        )
+        monkeypatch.setenv("DISCOVERY_DB_PATH", str(prod_db))
+
+        args = self._mock_args(command="full", recovery_override=True)
+
+        with patch("utils.db_guard.WATERMARK_PATH", watermark), \
+             patch("run_pipeline.create_parser") as mock_parser, \
+             patch("run_pipeline.setup_logging"), \
+             patch("utils.config_validator.validate_config", return_value=[]), \
+             patch("utils.config_validator.print_config_report", return_value=False), \
+             patch("run_pipeline.cmd_full", new_callable=AsyncMock, return_value=0) as mock_cmd:
+            mock_parser.return_value.parse_args.return_value = args
+            from run_pipeline import main
+            with pytest.raises(SystemExit) as exc_info:
+                await main()
+
+        assert exc_info.value.code == 2
+        mock_cmd.assert_not_called()

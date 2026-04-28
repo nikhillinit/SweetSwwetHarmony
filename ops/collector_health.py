@@ -30,6 +30,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
+from ops.collector_config import (
+    INTENTIONAL_CONFIGURED_STATUSES,
+    CollectorConfig,
+    load_collector_config,
+)
 from ops.collector_heartbeat import load_collector_state
 
 REPORT_SCHEMA_VERSION = 1
@@ -149,6 +154,34 @@ def _observed_count(
     return sum(counts_by_source_api.get(api, 0) for api in expected_source_apis)
 
 
+def _compute_override_active(
+    state_entry: Mapping[str, Any],
+    collector_config: Optional[CollectorConfig],
+) -> bool:
+    """Derived: is the operator's sticky configured_status overriding YAML intent?
+
+    A collector heartbeat preserves ``disabled_intentional`` and
+    ``blocked_access`` as sticky operator state (see
+    ``ops.collector_heartbeat._configured_fields_for``). When the YAML config
+    declares the collector as ``enabled`` (or any non-intentional value) but
+    the persisted state has been stickily flipped to an intentional status,
+    we surface this as ``override_active=True`` so health/dashboard consumers
+    can flag it without inspecting the YAML themselves.
+
+    Returns False when:
+    * state is not in {disabled_intentional, blocked_access}
+    * YAML itself declares the collector as intentionally disabled/blocked
+      (state simply matches YAML)
+    * collector is unknown to the YAML (cannot determine intent)
+    """
+    state_status = str(state_entry.get("configured_status") or "")
+    if state_status not in INTENTIONAL_CONFIGURED_STATUSES:
+        return False
+    if collector_config is None:
+        return False
+    return collector_config.configured_status not in INTENTIONAL_CONFIGURED_STATUSES
+
+
 def build_health_report(
     state: Mapping[str, Any],
     signal_counts: Iterable[Mapping[str, Any]],
@@ -159,10 +192,19 @@ def build_health_report(
     db_path: Optional[str | os.PathLike[str]] = None,
     lookback_days: int = DEFAULT_LOOKBACK_DAYS,
     now: Optional[datetime] = None,
+    configs: Optional[Mapping[str, CollectorConfig]] = None,
+    config_path: Optional[str | os.PathLike[str]] = None,
 ) -> dict[str, Any]:
-    """Combine heartbeat state and signal counts into a structured report."""
+    """Combine heartbeat state and signal counts into a structured report.
+
+    ``configs`` (or ``config_path`` for live loads) supplies the YAML intent
+    used to derive each collector's ``override_active`` field. Pass ``configs``
+    explicitly in tests; live callers can rely on ``load_collector_config()``.
+    """
     if expected_source_apis_by_collector is None:
         expected_source_apis_by_collector = DEFAULT_EXPECTED_SOURCE_APIS_BY_COLLECTOR
+    if configs is None:
+        configs = load_collector_config(config_path)
 
     counts_list = [
         {
@@ -188,6 +230,8 @@ def build_health_report(
     silent_count = 0
     stale_count = 0
     failing_count = 0
+    override_active_count = 0
+    override_active_collectors: list[str] = []
     used_source_apis: set[str] = set()
 
     for name in sorted(raw_collectors):
@@ -207,6 +251,7 @@ def build_health_report(
             and observed == 0
             and effective_status not in _NON_SILENT_STATUSES
         )
+        override_active = _compute_override_active(entry, configs.get(name))
 
         if is_silent:
             silent_count += 1
@@ -225,6 +270,14 @@ def build_health_report(
             warnings.append(
                 f"{name}: heartbeat marks FAILING — "
                 f"{entry.get('error_message') or 'see error_messages'}"
+            )
+        if override_active:
+            override_active_count += 1
+            override_active_collectors.append(name)
+            yaml_intent = configs[name].configured_status
+            warnings.append(
+                f"{name}: operator override active — state is "
+                f"{entry.get('configured_status')} but YAML intent is {yaml_intent}"
             )
 
         by_status[effective_status] = by_status.get(effective_status, 0) + 1
@@ -245,6 +298,7 @@ def build_health_report(
                 "is_stale": is_stale,
                 "is_silent": is_silent,
                 "is_failing": is_failing,
+                "override_active": override_active,
             }
         )
 
@@ -265,6 +319,8 @@ def build_health_report(
             "silent_count": silent_count,
             "stale_count": stale_count,
             "failing_count": failing_count,
+            "override_active_count": override_active_count,
+            "override_active_collectors": override_active_collectors,
             "unmapped_source_apis": unmapped_source_apis,
             "warnings": warnings,
         },
@@ -292,6 +348,8 @@ def render_table(report: Mapping[str, Any]) -> str:
             flags.append("STALE")
         if c.get("is_failing"):
             flags.append("FAILING")
+        if c.get("override_active"):
+            flags.append("OVERRIDE")
         rows.append(
             (
                 str(c["name"]),
@@ -318,7 +376,8 @@ def render_table(report: Mapping[str, Any]) -> str:
         f"Totals: {summary.get('total', 0)} collectors | "
         f"silent={summary.get('silent_count', 0)} | "
         f"stale={summary.get('stale_count', 0)} | "
-        f"failing={summary.get('failing_count', 0)}"
+        f"failing={summary.get('failing_count', 0)} | "
+        f"override_active={summary.get('override_active_count', 0)}"
     )
     by_status = summary.get("by_effective_status", {})
     if by_status:
@@ -382,6 +441,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         counts,
         db_path=args.db,
         lookback_days=args.lookback_days,
+        config_path=args.config,
     )
     if args.format == "json":
         sys.stdout.write(json.dumps(report, indent=2, sort_keys=True) + "\n")
