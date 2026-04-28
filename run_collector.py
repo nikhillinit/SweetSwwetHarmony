@@ -15,10 +15,12 @@ import asyncio
 import json
 import logging
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Setup path
 sys.path.insert(0, ".")
+
+from ops.collector_heartbeat import initialize_collector_state, record_collector_heartbeat
 
 logging.basicConfig(
     level=logging.INFO,
@@ -164,22 +166,53 @@ Examples:
         parser.print_help()
         sys.exit(1)
 
+    # Materialize all configured collectors before any subcommand-specific
+    # preflight exits.  This lets health tooling distinguish intentionally
+    # disabled or missing-key collectors from collectors that have never run.
+    try:
+        initialize_collector_state(runner="run_collector.py")
+    except Exception as exc:
+        logging.getLogger(__name__).warning(
+            "Collector state bootstrap failed: %s",
+            exc,
+        )
+
     # Handle --live flag
     if hasattr(args, "live") and args.live:
         args.dry_run = False
 
     # Run collector
+    started_at = datetime.now(timezone.utc)
+    result = None
     if args.collector == "sec_edgar":
-        asyncio.run(run_sec_edgar(args))
+        result = asyncio.run(run_sec_edgar(args))
     elif args.collector == "github":
-        asyncio.run(run_github(args))
+        result = asyncio.run(run_github(args))
     elif args.collector == "companies_house":
-        asyncio.run(run_companies_house(args))
+        result = asyncio.run(run_companies_house(args))
     elif args.collector == "domain_whois":
-        asyncio.run(run_domain_whois(args))
+        result = asyncio.run(run_domain_whois(args))
     else:
         print(f"Unknown collector: {args.collector}")
         sys.exit(1)
+
+    if result is not None:
+        finished_at = datetime.now(timezone.utc)
+        try:
+            record_collector_heartbeat(
+                result=result,
+                started_at=started_at,
+                finished_at=finished_at,
+                duration_seconds=(finished_at - started_at).total_seconds(),
+                api_calls=getattr(result, "api_calls", 0),
+                runner="run_collector.py",
+            )
+        except Exception as exc:
+            logging.getLogger(__name__).warning(
+                "Collector heartbeat update failed for %s: %s",
+                args.collector,
+                exc,
+            )
 
 
 async def run_companies_house(args):
