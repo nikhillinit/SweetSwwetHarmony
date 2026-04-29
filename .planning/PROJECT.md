@@ -165,6 +165,28 @@ The current scope is the **Direction-A-derived hybrid** strategy at `docs/plans/
 | OutcomeJoiner already exists | Wiring + display work, not greenfield build | Pending |
 | Withdraw "9% precision" claim | Selection bias invalidated it | Corrected |
 
+## Phase 2 confidence-score vocabulary
+
+References use `file:symbol` (not `file:line`) so they don't go stale.
+
+| Term | What it is | Where defined |
+|---|---|---|
+| `signals.confidence` | REAL column, in [0,1], per-signal raw confidence at storage time | `storage/signal_store.py` (column declaration in the signals-table CREATE) |
+| `score_binding.semantic_name = "signal_stored_confidence"` | Locked semantic name for `signals.confidence` in the Day 4 artifact contract | `scripts/recalibrate_conformal.py:SCORE_SEMANTIC_NAME` |
+| `ConfidenceBreakdown.overall` | Aggregate confidence after VerificationGate fusion (LLM + structural + reputation). NOT the same as `signals.confidence`. | `verification/verification_gate_v2.py:ConfidenceBreakdown` |
+| `state/conformal_calibration.json` | Day 4 artifact (`artifact_type=threshold_selection`) with `score_binding` and `chosen_cutoff` over `signals.confidence` | `scripts/recalibrate_conformal.py` (gitignored) |
+| `state/router_config_status.json` | Day 5 status writer output (`readiness_scope=human_review_only`). Embeds `candidate_router_threshold_config` only when not blocked. NEVER a production routing config. | `scripts/write_router_config_status.py` (gitignored) |
+| `calibration_semantic_digest` | SHA256 over the semantic content of the Day 4 artifact (excludes `generated_at`, `seed`, `git`; floats normalized to 6 decimals; `allow_nan=False`). | `verification/router_threshold_config.py` |
+| Reserved promotion drift codes | `promotion_prompt_version_drift`, `promotion_scoring_path_drift`, `promotion_runtime_threshold_incompatible` — owned by the future router-application gate. NEVER emitted by Day 5; Pydantic Literal enums prevent accidental emission. | reserved in `verification/router_threshold_config.py` module docstring |
+
+### Day 5 human-review handoff (current)
+
+Day 5 human review currently means manual inspection of `state/router_config_status.json`
+by the engineer/operator running Phase 2. No approval, rejection, or promotion decision
+is persisted by Day 5. Future router-application/gating work owns review persistence and
+promotion. The Day 3 dashboard may later surface this status, but Day 5 does not notify
+Slack, Notion, or governance systems.
+
 ## Evolution
 
 This document evolves at phase transitions and milestone boundaries.
