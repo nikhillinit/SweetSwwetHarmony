@@ -3,7 +3,7 @@ gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
 status: unknown
-last_updated: "2026-04-08T06:12:53.787Z"
+last_updated: "2026-05-01T17:11:34Z"
 progress:
   total_phases: 5
   completed_phases: 1
@@ -27,6 +27,12 @@ See: `.planning/PROJECT.md` (last updated 2026-04-08 with synthesis findings)
 ## Active phase
 
 **Phase 1: Move 0 Prep + Liveness Prep**
+
+> **Phase 1 operational status (as of 2026-04-29): RECOVERING / PENDING FRESH REGRET CHECK.**
+> R19 corpus repair and one-shot liveness are green: `signals.db` restored from `signals.db.pre-step4b-promotion-20260404`, collection restarted, 36h and 120h freshness watchdogs pass, and the missed 2026-04-18 Step 4B regret check is manually postponed in `artifacts/regret-check/step4b-postponed-2026-04-29/summary.md`.
+> R19 is **not closed** until scheduled recurrence is proven by a later scheduled `HarmonicKeepAlive` run with `LastTaskResult=0` and a second dated keep-alive artifact.
+>
+> **Update 2026-04-30:** R19 closed; see `artifacts/regret-check/step4b-postponed-2026-04-29/closure-2026-04-30.md`. The 2026-04-30 scheduled keep-alive run fired on time (`LastTaskResult=0`), produced a healthy artifact with `checked_at` inside the `[14:30Z, 23:00Z]` window, all 4 operational collectors `FRESH`. Manual closure applied after the remote verifier correctly took its Branch C precondition stop (Issue #146).
 
 - Started: 2026-04-08
 - Target end: 2026-04-19 (Move 0 protected paths freeze ends)
