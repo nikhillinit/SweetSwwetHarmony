@@ -122,6 +122,7 @@ state/train_ids.json
 state/calibration_ids.json
 state/holdout_ids.json
 state/evaluation_splits_summary.json
+state/conformal_calibration.json
 
 # Local restore / recovery scratch artifacts
 artifacts/incident-db-restore-*/
