@@ -1,0 +1,79 @@
+{
+  "checked_at": "2026-04-29T17:30:54.442490+00:00",
+  "threshold_hours": 36,
+  "exit_code": 0,
+  "status": "OK",
+  "collectors": [
+    {
+      "source_api": "arxiv",
+      "category": "operational",
+      "last_created": "2026-04-29T08:04:26.813557+00:00",
+      "age_hours": 9.44,
+      "status": "FRESH"
+    },
+    {
+      "source_api": "ashby_jobs",
+      "category": "informational",
+      "last_created": "2026-02-26T06:33:29.281237+00:00",
+      "age_hours": 1498.96,
+      "status": "UNKNOWN"
+    },
+    {
+      "source_api": "github",
+      "category": "informational",
+      "last_created": "2026-01-10T12:18:09.019836+00:00",
+      "age_hours": 2621.21,
+      "status": "UNKNOWN"
+    },
+    {
+      "source_api": "greenhouse_jobs",
+      "category": "informational",
+      "last_created": "2026-02-26T06:33:29.275988+00:00",
+      "age_hours": 1498.96,
+      "status": "UNKNOWN"
+    },
+    {
+      "source_api": "hacker_news",
+      "category": "operational",
+      "last_created": "2026-04-29T17:30:40.210107+00:00",
+      "age_hours": 0.0,
+      "status": "FRESH"
+    },
+    {
+      "source_api": "lever_jobs",
+      "category": "informational",
+      "last_created": "2026-02-26T06:33:29.284244+00:00",
+      "age_hours": 1498.96,
+      "status": "UNKNOWN"
+    },
+    {
+      "source_api": "manual_seed_buzz",
+      "category": "informational",
+      "last_created": "2026-02-26T07:31:31.247155+00:00",
+      "age_hours": 1497.99,
+      "status": "UNKNOWN"
+    },
+    {
+      "source_api": "news_api",
+      "category": "operational",
+      "last_created": "2026-04-29T08:04:39.789096+00:00",
+      "age_hours": 9.44,
+      "status": "FRESH"
+    },
+    {
+      "source_api": "product_hunt",
+      "category": "informational",
+      "last_created": "2026-01-10T12:18:09.035890+00:00",
+      "age_hours": 2621.21,
+      "status": "UNKNOWN"
+    },
+    {
+      "source_api": "rss_feeds",
+      "category": "operational",
+      "last_created": "2026-04-29T17:30:41.746681+00:00",
+      "age_hours": 0.0,
+      "status": "FRESH"
+    }
+  ],
+  "failures": []
+}

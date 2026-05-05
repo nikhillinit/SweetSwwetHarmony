@@ -1,0 +1,81 @@
+{
+  "checked_at": "2026-05-01T17:12:47.203087+00:00",
+  "threshold_hours": 36,
+  "exit_code": 1,
+  "status": "FAIL",
+  "collectors": [
+    {
+      "source_api": "arxiv",
+      "category": "operational",
+      "last_created": "2026-05-01T17:12:37.189554+00:00",
+      "age_hours": 0.0,
+      "status": "FRESH"
+    },
+    {
+      "source_api": "ashby_jobs",
+      "category": "informational",
+      "last_created": "2026-02-26T06:33:29.281237+00:00",
+      "age_hours": 1546.65,
+      "status": "UNKNOWN"
+    },
+    {
+      "source_api": "github",
+      "category": "informational",
+      "last_created": "2026-01-10T12:18:09.019836+00:00",
+      "age_hours": 2668.91,
+      "status": "UNKNOWN"
+    },
+    {
+      "source_api": "greenhouse_jobs",
+      "category": "informational",
+      "last_created": "2026-02-26T06:33:29.275988+00:00",
+      "age_hours": 1546.65,
+      "status": "UNKNOWN"
+    },
+    {
+      "source_api": "hacker_news",
+      "category": "operational",
+      "last_created": "2026-05-01T17:12:33.763309+00:00",
+      "age_hours": 0.0,
+      "status": "FRESH"
+    },
+    {
+      "source_api": "lever_jobs",
+      "category": "informational",
+      "last_created": "2026-02-26T06:33:29.284244+00:00",
+      "age_hours": 1546.65,
+      "status": "UNKNOWN"
+    },
+    {
+      "source_api": "manual_seed_buzz",
+      "category": "informational",
+      "last_created": "2026-02-26T07:31:31.247155+00:00",
+      "age_hours": 1545.69,
+      "status": "UNKNOWN"
+    },
+    {
+      "source_api": "news_api",
+      "category": "operational",
+      "last_created": "2026-04-29T08:04:39.789096+00:00",
+      "age_hours": 57.14,
+      "status": "STALE"
+    },
+    {
+      "source_api": "product_hunt",
+      "category": "informational",
+      "last_created": "2026-01-10T12:18:09.035890+00:00",
+      "age_hours": 2668.91,
+      "status": "UNKNOWN"
+    },
+    {
+      "source_api": "rss_feeds",
+      "category": "operational",
+      "last_created": "2026-05-01T17:12:33.746527+00:00",
+      "age_hours": 0.0,
+      "status": "FRESH"
+    }
+  ],
+  "failures": [
+    "news_api: 57.14h since last ingest"
+  ]
+}
