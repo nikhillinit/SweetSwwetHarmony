@@ -1,0 +1,261 @@
+R19 Recovery — Preflight Gate Snapshot
+=======================================
+
+Captured at:        2026-04-29T07:50:11+00:00 UTC (2026-04-29 00:50 local)
+Operator:           nikhil@narralytics.ai
+Working directory:  C:\dev\Harmonic
+Branch:             main
+Commit hash:        5715430762ebd00ed50b95987053280e2d57ccc0
+Plan:               C:\Users\nikhi\Downloads\PLAN.corrected.md
+Mutating actions:   NONE (this is a read-only audit)
+
+
+git status (--short)
+--------------------
+?? .tmp/
+?? 2026-03-01`
+
+  Note: untracked entry "2026-03-01`" includes a literal backtick — looks like
+  a stray shell artifact from an earlier session. NOT touched. NOT deleted.
+
+
+Recent Phase 1 / R19 / keep-alive git log (filtered, top 25)
+------------------------------------------------------------
+f18ba8a chore(01): mark Phase 1 complete in STATE.md frontmatter (11/11 plans)
+d5e302d docs(01-10): SUMMARY for plan 01-10 (SUB-01 Wave C synthesis, Phase 1 BLOCK)
+38b4093 feat(01-10): STATE.md Phase 1 daily gate evaluations per D-34 (Task 3)
+3dc42aa feat(01-10): Phase 1 VERIFICATION.md SUB-01 charter rollup (Task 2)
+2a2fece feat(01-10): SUB-01 rubric gate evidence file (Task 1)
+85f7086 docs(01-09): SUMMARY for plan 01-09 (Track E founder seed, REC-04)
+2f30e44 docs(01-06): SUMMARY for plan 01-06 (REC-02 Track C hold-out split)
+07e9646 docs(01-01): SUMMARY for plan 01-01 (R20 risk register, LIV-11 + GOV-02)
+ed88e6a feat(01-01): add R20 (analyst abandonment, Showstopper 25) to risk register
+7379169 merge: 01-11 R19 CI lane -v flag fix (worktree-agent-abc696e8)
+8b8988c merge: 01-05 LIV-11 R19 keepalive installer (worktree-agent-ae0f67e5)
+c7a4cae merge: 01-04 LIV-03 + GOV-03 step4b preconditions (worktree-agent-a30fe803)
+e433f8a merge: 01-03 GOV-01 9% precision withdrawal (worktree-agent-ae737a8a)
+7be6e49 merge: 01-02 GOV-04 framing correction (worktree-agent-ae28c1e2)
+458d95e docs(01-03): SUMMARY for GOV-01 9%% precision withdrawal plan
+878bea6 docs(01-05): SUMMARY -- complete keep-alive installer plan (LIV-11)
+24ea879 docs(01): KEEPALIVE-INSTALL-DEFERRED.md operator runbook (LIV-11)
+a014bd2 docs(01-04): plan 04 SUMMARY (Step 4B preconditions + LIV-03 + GOV-03)
+88a0270 feat(01): track artifacts/keepalive/ for daily keep-alive evidence (LIV-11)
+27d3408 docs(01-04): Step 4B preconditions + freshness gate contract (LIV-03 + GOV-03)
+9c52f24 docs(01-02): plan 01-02 SUMMARY (GOV-04 framing correction complete)
+d8bf597 feat(01): install_keepalive_task.ps1 (LIV-11, R19 root cause fix)
+72ef062 docs(01-02): GOV-04 prepend 2026-04-08 framing correction to 00-strategy.md
+4efe8cf feat(scripts): add freshness_watchdog.py for R19 (LIV-02)
+cff82ef docs(red-team-hybrid): R19 frozen-pipeline finding + lob-progress-eval rewrite
+
+Last 15 commits on main (most recent first)
+-------------------------------------------
+5715430 Merge pull request #144 from nikhillinit/docs/phase2-day4-day5-plans
+1907fdb docs(plans): track phase2 day4+5 plan files
+95cfb4b Merge pull request #143 from nikhillinit/phase2/instrumentation
+655be53 phase2 day5: gitignore + Phase 2 confidence-score vocabulary
+ce07a1c phase2 day5: test contract suite for router-config status writer
+5186a37 phase2 day5: guarded router-config status writer CLI
+b69ac2a phase2 day5: router-config status writer contract module
+9892201 Merge pull request #142 from nikhillinit/phase2/day4-calibration
+784200e phase2 day4: conformal recalibration script + 123-test contract suite
+daab672 phase2 day3: drop plan file (work shipped in 9204426)
+60b87d8 Merge pull request #141 from nikhillinit/phase2/day3-dashboards
+9204426 phase2 day3: strategy dashboard generator + 56-test contract suite
+3dd6b37 Merge pull request #140 from nikhillinit/phase2/hotfix-day2-5
+b855cfe fix: restrict recovery override to sync subcommand
+1daf6a8 phase2 day2.5: cover db_read_error + recovery_override gap
+
+
+Live-vs-backup DB counts and freshness
+--------------------------------------
+LIVE  : file=signals.db                                size=1.40 MB
+        signals=4    thesis_classifications=0
+        schema=26   max_created_at=2026-01-10T12:18:09.035890+00:00
+        max_detected_at=2026-01-10T12:18:09.019836
+
+BACKUP: file=signals.db.pre-step4b-promotion-20260404  size=9.30 MB
+        signals=612  thesis_classifications=2593
+        schema=53   max_created_at=2026-03-01T19:33:33.650304+00:00
+        max_detected_at=2026-03-01T11:05:28+00:00
+
+
+Schema constant (from storage.signal_store)
+-------------------------------------------
+storage.signal_store.CURRENT_SCHEMA_VERSION = 53
+
+
+API reachability (http://localhost:8000/api/v1/health)
+------------------------------------------------------
+NOT reachable: WinError 10061 — connection actively refused.
+=> --force NOT required. The forward restore must run without --force.
+
+
+Target sidecar status (signals.db family)
+-----------------------------------------
+signals.db      : present, size=1466368 bytes (1.40 MB)
+signals.db-wal  : PRESENT, size=0 bytes (empty WAL — checkpoint will resolve)
+signals.db-shm  : PRESENT, size=32768 bytes
+=> restore_db._ensure_no_target_sidecars will PRAGMA wal_checkpoint(TRUNCATE)
+   then unlink. Empty WAL + no other writer (API down) => safe to checkpoint.
+
+
+Get-ScheduledTask -TaskName HarmonicKeepAlive
+---------------------------------------------
+TASK NOT REGISTERED
+=> Step 7 installer must run later in this session.
+
+
+artifacts/keepalive/ contents
+-----------------------------
+artifacts/keepalive/.gitkeep
+=> No prior daily JSON artifacts exist. Step 7 -TestRun must produce
+   the first one.
+
+artifacts/regret-check/ contents (pre-existing)
+-----------------------------------------------
+step4b-baseline-2026-04-05/
+step4b-repair-2026-04-05/
+=> No existing "step4b-postponed-*" directory; Step 6 will create one.
+
+
+Watchdog #1 — default 36h threshold (operational liveness gate)
+---------------------------------------------------------------
+Command: python scripts/red-team-hybrid/freshness_watchdog.py --json
+Exit code: 1 (FAIL)
+
+{
+  "checked_at": "2026-04-29T07:50:11.097529+00:00",
+  "threshold_hours": 36,
+  "exit_code": 1,
+  "status": "FAIL",
+  "collectors": [
+    {
+      "source_api": "arxiv",
+      "category": "operational",
+      "last_created": null,
+      "age_hours": null,
+      "status": "MISSING"
+    },
+    {
+      "source_api": "github",
+      "category": "informational",
+      "last_created": "2026-01-10T12:18:09.019836+00:00",
+      "age_hours": 2611.53,
+      "status": "UNKNOWN"
+    },
+    {
+      "source_api": "hacker_news",
+      "category": "operational",
+      "last_created": null,
+      "age_hours": null,
+      "status": "MISSING"
+    },
+    {
+      "source_api": "news_api",
+      "category": "operational",
+      "last_created": null,
+      "age_hours": null,
+      "status": "MISSING"
+    },
+    {
+      "source_api": "product_hunt",
+      "category": "informational",
+      "last_created": "2026-01-10T12:18:09.035890+00:00",
+      "age_hours": 2611.53,
+      "status": "UNKNOWN"
+    },
+    {
+      "source_api": "rss_feeds",
+      "category": "operational",
+      "last_created": null,
+      "age_hours": null,
+      "status": "MISSING"
+    }
+  ],
+  "failures": [
+    "arxiv: no signals in DB (operational collector)",
+    "hacker_news: no signals in DB (operational collector)",
+    "news_api: no signals in DB (operational collector)",
+    "rss_feeds: no signals in DB (operational collector)"
+  ]
+}
+
+
+Watchdog #2 — 120h threshold (Step 4B regret-check freshness)
+-------------------------------------------------------------
+Command: python scripts/red-team-hybrid/freshness_watchdog.py --json --threshold-hours 120
+Exit code: 1 (FAIL)
+
+{
+  "checked_at": "2026-04-29T07:50:12.668069+00:00",
+  "threshold_hours": 120,
+  "exit_code": 1,
+  "status": "FAIL",
+  "collectors": [
+    {
+      "source_api": "arxiv",
+      "category": "operational",
+      "last_created": null,
+      "age_hours": null,
+      "status": "MISSING"
+    },
+    {
+      "source_api": "github",
+      "category": "informational",
+      "last_created": "2026-01-10T12:18:09.019836+00:00",
+      "age_hours": 2611.53,
+      "status": "UNKNOWN"
+    },
+    {
+      "source_api": "hacker_news",
+      "category": "operational",
+      "last_created": null,
+      "age_hours": null,
+      "status": "MISSING"
+    },
+    {
+      "source_api": "news_api",
+      "category": "operational",
+      "last_created": null,
+      "age_hours": null,
+      "status": "MISSING"
+    },
+    {
+      "source_api": "product_hunt",
+      "category": "informational",
+      "last_created": "2026-01-10T12:18:09.035890+00:00",
+      "age_hours": 2611.53,
+      "status": "UNKNOWN"
+    },
+    {
+      "source_api": "rss_feeds",
+      "category": "operational",
+      "last_created": null,
+      "age_hours": null,
+      "status": "MISSING"
+    }
+  ],
+  "failures": [
+    "arxiv: no signals in DB (operational collector)",
+    "hacker_news: no signals in DB (operational collector)",
+    "news_api: no signals in DB (operational collector)",
+    "rss_feeds: no signals in DB (operational collector)"
+  ]
+}
+
+
+Skip-restore condition table (per PLAN §"Skip-restore branch")
+--------------------------------------------------------------
+Condition                                          | Required  | Observed | Result
+---------------------------------------------------|-----------|----------|--------
+Live DB != 4 signals / 0 thesis_classifications    | TRUE      | 4 / 0    | FAIL
+Live schema == storage.signal_store.CURRENT_SCHEMA |           |          |
+   _VERSION (currently 53)                         | TRUE      | 26       | FAIL
+Watchdog --json (36h) exits 0                      | TRUE      | exit 1   | FAIL
+Watchdog --json --threshold-hours 120 exits 0      | TRUE      | exit 1   | FAIL
+
+ALL FOUR conditions fail. Skip-restore branch CANNOT fire.
+=> Step 2 proposal: RESTORE branch.
+
+
+End of preflight snapshot.
