@@ -81,10 +81,9 @@ These scripts contain INSERT/UPDATE/DELETE/COMMIT or executescript/executemany p
 | `scripts/backfill_thesis_provenance.py` | INSERT/UPDATE/DELETE pattern | **E (uncovered, mutating)** |
 | `scripts/backfill_hunter_company_names.py` | INSERT/UPDATE/DELETE pattern | **E (uncovered, mutating)** |
 | `scripts/seed_tier_c_domains.py` | INSERT/UPDATE/DELETE pattern | **E (uncovered, mutating)** |
-| `scripts/seed_job_posting_domains.py` | INSERT/UPDATE/DELETE pattern | **E (uncovered, mutating)** |
 | `scripts/gc_thin_files.py` | INSERT/UPDATE/DELETE pattern | **E (uncovered, mutating)** |
 
-After PR #155, PR #157, PR #158, and F.3.2, the remaining uncovered scripts from this set are `scripts/backfill_hunter_company_names.py`, `scripts/seed_tier_c_domains.py`, `scripts/seed_job_posting_domains.py`, and `scripts/gc_thin_files.py`. `scripts/cleanup_publisher_keys.py` was removed from this uncovered set after PR #155 (`4f159b8`) added the F.3.0 hardening.
+F.3.3 rechecked `scripts/seed_job_posting_domains.py` and found only SELECT queries plus stdout formatting; it is a read-only selector/export helper, not a live mutator. After PR #155, PR #157, PR #158, F.3.2, and F.3.3, the remaining uncovered scripts from this set are `scripts/backfill_hunter_company_names.py` and `scripts/gc_thin_files.py`. `scripts/cleanup_publisher_keys.py` was removed from this uncovered set after PR #155 (`4f159b8`) added the F.3.0 hardening.
 
 ## 8. F.1.1 verification of ambiguous candidates (completed 2026-05-10)
 
@@ -117,6 +116,7 @@ All 18 candidates were grep'd for `INSERT |UPDATE |DELETE |conn\.commit|executes
 | `scripts/evaluate_phase0_gate.py` | 0 mutation matches |
 | `scripts/convergence_diagnostic.py` | 0 mutation matches |
 | `scripts/convergence_kpi.py` | 0 mutation matches |
+| `scripts/seed_job_posting_domains.py` | F.3.3 recheck confirmed SELECT-only reads from `signals` / `company_files`, output formatting only, and regression coverage proving no DB mutation or ledger writes. |
 
 ## 9. Out of scope
 
@@ -128,11 +128,11 @@ All 18 candidates were grep'd for `INSERT |UPDATE |DELETE |conn\.commit|executes
 
 | Tier | Count | Names |
 |---|---|---|
-| A — covered | 2 | `backup_db.py`, `cleanup_publisher_keys.py` (PR #155 / `4f159b8`) |
+| A — covered | 3 | `backup_db.py`, `cleanup_publisher_keys.py` (PR #155 / `4f159b8`), `seed_tier_c_domains.py` (F.3.3) |
 | B — partial (lock + ledger + tests, missing structured exception or error-path ledger row) | 4 | `restore_db.py`, `db_maintenance.py`, `e2e_batch_approve.py`, `run_backfill.py` |
-| C — read-only (no mutation; pattern not required) | 17 | `e2e_batch_check.py`, `export_labeling_review.py`, plus 15 verified in §8.2 |
+| C — read-only (no mutation; pattern not required) | 18 | `e2e_batch_check.py`, `export_labeling_review.py`, plus 16 verified in §8.2 including `seed_job_posting_domains.py` |
 | D — meta tool | 1 | `db_ops_note.py` |
-| E — uncovered, confirmed live-mutating | **4** | `backfill_hunter_company_names.py`, `seed_tier_c_domains.py`, `seed_job_posting_domains.py`, `gc_thin_files.py` after PR #158 and F.3.2 |
+| E — uncovered, confirmed live-mutating | **2** | `backfill_hunter_company_names.py`, `gc_thin_files.py` after PR #158, F.3.2, and F.3.3 |
 | Source-read / scratch-mutating | 1 | `spc_override_decision.py` |
 | Ambiguous | 0 | F.1.1 closed the set |
 
@@ -142,12 +142,12 @@ All 18 candidates were grep'd for `INSERT |UPDATE |DELETE |conn\.commit|executes
 
 **F.2 - COMPLETE via PR #154 (`1beac36`).** The four former Tier-B scripts now have `DBToolError`-based structured exceptions and error-path ledger rows.
 
-**F.3 - true live-mutator PRs (4 remaining uncovered scripts after PR #158 and F.3.2).** Recommended chunking, ordered by live-data blast radius:
+**F.3 - true live-mutator PRs (2 remaining uncovered scripts after PR #158, F.3.2, and F.3.3).** Recommended chunking, ordered by live-data blast radius:
 
 - **F.3.0 - COMPLETE via PR #155 (`4f159b8`).** `cleanup_publisher_keys.py` is no longer part of the uncovered Tier E set.
 - **F.3.1 - COMPLETE via PR #157 (`df9bf1d`) and PR #158.** PR #157 completed the async wrapper pair: `rehydrate_canonical_keys_v2.py` and `backfill_evidence_family.py` via `run_pipeline.py` wrappers. PR #158 completed the standalone trio: `backfill_company_extraction.py`, `backfill_evidence_keys.py`, and `backfill_thesis_provenance.py`, and standardized `PRAGMA data_version` preflight evidence across the full F.3.1 direct-rewrite set.
 - **F.3.2 - COMPLETE.** `backfill_company_files.py`, `build_case_law_corpus.py`, and `build_exemplar_library.py` now have explicit write gates, `PRAGMA data_version` preflight evidence, commit-mode `DBToolLock`, success/error/lock ledger rows, report envelopes, typed `DBToolError` evidence, and subprocess tests. The corpus builder records staged artifact paths and cleanup evidence because its vectorizer files cannot be made atomically transactional with SQLite rows.
-- **F.3.3 - seed scripts:** `seed_tier_c_domains.py`, `seed_job_posting_domains.py`.
+- **F.3.3 - COMPLETE.** `seed_tier_c_domains.py` now has explicit safe-default dry-run behavior, init-time `PRAGMA data_version` evidence, commit-mode `DBToolLock`, success/error/lock ledger rows, report envelopes, typed `DBToolError` evidence, and subprocess tests. `seed_job_posting_domains.py` was rechecked and reclassified as read-only with regression proof; no mutator machinery was added.
 - **F.3.4 - cleanup/GC and hunter identity scripts:** `gc_thin_files.py`, `backfill_hunter_company_names.py`.
 
 Each chunk needs subprocess CLI tests using the `test_db_hardening_priority_scripts.py` pattern.
@@ -160,7 +160,7 @@ Each chunk needs subprocess CLI tests using the `test_db_hardening_priority_scri
 
 1. **Test parity for Tier C scripts.** `e2e_batch_check.py` and `export_labeling_review.py` are read-only but on the Tranche-1 list. Decision needed: do they need ledger entries to record reads (audit trail), or is read-only operation sufficient evidence of non-mutation? Recommend: keep as Tier C, add a one-line runbook note that read-only scripts on Tranche-1 are exempt from lock/ledger by design.
 2. **Storage-layer pipeline scripts.** Scripts that go through `SignalStore` (e.g., `run_backfill.py`) inherit the storage layer's connection management. The `DBToolLock` here is at a higher abstraction (process-level coordination) than SQLite's busy-timeout. Both are needed; verify the four Tier-B scripts don't accidentally bypass the storage layer's transaction discipline when adding the structured exception path.
-3. **Ambiguous-set verification CLOSED 2026-05-10 (F.1.1).** §8 originally listed 18 ambiguous candidates. F.1.1 grep'd all 18: 15 confirmed read-only (Tier C, §8.2), 2 confirmed live-mutating and promoted to Tier E (§8.1), and `spc_override_decision.py` confirmed source-read/scratch-mutating. After PR #155 (`4f159b8`), PR #157 (`df9bf1d`), PR #158, and F.3.2, the remaining uncovered Tier E count is 4. F.2 + F.3 scope is bounded; cap at 4 weeks of intermittent work and reassess at week 2.
+3. **Ambiguous-set verification CLOSED 2026-05-10 (F.1.1).** §8 originally listed 18 ambiguous candidates. F.1.1 grep'd all 18: 15 confirmed read-only (Tier C, §8.2), 2 confirmed live-mutating and promoted to Tier E (§8.1), and `spc_override_decision.py` confirmed source-read/scratch-mutating. F.3.3 reclassified `seed_job_posting_domains.py` as read-only and hardened `seed_tier_c_domains.py`; after PR #155 (`4f159b8`), PR #157 (`df9bf1d`), PR #158, F.3.2, and F.3.3, the remaining uncovered Tier E count is 2. F.2 + F.3 scope is bounded; cap at 4 weeks of intermittent work and reassess at week 2.
 4. **The keepalive branch (`chore/post-r19-keepalive-may-2-5`) is forked at R19 close (`51d379d`)** and missing both PR #150 and PR #153 merges. F.2/F.3 work should branch from current `main` (`8111d19`), not from this keepalive branch.
 
 ## 13. Verification commands used
@@ -181,12 +181,11 @@ grep -nE 'def test_|tool_name' tests/scripts/test_db_hardening_priority_scripts.
 
 ## 14. Status
 
-**F.1 COMPLETE (read-only audit).** **F.1.1 COMPLETE (ambiguous-set verified, 2026-05-10).** **F.2 COMPLETE via PR #154 (`1beac36`).** **F.3.0 COMPLETE via PR #155 (`4f159b8`).** **F.3.1 COMPLETE via PR #157 (`df9bf1d`) and PR #158.** **F.3.2 COMPLETE.** The former Tier-B scripts now have `DBToolError`-based structured exceptions and error-path ledger rows, `cleanup_publisher_keys.py` is no longer in the uncovered Tier E set, the F.3.1 direct-rewrite scripts have lock/ledger/report coverage, and the SignalStore corpus/build scripts now have explicit commit gates plus subprocess success/error/lock coverage.
+**F.1 COMPLETE (read-only audit).** **F.1.1 COMPLETE (ambiguous-set verified, 2026-05-10).** **F.2 COMPLETE via PR #154 (`1beac36`).** **F.3.0 COMPLETE via PR #155 (`4f159b8`).** **F.3.1 COMPLETE via PR #157 (`df9bf1d`) and PR #158.** **F.3.2 COMPLETE.** **F.3.3 COMPLETE.** The former Tier-B scripts now have `DBToolError`-based structured exceptions and error-path ledger rows, `cleanup_publisher_keys.py` is no longer in the uncovered Tier E set, the F.3.1 direct-rewrite scripts have lock/ledger/report coverage, the SignalStore corpus/build scripts now have explicit commit gates plus subprocess success/error/lock coverage, `seed_tier_c_domains.py` has the F.3 DB-tool contract, and `seed_job_posting_domains.py` is reclassified as read-only.
 
 Remaining Q-26 gate work:
 
 - F.2.5: correct durable docs/runbook drift after F.2 and reclassify `spc_override_decision.py`.
-- F.3.3: harden the seed scripts (`seed_tier_c_domains.py`, `seed_job_posting_domains.py`).
 - F.3.4: harden cleanup/GC and hunter identity scripts (`gc_thin_files.py`, `backfill_hunter_company_names.py`).
 - F.4: runbook tranche update after F.3 slices are finished.
 - F.5: ADR-043 write after F.2.5 + F.3 + F.4 close.
