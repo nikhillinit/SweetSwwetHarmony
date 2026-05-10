@@ -343,6 +343,40 @@ class TestSourceCompanyFiles:
         assert result == []
 
 
+class TestReadOnlyRegression:
+    """Domain selection must remain read-only."""
+
+    def test_seed_domains_does_not_mutate_source_tables(self, test_db):
+        now = datetime.now(timezone.utc).isoformat()
+        _insert_signal(test_db, "domain:freshly.com", created_at=now)
+        _insert_signal(test_db, "domain:olipop.com", created_at=now)
+        _insert_company_file(test_db, "huel.com", metadata={"manual_seed": True})
+
+        conn = sqlite3.connect(test_db)
+        try:
+            before_signals = conn.execute("SELECT COUNT(*) FROM signals").fetchone()[0]
+            before_company_files = conn.execute(
+                "SELECT COUNT(*) FROM company_files"
+            ).fetchone()[0]
+        finally:
+            conn.close()
+
+        result = seed_domains(test_db, days=90, top=10, output_format="list")
+
+        conn = sqlite3.connect(test_db)
+        try:
+            after_signals = conn.execute("SELECT COUNT(*) FROM signals").fetchone()[0]
+            after_company_files = conn.execute(
+                "SELECT COUNT(*) FROM company_files"
+            ).fetchone()[0]
+        finally:
+            conn.close()
+
+        assert result == ["freshly.com", "olipop.com"]
+        assert after_signals == before_signals
+        assert after_company_files == before_company_files
+
+
 # ============================================================================
 # Backward-compat symbol tests
 # ============================================================================
