@@ -23,11 +23,11 @@ async def db_with_signals(tmp_path):
 
     for i, (st, sa, ck, raw) in enumerate([
         ("github_spike", "github", "domain:acme.ai",
-         {"company_url": "https://acme.ai", "company_name": "Acme"}),
+         {"company_name": "Acme"}),
         ("hiring_signal", "job_postings", "name_loc:beta-corp",
          {"company_name": "Beta Corp"}),
         ("news_mention", "news_api", "domain:gamma.io",
-         {"company_url": "https://gamma.io", "company_name": "Gamma"}),
+         {"company_name": "Gamma"}),
     ]):
         await store.save_signal(
             signal_type=st, source_api=sa, canonical_key=ck,
@@ -100,3 +100,49 @@ async def test_fanin_gate(db_with_signals):
     result = await run(db_path=db_with_signals, dry_run=False, max_fanin=0)
 
     assert len(result.get("fanin_violations", [])) > 0
+
+
+@pytest.mark.asyncio
+async def test_commit_fanin_gate_rolls_back_tentative_writes(tmp_path):
+    """Commit mode rolls back if fan-in validation fails."""
+    from scripts.rehydrate_canonical_keys_v2 import run
+
+    db_path = str(tmp_path / "rehydrate_fanin_rollback.db")
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        """
+        CREATE TABLE signals (
+            id INTEGER PRIMARY KEY,
+            canonical_key_v2 TEXT,
+            signal_type TEXT,
+            source_api TEXT,
+            canonical_key TEXT,
+            raw_data TEXT
+        )
+        """
+    )
+    conn.executemany(
+        """
+        INSERT INTO signals (
+            id, canonical_key_v2, signal_type, source_api, canonical_key, raw_data
+        ) VALUES (?, NULL, 'github_spike', 'github', ?, ?)
+        """,
+        [
+            (1, "name_loc:same-company", '{"company_name": "Same Company"}'),
+            (2, "name_loc:same-company", '{"company_name": "Same Company"}'),
+            (3, "name_loc:same-company", '{"company_name": "Same Company"}'),
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+    result = await run(db_path=db_path, dry_run=False, chunk_size=2, max_fanin=1)
+
+    assert len(result.get("fanin_violations", [])) > 0
+
+    conn = sqlite3.connect(db_path)
+    non_null = conn.execute(
+        "SELECT COUNT(*) FROM signals WHERE canonical_key_v2 IS NOT NULL"
+    ).fetchone()[0]
+    conn.close()
+    assert non_null == 0, "Fan-in failure should roll back all tentative writes"
