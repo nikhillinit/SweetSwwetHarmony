@@ -16,7 +16,13 @@ import pytest
 
 sys.path.insert(0, ".")
 
-from scripts.seed_tier_c_domains import seed_tier_c, _load_domains, _merge_metadata, _is_filtered
+from scripts.seed_tier_c_domains import (
+    SeedTierCDomainsError,
+    seed_tier_c,
+    _load_domains,
+    _merge_metadata,
+    _is_filtered,
+)
 from utils.canonical_keys import derive_company_id
 
 
@@ -396,14 +402,23 @@ class TestErrorHandling:
     """Error cases."""
 
     def test_invalid_status_raises(self, test_db, single_domain_file):
-        """Invalid status raises ValueError."""
-        with pytest.raises(ValueError, match="Invalid status"):
+        """Invalid status raises structured DB-tool evidence."""
+        with pytest.raises(SeedTierCDomainsError, match="Invalid status") as excinfo:
             seed_tier_c(test_db, single_domain_file, commit=True, status="active")
+        evidence = excinfo.value.partial_evidence
+        assert evidence["phase"] == "validate_status"
+        assert evidence["commit_requested"] is True
+        assert evidence["transaction_started"] is False
 
     def test_missing_domain_file_raises(self, test_db):
-        """Missing domain file raises FileNotFoundError."""
-        with pytest.raises(FileNotFoundError):
+        """Missing domain file raises structured DB-tool evidence."""
+        with pytest.raises(SeedTierCDomainsError, match="load_domains") as excinfo:
             seed_tier_c(test_db, "/nonexistent/domains.txt", commit=True)
+        evidence = excinfo.value.partial_evidence
+        assert evidence["phase"] == "load_domains"
+        assert evidence["commit_requested"] is True
+        assert evidence["transaction_started"] is False
+        assert isinstance(evidence["preflight_data_version"], int)
 
     def test_empty_domain_file(self, test_db, tmp_path):
         """Empty domain file returns zero counts."""
@@ -411,6 +426,65 @@ class TestErrorHandling:
         path.write_text("")
         result = seed_tier_c(test_db, str(path), commit=True)
         assert result["total"] == 0
+
+    def test_dry_run_db_failure_preserves_dry_run_evidence(self, tmp_path):
+        """Dry-run DB errors stay typed as dry-run failures."""
+        db_path = tmp_path / "missing_company_files.db"
+        conn = sqlite3.connect(db_path)
+        conn.close()
+        domains_path = tmp_path / "domains.txt"
+        domains_path.write_text("freshly.com\n")
+
+        with pytest.raises(SeedTierCDomainsError, match="dry_run_select") as excinfo:
+            seed_tier_c(
+                str(db_path),
+                str(domains_path),
+                commit=False,
+                preflight_data_version=11,
+            )
+
+        evidence = excinfo.value.partial_evidence
+        assert evidence["phase"] == "dry_run_select"
+        assert evidence["commit_requested"] is False
+        assert evidence["dry_run"] is True
+        assert evidence["transaction_started"] is False
+        assert evidence["preflight_data_version"] == 11
+
+    def test_commit_failure_raises_structured_db_tool_error(self, test_db, tmp_path):
+        """Direct commit callers receive typed partial-evidence failures."""
+        path = tmp_path / "domains.txt"
+        path.write_text("freshly.com\nolipop.com\n")
+        conn = sqlite3.connect(test_db)
+        try:
+            conn.execute(
+                """
+                CREATE TRIGGER fail_seed_tier_c_insert
+                BEFORE INSERT ON company_files
+                WHEN NEW.canonical_key = 'domain:olipop.com'
+                BEGIN
+                    SELECT RAISE(ABORT, 'forced tier c seed failure');
+                END
+                """
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        with pytest.raises(SeedTierCDomainsError) as excinfo:
+            seed_tier_c(test_db, str(path), commit=True, preflight_data_version=7)
+
+        evidence = excinfo.value.partial_evidence
+        assert evidence["phase"] == "insert_row"
+        assert evidence["preflight_data_version"] == 7
+        assert evidence["rows_inserted_attempted"] == 2
+        assert evidence["transaction_started"] is True
+
+        conn = sqlite3.connect(test_db)
+        try:
+            count = conn.execute("SELECT COUNT(*) FROM company_files").fetchone()[0]
+        finally:
+            conn.close()
+        assert count == 0
 
 
 # ============================================================================
