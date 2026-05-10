@@ -39,8 +39,12 @@ _LABEL_INSERT = (
 
 
 @pytest_asyncio.fixture
-async def store_with_labels():
+async def store_with_labels(tmp_path, monkeypatch):
     """Fresh store with labeled signals for corpus building."""
+    monkeypatch.setattr(
+        "scripts.build_case_law_corpus.VECTORIZER_DIR",
+        str(tmp_path / "vectorizers"),
+    )
     fd, path = tempfile.mkstemp(suffix=".db")
     os.close(fd)
     store = SignalStore(db_path=path)
