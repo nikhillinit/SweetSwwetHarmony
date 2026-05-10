@@ -2,15 +2,23 @@
 
 from __future__ import annotations
 
+import json
+import os
 import sqlite3
+import subprocess
 import sys
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from scripts.backup_db import create_backup, _rotate_backups, BACKUP_PREFIX, BACKUP_SUFFIX
+from scripts.backup_db import BACKUP_PREFIX, BACKUP_SUFFIX, _rotate_backups, create_backup
 from scripts.restore_db import restore_backup
+from utils.db_tool_lock import DBToolLock
+
+
+ROOT = Path(__file__).resolve().parents[2]
+PYTHON = sys.executable
 
 
 # ---------------------------------------------------------------------------
@@ -45,6 +53,30 @@ def _corrupt_file(path: Path) -> None:
     path.write_bytes(b"CORRUPT" * 100)
 
 
+def _run_backup_script(
+    *args: str,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    merged_env = os.environ.copy()
+    if env:
+        merged_env.update(env)
+    return subprocess.run(
+        [PYTHON, str(ROOT / "scripts" / "backup_db.py"), *args],
+        capture_output=True,
+        text=True,
+        cwd=ROOT,
+        env=merged_env,
+    )
+
+
+def _read_ledger(path: Path) -> list[dict]:
+    return [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Backup tests
 # ---------------------------------------------------------------------------
@@ -64,6 +96,12 @@ class TestCreateBackup:
     def test_source_not_found(self, tmp_path):
         with pytest.raises(FileNotFoundError):
             create_backup(tmp_path / "no-such.db", tmp_path / "backups")
+
+    def test_rejects_invalid_retain(self, tmp_path):
+        db = _create_test_db(tmp_path / "signals.db")
+
+        with pytest.raises(ValueError, match="retain must be at least 1"):
+            create_backup(db, tmp_path / "backups", retain=0)
 
     def test_creates_output_dir(self, tmp_path):
         db = _create_test_db(tmp_path / "signals.db")
@@ -118,6 +156,114 @@ class TestCreateBackup:
 
         backups = list(out_dir.glob(f"{BACKUP_PREFIX}*{BACKUP_SUFFIX}"))
         assert len(backups) == 2
+
+
+class TestBackupMain:
+    def test_records_success_ledger_with_backup_path_retention_and_integrity_result(self, tmp_path):
+        db = _create_test_db(tmp_path / "signals.db")
+        out_dir = tmp_path / "backups"
+        ledger_path = tmp_path / "ledger.jsonl"
+
+        result = _run_backup_script(
+            "--db-path",
+            str(db),
+            "--out-dir",
+            str(out_dir),
+            "--retain",
+            "3",
+            env={"DB_OPS_LEDGER_PATH": str(ledger_path)},
+        )
+
+        assert result.returncode == 0
+        backups = list(out_dir.glob(f"{BACKUP_PREFIX}*{BACKUP_SUFFIX}"))
+        assert len(backups) == 1
+
+        entries = _read_ledger(ledger_path)
+        success = next(
+            entry
+            for entry in entries
+            if entry["tool_name"] == "backup_db" and entry["status"] == "success"
+        )
+        details = success["details"]
+        assert details["backup_path"] == str(backups[0])
+        assert details["retain"] == 3
+        assert details["retained_count"] == 1
+        assert details["integrity_check"] == "ok"
+
+    def test_records_lock_blocked_ledger_when_db_tool_lock_is_held(self, tmp_path):
+        db = _create_test_db(tmp_path / "signals.db")
+        ledger_path = tmp_path / "ledger.jsonl"
+
+        lock = DBToolLock(db, tool_name="test-holder")
+        assert lock.acquire(timeout_seconds=0)
+        try:
+            result = _run_backup_script(
+                "--db-path",
+                str(db),
+                "--out-dir",
+                str(tmp_path / "backups"),
+                env={"DB_OPS_LEDGER_PATH": str(ledger_path)},
+            )
+        finally:
+            lock.release()
+
+        assert result.returncode == 1
+        assert not (tmp_path / "backups").exists()
+        entries = _read_ledger(ledger_path)
+        assert any(
+            entry["tool_name"] == "backup_db" and entry["status"] == "lock_blocked"
+            for entry in entries
+        )
+
+    def test_records_error_ledger_when_source_database_is_missing(self, tmp_path):
+        ledger_path = tmp_path / "ledger.jsonl"
+        missing_db = tmp_path / "missing.db"
+
+        result = _run_backup_script(
+            "--db-path",
+            str(missing_db),
+            "--out-dir",
+            str(tmp_path / "backups"),
+            env={"DB_OPS_LEDGER_PATH": str(ledger_path)},
+        )
+
+        assert result.returncode == 1
+        assert "Source database not found" in result.stderr
+        entries = _read_ledger(ledger_path)
+        error = next(
+            entry
+            for entry in entries
+            if entry["tool_name"] == "backup_db" and entry["status"] == "error"
+        )
+        assert error["details"]["backup_path"] is None
+        assert error["details"]["integrity_check"] is None
+        assert "Source database not found" in error["details"]["error"]
+
+    def test_records_error_ledger_when_retain_is_invalid(self, tmp_path):
+        db = _create_test_db(tmp_path / "signals.db")
+        ledger_path = tmp_path / "ledger.jsonl"
+
+        result = _run_backup_script(
+            "--db-path",
+            str(db),
+            "--out-dir",
+            str(tmp_path / "backups"),
+            "--retain",
+            "0",
+            env={"DB_OPS_LEDGER_PATH": str(ledger_path)},
+        )
+
+        assert result.returncode == 1
+        assert "retain must be at least 1" in result.stderr
+        assert not (tmp_path / "backups").exists()
+        entries = _read_ledger(ledger_path)
+        error = next(
+            entry
+            for entry in entries
+            if entry["tool_name"] == "backup_db" and entry["status"] == "error"
+        )
+        assert error["details"]["retain"] == 0
+        assert error["details"]["error"] == "retain must be at least 1"
 
 
 # ---------------------------------------------------------------------------

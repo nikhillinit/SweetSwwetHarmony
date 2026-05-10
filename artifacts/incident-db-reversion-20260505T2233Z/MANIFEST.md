@@ -12,6 +12,7 @@ Repo-facing files:
 - `SHA256SUMS.redacted.txt` - hashes for repo-safe evidence surfaces and DB identity proof.
 - `artifact-index.redacted.md` - repo-safe size, mtime, collected-copy mtime, and SHA-256 index.
 - `attribution-report.md` - initial attribution matrix and current classification.
+- `attribution-report-addendum.md` - Phase 2A residual narrowing: 32-ms triple-mtime cluster + primary-source-attested >=413-row data-loss disclosure.
 - `restore-candidates.local.md` - quarantine-only local restore-candidate validation summary.
 - `restore-candidates.notion.md` - read-only Notion mirror inventory for bounded delta/provenance analysis.
 - `incident-issue-body.md` - hypothesis-first GitHub issue body.
