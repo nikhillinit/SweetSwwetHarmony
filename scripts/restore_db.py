@@ -22,11 +22,38 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from utils.db_path_helper import add_db_path_args, resolve_db_path, resolve_db_path_env
+from utils.db_tool_errors import DBToolError
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_API_URL = "http://localhost:8000/api/v1/health"
 PRE_RESTORE_PREFIX = "pre-restore-"
+
+
+class RestoreError(DBToolError):
+    """Restore failure with partial evidence for DB ops ledger rows."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        pre_restore_backup: Path | None = None,
+        sidecar_state: dict | list | str | None = None,
+        integrity_check: str | None = None,
+    ) -> None:
+        super().__init__(
+            message,
+            partial_evidence={
+                "pre_restore_backup": (
+                    str(pre_restore_backup) if pre_restore_backup else None
+                ),
+                "sidecar_state": sidecar_state,
+                "integrity_check": integrity_check,
+            },
+        )
+        self.pre_restore_backup = pre_restore_backup
+        self.sidecar_state = sidecar_state
+        self.integrity_check = integrity_check
 
 
 def _sidecar_paths(db_path: Path) -> tuple[Path, Path]:
@@ -44,6 +71,7 @@ def _ensure_no_target_sidecars(db_path: Path) -> None:
         return
 
     sidecars = ", ".join(path.name for path in present)
+    sidecar_state: dict = {"present": [path.name for path in present]}
     try:
         conn = sqlite3.connect(str(db_path), timeout=5)
         try:
@@ -52,18 +80,20 @@ def _ensure_no_target_sidecars(db_path: Path) -> None:
         finally:
             conn.close()
     except Exception as exc:
-        raise RuntimeError(
+        raise RestoreError(
             "Target DB sidecars are present "
             f"({sidecars}) and could not be checkpointed safely: {exc}. "
-            "Stop writers or restore into a fresh target path first."
+            "Stop writers or restore into a fresh target path first.",
+            sidecar_state={**sidecar_state, "checkpoint_error": str(exc)},
         ) from exc
 
     busy = row[0] if row and len(row) >= 1 else 1
     if busy:
-        raise RuntimeError(
+        raise RestoreError(
             "Target DB sidecars are present "
             f"({sidecars}) and appear to be owned by an active writer. "
-            "Stop writers or restore into a fresh target path first."
+            "Stop writers or restore into a fresh target path first.",
+            sidecar_state={**sidecar_state, "wal_checkpoint_busy": busy},
         )
 
     for path in present:
@@ -71,8 +101,10 @@ def _ensure_no_target_sidecars(db_path: Path) -> None:
             try:
                 path.unlink()
             except OSError as exc:
-                raise RuntimeError(
-                    f"Target DB sidecar {path.name} could not be removed after checkpoint: {exc}"
+                raise RestoreError(
+                    f"Target DB sidecar {path.name} could not be removed "
+                    f"after checkpoint: {exc}",
+                    sidecar_state={**sidecar_state, "unlink_error": str(exc)},
                 ) from exc
 
 
@@ -148,12 +180,14 @@ def restore_backup(
         try:
             result = check_conn.execute("PRAGMA integrity_check").fetchone()
         except sqlite3.DatabaseError as exc:
-            raise RuntimeError(
-                f"Backup integrity check failed: {exc}"
+            raise RestoreError(
+                f"Backup integrity check failed: {exc}",
+                integrity_check=str(exc),
             ) from exc
         if result[0] != "ok":
-            raise RuntimeError(
-                f"Backup integrity check failed: {result[0]}"
+            raise RestoreError(
+                f"Backup integrity check failed: {result[0]}",
+                integrity_check=result[0],
             )
     finally:
         check_conn.close()
@@ -161,7 +195,7 @@ def restore_backup(
     # API reachability guard
     if not force:
         if _check_api_reachable(api_url):
-            raise RuntimeError(
+            raise RestoreError(
                 "API server is running. Stop it before restoring. "
                 "Use --force to override."
             )
@@ -193,8 +227,10 @@ def restore_backup(
     try:
         result = post_conn.execute("PRAGMA integrity_check").fetchone()
         if result[0] != "ok":
-            raise RuntimeError(
-                f"Post-restore integrity check failed: {result[0]}"
+            raise RestoreError(
+                f"Post-restore integrity check failed: {result[0]}",
+                pre_restore_backup=pre_restore_path,
+                integrity_check=result[0],
             )
     finally:
         post_conn.close()
@@ -273,6 +309,20 @@ def main(argv: list[str] | None = None) -> int:
         )
         print(f"Restore complete. Pre-restore backup: {pre_restore}")
         return 0
+    except RestoreError as e:
+        append_db_ops_ledger(
+            tool_name="restore_db",
+            db_path=resolved_db_path,
+            action="restore_backup",
+            status="error",
+            details={
+                **e.partial_evidence,
+                "backup_file": args.backup_file,
+                "error": str(e),
+            },
+        )
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 1
     except Exception as e:
         append_db_ops_ledger(
             tool_name="restore_db",
