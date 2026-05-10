@@ -22,15 +22,46 @@ import json
 import logging
 import sqlite3
 import sys
+from pathlib import Path
 from urllib.parse import urlparse
 
 sys.path.insert(0, ".")
 
-from utils.company_name_extractor import is_blocked_domain
 from utils.canonical_keys import normalize_domain, NEWS_PUBLISHER_DOMAINS
+from utils.company_name_extractor import is_blocked_domain
+from utils.db_ops_ledger import append_db_ops_ledger
+from utils.db_tool_errors import DBToolError
+from utils.db_tool_lock import DBToolLock
+
+LOCK_TIMEOUT_SECONDS = 5
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 logger = logging.getLogger(__name__)
+
+
+class CleanupPublisherKeysError(DBToolError):
+    """Publisher-key cleanup failure carrying rewrite-count evidence."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        signals_to_rewrite: int | None = None,
+        company_files_to_rewrite: int | None = None,
+        collisions: int | None = None,
+        manual_review: int | None = None,
+        phase: str | None = None,
+    ) -> None:
+        super().__init__(
+            message,
+            partial_evidence={
+                "signals_to_rewrite": signals_to_rewrite,
+                "company_files_to_rewrite": company_files_to_rewrite,
+                "collisions": collisions,
+                "manual_review": manual_review,
+                "phase": phase,
+            },
+        )
 
 
 def _slug(s: str) -> str:
@@ -84,161 +115,284 @@ def run_cleanup(db_path: str, apply: bool = False) -> dict:
 
     Returns summary dict with per-table change counts.
     """
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-
-    # Phase 1: Find all affected signals
-    rows = conn.execute(
-        "SELECT id, canonical_key, raw_data FROM signals WHERE canonical_key LIKE 'domain:%'"
-    ).fetchall()
-
-    changes = []  # (signal_id, old_key, new_key)
-    manual_review = []  # (signal_id, old_key, reason)
-
-    for row in rows:
-        old_key = row["canonical_key"]
-        if not _is_publisher_domain_key(old_key):
-            continue
-
-        new_key = _compute_new_key(row["raw_data"], old_key)
-        if not new_key:
-            manual_review.append((row["id"], old_key, "no company_name in raw_data"))
-            continue
-
-        changes.append((row["id"], old_key, new_key))
-
-    # Collect unique old_key → new_key mappings for company_files
-    key_mapping: dict[str, str] = {}
-    for _sid, old_key, new_key in changes:
-        if old_key not in key_mapping:
-            key_mapping[old_key] = new_key
-
-    # Find affected company_files
-    cf_changes = []
-    if key_mapping:
-        placeholders = ",".join("?" * len(key_mapping))
-        cf_rows = conn.execute(
-            f"SELECT id, canonical_key FROM company_files WHERE canonical_key IN ({placeholders})",
-            list(key_mapping.keys()),
-        ).fetchall()
-        for cf in cf_rows:
-            new_key = key_mapping.get(cf["canonical_key"])
-            if new_key:
-                cf_changes.append((cf["id"], cf["canonical_key"], new_key))
-
-    # Check for collisions (new key already exists in signals or company_files)
-    collision_count = 0
-    if key_mapping:
-        new_keys = list(set(key_mapping.values()))
-        placeholders = ",".join("?" * len(new_keys))
-        existing_signal_keys = {
-            r[0] for r in conn.execute(
-                f"SELECT DISTINCT canonical_key FROM signals WHERE canonical_key IN ({placeholders})",
-                new_keys,
-            ).fetchall()
-        }
-        existing_cf_keys = {
-            r[0] for r in conn.execute(
-                f"SELECT DISTINCT canonical_key FROM company_files WHERE canonical_key IN ({placeholders})",
-                new_keys,
-            ).fetchall()
-        }
-        collisions = existing_signal_keys | existing_cf_keys
-        # Filter out changes that would collide
-        filtered_changes = []
-        for sid, old_key, new_key in changes:
-            if new_key in collisions:
-                collision_count += 1
-                manual_review.append((sid, old_key, f"collision with existing {new_key}"))
-            else:
-                filtered_changes.append((sid, old_key, new_key))
-        changes = filtered_changes
-
-        # Also filter cf_changes
-        filtered_cf = []
-        for cfid, old_key, new_key in cf_changes:
-            if new_key not in collisions:
-                filtered_cf.append((cfid, old_key, new_key))
-        cf_changes = filtered_cf
-
-    summary = {
-        "signals_to_rewrite": len(changes),
-        "company_files_to_rewrite": len(cf_changes),
-        "collisions": collision_count,
-        "manual_review": len(manual_review),
-    }
-
-    # Report
-    print(f"\n=== Publisher Key Cleanup {'(DRY RUN)' if not apply else '(APPLYING)'} ===")
-    print(f"DB: {db_path}")
-    print(f"Signals to rewrite:      {summary['signals_to_rewrite']}")
-    print(f"Company files to rewrite: {summary['company_files_to_rewrite']}")
-    print(f"Collisions (skipped):    {summary['collisions']}")
-    print(f"Manual review needed:    {summary['manual_review']}")
-
-    if changes:
-        print("\nSample changes (first 5):")
-        for _sid, old_key, new_key in changes[:5]:
-            print(f"  {old_key} → {new_key}")
-
-    if manual_review:
-        print("\nManual review items (first 5):")
-        for sid, old_key, reason in manual_review[:5]:
-            print(f"  signal {sid}: {old_key} — {reason}")
-
-    if not changes and not cf_changes:
-        print("\n0 changes needed.")
-        conn.close()
-        return summary
-
-    if not apply:
-        print("\nUse --apply --yes-rewrite-keys to apply changes.")
-        conn.close()
-        return summary
-
-    # Apply in single transaction
-    print("\nApplying changes...")
-    conn.execute("BEGIN IMMEDIATE")
     try:
-        for sid, old_key, new_key in changes:
-            conn.execute(
-                "UPDATE signals SET canonical_key = ? WHERE id = ? AND canonical_key = ?",
-                (new_key, sid, old_key),
-            )
+        conn = sqlite3.connect(db_path)
+    except Exception as exc:
+        raise CleanupPublisherKeysError(
+            f"Publisher key cleanup failed: {exc}",
+            phase="connect",
+        ) from exc
 
-        for cfid, old_key, new_key in cf_changes:
-            conn.execute(
-                "UPDATE company_files SET canonical_key = ? WHERE id = ? AND canonical_key = ?",
-                (new_key, cfid, old_key),
-            )
+    conn.row_factory = sqlite3.Row
+    transaction_started = False
+    try:
+        # Phase 1: Find all affected signals
+        try:
+            rows = conn.execute(
+                "SELECT id, canonical_key, raw_data FROM signals WHERE canonical_key LIKE 'domain:%'"
+            ).fetchall()
+        except Exception as exc:
+            raise CleanupPublisherKeysError(
+                f"Publisher key cleanup failed: {exc}",
+                phase="signals_scan",
+            ) from exc
 
-        conn.execute("COMMIT")
-        print(f"Done. Rewrote {len(changes)} signals + {len(cf_changes)} company_files.")
-    except Exception:
-        conn.execute("ROLLBACK")
-        raise
+        changes = []  # (signal_id, old_key, new_key)
+        manual_review = []  # (signal_id, old_key, reason)
+
+        for row in rows:
+            old_key = row["canonical_key"]
+            if not _is_publisher_domain_key(old_key):
+                continue
+
+            new_key = _compute_new_key(row["raw_data"], old_key)
+            if not new_key:
+                manual_review.append((row["id"], old_key, "no company_name in raw_data"))
+                continue
+
+            changes.append((row["id"], old_key, new_key))
+
+        # Collect unique old_key -> new_key mappings for company_files
+        key_mapping: dict[str, str] = {}
+        for _sid, old_key, new_key in changes:
+            if old_key not in key_mapping:
+                key_mapping[old_key] = new_key
+
+        # Find affected company_files
+        cf_changes = []
+        if key_mapping:
+            placeholders = ",".join("?" * len(key_mapping))
+            try:
+                cf_rows = conn.execute(
+                    f"SELECT id, canonical_key FROM company_files WHERE canonical_key IN ({placeholders})",
+                    list(key_mapping.keys()),
+                ).fetchall()
+            except Exception as exc:
+                raise CleanupPublisherKeysError(
+                    f"Publisher key cleanup failed: {exc}",
+                    signals_to_rewrite=len(changes),
+                    company_files_to_rewrite=None,
+                    collisions=0,
+                    manual_review=len(manual_review),
+                    phase="company_files_scan",
+                ) from exc
+            for cf in cf_rows:
+                new_key = key_mapping.get(cf["canonical_key"])
+                if new_key:
+                    cf_changes.append((cf["id"], cf["canonical_key"], new_key))
+
+        # Check for collisions (new key already exists in signals or company_files)
+        collision_count = 0
+        if key_mapping:
+            new_keys = list(set(key_mapping.values()))
+            placeholders = ",".join("?" * len(new_keys))
+            try:
+                existing_signal_keys = {
+                    r[0] for r in conn.execute(
+                        f"SELECT DISTINCT canonical_key FROM signals WHERE canonical_key IN ({placeholders})",
+                        new_keys,
+                    ).fetchall()
+                }
+            except Exception as exc:
+                raise CleanupPublisherKeysError(
+                    f"Publisher key cleanup failed: {exc}",
+                    signals_to_rewrite=len(changes),
+                    company_files_to_rewrite=len(cf_changes),
+                    collisions=0,
+                    manual_review=len(manual_review),
+                    phase="signal_collision_scan",
+                ) from exc
+            try:
+                existing_cf_keys = {
+                    r[0] for r in conn.execute(
+                        f"SELECT DISTINCT canonical_key FROM company_files WHERE canonical_key IN ({placeholders})",
+                        new_keys,
+                    ).fetchall()
+                }
+            except Exception as exc:
+                raise CleanupPublisherKeysError(
+                    f"Publisher key cleanup failed: {exc}",
+                    signals_to_rewrite=len(changes),
+                    company_files_to_rewrite=len(cf_changes),
+                    collisions=0,
+                    manual_review=len(manual_review),
+                    phase="company_file_collision_scan",
+                ) from exc
+            collisions = existing_signal_keys | existing_cf_keys
+            # Filter out changes that would collide
+            filtered_changes = []
+            for sid, old_key, new_key in changes:
+                if new_key in collisions:
+                    collision_count += 1
+                    manual_review.append((sid, old_key, f"collision with existing {new_key}"))
+                else:
+                    filtered_changes.append((sid, old_key, new_key))
+            changes = filtered_changes
+
+            # Also filter cf_changes
+            filtered_cf = []
+            for cfid, old_key, new_key in cf_changes:
+                if new_key not in collisions:
+                    filtered_cf.append((cfid, old_key, new_key))
+            cf_changes = filtered_cf
+
+        summary = {
+            "signals_to_rewrite": len(changes),
+            "company_files_to_rewrite": len(cf_changes),
+            "collisions": collision_count,
+            "manual_review": len(manual_review),
+        }
+
+        # Report
+        print(f"\n=== Publisher Key Cleanup {'(DRY RUN)' if not apply else '(APPLYING)'} ===")
+        print(f"DB: {db_path}")
+        print(f"Signals to rewrite:      {summary['signals_to_rewrite']}")
+        print(f"Company files to rewrite: {summary['company_files_to_rewrite']}")
+        print(f"Collisions (skipped):    {summary['collisions']}")
+        print(f"Manual review needed:    {summary['manual_review']}")
+
+        if changes:
+            print("\nSample changes (first 5):")
+            for _sid, old_key, new_key in changes[:5]:
+                print(f"  {old_key} -> {new_key}")
+
+        if manual_review:
+            print("\nManual review items (first 5):")
+            for sid, old_key, reason in manual_review[:5]:
+                print(f"  signal {sid}: {old_key} - {reason}")
+
+        if not changes and not cf_changes:
+            print("\n0 changes needed.")
+            return summary
+
+        if not apply:
+            print("\nUse --apply --yes-rewrite-keys to apply changes.")
+            return summary
+
+        # Apply in single transaction
+        print("\nApplying changes...")
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            transaction_started = True
+            for sid, old_key, new_key in changes:
+                conn.execute(
+                    "UPDATE signals SET canonical_key = ? WHERE id = ? AND canonical_key = ?",
+                    (new_key, sid, old_key),
+                )
+
+            for cfid, old_key, new_key in cf_changes:
+                conn.execute(
+                    "UPDATE company_files SET canonical_key = ? WHERE id = ? AND canonical_key = ?",
+                    (new_key, cfid, old_key),
+                )
+
+            conn.execute("COMMIT")
+            transaction_started = False
+            print(f"Done. Rewrote {len(changes)} signals + {len(cf_changes)} company_files.")
+        except Exception as exc:
+            if transaction_started:
+                try:
+                    conn.execute("ROLLBACK")
+                except sqlite3.Error:
+                    pass
+            raise CleanupPublisherKeysError(
+                f"Publisher key cleanup failed: {exc}",
+                signals_to_rewrite=summary["signals_to_rewrite"],
+                company_files_to_rewrite=summary["company_files_to_rewrite"],
+                collisions=summary["collisions"],
+                manual_review=summary["manual_review"],
+                phase="apply",
+            ) from exc
+
+        return summary
     finally:
+        if transaction_started:
+            try:
+                conn.execute("ROLLBACK")
+            except sqlite3.Error:
+                pass
         conn.close()
 
-    return summary
 
-
-def main():
+def main() -> int:
     parser = argparse.ArgumentParser(description="Cleanup publisher domain keys")
     parser.add_argument("--db", required=True, help="Path to SQLite database")
     parser.add_argument("--apply", action="store_true", help="Apply changes (default: dry-run)")
     parser.add_argument(
-        "--yes-rewrite-keys", action="store_true",
+        "--yes-rewrite-keys",
+        action="store_true",
         help="Double-confirmation for write operations",
     )
     args = parser.parse_args()
 
-    if args.apply and not args.yes_rewrite_keys:
-        print("ERROR: --apply requires --yes-rewrite-keys for confirmation")
-        sys.exit(1)
+    db_path = str(Path(args.db))
 
-    run_cleanup(args.db, apply=args.apply)
+    if args.apply and not args.yes_rewrite_keys:
+        append_db_ops_ledger(
+            tool_name="cleanup_publisher_keys",
+            db_path=db_path,
+            action="cleanup_publisher_keys",
+            status="refused",
+            details={"reason": "missing_yes_rewrite_keys", "apply": args.apply},
+        )
+        print("ERROR: --apply requires --yes-rewrite-keys for confirmation")
+        return 2
+
+    if not args.apply:
+        run_cleanup(db_path, apply=False)
+        return 0
+
+    lock = DBToolLock(db_path, tool_name="cleanup_publisher_keys")
+    if not lock.acquire(timeout_seconds=LOCK_TIMEOUT_SECONDS):
+        holder = lock.get_holder_info()
+        append_db_ops_ledger(
+            tool_name="cleanup_publisher_keys",
+            db_path=db_path,
+            action="cleanup_publisher_keys",
+            status="lock_blocked",
+            details={"holder": holder},
+        )
+        print(f"ERROR: Could not acquire DB tool lock. Holder: {holder}", file=sys.stderr)
+        return 2
+
+    try:
+        summary = run_cleanup(db_path, apply=True)
+        append_db_ops_ledger(
+            tool_name="cleanup_publisher_keys",
+            db_path=db_path,
+            action="cleanup_publisher_keys",
+            status="success",
+            details={
+                "signals_rewritten": summary["signals_to_rewrite"],
+                "company_files_rewritten": summary["company_files_to_rewrite"],
+                "collisions": summary["collisions"],
+                "manual_review": summary["manual_review"],
+            },
+        )
+        return 0
+    except CleanupPublisherKeysError as exc:
+        append_db_ops_ledger(
+            tool_name="cleanup_publisher_keys",
+            db_path=db_path,
+            action="cleanup_publisher_keys",
+            status="error",
+            details={**exc.partial_evidence, "error": str(exc)},
+        )
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+    except Exception as exc:
+        append_db_ops_ledger(
+            tool_name="cleanup_publisher_keys",
+            db_path=db_path,
+            action="cleanup_publisher_keys",
+            status="error",
+            details={"error": str(exc)},
+        )
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 1
+    finally:
+        lock.release()
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
