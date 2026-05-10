@@ -74,20 +74,34 @@ This does not imply a repo-wide ban on every `"signals.db"` mention in docs, hel
 
 ## Tranche-2 / F.3 Live-Mutator Slices
 
-F.3 hardening proceeds by live-data blast radius:
+F.3 hardening proceeded by live-data blast radius and is complete as of PR #162:
 
 1. F.3.0: `scripts/cleanup_publisher_keys.py` (complete)
-2. F.3.1 PR1: `run_pipeline.py backfill-evidence-family` and `run_pipeline.py rehydrate-canonical-keys-v2` wrappers (complete)
-3. F.3.1 PR2: `scripts/backfill_company_extraction.py`, `scripts/backfill_evidence_keys.py`, `scripts/backfill_thesis_provenance.py` (complete)
-4. F.3.2: `scripts/backfill_company_files.py`, `scripts/build_case_law_corpus.py`, `scripts/build_exemplar_library.py` (complete)
-5. F.3.3: `scripts/seed_tier_c_domains.py` (complete)
-6. F.3.4: `scripts/gc_thin_files.py`, `scripts/backfill_hunter_company_names.py`
+2. F.3.1 PR1: `run_pipeline.py backfill-evidence-family` and `run_pipeline.py rehydrate-canonical-keys-v2` wrappers (complete via PR #157)
+3. F.3.1 PR2: `scripts/backfill_company_extraction.py`, `scripts/backfill_evidence_keys.py`, `scripts/backfill_thesis_provenance.py` (complete via PR #158)
+4. F.3.2: `scripts/backfill_company_files.py`, `scripts/build_case_law_corpus.py`, `scripts/build_exemplar_library.py` (complete via PR #159)
+5. F.3.3: `scripts/seed_tier_c_domains.py` (complete via PR #160)
+6. F.3.4A: `scripts/gc_thin_files.py` (complete via PR #161)
+7. F.3.4B: `scripts/backfill_hunter_company_names.py` (complete via PR #162)
 
 Each mutating script in these slices should default to dry-run or otherwise require explicit commit/apply confirmation, acquire `DBToolLock` in commit mode, write success and error rows to `db_ops_ledger.jsonl`, preserve structured partial evidence on failures, and include focused subprocess tests for dry-run, success, lock-blocked, and rollback/error paths.
+
+The standard init marker in reports and ledger details is `preflight_data_version`, captured from `PRAGMA data_version` before the lock/transaction path. Do not use alternate names such as `data_version_at_init` in new DB-tool reports.
 
 For F.3.2, `build_case_law_corpus.py` and `build_exemplar_library.py` are deliberately non-mutating on bare invocation; use `--commit` to write. `build_case_law_corpus.py` writes SQLite rows plus vectorizer artifacts, so its reports and ledger rows record staged artifact paths and cleanup evidence rather than claiming DB-plus-filesystem atomicity.
 
 For F.3.3, `scripts/seed_job_posting_domains.py` is a read-only selector/export helper. It reads `signals` or `company_files`, emits `JOB_POSTING_DOMAINS` or list/csv output, and is intentionally lock-free and ledger-silent while it has no write path. Future write-capable job-posting-domain seeding should be planned as a new mutator contract.
+
+For F.3.4, both scripts use `--apply` rather than `--commit` for their mutating path. `gc_thin_files.py` records explicit partial-commit evidence when delete work succeeds but the later audit-log insert fails. `backfill_hunter_company_names.py` records per-table attempted update counts for mid-transaction rollback evidence.
+
+## Assertion Contract Variants
+
+DB-tool tests should use the smallest contract that fits the script's mutation surface:
+
+1. Standard mutator: dry-run or commit/apply success, lock-blocked, preflight error, rollback/error evidence, success report envelope, error report envelope.
+2. Mixed read/write tool: prove the non-mutating path is ledger-silent and does not require a lock; use a read-only connection when practical.
+3. Destructive cleanup tool: add rollback delete failure and audit/report failure evidence so the ledger never overclaims global atomicity.
+4. Multi-table identity rewrite: include per-table attempted counts in `DBToolError.partial_evidence` for rollback correlation.
 
 ## Phase 5.2 Cloud Durability Direction
 
