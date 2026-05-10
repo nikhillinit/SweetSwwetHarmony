@@ -8,6 +8,7 @@ from pathlib import Path
 from ops.collector_health import (
     DEFAULT_EXPECTED_SOURCE_APIS_BY_COLLECTOR,
     DEFAULT_LOOKBACK_DAYS,
+    aggregate_outbox_health,
     aggregate_signal_counts,
     build_health_report,
     main,
@@ -35,6 +36,29 @@ def _create_signals_schema(db_path: Path) -> None:
                 raw_data TEXT NOT NULL,
                 detected_at TEXT NOT NULL,
                 created_at TEXT NOT NULL
+            );
+            """
+        )
+        con.commit()
+    finally:
+        con.close()
+
+
+def _create_notion_outbox_schema(db_path: Path) -> None:
+    con = sqlite3.connect(db_path)
+    try:
+        con.executescript(
+            """
+            CREATE TABLE IF NOT EXISTS notion_outbox (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                idempotency_key TEXT NOT NULL UNIQUE,
+                payload_json TEXT NOT NULL,
+                status TEXT NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                next_attempt_at TEXT,
+                last_error TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
             );
             """
         )
@@ -110,6 +134,78 @@ def test_aggregate_signal_counts_returns_empty_for_missing_table(tmp_path):
     assert rows == []
 
 
+def test_aggregate_outbox_health_reports_due_failed_and_stale_work(tmp_path):
+    db_path = tmp_path / "signals.db"
+    _create_notion_outbox_schema(db_path)
+    now = datetime.now(timezone.utc)
+    stale = now - timedelta(hours=2)
+    future = now + timedelta(hours=2)
+
+    con = sqlite3.connect(db_path)
+    try:
+        con.executemany(
+            """
+            INSERT INTO notion_outbox(
+                idempotency_key, payload_json, status, next_attempt_at,
+                last_error, created_at, updated_at
+            )
+            VALUES(?,?,?,?,?,?,?)
+            """,
+            [
+                ("due", "{}", "pending", None, None, now.isoformat(), now.isoformat()),
+                (
+                    "future",
+                    "{}",
+                    "pending",
+                    future.isoformat(),
+                    None,
+                    now.isoformat(),
+                    now.isoformat(),
+                ),
+                (
+                    "stale-processing",
+                    "{}",
+                    "processing",
+                    None,
+                    None,
+                    stale.isoformat(),
+                    stale.isoformat(),
+                ),
+                (
+                    "failed",
+                    "{}",
+                    "failed",
+                    None,
+                    "nope",
+                    now.isoformat(),
+                    now.isoformat(),
+                ),
+                (
+                    "sent",
+                    "{}",
+                    "sent",
+                    None,
+                    None,
+                    stale.isoformat(),
+                    now.isoformat(),
+                ),
+            ],
+        )
+        con.commit()
+    finally:
+        con.close()
+
+    summary = aggregate_outbox_health(db_path, stale_processing_minutes=60)
+
+    assert summary["available"] is True
+    assert summary["pending_count"] == 2
+    assert summary["pending_due_count"] == 1
+    assert summary["processing_count"] == 1
+    assert summary["stale_processing_count"] == 1
+    assert summary["failed_count"] == 1
+    assert summary["last_successful_send_at"] == now.isoformat()
+
+
 def test_build_health_report_marks_silent_enabled_collector(tmp_path):
     config_path = _write_collectors_yaml(
         tmp_path / "collectors.yaml",
@@ -150,6 +246,166 @@ collectors:
     assert by_name["sec_edgar"]["observed_signal_count"] == 0
     assert any("sec_edgar" in w for w in report["summary"]["warnings"])
     assert report["summary"]["silent_count"] == 1
+
+
+def test_build_health_report_marks_alive_but_no_db_progress(tmp_path):
+    config_path = _write_collectors_yaml(
+        tmp_path / "collectors.yaml",
+        """
+schema_version: 1
+collectors:
+  github:
+    configured_status: enabled
+    expected_cadence_hours: 24
+""",
+    )
+    state = {
+        "schema_version": 2,
+        "updated_at": None,
+        "collectors": {
+            "github": {
+                "schema_version": 2,
+                "collector": "github",
+                "configured_status": "enabled",
+                "expected_cadence_hours": 24,
+                "last_run_status": "success",
+                "last_finished_at": datetime.now(timezone.utc).isoformat(),
+                "last_success_at": datetime.now(timezone.utc).isoformat(),
+                "consecutive_failures": 0,
+                "effective_status": "healthy",
+                "data_version_before": 10,
+                "data_version_after": 10,
+                "rows_inserted_this_iter": 0,
+                "rows_total_last_24h": 0,
+                "collector_class": "GitHubCollector",
+            }
+        },
+    }
+
+    report = build_health_report(
+        state,
+        signal_counts=[],
+        config_path=config_path,
+        expected_source_apis_by_collector={"github": ("github",)},
+    )
+
+    github = next(c for c in report["collectors"] if c["name"] == "github")
+    assert github["is_alive_but_no_db_progress"] is True
+    assert github["is_silent"] is True
+    assert report["summary"]["alive_but_no_db_progress_count"] == 1
+    assert report["summary"]["alive_but_no_db_progress_collectors"] == ["github"]
+    assert any("no DB progress" in w for w in report["summary"]["warnings"])
+
+
+def test_build_health_report_no_progress_ignores_historical_lookback_rows(tmp_path):
+    config_path = _write_collectors_yaml(
+        tmp_path / "collectors.yaml",
+        """
+schema_version: 1
+collectors:
+  github:
+    configured_status: enabled
+    expected_cadence_hours: 24
+""",
+    )
+    state = {
+        "schema_version": 2,
+        "updated_at": None,
+        "collectors": {
+            "github": {
+                "schema_version": 2,
+                "collector": "github",
+                "configured_status": "enabled",
+                "expected_cadence_hours": 24,
+                "last_run_status": "success",
+                "last_finished_at": datetime.now(timezone.utc).isoformat(),
+                "last_success_at": datetime.now(timezone.utc).isoformat(),
+                "consecutive_failures": 0,
+                "effective_status": "healthy",
+                "data_version_before": 20,
+                "data_version_after": 20,
+                "rows_inserted_this_iter": 0,
+                "rows_total_last_24h": 5,
+                "collector_class": "GitHubCollector",
+            }
+        },
+    }
+
+    report = build_health_report(
+        state,
+        signal_counts=[
+            {"signal_type": "github_repo", "source_api": "github", "count": 5}
+        ],
+        config_path=config_path,
+        expected_source_apis_by_collector={"github": ("github",)},
+        outbox_health={
+            "available": True,
+            "pending_due_count": 1,
+            "failed_count": 0,
+            "stale_processing_count": 0,
+        },
+    )
+
+    github = next(c for c in report["collectors"] if c["name"] == "github")
+    assert github["observed_signal_count"] == 5
+    assert github["rows_total_last_24h"] == 5
+    assert github["is_alive_but_no_db_progress"] is True
+    assert report["summary"]["producer_progress_seen"] is False
+    assert report["summary"]["db_progressed_but_drain_stalled"] is False
+
+
+def test_build_health_report_marks_db_progressed_but_drain_stalled(tmp_path):
+    config_path = _write_collectors_yaml(
+        tmp_path / "collectors.yaml",
+        """
+schema_version: 1
+collectors:
+  arxiv:
+    configured_status: enabled
+    expected_cadence_hours: 24
+""",
+    )
+    state = {
+        "schema_version": 2,
+        "updated_at": None,
+        "collectors": {
+            "arxiv": {
+                "schema_version": 2,
+                "collector": "arxiv",
+                "configured_status": "enabled",
+                "expected_cadence_hours": 24,
+                "last_run_status": "success",
+                "last_finished_at": datetime.now(timezone.utc).isoformat(),
+                "last_success_at": datetime.now(timezone.utc).isoformat(),
+                "consecutive_failures": 0,
+                "effective_status": "healthy",
+                "data_version_before": 10,
+                "data_version_after": 12,
+                "rows_inserted_this_iter": 2,
+                "rows_total_last_24h": 2,
+                "collector_class": "ArxivCollector",
+            }
+        },
+    }
+
+    report = build_health_report(
+        state,
+        signal_counts=[
+            {"signal_type": "research_paper", "source_api": "arxiv", "count": 2}
+        ],
+        config_path=config_path,
+        expected_source_apis_by_collector={"arxiv": ("arxiv",)},
+        outbox_health={
+            "available": True,
+            "pending_due_count": 1,
+            "failed_count": 0,
+            "stale_processing_count": 0,
+        },
+    )
+
+    assert report["summary"]["producer_progress_seen"] is True
+    assert report["summary"]["db_progressed_but_drain_stalled"] is True
+    assert any("Notion outbox" in w for w in report["summary"]["warnings"])
 
 
 def test_build_health_report_does_not_flag_disabled_collectors_as_silent(tmp_path, monkeypatch):
