@@ -91,13 +91,13 @@ These 11 scripts will fail the Q-26 promotion gate as currently written.
 
 All 18 candidates were grep'd for `INSERT |UPDATE |DELETE |conn\.commit|executescript|executemany`. Mutation-positive results were drilled into for context (target DB and statement type). Outcome:
 
-### 8.1 Confirmed mutating `signals.db` — promote to Tier E
+### 8.1 Confirmed live mutators and scratch-only helper
 
 | Script | Mutation evidence | Risk note |
 |---|---|---|
 | `scripts/build_case_law_corpus.py` | `INSERT OR REPLACE INTO precedents` (line 187), `DELETE FROM precedents WHERE vectorizer_version != ?` (line 221). Goes through `SignalStore`. | Standard backfill class. |
 | `scripts/build_exemplar_library.py` | `INSERT OR REPLACE INTO thesis_exemplars` (line 196), `DELETE FROM thesis_exemplars WHERE vectorizer_version != ? AND source = 'auto'` (line 226). Goes through `SignalStore`. | Standard backfill class. |
-| `scripts/spc_override_decision.py` | **Direct `sqlite3.connect`** (line 80, no `mode=ro`), **`conn.execute("DELETE FROM quality_metrics_daily")`** (line 83) — full-table wipe with no WHERE — followed by `conn.commit()` (line 85). Bypasses `SignalStore`. | **Highest risk in the uncovered set.** Full-table DELETE on `signals.db` outside the storage layer with no lock and no ledger. Should be the F.3 priority case. |
+| `scripts/spc_override_decision.py` | Source DB is copied with SQLite online backup into a temp snapshot (`evaluate_override_decision`, lines 179-181). `_evaluate_profile` copies that snapshot again into a temp scratch DB (lines 114-119). The `DELETE FROM quality_metrics_daily` happens only inside `_recompute_quality_metrics` on the scratch DB (lines 79-85). | **Reclassify out of Tier E live-mutator priority.** This is source-read and scratch-mutating. It may deserve an explicit source-unchanged regression test, but it should not be the first live DB hardening target. |
 
 ### 8.2 Confirmed read-only — Tier C
 
@@ -133,25 +133,27 @@ All 18 candidates were grep'd for `INSERT |UPDATE |DELETE |conn\.commit|executes
 | B — partial (lock + ledger + tests, missing structured exception or error-path ledger row) | 4 | `restore_db.py`, `db_maintenance.py`, `e2e_batch_approve.py`, `run_backfill.py` |
 | C — read-only (no mutation; pattern not required) | 17 | `e2e_batch_check.py`, `export_labeling_review.py`, plus 15 verified in §8.2 |
 | D — meta tool | 1 | `db_ops_note.py` |
-| E — uncovered, confirmed mutating | **14** | 11 from §7 + 3 from §8.1 (`build_case_law_corpus.py`, `build_exemplar_library.py`, `spc_override_decision.py`) |
+| E — uncovered, confirmed live-mutating | **13** | 11 from §7 + 2 live mutators from §8.1 (`build_case_law_corpus.py`, `build_exemplar_library.py`) |
+| Source-read / scratch-mutating | 1 | `spc_override_decision.py` |
 | Ambiguous | 0 | F.1.1 closed the set |
 
 ## 11. Recommended F.2 / F.3 sequence
 
-**F.1.1 — DONE 2026-05-10.** Verification of the 18 ambiguous candidates closed the set: 15 are confirmed read-only (Tier C), 3 are confirmed mutating `signals.db` and have been promoted to Tier E (§8.1). Highest-risk addition: `scripts/spc_override_decision.py:83` (`DELETE FROM quality_metrics_daily` full-table wipe outside the storage layer with no lock and no ledger).
+**F.1.1 - DONE 2026-05-10.** Verification of the 18 ambiguous candidates closed the set: 15 are confirmed read-only (Tier C), 2 are confirmed mutating `signals.db` and have been promoted to Tier E (§8.1), and `scripts/spc_override_decision.py` is reclassified as source-read/scratch-mutating.
 
-**F.2 — gap-close PR for Tier B (4 scripts):** add structured exception classes (`RestoreError`, `MaintenanceError`, `ApproveError`, `BackfillError` — or one shared `DBToolError` if patterns align) and error-path ledger rows. This is a single surgical PR. Tests already exist; extend with explicit error-path coverage. Estimate: 1-2 hours.
+**F.2 - COMPLETE via PR #154 (`1beac36`).** The four former Tier-B scripts now have `DBToolError`-based structured exceptions and error-path ledger rows.
 
-**F.3 — Tier E PRs (14 scripts).** Recommended chunking, ordered by risk:
+**F.3 - true live-mutator PRs (13 scripts after reclassifying `spc_override_decision.py`).** Recommended chunking, ordered by live-data blast radius:
 
-- **F.3.0 — `spc_override_decision.py` (priority case).** Direct `sqlite3.connect` + full-table `DELETE FROM quality_metrics_daily`. Highest-risk uncovered mutator. Single-script PR. Test pattern: lock-blocking + success ledger + error ledger when `_recompute_quality_metrics` fails mid-DELETE.
-- **F.3.1 — backfill family (8 scripts):** `backfill_company_files`, `backfill_company_extraction`, `backfill_evidence_family`, `backfill_evidence_keys`, `backfill_thesis_provenance`, `backfill_hunter_company_names`, `build_case_law_corpus`, `build_exemplar_library`. Single PR with shared structured exception class and a parameterized test fixture. Note: `build_*` scripts go through `SignalStore`; verify the wrapper doesn't double-acquire.
-- **F.3.2 — seed family (2 scripts):** `seed_tier_c_domains`, `seed_job_posting_domains`.
-- **F.3.3 — miscellaneous (3 scripts):** `cleanup_publisher_keys`, `rehydrate_canonical_keys_v2`, `gc_thin_files`.
+- **F.3.0 - `cleanup_publisher_keys.py` (priority case).** Direct SQLite transaction rewriting `signals.canonical_key` and `company_files.canonical_key`. Single-script PR. Test pattern: missing-confirmation refusal ledger, lock-blocking ledger, success ledger on `--apply --yes-rewrite-keys`, and error ledger when an apply-mode query fails after the lock is acquired.
+- **F.3.1 - direct canonical/evidence rewrite scripts:** `rehydrate_canonical_keys_v2.py`, `backfill_company_extraction.py`, `backfill_evidence_keys.py`, `backfill_evidence_family.py`, `backfill_thesis_provenance.py`.
+- **F.3.2 - `SignalStore` corpus/build scripts:** `backfill_company_files.py`, `build_case_law_corpus.py`, `build_exemplar_library.py`. Tests must inject failures after `SignalStore.initialize()` because external writer locks can deadlock on `PRAGMA journal_mode=WAL`.
+- **F.3.3 - seed scripts:** `seed_tier_c_domains.py`, `seed_job_posting_domains.py`.
+- **F.3.4 - cleanup/GC and hunter identity scripts:** `gc_thin_files.py`, `backfill_hunter_company_names.py`.
 
 Each chunk needs subprocess CLI tests using the `test_db_hardening_priority_scripts.py` pattern.
 
-**F.4 — runbook update (small):** add `db_maintenance.py` to Tranche-1 list; document `db_ops_note.py` as the meta-ledger tool; enumerate the F.3 batches as Tranche-2 (F.3.0 + F.3.1 + F.3.2) / Tranche-3 (F.3.3) slices; add a one-line note that read-only Tranche-1 scripts (`e2e_batch_check`, `export_labeling_review`) are exempt from lock/ledger by design.
+**F.4 — runbook update (small):** add `db_maintenance.py` to Tranche-1 list; document `db_ops_note.py` as the meta-ledger tool; enumerate the F.3 batches as Tranche-2/F.3 live-mutator slices; add a one-line note that read-only Tranche-1 scripts (`e2e_batch_check`, `export_labeling_review`) are exempt from lock/ledger by design.
 
 **F.5 — ADR-043 write:** when F.2 + F.3 + F.4 close, promote Q-26 to `wiki/decisions/043-phase-5-tranche-1-db-tooling-lock-ledger-discipline.md`. The decision file documents the four-criteria pattern, the runbook reference, the test pattern, and the post-incident motivation (32 ms triple-mtime correlation finding).
 
@@ -159,7 +161,7 @@ Each chunk needs subprocess CLI tests using the `test_db_hardening_priority_scri
 
 1. **Test parity for Tier C scripts.** `e2e_batch_check.py` and `export_labeling_review.py` are read-only but on the Tranche-1 list. Decision needed: do they need ledger entries to record reads (audit trail), or is read-only operation sufficient evidence of non-mutation? Recommend: keep as Tier C, add a one-line runbook note that read-only scripts on Tranche-1 are exempt from lock/ledger by design.
 2. **Storage-layer pipeline scripts.** Scripts that go through `SignalStore` (e.g., `run_backfill.py`) inherit the storage layer's connection management. The `DBToolLock` here is at a higher abstraction (process-level coordination) than SQLite's busy-timeout. Both are needed; verify the four Tier-B scripts don't accidentally bypass the storage layer's transaction discipline when adding the structured exception path.
-3. **Ambiguous-set verification CLOSED 2026-05-10 (F.1.1).** §8 originally listed 18 ambiguous candidates. F.1.1 grep'd all 18: 15 confirmed read-only (Tier C, §8.2), 3 confirmed mutating and promoted to Tier E (§8.1). The Tier E count is now firm at 14 (11 from §7 + 3 from §8.1). F.2 + F.3 scope is bounded; cap at 4 weeks of intermittent work and reassess at week 2.
+3. **Ambiguous-set verification CLOSED 2026-05-10 (F.1.1).** §8 originally listed 18 ambiguous candidates. F.1.1 grep'd all 18: 15 confirmed read-only (Tier C, §8.2), 2 confirmed live-mutating and promoted to Tier E (§8.1), and `spc_override_decision.py` confirmed source-read/scratch-mutating. The Tier E count is now firm at 13 (11 from §7 + 2 from §8.1). F.2 + F.3 scope is bounded; cap at 4 weeks of intermittent work and reassess at week 2.
 4. **The keepalive branch (`chore/post-r19-keepalive-may-2-5`) is forked at R19 close (`51d379d`)** and missing both PR #150 and PR #153 merges. F.2/F.3 work should branch from current `main` (`8111d19`), not from this keepalive branch.
 
 ## 13. Verification commands used
@@ -180,4 +182,11 @@ grep -nE 'def test_|tool_name' tests/scripts/test_db_hardening_priority_scripts.
 
 ## 14. Status
 
-**F.1 COMPLETE (read-only audit).** **F.1.1 COMPLETE (ambiguous-set verified, 2026-05-10).** Final tier counts: A=1, B=4, C=17, D=1, E=14. Awaiting operator decision on F.2 sequencing (Tier-B gap-close) and F.3 priority (recommend `spc_override_decision.py` first).
+**F.1 COMPLETE (read-only audit).** **F.1.1 COMPLETE (ambiguous-set verified, 2026-05-10).** **F.2 COMPLETE via PR #154 (`1beac36`).** The four former Tier-B scripts now have `DBToolError`-based structured exceptions and error-path ledger rows.
+
+Remaining Q-26 gate work:
+
+- F.2.5: correct durable docs/runbook drift after F.2 and reclassify `spc_override_decision.py`.
+- F.3: harden true live DB mutators, starting with `cleanup_publisher_keys.py`.
+- F.4: runbook tranche update after F.3 slices are finished.
+- F.5: ADR-043 write after F.2.5 + F.3 + F.4 close.
