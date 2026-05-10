@@ -26,7 +26,7 @@ import json
 import os
 import sqlite3
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
@@ -95,6 +95,16 @@ _NON_SILENT_STATUSES = {
     "blocked_access",
     "deprecated",
 }
+_PROGRESS_RUNTIME_STATUSES = {"success", "partial_success", "dry_run"}
+
+
+def _optional_int(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def aggregate_signal_counts(
@@ -143,6 +153,90 @@ def aggregate_signal_counts(
     ]
 
 
+def aggregate_outbox_health(
+    db_path: str | os.PathLike[str],
+    *,
+    stale_processing_minutes: int = 60,
+) -> dict[str, Any]:
+    """Summarize Notion outbox drain state without modifying the database."""
+    empty = {
+        "available": False,
+        "pending_count": 0,
+        "pending_due_count": 0,
+        "processing_count": 0,
+        "stale_processing_count": 0,
+        "failed_count": 0,
+        "last_successful_send_at": None,
+        "oldest_due_at": None,
+    }
+    path = Path(db_path)
+    if not path.exists():
+        return empty
+
+    con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    try:
+        con.row_factory = sqlite3.Row
+        table = con.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='notion_outbox'"
+        ).fetchone()
+        if table is None:
+            return empty
+
+        now = datetime.now(timezone.utc)
+        now_iso = now.isoformat()
+        stale_threshold = (
+            now - timedelta(minutes=int(stale_processing_minutes))
+        ).isoformat()
+        counts = con.execute(
+            """
+            SELECT
+                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) AS pending_count,
+                SUM(
+                    CASE
+                        WHEN status = 'pending'
+                         AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+                        THEN 1 ELSE 0
+                    END
+                ) AS pending_due_count,
+                SUM(CASE WHEN status = 'processing' THEN 1 ELSE 0 END) AS processing_count,
+                SUM(
+                    CASE
+                        WHEN status = 'processing' AND updated_at < ?
+                        THEN 1 ELSE 0
+                    END
+                ) AS stale_processing_count,
+                SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) AS failed_count
+            FROM notion_outbox
+            """,
+            (now_iso, stale_threshold),
+        ).fetchone()
+        last_successful_send_at = con.execute(
+            "SELECT MAX(updated_at) FROM notion_outbox WHERE status = 'sent'"
+        ).fetchone()[0]
+        oldest_due_at = con.execute(
+            """
+            SELECT MIN(COALESCE(next_attempt_at, created_at))
+            FROM notion_outbox
+            WHERE status = 'pending'
+              AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
+            """,
+            (now_iso,),
+        ).fetchone()[0]
+    finally:
+        con.close()
+
+    return {
+        "available": True,
+        "pending_count": int(counts["pending_count"] or 0),
+        "pending_due_count": int(counts["pending_due_count"] or 0),
+        "processing_count": int(counts["processing_count"] or 0),
+        "stale_processing_count": int(counts["stale_processing_count"] or 0),
+        "failed_count": int(counts["failed_count"] or 0),
+        "last_successful_send_at": last_successful_send_at,
+        "oldest_due_at": oldest_due_at,
+    }
+
+
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -182,6 +276,50 @@ def _compute_override_active(
     return collector_config.configured_status not in INTENTIONAL_CONFIGURED_STATUSES
 
 
+def _has_progress_proof(entry: Mapping[str, Any]) -> bool:
+    return any(
+        _optional_int(entry.get(field)) is not None
+        for field in (
+            "data_version_before",
+            "data_version_after",
+            "rows_inserted_this_iter",
+        )
+    )
+
+
+def _has_producer_progress(entry: Mapping[str, Any]) -> bool:
+    status = str(entry.get("last_run_status") or "")
+    if status not in _PROGRESS_RUNTIME_STATUSES:
+        return False
+
+    before = _optional_int(entry.get("data_version_before"))
+    after = _optional_int(entry.get("data_version_after"))
+    inserted = _optional_int(entry.get("rows_inserted_this_iter"))
+    if inserted is not None:
+        return inserted > 0
+    return (
+        before is not None
+        and after is not None
+        and after > before
+    )
+
+
+def _is_alive_but_no_db_progress(
+    entry: Mapping[str, Any],
+) -> bool:
+    status = str(entry.get("last_run_status") or "")
+    if status not in _PROGRESS_RUNTIME_STATUSES or not _has_progress_proof(entry):
+        return False
+
+    before = _optional_int(entry.get("data_version_before"))
+    after = _optional_int(entry.get("data_version_after"))
+    inserted = _optional_int(entry.get("rows_inserted_this_iter"))
+    if inserted is not None:
+        return inserted <= 0
+
+    return before is not None and after is not None and after <= before
+
+
 def build_health_report(
     state: Mapping[str, Any],
     signal_counts: Iterable[Mapping[str, Any]],
@@ -194,6 +332,7 @@ def build_health_report(
     now: Optional[datetime] = None,
     configs: Optional[Mapping[str, CollectorConfig]] = None,
     config_path: Optional[str | os.PathLike[str]] = None,
+    outbox_health: Optional[Mapping[str, Any]] = None,
 ) -> dict[str, Any]:
     """Combine heartbeat state and signal counts into a structured report.
 
@@ -232,6 +371,9 @@ def build_health_report(
     failing_count = 0
     override_active_count = 0
     override_active_collectors: list[str] = []
+    alive_but_no_db_progress_count = 0
+    alive_but_no_db_progress_collectors: list[str] = []
+    producer_progress_seen = False
     used_source_apis: set[str] = set()
 
     for name in sorted(raw_collectors):
@@ -252,6 +394,8 @@ def build_health_report(
             and effective_status not in _NON_SILENT_STATUSES
         )
         override_active = _compute_override_active(entry, configs.get(name))
+        is_no_db_progress = _is_alive_but_no_db_progress(entry)
+        producer_progress_seen = producer_progress_seen or _has_producer_progress(entry)
 
         if is_silent:
             silent_count += 1
@@ -279,6 +423,12 @@ def build_health_report(
                 f"{name}: operator override active — state is "
                 f"{entry.get('configured_status')} but YAML intent is {yaml_intent}"
             )
+        if is_no_db_progress:
+            alive_but_no_db_progress_count += 1
+            alive_but_no_db_progress_collectors.append(name)
+            warnings.append(
+                f"{name}: heartbeat completed but proof fields show no DB progress"
+            )
 
         by_status[effective_status] = by_status.get(effective_status, 0) + 1
 
@@ -292,12 +442,24 @@ def build_health_report(
                 "last_finished_at": entry.get("last_finished_at"),
                 "last_success_at": entry.get("last_success_at"),
                 "consecutive_failures": entry.get("consecutive_failures", 0),
+                "data_version_before": _optional_int(
+                    entry.get("data_version_before")
+                ),
+                "data_version_after": _optional_int(entry.get("data_version_after")),
+                "rows_inserted_this_iter": _optional_int(
+                    entry.get("rows_inserted_this_iter")
+                ),
+                "rows_total_last_24h": _optional_int(
+                    entry.get("rows_total_last_24h")
+                ),
+                "collector_class": entry.get("collector_class"),
                 "effective_status": effective_status,
                 "expected_source_apis": list(expected_apis),
                 "observed_signal_count": observed,
                 "is_stale": is_stale,
                 "is_silent": is_silent,
                 "is_failing": is_failing,
+                "is_alive_but_no_db_progress": is_no_db_progress,
                 "override_active": override_active,
             }
         )
@@ -305,6 +467,20 @@ def build_health_report(
     unmapped_source_apis = sorted(
         api for api in counts_by_source_api if api not in used_source_apis
     )
+    outbox_summary = dict(outbox_health or {"available": False})
+    outbox_has_stalled_work = bool(
+        int(outbox_summary.get("pending_due_count") or 0) > 0
+        or int(outbox_summary.get("failed_count") or 0) > 0
+        or int(outbox_summary.get("stale_processing_count") or 0) > 0
+    )
+    db_progressed_but_drain_stalled = (
+        producer_progress_seen and outbox_has_stalled_work
+    )
+    if db_progressed_but_drain_stalled:
+        warnings.append(
+            "producer proof shows DB progress but Notion outbox has due, failed, "
+            "or stale processing work"
+        )
 
     return {
         "schema_version": REPORT_SCHEMA_VERSION,
@@ -312,6 +488,7 @@ def build_health_report(
         "db_path": str(db_path) if db_path is not None else None,
         "lookback_days": lookback_days,
         "signal_counts": counts_list,
+        "outbox_health": outbox_summary,
         "collectors": collectors,
         "summary": {
             "total": len(collectors),
@@ -319,6 +496,12 @@ def build_health_report(
             "silent_count": silent_count,
             "stale_count": stale_count,
             "failing_count": failing_count,
+            "alive_but_no_db_progress_count": alive_but_no_db_progress_count,
+            "alive_but_no_db_progress_collectors": (
+                alive_but_no_db_progress_collectors
+            ),
+            "producer_progress_seen": producer_progress_seen,
+            "db_progressed_but_drain_stalled": db_progressed_but_drain_stalled,
             "override_active_count": override_active_count,
             "override_active_collectors": override_active_collectors,
             "unmapped_source_apis": unmapped_source_apis,
@@ -348,6 +531,8 @@ def render_table(report: Mapping[str, Any]) -> str:
             flags.append("STALE")
         if c.get("is_failing"):
             flags.append("FAILING")
+        if c.get("is_alive_but_no_db_progress"):
+            flags.append("NO_DB_PROGRESS")
         if c.get("override_active"):
             flags.append("OVERRIDE")
         rows.append(
@@ -377,8 +562,19 @@ def render_table(report: Mapping[str, Any]) -> str:
         f"silent={summary.get('silent_count', 0)} | "
         f"stale={summary.get('stale_count', 0)} | "
         f"failing={summary.get('failing_count', 0)} | "
+        f"no_db_progress={summary.get('alive_but_no_db_progress_count', 0)} | "
+        f"drain_stalled={summary.get('db_progressed_but_drain_stalled', False)} | "
         f"override_active={summary.get('override_active_count', 0)}"
     )
+    outbox = report.get("outbox_health") or {}
+    if outbox.get("available"):
+        out_lines.append(
+            "Outbox: "
+            f"pending_due={outbox.get('pending_due_count', 0)} | "
+            f"failed={outbox.get('failed_count', 0)} | "
+            f"stale_processing={outbox.get('stale_processing_count', 0)} | "
+            f"last_successful_send_at={outbox.get('last_successful_send_at')}"
+        )
     by_status = summary.get("by_effective_status", {})
     if by_status:
         parts = ", ".join(f"{k}={v}" for k, v in sorted(by_status.items()))
@@ -436,12 +632,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     args = _parse_args(argv)
     state = load_collector_state(args.state, config_path=args.config)
     counts = aggregate_signal_counts(args.db, lookback_days=args.lookback_days)
+    outbox_health = aggregate_outbox_health(args.db)
     report = build_health_report(
         state,
         counts,
         db_path=args.db,
         lookback_days=args.lookback_days,
         config_path=args.config,
+        outbox_health=outbox_health,
     )
     if args.format == "json":
         sys.stdout.write(json.dumps(report, indent=2, sort_keys=True) + "\n")

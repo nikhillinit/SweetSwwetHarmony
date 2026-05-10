@@ -85,6 +85,15 @@ def isoformat(value: Optional[datetime | str]) -> Optional[str]:
     return str(value)
 
 
+def _optional_int(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _parse_iso_datetime(value: Any) -> Optional[datetime]:
     if not value:
         return None
@@ -297,6 +306,13 @@ def _normalize_entry(
         "signals_found": int(previous.get("signals_found") or 0),
         "signals_new": int(previous.get("signals_new") or 0),
         "signals_suppressed": int(previous.get("signals_suppressed") or 0),
+        "data_version_before": _optional_int(previous.get("data_version_before")),
+        "data_version_after": _optional_int(previous.get("data_version_after")),
+        "rows_inserted_this_iter": _optional_int(
+            previous.get("rows_inserted_this_iter")
+        ),
+        "rows_total_last_24h": _optional_int(previous.get("rows_total_last_24h")),
+        "collector_class": previous.get("collector_class") or collector_name,
         "api_calls": int(previous.get("api_calls") or 0),
         "rate_limit_hits": int(previous.get("rate_limit_hits") or 0),
         "retries": int(previous.get("retries") or 0),
@@ -464,6 +480,11 @@ def record_collector_heartbeat(
     retries: Optional[int] = None,
     errors: Optional[int] = None,
     error_messages: Optional[list[str]] = None,
+    data_version_before: Optional[int] = None,
+    data_version_after: Optional[int] = None,
+    rows_inserted_this_iter: Optional[int] = None,
+    rows_total_last_24h: Optional[int] = None,
+    collector_class: Optional[str] = None,
     runner: str = "unknown",
     state_path: Optional[str | os.PathLike[str]] = None,
     config_path: Optional[str | os.PathLike[str]] = None,
@@ -518,6 +539,11 @@ def record_collector_heartbeat(
 
         config = load_collector_config(config_path).get(result.collector)
         configured_fields = _configured_fields_for(result.collector, config, previous)
+        proof_rows_inserted = rows_inserted_this_iter
+        if proof_rows_inserted is None:
+            proof_rows_inserted = getattr(result, "rows_inserted_this_iter", None)
+        if proof_rows_inserted is None:
+            proof_rows_inserted = getattr(result, "signals_new", None)
 
         entry: dict[str, Any] = {
             "schema_version": SCHEMA_VERSION,
@@ -535,6 +561,27 @@ def record_collector_heartbeat(
             "signals_found": int(getattr(result, "signals_found", 0) or 0),
             "signals_new": int(getattr(result, "signals_new", 0) or 0),
             "signals_suppressed": int(getattr(result, "signals_suppressed", 0) or 0),
+            "data_version_before": _optional_int(
+                data_version_before
+                if data_version_before is not None
+                else getattr(result, "data_version_before", None)
+            ),
+            "data_version_after": _optional_int(
+                data_version_after
+                if data_version_after is not None
+                else getattr(result, "data_version_after", None)
+            ),
+            "rows_inserted_this_iter": _optional_int(proof_rows_inserted),
+            "rows_total_last_24h": _optional_int(
+                rows_total_last_24h
+                if rows_total_last_24h is not None
+                else getattr(result, "rows_total_last_24h", None)
+            ),
+            "collector_class": (
+                collector_class
+                or getattr(result, "collector_class", None)
+                or str(result.collector)
+            ),
             "api_calls": int(
                 api_calls
                 if api_calls is not None
