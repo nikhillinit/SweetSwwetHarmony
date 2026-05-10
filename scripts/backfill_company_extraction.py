@@ -23,17 +23,62 @@ import logging
 import os
 import sqlite3
 import sys
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Set
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from utils.db_ops_ledger import append_db_ops_ledger
+from utils.db_tool_errors import DBToolError
+from utils.db_tool_lock import DBToolLock
+from utils.db_tool_preflight import read_sqlite_data_version
+from utils.report_envelope import create_report, write_report
+
 logger = logging.getLogger(__name__)
+LOCK_TIMEOUT_SECONDS = 5
 
 # Source APIs to re-extract
 _TARGET_SOURCES = ("news_api", "rss_feeds")
 _ACTOR_ID = "system:bulk_company_name_backfill_v1"
 _SOURCE_VERSION = "bulk_company_name_backfill_v1"
+
+
+class BackfillCompanyExtractionError(DBToolError):
+    """Company extraction backfill failure carrying partial progress evidence."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        phase: str,
+        scanned: int = 0,
+        updated_attempted: int = 0,
+        errors: int = 0,
+        skipped_non_empty: int = 0,
+        allowlist_count: int | None = None,
+        policy_id: str | None = None,
+        policy_version: str | None = None,
+        include_ner_candidates: bool | None = None,
+        dry_run: bool | None = None,
+        preflight_data_version: int | None = None,
+    ) -> None:
+        super().__init__(
+            message,
+            partial_evidence={
+                "phase": phase,
+                "scanned": scanned,
+                "updated_attempted": updated_attempted,
+                "errors": errors,
+                "skipped_non_empty": skipped_non_empty,
+                "allowlist_count": allowlist_count,
+                "policy_id": policy_id,
+                "policy_version": policy_version,
+                "include_ner_candidates": include_ner_candidates,
+                "dry_run": dry_run,
+                "preflight_data_version": preflight_data_version,
+            },
+        )
 
 
 def _parse_raw_data(raw_data_str: str) -> Optional[Dict[str, Any]]:
@@ -94,6 +139,7 @@ def _is_empty_name(name: Optional[str]) -> bool:
 
 def preflight(db_path: str) -> Dict[str, Any]:
     """Show summary statistics for news/RSS signals before backfill."""
+    preflight_data_version = read_sqlite_data_version(db_path)
     conn = sqlite3.connect(db_path)
     conn.execute("PRAGMA journal_mode=WAL")
 
@@ -133,6 +179,7 @@ def preflight(db_path: str) -> Dict[str, Any]:
             "name_loc_keys": name_loc_keys,
             "domain_keys": domain_keys,
             "missing_company_name": no_company,
+            "preflight_data_version": preflight_data_version,
         }
     finally:
         conn.close()
@@ -145,6 +192,7 @@ def run(
     allowlist_ids: Optional[Set[int]] = None,
     include_ner_candidates: bool = False,
     policy_path: Optional[str] = None,
+    preflight_data_version: int | None = None,
 ) -> Dict[str, Any]:
     """Re-extract company names for news/RSS signals.
 
@@ -177,11 +225,27 @@ def run(
     if include_ner_candidates:
         warmup_ner()
 
-    conn = sqlite3.connect(db_path)
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=5000")
-
+    phase = "preflight_data_version"
+    scanned = 0
+    updated = 0
+    updated_attempted = 0
+    errors = 0
+    skipped_non_empty = 0
+    transaction_started = False
+    conn: sqlite3.Connection | None = None
     try:
+        if preflight_data_version is None:
+            preflight_data_version = read_sqlite_data_version(db_path)
+
+        phase = "connect"
+        conn = sqlite3.connect(db_path)
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=5000")
+        if not dry_run:
+            phase = "begin"
+            conn.execute("BEGIN IMMEDIATE")
+            transaction_started = True
+
         where_clause = "source_api IN (?, ?)"
         where_params: List[Any] = [*_TARGET_SOURCES]
         if allowlist_ids:
@@ -189,16 +253,13 @@ def run(
             where_clause += f" AND id IN ({placeholders})"
             where_params.extend(sorted(allowlist_ids))
 
+        phase = "count"
         total = conn.execute(
             f"SELECT COUNT(*) FROM signals WHERE {where_clause}",
             tuple(where_params),
         ).fetchone()[0]
 
-        scanned = 0
-        updated = 0
         unchanged = 0
-        errors = 0
-        skipped_non_empty = 0
         ner_candidates_seen = 0
         ner_writes_blocked = 0
         policy_denied = 0
@@ -207,6 +268,7 @@ def run(
 
         offset = 0
         while True:
+            phase = "select_chunk"
             rows = conn.execute(
                 "SELECT id, source_api, company_name, canonical_key, raw_data "
                 f"FROM signals WHERE {where_clause} "
@@ -219,6 +281,7 @@ def run(
             batch_updates: List[tuple] = []
 
             for row_id, source_api, old_name, old_key, raw_data_str in rows:
+                phase = "process_row"
                 scanned += 1
                 raw = _parse_raw_data(raw_data_str)
                 if raw is None:
@@ -334,20 +397,24 @@ def run(
 
             # Apply batch
             if batch_updates and not dry_run:
-                conn.execute("BEGIN")
                 try:
+                    phase = "apply_chunk"
+                    updated_attempted = updated + len(batch_updates)
                     conn.executemany(
                         "UPDATE signals SET company_name = ?, canonical_key = ?, "
                         "raw_data = ? WHERE id = ?",
                         batch_updates,
                     )
-                    conn.commit()
                 except Exception:
-                    conn.rollback()
                     raise
 
             updated += len(batch_updates)
             offset += chunk_size
+
+        if transaction_started:
+            phase = "commit"
+            conn.commit()
+            transaction_started = False
 
         return {
             "total": total,
@@ -366,11 +433,34 @@ def run(
             "ner_writes_blocked": ner_writes_blocked,
             "policy_denied": policy_denied,
             "policy_denied_reasons": dict(policy_denied_reasons),
+            "preflight_data_version": preflight_data_version,
             "diffs": diffs if dry_run else [],
         }
 
+    except BackfillCompanyExtractionError:
+        if transaction_started and conn is not None:
+            conn.rollback()
+        raise
+    except Exception as exc:
+        if transaction_started and conn is not None:
+            conn.rollback()
+        raise BackfillCompanyExtractionError(
+            f"company extraction backfill failed: {exc}",
+            phase=phase,
+            scanned=scanned,
+            updated_attempted=updated_attempted,
+            errors=errors,
+            skipped_non_empty=skipped_non_empty,
+            allowlist_count=len(allowlist_ids) if allowlist_ids else None,
+            policy_id=policy_id,
+            policy_version=policy_version,
+            include_ner_candidates=include_ner_candidates,
+            dry_run=dry_run,
+            preflight_data_version=preflight_data_version,
+        ) from exc
     finally:
-        conn.close()
+        if conn is not None:
+            conn.close()
 
 
 def main():
@@ -378,11 +468,12 @@ def main():
         description="Backfill company name extraction for news/RSS signals"
     )
     parser.add_argument("--db", required=True, help="Path to signals.db")
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
         "--dry-run", action="store_true", default=False,
         help="Preview without modifying"
     )
-    parser.add_argument(
+    mode.add_argument(
         "--commit", action="store_true",
         help="Actually apply changes"
     )
@@ -406,12 +497,35 @@ def main():
         default="",
         help="Optional path to company_name_policy.yaml (default: config/company_name_policy.yaml)",
     )
+    parser.add_argument("--report", default="", help="Optional path to write a JSON report envelope")
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
 
+    tool_name = "backfill_company_extraction"
+    action = "backfill_company_extraction"
+    started_at = datetime.now(timezone.utc)
+    report_path = args.report or None
+    preflight_data_version: int | None = None
+    lock: DBToolLock | None = None
+
     if not os.path.exists(args.db):
         print(f"ERROR: Database not found: {args.db}")
+        sys.exit(1)
+
+    try:
+        preflight_data_version = read_sqlite_data_version(args.db)
+    except Exception as exc:
+        report = create_report(
+            command=action,
+            ok=False,
+            db_path=args.db,
+            started_at=started_at,
+            errors=[str(exc)],
+        )
+        if report_path:
+            write_report(report, report_path)
+        print(f"ERROR: {exc}", file=sys.stderr)
         sys.exit(1)
 
     if args.preflight:
@@ -426,10 +540,52 @@ def main():
         sys.exit(2)
 
     if args.commit and args.include_ner_candidates:
+        append_db_ops_ledger(
+            tool_name=tool_name,
+            db_path=args.db,
+            action=action,
+            status="refused",
+            details={
+                "reason": "include_ner_candidates_commit",
+                "preflight_data_version": preflight_data_version,
+            },
+        )
         print("ERROR: --include-ner-candidates is dry-run only under COMPANY_NAME_WRITE_POLICY")
         sys.exit(2)
 
     dry_run = not args.commit
+    if args.commit:
+        lock = DBToolLock(args.db, tool_name=tool_name)
+        if not lock.acquire(timeout_seconds=LOCK_TIMEOUT_SECONDS):
+            holder = lock.get_holder_info()
+            error = f"Could not acquire DB tool lock. Holder: {holder}"
+            append_db_ops_ledger(
+                tool_name=tool_name,
+                db_path=args.db,
+                action=action,
+                status="lock_blocked",
+                details={
+                    "holder": holder,
+                    "commit": True,
+                    "preflight_data_version": preflight_data_version,
+                },
+            )
+            report = create_report(
+                command=action,
+                ok=False,
+                db_path=args.db,
+                started_at=started_at,
+                metrics={
+                    "holder": holder,
+                    "preflight_data_version": preflight_data_version,
+                },
+                errors=[error],
+            )
+            if report_path:
+                write_report(report, report_path)
+            print(f"ERROR: {error}", file=sys.stderr)
+            sys.exit(2)
+
     try:
         report = run(
             args.db,
@@ -438,10 +594,72 @@ def main():
             allowlist_ids=allowlist_ids,
             include_ner_candidates=args.include_ner_candidates,
             policy_path=args.policy_path or None,
+            preflight_data_version=preflight_data_version,
         )
-    except Exception as exc:
-        print(f"ERROR: {exc}")
+        envelope = create_report(
+            command=action,
+            ok=True,
+            db_path=args.db,
+            started_at=started_at,
+            metrics={k: v for k, v in report.items() if k != "diffs"},
+        )
+        if report_path:
+            write_report(envelope, report_path)
+        if args.commit:
+            append_db_ops_ledger(
+                tool_name=tool_name,
+                db_path=args.db,
+                action=action,
+                status="success",
+                details={k: v for k, v in report.items() if k != "diffs"},
+            )
+    except DBToolError as exc:
+        details = {**exc.partial_evidence, "error": str(exc)}
+        if args.commit:
+            append_db_ops_ledger(
+                tool_name=tool_name,
+                db_path=args.db,
+                action=action,
+                status="error",
+                details=details,
+            )
+        envelope = create_report(
+            command=action,
+            ok=False,
+            db_path=args.db,
+            started_at=started_at,
+            metrics=exc.partial_evidence,
+            errors=[str(exc)],
+        )
+        if report_path:
+            write_report(envelope, report_path)
+        print(f"ERROR: {exc}", file=sys.stderr)
         sys.exit(2)
+    except Exception as exc:
+        details = {"error": str(exc), "preflight_data_version": preflight_data_version}
+        if args.commit:
+            append_db_ops_ledger(
+                tool_name=tool_name,
+                db_path=args.db,
+                action=action,
+                status="error",
+                details=details,
+            )
+        envelope = create_report(
+            command=action,
+            ok=False,
+            db_path=args.db,
+            started_at=started_at,
+            metrics={"preflight_data_version": preflight_data_version},
+            errors=[str(exc)],
+        )
+        if report_path:
+            write_report(envelope, report_path)
+        print(f"ERROR: {exc}", file=sys.stderr)
+        sys.exit(2)
+    finally:
+        if lock is not None:
+            lock.release()
 
     if allowlist_ids:
         ids_csv = ",".join(str(i) for i in sorted(allowlist_ids))

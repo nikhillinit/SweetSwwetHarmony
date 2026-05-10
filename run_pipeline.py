@@ -7456,6 +7456,7 @@ async def cmd_backfill_evidence_family(args):
     from utils.db_path_helper import resolve_db_path
     from utils.db_tool_errors import DBToolError
     from utils.db_tool_lock import DBToolLock
+    from utils.db_tool_preflight import read_sqlite_data_version
     from utils.report_envelope import create_report, write_report
 
     started_at = datetime.now(timezone.utc)
@@ -7466,8 +7467,11 @@ async def cmd_backfill_evidence_family(args):
     tool_name = "backfill_evidence_family"
     command_name = "backfill-evidence-family"
     lock = None
+    preflight_data_version = None
 
     try:
+        preflight_data_version = read_sqlite_data_version(db_path)
+
         if commit_mode:
             lock = DBToolLock(db_path, tool_name=tool_name)
             if not lock.acquire(timeout_seconds=5):
@@ -7478,14 +7482,21 @@ async def cmd_backfill_evidence_family(args):
                     db_path=db_path,
                     action=command_name,
                     status="lock_blocked",
-                    details={"holder": holder, "commit": True},
+                    details={
+                        "holder": holder,
+                        "commit": True,
+                        "preflight_data_version": preflight_data_version,
+                    },
                 )
                 report = create_report(
                     command=command_name,
                     ok=False,
                     db_path=db_path,
                     started_at=started_at,
-                    metrics={"holder": holder},
+                    metrics={
+                        "holder": holder,
+                        "preflight_data_version": preflight_data_version,
+                    },
                     errors=[error],
                 )
                 if report_path:
@@ -7505,6 +7516,10 @@ async def cmd_backfill_evidence_family(args):
             baseline_unknown_rate=getattr(args, "baseline_unknown_rate", None),
             unknown_delta_max_pp=getattr(args, "unknown_delta_max_pp", 10.0),
         )
+        result = {
+            **result,
+            "preflight_data_version": preflight_data_version,
+        }
 
         ok = not result.get("delta_exceeded", False)
         errors = ["Unknown-rate delta exceeded"] if not ok else []
@@ -7533,7 +7548,11 @@ async def cmd_backfill_evidence_family(args):
         return 0 if ok else 1
 
     except DBToolError as exc:
-        details = {**exc.partial_evidence, "error": str(exc)}
+        details = {
+            **exc.partial_evidence,
+            "preflight_data_version": preflight_data_version,
+            "error": str(exc),
+        }
         if commit_mode:
             append_db_ops_ledger(
                 tool_name=tool_name,
@@ -7544,7 +7563,12 @@ async def cmd_backfill_evidence_family(args):
             )
         report = create_report(
             command=command_name, ok=False, db_path=db_path,
-            started_at=started_at, metrics=exc.partial_evidence, errors=[str(exc)],
+            started_at=started_at,
+            metrics={
+                **exc.partial_evidence,
+                "preflight_data_version": preflight_data_version,
+            },
+            errors=[str(exc)],
         )
         if report_path:
             write_report(report, report_path)
@@ -7557,11 +7581,16 @@ async def cmd_backfill_evidence_family(args):
                 db_path=db_path,
                 action=command_name,
                 status="error",
-                details={"error": str(exc)},
+                details={
+                    "preflight_data_version": preflight_data_version,
+                    "error": str(exc),
+                },
             )
         report = create_report(
             command=command_name, ok=False, db_path=db_path,
-            started_at=started_at, errors=[str(exc)],
+            started_at=started_at,
+            metrics={"preflight_data_version": preflight_data_version},
+            errors=[str(exc)],
         )
         if report_path:
             write_report(report, report_path)
@@ -7579,6 +7608,7 @@ async def cmd_rehydrate_canonical_keys_v2(args):
     from utils.db_path_helper import resolve_db_path
     from utils.db_tool_errors import DBToolError
     from utils.db_tool_lock import DBToolLock
+    from utils.db_tool_preflight import read_sqlite_data_version
     from utils.report_envelope import create_report, write_report
 
     started_at = datetime.now(timezone.utc)
@@ -7589,8 +7619,11 @@ async def cmd_rehydrate_canonical_keys_v2(args):
     tool_name = "rehydrate_canonical_keys_v2"
     command_name = "rehydrate-canonical-keys-v2"
     lock = None
+    preflight_data_version = None
 
     try:
+        preflight_data_version = read_sqlite_data_version(db_path)
+
         if commit_mode:
             lock = DBToolLock(db_path, tool_name=tool_name)
             if not lock.acquire(timeout_seconds=5):
@@ -7601,14 +7634,21 @@ async def cmd_rehydrate_canonical_keys_v2(args):
                     db_path=db_path,
                     action=command_name,
                     status="lock_blocked",
-                    details={"holder": holder, "commit": True},
+                    details={
+                        "holder": holder,
+                        "commit": True,
+                        "preflight_data_version": preflight_data_version,
+                    },
                 )
                 report = create_report(
                     command=command_name,
                     ok=False,
                     db_path=db_path,
                     started_at=started_at,
-                    metrics={"holder": holder},
+                    metrics={
+                        "holder": holder,
+                        "preflight_data_version": preflight_data_version,
+                    },
                     errors=[error],
                 )
                 if report_path:
@@ -7629,6 +7669,10 @@ async def cmd_rehydrate_canonical_keys_v2(args):
             max_collision_rate=getattr(args, "max_collision_rate", None),
             limit=getattr(args, "limit", None),
         )
+        result = {
+            **result,
+            "preflight_data_version": preflight_data_version,
+        }
 
         ok = len(result.get("fanin_violations", [])) == 0
         errors = ["Fan-in violations detected"] if not ok else []
@@ -7659,7 +7703,11 @@ async def cmd_rehydrate_canonical_keys_v2(args):
         return 0 if ok else 1
 
     except DBToolError as exc:
-        details = {**exc.partial_evidence, "error": str(exc)}
+        details = {
+            **exc.partial_evidence,
+            "preflight_data_version": preflight_data_version,
+            "error": str(exc),
+        }
         if commit_mode:
             append_db_ops_ledger(
                 tool_name=tool_name,
@@ -7670,7 +7718,12 @@ async def cmd_rehydrate_canonical_keys_v2(args):
             )
         report = create_report(
             command=command_name, ok=False, db_path=db_path,
-            started_at=started_at, metrics=exc.partial_evidence, errors=[str(exc)],
+            started_at=started_at,
+            metrics={
+                **exc.partial_evidence,
+                "preflight_data_version": preflight_data_version,
+            },
+            errors=[str(exc)],
         )
         if report_path:
             write_report(report, report_path)
@@ -7683,11 +7736,16 @@ async def cmd_rehydrate_canonical_keys_v2(args):
                 db_path=db_path,
                 action=command_name,
                 status="error",
-                details={"error": str(exc)},
+                details={
+                    "preflight_data_version": preflight_data_version,
+                    "error": str(exc),
+                },
             )
         report = create_report(
             command=command_name, ok=False, db_path=db_path,
-            started_at=started_at, errors=[str(exc)],
+            started_at=started_at,
+            metrics={"preflight_data_version": preflight_data_version},
+            errors=[str(exc)],
         )
         if report_path:
             write_report(report, report_path)
