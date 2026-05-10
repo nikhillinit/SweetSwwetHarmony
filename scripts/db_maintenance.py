@@ -20,7 +20,29 @@ import sys
 from pathlib import Path
 
 from utils.db_ops_ledger import append_db_ops_ledger
+from utils.db_tool_errors import DBToolError
 from utils.db_tool_lock import DBToolLock
+
+
+class MaintenanceError(DBToolError):
+    """Maintenance operation failure carrying the failed operation name."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        operation: str,
+        underlying_error: str | None = None,
+    ) -> None:
+        super().__init__(
+            message,
+            partial_evidence={
+                "operation": operation,
+                "underlying_error": underlying_error,
+            },
+        )
+        self.operation = operation
+        self.underlying_error = underlying_error
 
 
 def check_integrity(db_path: str) -> bool:
@@ -28,23 +50,31 @@ def check_integrity(db_path: str) -> bool:
     Run SQLite integrity check.
 
     Returns:
-        True if integrity check passes
+        True if integrity check passes (PRAGMA returned "ok").
+        False if PRAGMA returned a non-ok result (soft failure).
+
+    Raises:
+        MaintenanceError(operation="integrity_check") if SQLite raises
+        (corrupt header, missing file, etc.).
     """
     try:
         conn = sqlite3.connect(db_path)
         cursor = conn.execute("PRAGMA integrity_check;")
         result = cursor.fetchone()[0]
         conn.close()
-
-        if result == "ok":
-            print(f"[OK] Integrity check passed: {db_path}")
-            return True
-        else:
-            print(f"[ERROR] Integrity check failed: {result}")
-            return False
     except Exception as e:
         print(f"[ERROR] Integrity check error: {e}")
-        return False
+        raise MaintenanceError(
+            f"Integrity check error: {e}",
+            operation="integrity_check",
+            underlying_error=str(e),
+        ) from e
+
+    if result == "ok":
+        print(f"[OK] Integrity check passed: {db_path}")
+        return True
+    print(f"[ERROR] Integrity check failed: {result}")
+    return False
 
 
 def checkpoint_wal(db_path: str) -> bool:
@@ -52,7 +82,10 @@ def checkpoint_wal(db_path: str) -> bool:
     Checkpoint WAL journal to main database file.
 
     Returns:
-        True if checkpoint succeeded or no WAL present
+        True if checkpoint succeeded or no WAL present.
+
+    Raises:
+        MaintenanceError(operation="checkpoint") if SQLite raises.
     """
     wal_path = Path(db_path + "-wal")
 
@@ -65,20 +98,23 @@ def checkpoint_wal(db_path: str) -> bool:
         cursor = conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
         result = cursor.fetchone()
         conn.close()
-
-        # Result is (busy, log, checkpointed)
-        busy, log, checkpointed = result
-        print(f"[OK] WAL checkpoint: busy={busy}, log={log}, checkpointed={checkpointed}")
-
-        # Check if WAL was fully checkpointed
-        if wal_path.exists() and wal_path.stat().st_size > 0:
-            print(f"[WARN] WAL file still has content after checkpoint")
-            return True  # Not a failure, just informational
-
-        return True
     except Exception as e:
         print(f"[ERROR] WAL checkpoint error: {e}")
-        return False
+        raise MaintenanceError(
+            f"WAL checkpoint error: {e}",
+            operation="checkpoint",
+            underlying_error=str(e),
+        ) from e
+
+    # Result is (busy, log, checkpointed)
+    busy, log, checkpointed = result
+    print(f"[OK] WAL checkpoint: busy={busy}, log={log}, checkpointed={checkpointed}")
+
+    # Check if WAL was fully checkpointed
+    if wal_path.exists() and wal_path.stat().st_size > 0:
+        print(f"[WARN] WAL file still has content after checkpoint")
+
+    return True
 
 
 def vacuum_db(db_path: str) -> bool:
@@ -88,7 +124,10 @@ def vacuum_db(db_path: str) -> bool:
     Note: VACUUM can be slow on large databases. Use sparingly.
 
     Returns:
-        True if vacuum succeeded
+        True if vacuum succeeded.
+
+    Raises:
+        MaintenanceError(operation="vacuum") if SQLite raises.
     """
     try:
         original_size = Path(db_path).stat().st_size
@@ -104,7 +143,11 @@ def vacuum_db(db_path: str) -> bool:
         return True
     except Exception as e:
         print(f"[ERROR] Vacuum error: {e}")
-        return False
+        raise MaintenanceError(
+            f"Vacuum error: {e}",
+            operation="vacuum",
+            underlying_error=str(e),
+        ) from e
 
 
 def get_db_stats(db_path: str) -> dict:
@@ -204,44 +247,62 @@ def main():
             sys.exit(1)
 
     all_ok = True
-    actions = []
+    actions: list[str] = []
+    op_failure: MaintenanceError | None = None
     try:
-        # Run requested operations
-        if args.all or args.stats:
-            actions.append("stats")
-            print(f"\n=== Database Stats: {args.db_path} ===")
-            stats = get_db_stats(args.db_path)
-            for key, value in stats.items():
-                if isinstance(value, int) and key != "journal_mode":
-                    print(f"  {key}: {value:,}")
-                else:
-                    print(f"  {key}: {value}")
+        try:
+            # Run requested operations
+            if args.all or args.stats:
+                actions.append("stats")
+                print(f"\n=== Database Stats: {args.db_path} ===")
+                stats = get_db_stats(args.db_path)
+                for key, value in stats.items():
+                    if isinstance(value, int) and key != "journal_mode":
+                        print(f"  {key}: {value:,}")
+                    else:
+                        print(f"  {key}: {value}")
 
-        if args.all or args.integrity_check:
-            actions.append("integrity_check")
-            print(f"\n=== Integrity Check ===")
-            if not check_integrity(args.db_path):
-                all_ok = False
+            if args.all or args.integrity_check:
+                actions.append("integrity_check")
+                print(f"\n=== Integrity Check ===")
+                if not check_integrity(args.db_path):
+                    all_ok = False
 
-        if args.all or args.checkpoint:
-            actions.append("checkpoint")
-            print(f"\n=== WAL Checkpoint ===")
-            if not checkpoint_wal(args.db_path):
-                all_ok = False
+            if args.all or args.checkpoint:
+                actions.append("checkpoint")
+                print(f"\n=== WAL Checkpoint ===")
+                if not checkpoint_wal(args.db_path):
+                    all_ok = False
 
-        if args.vacuum:
-            actions.append("vacuum")
-            print(f"\n=== Vacuum ===")
-            if not vacuum_db(args.db_path):
-                all_ok = False
+            if args.vacuum:
+                actions.append("vacuum")
+                print(f"\n=== Vacuum ===")
+                if not vacuum_db(args.db_path):
+                    all_ok = False
+        except MaintenanceError as e:
+            all_ok = False
+            op_failure = e
 
-        append_db_ops_ledger(
-            tool_name="db_maintenance",
-            db_path=args.db_path,
-            action=",".join(actions) or "none",
-            status="success" if all_ok else "error",
-            details={"all": args.all},
-        )
+        if op_failure is not None:
+            append_db_ops_ledger(
+                tool_name="db_maintenance",
+                db_path=args.db_path,
+                action=",".join(actions) or "none",
+                status="error",
+                details={
+                    **op_failure.partial_evidence,
+                    "all": args.all,
+                    "error": str(op_failure),
+                },
+            )
+        else:
+            append_db_ops_ledger(
+                tool_name="db_maintenance",
+                db_path=args.db_path,
+                action=",".join(actions) or "none",
+                status="success" if all_ok else "error",
+                details={"all": args.all},
+            )
 
         # Exit with appropriate code
         if not all_ok:
