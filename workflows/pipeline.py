@@ -34,6 +34,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import sqlite3
 import uuid
 from collections import defaultdict
 from contextvars import ContextVar
@@ -113,6 +114,7 @@ from workflows.thin_file_manager import run_promotion_sweep
 from collectors.http_client import CollectorHttpClient, RunContext
 from workflows.run_manager import create_run, start_run, complete_run, fail_run
 from ops.collector_heartbeat import initialize_collector_state, record_collector_heartbeat
+from ops.collector_health import DEFAULT_EXPECTED_SOURCE_APIS_BY_COLLECTOR
 
 logger = logging.getLogger(__name__)
 
@@ -1389,6 +1391,71 @@ class DiscoveryPipeline:
 
         return results
 
+    def _open_data_version_probe(self) -> Optional[sqlite3.Connection]:
+        """Open a same-connection PRAGMA data_version probe for a collector run."""
+        if not self._store:
+            return None
+        db_path = Path(getattr(self._store, "db_path", self.config.db_path))
+        if str(db_path) == ":memory:" or not db_path.exists():
+            return None
+        try:
+            return sqlite3.connect(str(db_path))
+        except sqlite3.Error as exc:
+            logger.debug("Could not open data_version probe for %s: %s", db_path, exc)
+            return None
+
+    @staticmethod
+    def _read_data_version_probe(
+        connection: Optional[sqlite3.Connection],
+    ) -> Optional[int]:
+        if connection is None:
+            return None
+        try:
+            row = connection.execute("PRAGMA data_version").fetchone()
+            return int(row[0]) if row else None
+        except sqlite3.Error as exc:
+            logger.debug("Could not read data_version probe: %s", exc)
+            return None
+
+    async def _count_recent_signals_for_collector(
+        self,
+        collector_name: str,
+    ) -> Optional[int]:
+        """Count this collector's DB-visible rows in the last 24 hours."""
+        if not self._store or not getattr(self._store, "_db", None):
+            return None
+        source_apis = DEFAULT_EXPECTED_SOURCE_APIS_BY_COLLECTOR.get(
+            collector_name,
+            (collector_name,),
+        )
+        if not source_apis:
+            return 0
+        placeholders = ",".join("?" for _ in source_apis)
+        try:
+            cursor = await self._store._db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='signals'"
+            )
+            if await cursor.fetchone() is None:
+                return 0
+            cursor = await self._store._db.execute(
+                f"""
+                SELECT COUNT(*)
+                FROM signals
+                WHERE detected_at > datetime('now', '-24 hours')
+                  AND source_api IN ({placeholders})
+                """,
+                tuple(source_apis),
+            )
+            row = await cursor.fetchone()
+            return int(row[0]) if row else 0
+        except sqlite3.Error as exc:
+            logger.debug(
+                "Could not count recent signals for collector %s: %s",
+                collector_name,
+                exc,
+            )
+            return None
+
     async def _run_single_collector(
         self,
         collector_name: str,
@@ -1402,6 +1469,11 @@ class DiscoveryPipeline:
         )
         collector = None
         result: Optional[CollectorResult] = None
+        data_version_probe = self._open_data_version_probe()
+        data_version_before = self._read_data_version_probe(data_version_probe)
+        data_version_after: Optional[int] = None
+        rows_total_last_24h: Optional[int] = None
+        collector_class: Optional[str] = None
 
         def _make_result(**kwargs: Any) -> CollectorResult:
             nonlocal result
@@ -1611,7 +1683,12 @@ class DiscoveryPipeline:
                 )
 
             # Run collector
+            collector_class = collector.__class__.__name__
             result = await collector.run(dry_run=dry_run)
+            data_version_after = self._read_data_version_probe(data_version_probe)
+            rows_total_last_24h = await self._count_recent_signals_for_collector(
+                collector_name
+            )
 
             # Capture metrics from collector
             metrics.signals_found = result.signals_found
@@ -1651,6 +1728,14 @@ class DiscoveryPipeline:
             # Always capture timing
             metrics.complete()
             if result is not None:
+                if collector_class is None and collector is not None:
+                    collector_class = collector.__class__.__name__
+                if data_version_after is None:
+                    data_version_after = self._read_data_version_probe(data_version_probe)
+                if rows_total_last_24h is None:
+                    rows_total_last_24h = await self._count_recent_signals_for_collector(
+                        collector_name
+                    )
                 try:
                     record_collector_heartbeat(
                         result=result,
@@ -1662,6 +1747,11 @@ class DiscoveryPipeline:
                         retries=metrics.retries,
                         errors=metrics.errors,
                         error_messages=metrics.error_messages,
+                        data_version_before=data_version_before,
+                        data_version_after=data_version_after,
+                        rows_inserted_this_iter=getattr(result, "signals_new", 0),
+                        rows_total_last_24h=rows_total_last_24h,
+                        collector_class=collector_class,
                         runner="pipeline",
                     )
                 except Exception as heartbeat_error:
@@ -1670,6 +1760,8 @@ class DiscoveryPipeline:
                         collector_name,
                         heartbeat_error,
                     )
+            if data_version_probe is not None:
+                data_version_probe.close()
             self._collector_metrics.append(metrics)
 
     async def _process_signals_stage(self, dry_run: bool, source_api: Optional[str] = None) -> Dict[str, int]:

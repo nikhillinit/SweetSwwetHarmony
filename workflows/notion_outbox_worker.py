@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 import random
-from typing import Any, Callable, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, Optional, TYPE_CHECKING
 
 from connectors.notion_connector_v2 import (
     NotionConnector,
@@ -25,6 +25,11 @@ if TYPE_CHECKING:
     from storage.claim_store import ClaimStore
 
 logger = logging.getLogger(__name__)
+
+CLAIMED_EVENT_TYPES = (
+    EventType.NOTION_PUSH.value,
+    EventType.PROFILE_UPDATE_REQUESTED.value,
+)
 
 
 class NotionOutboxWorker:
@@ -53,7 +58,8 @@ class NotionOutboxWorker:
         Drain pending outbox entries with event-type routing.
 
         Routes events to appropriate handlers based on event_type field.
-        Falls back to legacy Notion push if no event_type specified.
+        Uses the atomic claim/finalize contract so overlapping drains cannot
+        process the same row.
         """
         stats = {
             "processed": 0,
@@ -65,7 +71,18 @@ class NotionOutboxWorker:
             "profile_updates": 0,
         }
 
-        entries = await self.store.get_pending_outbox(limit=limit)
+        entries = []
+        remaining = max(0, limit)
+        for event_type in CLAIMED_EVENT_TYPES:
+            if remaining <= 0:
+                break
+            claimed = await self.store.claim_due_outbox(
+                event_type=event_type,
+                limit=remaining,
+            )
+            entries.extend(claimed)
+            remaining -= len(claimed)
+
         if not entries:
             return stats
 
@@ -76,12 +93,16 @@ class NotionOutboxWorker:
 
             try:
                 # Check for event_type routing
-                event_type = payload.get("event_type")
+                event_type = (
+                    payload.get("event_type")
+                    or entry.get("event_type")
+                    or EventType.NOTION_PUSH.value
+                )
 
                 if event_type == EventType.PROFILE_UPDATE_REQUESTED.value:
                     # Handle profile update request
                     await self._handle_profile_update(payload)
-                    await self.store.mark_outbox_sent(outbox_id)
+                    await self.store.finalize_outbox(outbox_id, success=True)
                     stats["sent"] += 1
                     stats["profile_updates"] += 1
 
@@ -97,9 +118,6 @@ class NotionOutboxWorker:
 
                     result = await self.notion.upsert_prospect(prospect_payload)
 
-                    await self.store.mark_outbox_sent(outbox_id)
-                    stats["sent"] += 1
-
                     result_status = result.get("status")
                     if result_status in stats:
                         stats[result_status] += 1
@@ -114,15 +132,23 @@ class NotionOutboxWorker:
                             metadata=metadata,
                         )
 
+                    await self.store.finalize_outbox(outbox_id, success=True)
+                    stats["sent"] += 1
+
                 else:
                     logger.warning(f"Unknown event_type: {event_type}, skipping")
                     stats["skipped"] += 1
-                    await self.store.mark_outbox_sent(outbox_id)
+                    await self.store.finalize_outbox(outbox_id, success=True)
 
             except Exception as exc:
                 stats["failed"] += 1
                 backoff_seconds = self._compute_backoff(entry.get("attempts", 0))
-                await self.store.mark_outbox_failed(outbox_id, str(exc), backoff_seconds)
+                await self.store.finalize_outbox(
+                    outbox_id,
+                    success=False,
+                    error=str(exc),
+                    backoff_seconds=backoff_seconds,
+                )
                 logger.warning(f"Outbox entry {outbox_id} failed: {exc}")
 
         return stats

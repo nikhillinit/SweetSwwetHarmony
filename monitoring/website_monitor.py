@@ -352,6 +352,7 @@ class WebsiteMonitor:
         await self._signal_store.enqueue_notion_write(
             idempotency_key=idempotency_key,
             payload=payload.model_dump(),
+            event_type=EventType.PROFILE_UPDATE_REQUESTED.value,
         )
 
         logger.info(f"Enqueued profile update for {watch.canonical_key}: {trigger}")

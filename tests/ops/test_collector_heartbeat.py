@@ -29,8 +29,8 @@ collectors:
     expected_cadence_hours: 24
 """,
     )
-    started = datetime(2026, 4, 27, 14, 0, tzinfo=timezone.utc)
-    finished = datetime(2026, 4, 27, 14, 1, tzinfo=timezone.utc)
+    finished = datetime.now(timezone.utc)
+    started = finished - timedelta(minutes=1)
 
     entry = record_collector_heartbeat(
         result=SimpleNamespace(
@@ -61,6 +61,8 @@ collectors:
     assert entry["signals_found"] == 12
     assert entry["signals_new"] == 8
     assert entry["signals_suppressed"] == 4
+    assert entry["rows_inserted_this_iter"] == 8
+    assert entry["collector_class"] == "github"
     assert entry["api_calls"] == 7
     assert entry["retries"] == 2
     assert entry["consecutive_failures"] == 0
@@ -69,6 +71,48 @@ collectors:
     persisted = json.loads(state_path.read_text(encoding="utf-8"))
     assert persisted["schema_version"] == SCHEMA_VERSION
     assert persisted["collectors"]["github"] == entry
+
+
+def test_record_collector_heartbeat_records_progress_proof_fields(tmp_path):
+    state_path = tmp_path / "collectors.json"
+    config_path = _write_config(
+        tmp_path / "collectors.yaml",
+        """
+schema_version: 1
+collectors:
+  arxiv:
+    configured_status: enabled
+    expected_cadence_hours: 24
+""",
+    )
+
+    entry = record_collector_heartbeat(
+        result=SimpleNamespace(
+            collector="arxiv",
+            status="success",
+            signals_found=5,
+            signals_new=3,
+            signals_suppressed=2,
+            dry_run=False,
+        ),
+        data_version_before=10,
+        data_version_after=12,
+        rows_inserted_this_iter=3,
+        rows_total_last_24h=7,
+        collector_class="ArxivCollector",
+        state_path=state_path,
+        config_path=config_path,
+        runner="test",
+    )
+
+    assert entry["data_version_before"] == 10
+    assert entry["data_version_after"] == 12
+    assert entry["rows_inserted_this_iter"] == 3
+    assert entry["rows_total_last_24h"] == 7
+    assert entry["collector_class"] == "ArxivCollector"
+
+    reloaded = load_collector_state(state_path, config_path=config_path)
+    assert reloaded["collectors"]["arxiv"]["data_version_after"] == 12
 
 
 def test_record_collector_heartbeat_tracks_failure_and_recovery(tmp_path):
