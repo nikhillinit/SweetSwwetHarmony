@@ -222,6 +222,7 @@ def test_commit_success_writes_report_ledger_and_mutates(
     assert report["metrics"]["rows_scanned"] == 5
     assert report["metrics"]["rows_updated"] == 5
     assert report["metrics"]["dry_run"] is False
+    assert isinstance(report["metrics"]["preflight_data_version"], int)
     assert _null_count(db_path, spec.target_column) == 0
 
     success_rows = _ledger_rows_for(ledger_path, spec.tool_name, "success")
@@ -230,6 +231,7 @@ def test_commit_success_writes_report_ledger_and_mutates(
     assert details["rows_scanned"] == 5
     assert details["rows_updated"] == 5
     assert details["dry_run"] is False
+    assert isinstance(details["preflight_data_version"], int)
 
 
 @pytest.mark.parametrize("spec", COMMAND_SPECS, ids=lambda spec: spec.tool_name)
@@ -256,6 +258,7 @@ def test_dry_run_ignores_db_tool_lock_and_writes_no_ledger(
     assert report["command"] == spec.command
     assert report["errors"] == []
     assert report["metrics"]["dry_run"] is True
+    assert isinstance(report["metrics"]["preflight_data_version"], int)
     assert _null_count(db_path, spec.target_column) == before_nulls
     assert _read_ledger_rows(ledger_path) == []
 
@@ -283,12 +286,14 @@ def test_commit_lock_blocked_writes_report_ledger_and_leaves_db(
     assert report["ok"] is False
     assert report["command"] == spec.command
     assert report["errors"]
+    assert isinstance(report["metrics"]["preflight_data_version"], int)
     assert _null_count(db_path, spec.target_column) == before_nulls
 
     blocked_rows = _ledger_rows_for(ledger_path, spec.tool_name, "lock_blocked")
     assert blocked_rows, f"No lock_blocked ledger row for {spec.tool_name}"
     holder = blocked_rows[-1]["details"]["holder"]
     assert holder["tool_name"] == "test-holder"
+    assert isinstance(blocked_rows[-1]["details"]["preflight_data_version"], int)
 
 
 @pytest.mark.parametrize("spec", COMMAND_SPECS, ids=lambda spec: spec.tool_name)
@@ -319,6 +324,7 @@ def test_commit_typed_error_writes_report_ledger_and_rolls_back(
     assert report["metrics"]["rows_scanned"] == 2
     assert report["metrics"]["chunk_size"] == 2
     assert report["metrics"]["dry_run"] is False
+    assert isinstance(report["metrics"]["preflight_data_version"], int)
     assert _null_count(db_path, spec.target_column) == before_nulls
 
     error_rows = _ledger_rows_for(ledger_path, spec.tool_name, "error")
@@ -329,6 +335,7 @@ def test_commit_typed_error_writes_report_ledger_and_rolls_back(
     assert details["rows_updated_attempted"] == 0
     assert details["chunk_size"] == 2
     assert details["dry_run"] is False
+    assert isinstance(details["preflight_data_version"], int)
     assert details["error"]
     if spec.tool_name == "rehydrate_canonical_keys_v2":
         assert details["sources"] == "all"
