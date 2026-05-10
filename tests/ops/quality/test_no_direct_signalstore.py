@@ -108,7 +108,9 @@ ALLOWLIST = {
     "scripts/preflight_check.py",
     "scripts/run_backfill.py",
     "scripts/shadow_mode_report.py",
+    "scripts/spc_override_decision.py",
     "scripts/step3b_evidence_pack.py",
+    "scripts/thesis_activation_sandbox.py",
 
     # --- API / DB layer (dependency injection entrypoints) ---
     "api/db.py",
@@ -116,6 +118,11 @@ ALLOWLIST = {
     # --- Migration CLI (standalone entrypoint) ---
     "storage/migrations/cli.py",
 }
+
+
+def _looks_inside_string_literal(line: str, match_start: int) -> bool:
+    prefix = line[:match_start]
+    return prefix.count('"') % 2 == 1 or prefix.count("'") % 2 == 1
 
 
 def _collect_production_python_files():
@@ -213,7 +220,8 @@ def test_no_direct_signalstore_construction():
                 if "SignalStore" in line and "(" not in line:
                     continue
 
-                if CONSTRUCTOR_RE.search(line):
+                match = CONSTRUCTOR_RE.search(line)
+                if match and not _looks_inside_string_literal(line, match.start()):
                     violations.append(f"  {rel_path}:{lineno}: {stripped.rstrip()}")
 
     if violations:

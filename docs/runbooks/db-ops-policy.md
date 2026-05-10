@@ -78,12 +78,14 @@ F.3 hardening proceeds by live-data blast radius:
 
 1. F.3.0: `scripts/cleanup_publisher_keys.py` (complete)
 2. F.3.1 PR1: `run_pipeline.py backfill-evidence-family` and `run_pipeline.py rehydrate-canonical-keys-v2` wrappers (complete)
-3. F.3.1 PR2: `scripts/backfill_company_extraction.py`, `scripts/backfill_evidence_keys.py`, `scripts/backfill_thesis_provenance.py`
-4. F.3.2: `scripts/backfill_company_files.py`, `scripts/build_case_law_corpus.py`, `scripts/build_exemplar_library.py`
+3. F.3.1 PR2: `scripts/backfill_company_extraction.py`, `scripts/backfill_evidence_keys.py`, `scripts/backfill_thesis_provenance.py` (complete)
+4. F.3.2: `scripts/backfill_company_files.py`, `scripts/build_case_law_corpus.py`, `scripts/build_exemplar_library.py` (complete)
 5. F.3.3: `scripts/seed_tier_c_domains.py`, `scripts/seed_job_posting_domains.py`
 6. F.3.4: `scripts/gc_thin_files.py`, `scripts/backfill_hunter_company_names.py`
 
 Each mutating script in these slices should default to dry-run or otherwise require explicit commit/apply confirmation, acquire `DBToolLock` in commit mode, write success and error rows to `db_ops_ledger.jsonl`, preserve structured partial evidence on failures, and include focused subprocess tests for dry-run, success, lock-blocked, and rollback/error paths.
+
+For F.3.2, `build_case_law_corpus.py` and `build_exemplar_library.py` are deliberately non-mutating on bare invocation; use `--commit` to write. `build_case_law_corpus.py` writes SQLite rows plus vectorizer artifacts, so its reports and ledger rows record staged artifact paths and cleanup evidence rather than claiming DB-plus-filesystem atomicity.
 
 ## Phase 5.2 Cloud Durability Direction
 
