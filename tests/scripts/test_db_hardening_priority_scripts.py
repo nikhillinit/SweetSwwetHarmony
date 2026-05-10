@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import json
 import sqlite3
 import os
 import subprocess
@@ -10,6 +11,25 @@ from pathlib import Path
 
 from storage.signal_store import SignalStore
 from utils.db_tool_lock import DBToolLock
+
+
+def _read_ledger_rows(ledger_path: Path) -> list[dict]:
+    """Parse JSONL ledger entries; tolerates missing file."""
+    if not ledger_path.exists():
+        return []
+    return [
+        json.loads(line)
+        for line in ledger_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def _error_rows_for(rows: list[dict], tool_name: str) -> list[dict]:
+    return [
+        row
+        for row in rows
+        if row.get("tool_name") == tool_name and row.get("status") == "error"
+    ]
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -240,6 +260,41 @@ def test_e2e_batch_approve_respects_db_tool_lock(tmp_path: Path) -> None:
     assert any('"tool_name": "e2e_batch_approve"' in entry and '"status": "lock_blocked"' in entry for entry in entries)
 
 
+def test_e2e_batch_approve_records_ledger_on_error_path(tmp_path: Path) -> None:
+    """Mid-mutation failure must emit an error ledger row carrying the
+    review_item_ids that were in flight, via structured ApproveError."""
+    db_path = tmp_path / "review.db"
+    # DB exists but lacks the review_items table — SELECT will raise
+    # OperationalError after BEGIN IMMEDIATE inside the script's try block.
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute("CREATE TABLE other (x INTEGER)")
+        conn.commit()
+    finally:
+        conn.close()
+    ledger_path = tmp_path / "ledger.jsonl"
+
+    result = _run_script(
+        "scripts/e2e_batch_approve.py",
+        "--db-path",
+        str(db_path),
+        "--review-item-ids",
+        "1,2",
+        "--yes",
+        env={"DB_OPS_LEDGER_PATH": str(ledger_path)},
+    )
+
+    assert result.returncode != 0
+    rows = _read_ledger_rows(ledger_path)
+    error_rows = _error_rows_for(rows, "e2e_batch_approve")
+    assert error_rows, f"No error ledger row for e2e_batch_approve. Rows: {rows}"
+    details = error_rows[-1]["details"]
+    assert details.get("review_item_ids") == [1, 2], (
+        f"Expected review_item_ids=[1,2] in details, got: {details}"
+    )
+    assert details.get("error"), "error message missing from details"
+
+
 def test_export_labeling_review_uses_custom_db_and_out(tmp_path: Path) -> None:
     db_path = tmp_path / "labels.db"
     out_path = tmp_path / "labels.csv"
@@ -308,6 +363,46 @@ def test_run_backfill_updates_with_yes(tmp_path: Path) -> None:
     assert any('"tool_name": "run_backfill"' in entry and '"status": "success"' in entry for entry in entries)
 
 
+def test_run_backfill_records_ledger_on_error_path(tmp_path: Path) -> None:
+    """Mid-backfill failure must emit an error ledger row carrying the
+    null_count snapshot keys via structured BackfillError. We force the
+    failure by dropping the signals table after SignalStore initialization
+    so the in-try-block COUNT raises before null_count_before is captured.
+    (Holding an external SQLite writer lock would deadlock the script's
+    own SignalStore.initialize on PRAGMA journal_mode=WAL.)"""
+    db_path = tmp_path / "backfill.db"
+    _create_backfill_db(db_path)
+    # Drop the signals table; schema_migrations still says version is current,
+    # so SignalStore.initialize in the subprocess won't re-create it.
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute("DROP TABLE signals")
+        conn.commit()
+    finally:
+        conn.close()
+    ledger_path = tmp_path / "ledger.jsonl"
+
+    result = _run_script(
+        "scripts/run_backfill.py",
+        "--db-path",
+        str(db_path),
+        "--yes",
+        env={"DB_OPS_LEDGER_PATH": str(ledger_path)},
+    )
+
+    assert result.returncode != 0
+    rows = _read_ledger_rows(ledger_path)
+    error_rows = _error_rows_for(rows, "run_backfill")
+    assert error_rows, f"No error ledger row for run_backfill. Rows: {rows}"
+    details = error_rows[-1]["details"]
+    # Key must be present in partial-evidence even if value is None
+    # (the failure happens before null_count_before is populated).
+    assert "null_count_before" in details, (
+        f"Expected null_count_before key in details, got: {details}"
+    )
+    assert details.get("error"), "error message missing from details"
+
+
 def test_restore_db_help_shows_shared_db_contract() -> None:
     result = _run_script("scripts/restore_db.py", "--help")
 
@@ -327,6 +422,34 @@ def test_restore_db_deprecated_db_alias_warns(tmp_path: Path) -> None:
 
     assert result.returncode == 1
     assert "DEPRECATED" in result.stderr
+
+
+def test_restore_db_records_ledger_on_error_path(tmp_path: Path) -> None:
+    """Bad backup file → integrity check fails → structured RestoreError →
+    ledger row carries integrity_check evidence."""
+    db_path = tmp_path / "signals.db"
+    backup_path = tmp_path / "bad_backup.db"
+    backup_path.write_bytes(b"this is not a valid sqlite database")
+    ledger_path = tmp_path / "ledger.jsonl"
+
+    result = _run_script(
+        "scripts/restore_db.py",
+        str(backup_path),
+        "--db-path",
+        str(db_path),
+        "--force",
+        env={"DB_OPS_LEDGER_PATH": str(ledger_path)},
+    )
+
+    assert result.returncode != 0
+    rows = _read_ledger_rows(ledger_path)
+    error_rows = _error_rows_for(rows, "restore_db")
+    assert error_rows, f"No error ledger row for restore_db. Rows: {rows}"
+    details = error_rows[-1]["details"]
+    assert details.get("integrity_check"), (
+        f"Expected integrity_check evidence in details, got: {details}"
+    )
+    assert details.get("error"), "error message missing from details"
 
 
 def test_restore_db_records_ledger_on_sidecar_refusal(tmp_path: Path) -> None:
@@ -398,6 +521,32 @@ def test_db_maintenance_records_ledger(tmp_path: Path) -> None:
     assert result.returncode == 0
     entries = ledger_path.read_text(encoding="utf-8").strip().splitlines()
     assert any('"tool_name": "db_maintenance"' in entry and '"status": "success"' in entry for entry in entries)
+
+
+def test_db_maintenance_records_ledger_on_error_path(tmp_path: Path) -> None:
+    """Vacuum on a non-SQLite file → structured MaintenanceError →
+    ledger row carries operation='vacuum' evidence."""
+    db_path = tmp_path / "maintenance.db"
+    db_path.write_bytes(b"this is not a sqlite database")
+    ledger_path = tmp_path / "ledger.jsonl"
+
+    result = _run_script(
+        "scripts/db_maintenance.py",
+        "--db-path",
+        str(db_path),
+        "--vacuum",
+        env={"DB_OPS_LEDGER_PATH": str(ledger_path)},
+    )
+
+    assert result.returncode != 0
+    rows = _read_ledger_rows(ledger_path)
+    error_rows = _error_rows_for(rows, "db_maintenance")
+    assert error_rows, f"No error ledger row for db_maintenance. Rows: {rows}"
+    details = error_rows[-1]["details"]
+    assert details.get("operation") == "vacuum", (
+        f"Expected operation='vacuum' in details, got: {details}"
+    )
+    assert details.get("error"), "error message missing from details"
 
 
 def test_db_ops_note_records_manual_entry(tmp_path: Path) -> None:
