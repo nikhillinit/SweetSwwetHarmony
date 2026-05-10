@@ -76,6 +76,14 @@ def _table_count(db_path: Path, table: str) -> int:
         conn.close()
 
 
+def _scalar(db_path: Path, sql: str, params: tuple[object, ...] = ()) -> object:
+    conn = sqlite3.connect(str(db_path))
+    try:
+        return conn.execute(sql, params).fetchone()[0]
+    finally:
+        conn.close()
+
+
 def _exec_sql(db_path: Path, sql: str) -> None:
     conn = sqlite3.connect(str(db_path))
     try:
@@ -91,6 +99,97 @@ async def _create_signalstore_db(db_path: Path) -> None:
     store = SignalStore(str(db_path))
     await store.initialize()
     await store.close()
+
+
+async def _create_gc_db(db_path: Path) -> None:
+    from storage.signal_store import SignalStore
+
+    store = SignalStore(str(db_path))
+    await store.initialize()
+    try:
+        now = "2026-05-10T00:00:00Z"
+        old_archived = "2024-01-01T00:00:00Z"
+        recent_archived = "2026-04-01T00:00:00Z"
+        await store._db.execute(
+            """
+            INSERT INTO company_files (
+                company_id, company_name, canonical_key, status, source_apis,
+                first_seen_at, last_seen_at, archived_at, metadata
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "old-archived",
+                "Old Archived Co",
+                "domain:old.example",
+                "archived",
+                "[]",
+                "2023-01-01T00:00:00Z",
+                "2023-06-01T00:00:00Z",
+                old_archived,
+                "{}",
+            ),
+        )
+        await store._db.execute(
+            """
+            INSERT INTO company_files (
+                company_id, company_name, canonical_key, status, source_apis,
+                first_seen_at, last_seen_at, archived_at, metadata
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "recent-archived",
+                "Recent Archived Co",
+                "domain:recent.example",
+                "archived",
+                "[]",
+                "2026-01-01T00:00:00Z",
+                "2026-02-01T00:00:00Z",
+                recent_archived,
+                "{}",
+            ),
+        )
+        await store._db.execute(
+            """
+            INSERT INTO company_files (
+                company_id, company_name, canonical_key, status, source_apis,
+                first_seen_at, last_seen_at, metadata
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "active-thin",
+                "Active Thin Co",
+                "domain:active.example",
+                "thin",
+                "[]",
+                now,
+                now,
+                "{}",
+            ),
+        )
+        review_rows = [
+            ("old-archived", "rejected"),
+            ("old-archived", "pending"),
+            ("active-thin", "deferred"),
+        ]
+        for company_id, status in review_rows:
+            await store._db.execute(
+                """
+                INSERT INTO review_items (
+                    company_id, status, evidence_bundle, reason, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    company_id,
+                    status,
+                    json.dumps({"signal_ids": [], "schema_version": 1}),
+                    "fixture",
+                    now,
+                    now,
+                ),
+            )
+        await store._db.commit()
+    finally:
+        await store.close()
 
 
 async def _create_company_files_db(db_path: Path) -> None:
@@ -246,6 +345,245 @@ def _journal_mode(db_path: Path) -> str:
         return conn.execute("PRAGMA journal_mode").fetchone()[0].lower()
     finally:
         conn.close()
+
+
+def test_gc_thin_files_bare_cli_defaults_to_dry_run(tmp_path: Path) -> None:
+    db_path = tmp_path / "signals.db"
+    report_path = tmp_path / "report.json"
+    ledger_path = tmp_path / "ledger.jsonl"
+    asyncio.run(_create_gc_db(db_path))
+
+    result = _run_script(
+        "scripts/gc_thin_files.py",
+        "--db",
+        str(db_path),
+        "--report",
+        str(report_path),
+        ledger_path=ledger_path,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert _table_count(db_path, "company_files") == 3
+    assert _table_count(db_path, "review_items") == 3
+    assert _read_ledger_rows(ledger_path) == []
+    report = _read_report(report_path)
+    assert report["ok"] is True
+    assert report["metrics"]["dry_run"] is True
+    assert report["metrics"]["company_files_found"] == 1
+    assert report["metrics"]["company_files_deleted"] == 0
+    assert isinstance(report["metrics"]["preflight_data_version"], int)
+
+
+def test_gc_thin_files_apply_records_success_ledger(tmp_path: Path) -> None:
+    db_path = tmp_path / "signals.db"
+    report_path = tmp_path / "report.json"
+    ledger_path = tmp_path / "ledger.jsonl"
+    asyncio.run(_create_gc_db(db_path))
+
+    result = _run_script(
+        "scripts/gc_thin_files.py",
+        "--db",
+        str(db_path),
+        "--apply",
+        "--report",
+        str(report_path),
+        ledger_path=ledger_path,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert _table_count(db_path, "company_files") == 2
+    assert _scalar(
+        db_path,
+        "SELECT COUNT(*) FROM company_files WHERE company_id = ?",
+        ("old-archived",),
+    ) == 0
+    assert _table_count(db_path, "review_items") == 2
+    assert _scalar(
+        db_path,
+        "SELECT COUNT(*) FROM review_items WHERE company_id = ? AND status = ?",
+        ("old-archived", "pending"),
+    ) == 1
+    assert _table_count(db_path, "audit_log") == 1
+
+    report = _read_report(report_path)
+    assert report["ok"] is True
+    metrics = report["metrics"]
+    assert metrics["dry_run"] is False
+    assert metrics["company_files_found"] == 1
+    assert metrics["company_files_deleted"] == 1
+    assert metrics["orphaned_reviews_cleaned"] == 1
+    assert metrics["audit_log_written"] is True
+    assert metrics["transaction"] == "committed"
+    assert isinstance(metrics["preflight_data_version"], int)
+
+    success_rows = _ledger_rows_for(ledger_path, "gc_thin_files", "success")
+    assert success_rows
+    details = success_rows[-1]["details"]
+    assert details["company_files_found"] == 1
+    assert details["company_files_deleted"] == 1
+    assert details["orphaned_reviews_cleaned"] == 1
+    assert details["audit_log_written"] is True
+    assert details["transaction"] == "committed"
+    assert isinstance(details["preflight_data_version"], int)
+
+
+def test_gc_thin_files_apply_lock_blocked(tmp_path: Path) -> None:
+    db_path = tmp_path / "signals.db"
+    report_path = tmp_path / "report.json"
+    ledger_path = tmp_path / "ledger.jsonl"
+    asyncio.run(_create_gc_db(db_path))
+
+    lock = DBToolLock(db_path, tool_name="test-holder")
+    assert lock.acquire(timeout_seconds=0)
+    try:
+        result = _run_script(
+            "scripts/gc_thin_files.py",
+            "--db",
+            str(db_path),
+            "--apply",
+            "--report",
+            str(report_path),
+            ledger_path=ledger_path,
+        )
+    finally:
+        lock.release()
+
+    assert result.returncode == 2
+    assert _table_count(db_path, "company_files") == 3
+    blocked_rows = _ledger_rows_for(ledger_path, "gc_thin_files", "lock_blocked")
+    assert blocked_rows
+    details = blocked_rows[-1]["details"]
+    assert details["holder"]["tool_name"] == "test-holder"
+    assert details["apply"] is True
+    assert isinstance(details["preflight_data_version"], int)
+    report = _read_report(report_path)
+    assert report["ok"] is False
+    assert report["metrics"]["holder"]["tool_name"] == "test-holder"
+
+
+def test_gc_thin_files_apply_preflight_error_records_ledger(tmp_path: Path) -> None:
+    db_path = tmp_path / "missing.db"
+    report_path = tmp_path / "report.json"
+    ledger_path = tmp_path / "ledger.jsonl"
+
+    result = _run_script(
+        "scripts/gc_thin_files.py",
+        "--db",
+        str(db_path),
+        "--apply",
+        "--report",
+        str(report_path),
+        ledger_path=ledger_path,
+    )
+
+    assert result.returncode == 1
+    error_rows = _ledger_rows_for(ledger_path, "gc_thin_files", "error")
+    assert error_rows
+    details = error_rows[-1]["details"]
+    assert details["phase"] == "preflight_data_version"
+    assert details["apply"] is True
+    assert details["preflight_data_version"] is None
+    assert details["error"]
+    report = _read_report(report_path)
+    assert report["ok"] is False
+    assert report["metrics"]["phase"] == "preflight_data_version"
+
+
+def test_gc_thin_files_apply_delete_error_rolls_back_current_batch(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "signals.db"
+    report_path = tmp_path / "report.json"
+    ledger_path = tmp_path / "ledger.jsonl"
+    asyncio.run(_create_gc_db(db_path))
+    _exec_sql(
+        db_path,
+        """
+        CREATE TRIGGER fail_gc_delete
+        BEFORE DELETE ON company_files
+        WHEN OLD.company_id = 'old-archived'
+        BEGIN
+            SELECT RAISE(ABORT, 'forced gc delete failure');
+        END;
+        """,
+    )
+
+    result = _run_script(
+        "scripts/gc_thin_files.py",
+        "--db",
+        str(db_path),
+        "--apply",
+        "--report",
+        str(report_path),
+        ledger_path=ledger_path,
+    )
+
+    assert result.returncode == 1
+    assert _table_count(db_path, "company_files") == 3
+    assert _table_count(db_path, "review_items") == 3
+    assert _table_count(db_path, "audit_log") == 0
+    error_rows = _ledger_rows_for(ledger_path, "gc_thin_files", "error")
+    assert error_rows
+    details = error_rows[-1]["details"]
+    assert details["phase"] == "delete_company_files"
+    assert details["transaction"] == "rolled_back"
+    assert details["company_files_found"] == 1
+    assert details["company_files_deleted"] == 0
+    assert details["audit_log_written"] is False
+    assert isinstance(details["preflight_data_version"], int)
+    assert "forced gc delete failure" in details["error"]
+    report = _read_report(report_path)
+    assert report["ok"] is False
+    assert report["metrics"]["transaction"] == "rolled_back"
+
+
+def test_gc_thin_files_apply_audit_failure_records_partial_evidence(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "signals.db"
+    report_path = tmp_path / "report.json"
+    ledger_path = tmp_path / "ledger.jsonl"
+    asyncio.run(_create_gc_db(db_path))
+    _exec_sql(
+        db_path,
+        """
+        CREATE TRIGGER fail_gc_audit
+        BEFORE INSERT ON audit_log
+        WHEN NEW.action_type = 'gc_thin_files'
+        BEGIN
+            SELECT RAISE(ABORT, 'forced audit failure');
+        END;
+        """,
+    )
+
+    result = _run_script(
+        "scripts/gc_thin_files.py",
+        "--db",
+        str(db_path),
+        "--apply",
+        "--report",
+        str(report_path),
+        ledger_path=ledger_path,
+    )
+
+    assert result.returncode == 1
+    assert _table_count(db_path, "company_files") == 2
+    assert _table_count(db_path, "review_items") == 2
+    assert _table_count(db_path, "audit_log") == 0
+    error_rows = _ledger_rows_for(ledger_path, "gc_thin_files", "error")
+    assert error_rows
+    details = error_rows[-1]["details"]
+    assert details["phase"] == "write_audit_log"
+    assert details["transaction"] == "partial_committed"
+    assert details["company_files_found"] == 1
+    assert details["company_files_deleted"] == 1
+    assert details["orphaned_reviews_cleaned"] == 1
+    assert details["audit_log_written"] is False
+    assert isinstance(details["preflight_data_version"], int)
+    assert "forced audit failure" in details["error"]
+    report = _read_report(report_path)
+    assert report["ok"] is False
+    assert report["metrics"]["transaction"] == "partial_committed"
 
 
 def test_backfill_company_files_bare_cli_defaults_to_dry_run(tmp_path: Path) -> None:
