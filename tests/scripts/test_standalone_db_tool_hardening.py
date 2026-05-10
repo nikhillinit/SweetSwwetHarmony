@@ -178,6 +178,92 @@ def _create_thesis_provenance_db(path: Path) -> None:
         conn.close()
 
 
+def _create_hunter_backfill_db(path: Path) -> None:
+    conn = sqlite3.connect(str(path))
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute(
+            """
+            CREATE TABLE signals (
+                id INTEGER PRIMARY KEY,
+                company_name TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE hunter_results (
+                id INTEGER PRIMARY KEY,
+                company_name TEXT NOT NULL,
+                canonical_key TEXT,
+                raw_data TEXT NOT NULL,
+                source_api TEXT NOT NULL,
+                promoted_signal_id INTEGER
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO signals (id, company_name) VALUES (?, ?)",
+            (1, "Old Signal"),
+        )
+        rows = [
+            (
+                1,
+                "",
+                "",
+                json.dumps(
+                    {
+                        "title": "Show HN: Bloomly - plant care app",
+                        "description": "",
+                        "url": "",
+                    }
+                ),
+                "hacker_news",
+                1,
+            ),
+            (
+                2,
+                "Repo Co",
+                "domain:repo.example",
+                json.dumps(
+                    {
+                        "title": "repo/full-name",
+                        "description": "",
+                        "url": "https://github.com/repo/full-name",
+                    }
+                ),
+                "github",
+                None,
+            ),
+            (
+                3,
+                "Acme",
+                "name_loc:acme",
+                json.dumps(
+                    {
+                        "title": "Acme raises $10M",
+                        "description": "",
+                        "url": "",
+                    }
+                ),
+                "news_api",
+                None,
+            ),
+        ]
+        conn.executemany(
+            """
+            INSERT INTO hunter_results (
+                id, company_name, canonical_key, raw_data, source_api,
+                promoted_signal_id
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def _null_count(db_path: Path, table: str, column: str) -> int:
     conn = sqlite3.connect(str(db_path))
     try:
@@ -186,6 +272,214 @@ def _null_count(db_path: Path, table: str, column: str) -> int:
         ).fetchone()[0]
     finally:
         conn.close()
+
+
+def _scalar(db_path: Path, sql: str, params: tuple[object, ...] = ()) -> object:
+    conn = sqlite3.connect(str(db_path))
+    try:
+        return conn.execute(sql, params).fetchone()[0]
+    finally:
+        conn.close()
+
+
+def _exec_sql(db_path: Path, sql: str) -> None:
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.executescript(sql)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_backfill_hunter_company_names_bare_cli_defaults_to_dry_run(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "hunter.db"
+    report_path = tmp_path / "report.json"
+    ledger_path = tmp_path / "ledger.jsonl"
+    _create_hunter_backfill_db(db_path)
+
+    result = _run_script(
+        "scripts/backfill_hunter_company_names.py",
+        "--db",
+        str(db_path),
+        "--report",
+        str(report_path),
+        ledger_path=ledger_path,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert _read_ledger_rows(ledger_path) == []
+    assert _scalar(db_path, "SELECT company_name FROM hunter_results WHERE id = 1") == ""
+    assert _scalar(db_path, "SELECT company_name FROM signals WHERE id = 1") == "Old Signal"
+    report = _read_report(report_path)
+    assert report["ok"] is True
+    assert report["metrics"]["dry_run"] is True
+    assert report["metrics"]["updates_planned"] == 1
+    assert report["metrics"]["signal_updates_planned"] == 1
+    assert isinstance(report["metrics"]["preflight_data_version"], int)
+
+
+def test_backfill_hunter_company_names_apply_records_success_ledger(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "hunter.db"
+    report_path = tmp_path / "report.json"
+    ledger_path = tmp_path / "ledger.jsonl"
+    _create_hunter_backfill_db(db_path)
+
+    result = _run_script(
+        "scripts/backfill_hunter_company_names.py",
+        "--db",
+        str(db_path),
+        "--apply",
+        "--report",
+        str(report_path),
+        ledger_path=ledger_path,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert _scalar(db_path, "SELECT company_name FROM hunter_results WHERE id = 1") == "Bloomly"
+    assert (
+        _scalar(db_path, "SELECT canonical_key FROM hunter_results WHERE id = 1")
+        == "name_loc:bloomly"
+    )
+    assert _scalar(db_path, "SELECT company_name FROM signals WHERE id = 1") == "Bloomly"
+    report = _read_report(report_path)
+    assert report["ok"] is True
+    metrics = report["metrics"]
+    assert metrics["dry_run"] is False
+    assert metrics["updates_planned"] == 1
+    assert metrics["signal_updates_planned"] == 1
+    assert metrics["hunter_results_updated"] == 1
+    assert metrics["signals_updated"] == 1
+    assert metrics["transaction"] == "committed"
+    assert isinstance(metrics["preflight_data_version"], int)
+    success_rows = _ledger_rows_for(ledger_path, "backfill_hunter_company_names", "success")
+    assert success_rows
+    details = success_rows[-1]["details"]
+    assert details["hunter_results_updated"] == 1
+    assert details["signals_updated"] == 1
+    assert details["transaction"] == "committed"
+    assert isinstance(details["preflight_data_version"], int)
+
+
+def test_backfill_hunter_company_names_apply_lock_blocked(tmp_path: Path) -> None:
+    db_path = tmp_path / "hunter.db"
+    report_path = tmp_path / "report.json"
+    ledger_path = tmp_path / "ledger.jsonl"
+    _create_hunter_backfill_db(db_path)
+
+    lock = DBToolLock(db_path, tool_name="test-holder")
+    assert lock.acquire(timeout_seconds=0)
+    try:
+        result = _run_script(
+            "scripts/backfill_hunter_company_names.py",
+            "--db",
+            str(db_path),
+            "--apply",
+            "--report",
+            str(report_path),
+            ledger_path=ledger_path,
+        )
+    finally:
+        lock.release()
+
+    assert result.returncode == 2
+    assert _scalar(db_path, "SELECT company_name FROM hunter_results WHERE id = 1") == ""
+    assert _scalar(db_path, "SELECT company_name FROM signals WHERE id = 1") == "Old Signal"
+    blocked_rows = _ledger_rows_for(
+        ledger_path,
+        "backfill_hunter_company_names",
+        "lock_blocked",
+    )
+    assert blocked_rows
+    details = blocked_rows[-1]["details"]
+    assert details["holder"]["tool_name"] == "test-holder"
+    assert details["apply"] is True
+    assert isinstance(details["preflight_data_version"], int)
+    report = _read_report(report_path)
+    assert report["ok"] is False
+    assert report["metrics"]["holder"]["tool_name"] == "test-holder"
+
+
+def test_backfill_hunter_company_names_apply_preflight_error_records_ledger(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "missing.db"
+    report_path = tmp_path / "report.json"
+    ledger_path = tmp_path / "ledger.jsonl"
+
+    result = _run_script(
+        "scripts/backfill_hunter_company_names.py",
+        "--db",
+        str(db_path),
+        "--apply",
+        "--report",
+        str(report_path),
+        ledger_path=ledger_path,
+    )
+
+    assert result.returncode == 1
+    error_rows = _ledger_rows_for(ledger_path, "backfill_hunter_company_names", "error")
+    assert error_rows
+    details = error_rows[-1]["details"]
+    assert details["phase"] == "preflight_data_version"
+    assert details["apply"] is True
+    assert details["preflight_data_version"] is None
+    assert details["error"]
+    report = _read_report(report_path)
+    assert report["ok"] is False
+    assert report["metrics"]["phase"] == "preflight_data_version"
+
+
+def test_backfill_hunter_company_names_apply_error_rolls_back(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "hunter.db"
+    report_path = tmp_path / "report.json"
+    ledger_path = tmp_path / "ledger.jsonl"
+    _create_hunter_backfill_db(db_path)
+    _exec_sql(
+        db_path,
+        """
+        CREATE TRIGGER fail_hunter_signal_update
+        BEFORE UPDATE OF company_name ON signals
+        WHEN OLD.id = 1
+        BEGIN
+            SELECT RAISE(ABORT, 'forced hunter signal failure');
+        END;
+        """,
+    )
+
+    result = _run_script(
+        "scripts/backfill_hunter_company_names.py",
+        "--db",
+        str(db_path),
+        "--apply",
+        "--report",
+        str(report_path),
+        ledger_path=ledger_path,
+    )
+
+    assert result.returncode == 2
+    assert _scalar(db_path, "SELECT company_name FROM hunter_results WHERE id = 1") == ""
+    assert _scalar(db_path, "SELECT canonical_key FROM hunter_results WHERE id = 1") == ""
+    assert _scalar(db_path, "SELECT company_name FROM signals WHERE id = 1") == "Old Signal"
+    error_rows = _ledger_rows_for(ledger_path, "backfill_hunter_company_names", "error")
+    assert error_rows
+    details = error_rows[-1]["details"]
+    assert details["phase"] == "apply_signals"
+    assert details["transaction"] == "rolled_back"
+    assert details["updates_planned"] == 1
+    assert details["signal_updates_planned"] == 1
+    assert details["hunter_results_updated_attempted"] == 1
+    assert details["signals_updated_attempted"] == 1
+    assert isinstance(details["preflight_data_version"], int)
+    assert "forced hunter signal failure" in details["error"]
+    report = _read_report(report_path)
+    assert report["ok"] is False
+    assert report["metrics"]["transaction"] == "rolled_back"
 
 
 def test_backfill_evidence_keys_bare_cli_defaults_to_dry_run(tmp_path: Path) -> None:
