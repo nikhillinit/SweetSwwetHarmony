@@ -47,12 +47,24 @@ python scripts/db_ops_note.py --db-path <db> --tool-name <tool> --action <action
 
 Tranche-1 hardening applies to:
 
-- `scripts/e2e_batch_check.py`
-- `scripts/e2e_batch_approve.py`
-- `scripts/export_labeling_review.py`
-- `scripts/run_backfill.py`
 - `scripts/backup_db.py`
 - `scripts/restore_db.py`
+- `scripts/db_maintenance.py`
+- `scripts/e2e_batch_approve.py`
+- `scripts/run_backfill.py`
+
+Read-only scripts from the original priority list are exempt from lock/ledger by design:
+
+- `scripts/e2e_batch_check.py`
+- `scripts/export_labeling_review.py`
+
+Meta-ledger tooling is exempt from `DBToolLock` because it records manual or external operations and does not mutate the target DB:
+
+- `scripts/db_ops_note.py`
+
+Scratch-only decision helpers are not Tier-E live mutators, even if they mutate temp copies:
+
+- `scripts/spc_override_decision.py`
 
 This does not imply a repo-wide ban on every `"signals.db"` mention in docs, help text, or lower-risk parser defaults.
 
