@@ -10,6 +10,32 @@ from pathlib import Path
 sys.stdout.reconfigure(errors="replace")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from utils.db_tool_errors import DBToolError
+
+
+class BackfillError(DBToolError):
+    """Backfill failure carrying null_count snapshots at failure time."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        null_count_before: int | None = None,
+        null_count_after: int | None = None,
+        mode: str | None = None,
+    ) -> None:
+        super().__init__(
+            message,
+            partial_evidence={
+                "null_count_before": null_count_before,
+                "null_count_after": null_count_after,
+                "mode": mode,
+            },
+        )
+        self.null_count_before = null_count_before
+        self.null_count_after = null_count_after
+        self.mode = mode
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -63,46 +89,70 @@ async def run(db_path: str | None, *, dry_run: bool, apply_changes: bool) -> int
             return 2
     store = SignalStore(resolved_db_path)
     await store.initialize()
+    null_count_before: int | None = None
+    null_count_after: int | None = None
     try:
-        await store._db.execute("PRAGMA busy_timeout=5000")
-        if not dry_run:
-            await store._db.execute("BEGIN IMMEDIATE")
-            await store._db.rollback()
+        try:
+            await store._db.execute("PRAGMA busy_timeout=5000")
+            if not dry_run:
+                await store._db.execute("BEGIN IMMEDIATE")
+                await store._db.rollback()
 
-        cursor = await store._db.execute(
-            "SELECT COUNT(*) FROM signals WHERE company_id IS NULL"
-        )
-        null_count = (await cursor.fetchone())[0]
-        print(f"NULL company_id count: {null_count}")
-
-        if null_count == 0:
-            print("No NULLs to fix - already clean!")
-            return 0
-
-        cursor = await store._db.execute(
-            "SELECT id, canonical_key FROM signals WHERE company_id IS NULL"
-        )
-        rows = await cursor.fetchall()
-        for row in rows:
-            print(f"  Signal {row[0]}: {row[1]}")
-
-        result = await backfill_company_ids(store, dry_run=dry_run)
-        mode = result["mode"]
-        before = result["null_count_before"]
-        after = result.get("null_count_after", before)
-        new = result["newly_generated"]
-        merged = result["merge_resolved"]
-        print(f"Backfill complete: mode={mode}, null_before={before}, null_after={after}")
-        print(f"  Newly generated: {new}, merge_resolved: {merged}")
-        if not dry_run:
-            append_db_ops_ledger(
-                tool_name="run_backfill",
-                db_path=resolved_db_path,
-                action="backfill_company_ids",
-                status="success",
-                details={"null_count_before": before, "null_count_after": after},
+            cursor = await store._db.execute(
+                "SELECT COUNT(*) FROM signals WHERE company_id IS NULL"
             )
-        return 0
+            null_count = (await cursor.fetchone())[0]
+            null_count_before = null_count
+            print(f"NULL company_id count: {null_count}")
+
+            if null_count == 0:
+                print("No NULLs to fix - already clean!")
+                return 0
+
+            cursor = await store._db.execute(
+                "SELECT id, canonical_key FROM signals WHERE company_id IS NULL"
+            )
+            rows = await cursor.fetchall()
+            for row in rows:
+                print(f"  Signal {row[0]}: {row[1]}")
+
+            result = await backfill_company_ids(store, dry_run=dry_run)
+            mode = result["mode"]
+            before = result["null_count_before"]
+            after = result.get("null_count_after", before)
+            null_count_after = after
+            new = result["newly_generated"]
+            merged = result["merge_resolved"]
+            print(f"Backfill complete: mode={mode}, null_before={before}, null_after={after}")
+            print(f"  Newly generated: {new}, merge_resolved: {merged}")
+            if not dry_run:
+                append_db_ops_ledger(
+                    tool_name="run_backfill",
+                    db_path=resolved_db_path,
+                    action="backfill_company_ids",
+                    status="success",
+                    details={"null_count_before": before, "null_count_after": after},
+                )
+            return 0
+        except Exception as e:
+            err = BackfillError(
+                f"Backfill failed: {e}",
+                null_count_before=null_count_before,
+                null_count_after=null_count_after,
+                mode="dry_run" if dry_run else "apply",
+            )
+            # Dry-run is a no-ledger mode (no lock acquired, no writes
+            # attempted); only --yes runs ledger the error.
+            if not dry_run:
+                append_db_ops_ledger(
+                    tool_name="run_backfill",
+                    db_path=resolved_db_path,
+                    action="backfill_company_ids",
+                    status="error",
+                    details={**err.partial_evidence, "error": str(err)},
+                )
+            print(f"ERROR: {err}", file=sys.stderr)
+            return 1
     finally:
         await store.close()
         if lock is not None:
