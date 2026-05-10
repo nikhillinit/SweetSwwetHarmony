@@ -41,12 +41,17 @@ import logging
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import List
+from typing import Any, List
 
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from storage.signal_store import SignalStore
+from utils.db_ops_ledger import append_db_ops_ledger
+from utils.db_tool_errors import DBToolError
+from utils.db_tool_lock import DBToolLock
+from utils.db_tool_preflight import read_sqlite_data_version
+from utils.report_envelope import create_report, write_report
 
 logging.basicConfig(
     level=logging.INFO,
@@ -54,12 +59,92 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+TOOL_NAME = "gc_thin_files"
+LOCK_TIMEOUT_SECONDS = 5
+
 # Maximum number of sample company_ids to include in the report
 _MAX_SAMPLE_IDS = 10
 
 # Review statuses that are safe to clean up as orphans.
 # Active statuses (pending, approved, publish_queued) are NEVER deleted.
 _ORPHAN_REVIEW_STATUSES = ("rejected", "deferred")
+
+
+class GcThinFilesError(DBToolError):
+    """GC failure carrying partial evidence for DB ops ledger rows."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        phase: str,
+        preflight_data_version: int | None,
+        apply: bool,
+        transaction: str,
+        cutoff_days: int | None = None,
+        batch_size: int | None = None,
+        company_files_found: int | None = None,
+        company_files_deleted: int | None = None,
+        orphaned_reviews_cleaned: int | None = None,
+        audit_log_written: bool | None = None,
+        current_batch_index: int | None = None,
+    ) -> None:
+        super().__init__(
+            message,
+            partial_evidence={
+                "phase": phase,
+                "preflight_data_version": preflight_data_version,
+                "apply": apply,
+                "transaction": transaction,
+                "cutoff_days": cutoff_days,
+                "batch_size": batch_size,
+                "company_files_found": company_files_found,
+                "company_files_deleted": company_files_deleted,
+                "orphaned_reviews_cleaned": orphaned_reviews_cleaned,
+                "audit_log_written": audit_log_written,
+                "current_batch_index": current_batch_index,
+            },
+        )
+
+
+def _append_ledger(*, db_path: str, status: str, details: dict[str, Any]) -> None:
+    append_db_ops_ledger(
+        tool_name=TOOL_NAME,
+        db_path=db_path,
+        action=TOOL_NAME,
+        status=status,
+        details=details,
+    )
+
+
+def _write_report_if_requested(
+    *,
+    report_path: str | None,
+    db_path: str,
+    started_at: datetime,
+    ok: bool,
+    metrics: dict[str, Any] | None = None,
+    errors: list[str] | None = None,
+) -> None:
+    if not report_path:
+        return
+    report = create_report(
+        command=TOOL_NAME,
+        ok=ok,
+        db_path=db_path,
+        started_at=started_at,
+        metrics=metrics or {},
+        errors=errors or [],
+    )
+    write_report(report, report_path)
+
+
+def _transaction_state_for_failure(report: dict[str, Any], phase: str) -> str:
+    if report.get("company_files_deleted") or report.get("orphaned_reviews_cleaned"):
+        return "partial_committed"
+    if phase in {"delete_company_files", "clean_orphaned_reviews", "write_audit_log"}:
+        return "rolled_back"
+    return "not_started"
 
 
 async def _find_gc_candidates(
@@ -165,6 +250,8 @@ async def run_gc(
     days: int,
     batch_size: int,
     apply: bool,
+    *,
+    preflight_data_version: int | None = None,
 ) -> dict:
     """Execute the garbage collection workflow.
 
@@ -177,25 +264,52 @@ async def run_gc(
     Returns:
         Summary report dict suitable for JSON serialisation.
     """
-    store = SignalStore(db_path)
-    await store.initialize()
+    phase = "preflight_data_version"
+    report: dict[str, Any] = {
+        "mode": "apply" if apply else "dry_run",
+        "dry_run": not apply,
+        "cutoff_days": days,
+        "cutoff_date": None,
+        "batch_size": batch_size,
+        "company_files_found": 0,
+        "company_files_deleted": 0,
+        "orphaned_reviews_cleaned": 0,
+        "sample_company_ids": [],
+        "preflight_data_version": preflight_data_version,
+        "audit_log_written": False,
+        "transaction": "not_started",
+    }
+    current_batch_index: int | None = None
 
     try:
+        if preflight_data_version is None:
+            preflight_data_version = read_sqlite_data_version(db_path)
+            report["preflight_data_version"] = preflight_data_version
+    except Exception as exc:
+        raise GcThinFilesError(
+            f"GC run failed during preflight_data_version: {exc}",
+            phase="preflight_data_version",
+            preflight_data_version=None,
+            apply=apply,
+            transaction="not_started",
+            cutoff_days=days,
+            batch_size=batch_size,
+        ) from exc
+
+    store = SignalStore(db_path)
+    try:
+        phase = "initialize"
+        await store.initialize()
+
         cutoff = datetime.now(timezone.utc) - timedelta(days=days)
         cutoff_iso = cutoff.isoformat()
+        report["cutoff_date"] = cutoff_iso
 
         # --- Discover candidates ---
+        phase = "find_candidates"
         candidate_ids = await _find_gc_candidates(store, cutoff_iso)
-
-        report = {
-            "mode": "apply" if apply else "dry_run",
-            "cutoff_days": days,
-            "cutoff_date": cutoff_iso,
-            "company_files_found": len(candidate_ids),
-            "company_files_deleted": 0,
-            "orphaned_reviews_cleaned": 0,
-            "sample_company_ids": candidate_ids[:_MAX_SAMPLE_IDS],
-        }
+        report["company_files_found"] = len(candidate_ids)
+        report["sample_company_ids"] = candidate_ids[:_MAX_SAMPLE_IDS]
 
         if not candidate_ids:
             logger.info("No archived company_files older than %d days.", days)
@@ -220,13 +334,16 @@ async def run_gc(
 
         # --- Delete company_files in batches ---
         total_deleted = 0
+        phase = "delete_company_files"
         for i in range(0, len(candidate_ids), batch_size):
+            current_batch_index = (i // batch_size) + 1
             batch = candidate_ids[i : i + batch_size]
             deleted = await _delete_company_files_batch(store, batch)
             total_deleted += deleted
+            report["company_files_deleted"] = total_deleted
             logger.info(
                 "Batch %d: deleted %d/%d company_files.",
-                (i // batch_size) + 1,
+                current_batch_index,
                 deleted,
                 len(batch),
             )
@@ -234,6 +351,7 @@ async def run_gc(
         report["company_files_deleted"] = total_deleted
 
         # --- Clean orphaned reviews ---
+        phase = "clean_orphaned_reviews"
         orphans_cleaned = await _clean_orphaned_reviews(store, candidate_ids)
         report["orphaned_reviews_cleaned"] = orphans_cleaned
         if orphans_cleaned:
@@ -243,11 +361,31 @@ async def run_gc(
             )
 
         # --- Audit log ---
+        phase = "write_audit_log"
         await _write_audit_entry(store, report)
+        report["audit_log_written"] = True
+        report["transaction"] = "committed"
         logger.info("Audit log entry written.")
 
         return report
 
+    except DBToolError:
+        raise
+    except Exception as exc:
+        raise GcThinFilesError(
+            f"GC run failed during {phase}: {exc}",
+            phase=phase,
+            preflight_data_version=preflight_data_version,
+            apply=apply,
+            transaction=_transaction_state_for_failure(report, phase),
+            cutoff_days=days,
+            batch_size=batch_size,
+            company_files_found=report.get("company_files_found"),
+            company_files_deleted=report.get("company_files_deleted"),
+            orphaned_reviews_cleaned=report.get("orphaned_reviews_cleaned"),
+            audit_log_written=report.get("audit_log_written"),
+            current_batch_index=current_batch_index,
+        ) from exc
     finally:
         await store.close()
 
@@ -296,33 +434,113 @@ def _build_parser() -> argparse.ArgumentParser:
         default=500,
         help="Number of rows to delete per batch (default: 500).",
     )
+    parser.add_argument(
+        "--report",
+        default="",
+        help="Optional path to write a JSON report envelope.",
+    )
     return parser
 
 
-async def async_main() -> None:
+async def async_main() -> int:
     """Async entry point -- parses args and runs GC."""
     # Reconfigure stdout for Windows console safety
     sys.stdout.reconfigure(errors="replace")
 
     parser = _build_parser()
     args = parser.parse_args()
-
-    # Validate database exists
-    db_path = Path(args.db)
-    if not db_path.exists():
-        logger.error("Database not found: %s", args.db)
-        sys.exit(1)
+    started_at = datetime.now(timezone.utc)
+    report_path = args.report or None
 
     # Validate numeric arguments
     if args.days < 1:
         logger.error("--days must be >= 1 (got %d).", args.days)
-        sys.exit(1)
+        details = {
+            "phase": "validate_args",
+            "error": "--days must be >= 1",
+            "days": args.days,
+            "apply": args.apply,
+            "preflight_data_version": None,
+        }
+        if args.apply:
+            _append_ledger(db_path=args.db, status="error", details=details)
+        _write_report_if_requested(
+            report_path=report_path,
+            db_path=args.db,
+            started_at=started_at,
+            ok=False,
+            metrics=details,
+            errors=[details["error"]],
+        )
+        return 1
     if args.batch_size < 1:
         logger.error("--batch-size must be >= 1 (got %d).", args.batch_size)
-        sys.exit(1)
+        details = {
+            "phase": "validate_args",
+            "error": "--batch-size must be >= 1",
+            "batch_size": args.batch_size,
+            "apply": args.apply,
+            "preflight_data_version": None,
+        }
+        if args.apply:
+            _append_ledger(db_path=args.db, status="error", details=details)
+        _write_report_if_requested(
+            report_path=report_path,
+            db_path=args.db,
+            started_at=started_at,
+            ok=False,
+            metrics=details,
+            errors=[details["error"]],
+        )
+        return 1
 
     # --apply overrides the default --dry-run
     apply = args.apply
+    preflight_data_version: int | None = None
+    lock: DBToolLock | None = None
+
+    try:
+        preflight_data_version = read_sqlite_data_version(args.db)
+    except Exception as exc:
+        details = {
+            "phase": "preflight_data_version",
+            "error": str(exc),
+            "apply": apply,
+            "preflight_data_version": None,
+        }
+        if apply:
+            _append_ledger(db_path=args.db, status="error", details=details)
+        _write_report_if_requested(
+            report_path=report_path,
+            db_path=args.db,
+            started_at=started_at,
+            ok=False,
+            metrics=details,
+            errors=[str(exc)],
+        )
+        logger.error("GC preflight failed: %s", exc)
+        return 1
+
+    if apply:
+        lock = DBToolLock(args.db, tool_name=TOOL_NAME)
+        if not lock.acquire(timeout_seconds=LOCK_TIMEOUT_SECONDS):
+            holder = lock.get_holder_info()
+            details = {
+                "holder": holder,
+                "preflight_data_version": preflight_data_version,
+                "apply": apply,
+            }
+            _append_ledger(db_path=args.db, status="lock_blocked", details=details)
+            _write_report_if_requested(
+                report_path=report_path,
+                db_path=args.db,
+                started_at=started_at,
+                ok=False,
+                metrics=details,
+                errors=["Could not acquire DB tool lock"],
+            )
+            print(f"ERROR: Could not acquire DB tool lock. Holder: {holder}", file=sys.stderr)
+            return 2
 
     try:
         report = await run_gc(
@@ -330,14 +548,53 @@ async def async_main() -> None:
             days=args.days,
             batch_size=args.batch_size,
             apply=apply,
+            preflight_data_version=preflight_data_version,
         )
-    except Exception:
+        _write_report_if_requested(
+            report_path=report_path,
+            db_path=args.db,
+            started_at=started_at,
+            ok=True,
+            metrics=report,
+        )
+        if apply:
+            _append_ledger(db_path=args.db, status="success", details=report)
+    except DBToolError as exc:
+        details = {**exc.partial_evidence, "error": str(exc)}
+        if apply:
+            _append_ledger(db_path=args.db, status="error", details=details)
+        _write_report_if_requested(
+            report_path=report_path,
+            db_path=args.db,
+            started_at=started_at,
+            ok=False,
+            metrics=details,
+            errors=[str(exc)],
+        )
         logger.exception("GC run failed.")
-        sys.exit(1)
+        return 1
+    except Exception as exc:
+        details = {"error": str(exc), "preflight_data_version": preflight_data_version}
+        if apply:
+            _append_ledger(db_path=args.db, status="error", details=details)
+        _write_report_if_requested(
+            report_path=report_path,
+            db_path=args.db,
+            started_at=started_at,
+            ok=False,
+            metrics=details,
+            errors=[str(exc)],
+        )
+        logger.exception("GC run failed.")
+        return 1
+    finally:
+        if lock is not None:
+            lock.release()
 
     # Emit JSON report to stdout
     print(json.dumps(report, indent=2, default=str))
+    return 0
 
 
 if __name__ == "__main__":
-    asyncio.run(async_main())
+    raise SystemExit(asyncio.run(async_main()))
