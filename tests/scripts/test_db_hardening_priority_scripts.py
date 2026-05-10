@@ -178,6 +178,215 @@ def _create_backfill_db(path: Path) -> None:
     asyncio.run(_init())
 
 
+def _create_publisher_cleanup_db(path: Path) -> None:
+    conn = sqlite3.connect(str(path))
+    try:
+        conn.execute(
+            """
+            CREATE TABLE signals (
+                id INTEGER PRIMARY KEY,
+                canonical_key TEXT,
+                raw_data TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE company_files (
+                id INTEGER PRIMARY KEY,
+                canonical_key TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO signals (id, canonical_key, raw_data)
+            VALUES (
+                1,
+                'domain:techcrunch.com',
+                '{"company_name": "Acme Wellness"}'
+            )
+            """
+        )
+        conn.execute(
+            "INSERT INTO company_files (id, canonical_key) VALUES (1, 'domain:techcrunch.com')"
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def test_cleanup_publisher_keys_requires_yes_for_apply(tmp_path: Path) -> None:
+    db_path = tmp_path / "publisher.db"
+    _create_publisher_cleanup_db(db_path)
+    ledger_path = tmp_path / "ledger.jsonl"
+
+    result = _run_script(
+        "scripts/cleanup_publisher_keys.py",
+        "--db",
+        str(db_path),
+        "--apply",
+        env={"DB_OPS_LEDGER_PATH": str(ledger_path)},
+    )
+
+    assert result.returncode == 2
+    rows = _read_ledger_rows(ledger_path)
+    refused_rows = [
+        row
+        for row in rows
+        if row.get("tool_name") == "cleanup_publisher_keys"
+        and row.get("status") == "refused"
+    ]
+    assert refused_rows, f"No refused ledger row. Rows: {rows}"
+    assert refused_rows[-1]["details"]["reason"] == "missing_yes_rewrite_keys"
+
+
+def test_cleanup_publisher_keys_respects_db_tool_lock(tmp_path: Path) -> None:
+    db_path = tmp_path / "publisher.db"
+    _create_publisher_cleanup_db(db_path)
+    ledger_path = tmp_path / "ledger.jsonl"
+
+    lock = DBToolLock(db_path, tool_name="test-holder")
+    assert lock.acquire(timeout_seconds=0)
+    try:
+        result = _run_script(
+            "scripts/cleanup_publisher_keys.py",
+            "--db",
+            str(db_path),
+            "--apply",
+            "--yes-rewrite-keys",
+            env={"DB_OPS_LEDGER_PATH": str(ledger_path)},
+        )
+    finally:
+        lock.release()
+
+    assert result.returncode == 2
+    rows = _read_ledger_rows(ledger_path)
+    blocked_rows = [
+        row
+        for row in rows
+        if row.get("tool_name") == "cleanup_publisher_keys"
+        and row.get("status") == "lock_blocked"
+    ]
+    assert blocked_rows, f"No lock_blocked ledger row. Rows: {rows}"
+    assert blocked_rows[-1]["details"].get("holder")
+
+
+def test_cleanup_publisher_keys_records_success_ledger(tmp_path: Path) -> None:
+    db_path = tmp_path / "publisher.db"
+    _create_publisher_cleanup_db(db_path)
+    ledger_path = tmp_path / "ledger.jsonl"
+
+    result = _run_script(
+        "scripts/cleanup_publisher_keys.py",
+        "--db",
+        str(db_path),
+        "--apply",
+        "--yes-rewrite-keys",
+        env={"DB_OPS_LEDGER_PATH": str(ledger_path)},
+    )
+
+    assert result.returncode == 0
+    conn = sqlite3.connect(str(db_path))
+    try:
+        signal_key = conn.execute("SELECT canonical_key FROM signals WHERE id = 1").fetchone()[0]
+        file_key = conn.execute("SELECT canonical_key FROM company_files WHERE id = 1").fetchone()[0]
+    finally:
+        conn.close()
+    assert signal_key == "name_loc:acme-wellness"
+    assert file_key == "name_loc:acme-wellness"
+
+    rows = _read_ledger_rows(ledger_path)
+    success_rows = [
+        row
+        for row in rows
+        if row.get("tool_name") == "cleanup_publisher_keys"
+        and row.get("status") == "success"
+    ]
+    assert success_rows, f"No success ledger row. Rows: {rows}"
+    details = success_rows[-1]["details"]
+    assert details["signals_rewritten"] == 1
+    assert details["company_files_rewritten"] == 1
+
+
+def test_cleanup_publisher_keys_records_ledger_on_error_path(tmp_path: Path) -> None:
+    db_path = tmp_path / "publisher.db"
+    _create_publisher_cleanup_db(db_path)
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute("DROP TABLE company_files")
+        conn.commit()
+    finally:
+        conn.close()
+    ledger_path = tmp_path / "ledger.jsonl"
+
+    result = _run_script(
+        "scripts/cleanup_publisher_keys.py",
+        "--db",
+        str(db_path),
+        "--apply",
+        "--yes-rewrite-keys",
+        env={"DB_OPS_LEDGER_PATH": str(ledger_path)},
+    )
+
+    assert result.returncode == 1
+    rows = _read_ledger_rows(ledger_path)
+    error_rows = _error_rows_for(rows, "cleanup_publisher_keys")
+    assert error_rows, f"No error ledger row for cleanup_publisher_keys. Rows: {rows}"
+    details = error_rows[-1]["details"]
+    assert "signals_to_rewrite" in details
+    assert "company_files_to_rewrite" in details
+    assert details.get("error")
+
+
+def test_cleanup_publisher_keys_rolls_back_partial_apply_failure(tmp_path: Path) -> None:
+    db_path = tmp_path / "publisher.db"
+    _create_publisher_cleanup_db(db_path)
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute(
+            """
+            CREATE TRIGGER fail_company_file_update
+            BEFORE UPDATE ON company_files
+            BEGIN
+                SELECT RAISE(ABORT, 'forced company_files update failure');
+            END
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    ledger_path = tmp_path / "ledger.jsonl"
+
+    result = _run_script(
+        "scripts/cleanup_publisher_keys.py",
+        "--db",
+        str(db_path),
+        "--apply",
+        "--yes-rewrite-keys",
+        env={"DB_OPS_LEDGER_PATH": str(ledger_path)},
+    )
+
+    assert result.returncode == 1
+    conn = sqlite3.connect(str(db_path))
+    try:
+        signal_key = conn.execute("SELECT canonical_key FROM signals WHERE id = 1").fetchone()[0]
+        file_key = conn.execute("SELECT canonical_key FROM company_files WHERE id = 1").fetchone()[0]
+    finally:
+        conn.close()
+    assert signal_key == "domain:techcrunch.com"
+    assert file_key == "domain:techcrunch.com"
+
+    rows = _read_ledger_rows(ledger_path)
+    error_rows = _error_rows_for(rows, "cleanup_publisher_keys")
+    assert error_rows, f"No error ledger row for cleanup_publisher_keys. Rows: {rows}"
+    details = error_rows[-1]["details"]
+    assert details["phase"] == "apply"
+    assert details["signals_to_rewrite"] == 1
+    assert details["company_files_to_rewrite"] == 1
+    assert details.get("error")
+
+
 def test_e2e_batch_check_respects_db_path(tmp_path: Path) -> None:
     db_path = tmp_path / "review.db"
     _create_review_db(db_path)
