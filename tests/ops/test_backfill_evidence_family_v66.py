@@ -108,6 +108,36 @@ async def test_delta_gate_abort(db_with_signals):
 
 
 @pytest.mark.asyncio
+async def test_commit_delta_gate_rolls_back_tentative_writes(db_with_signals):
+    """Commit mode rolls back if the unknown-rate delta gate fails."""
+    from scripts.backfill_evidence_family import run
+
+    conn = sqlite3.connect(db_with_signals)
+    conn.execute(
+        "INSERT INTO signals (signal_type, source_api, canonical_key, company_name, "
+        "confidence, raw_data, detected_at, created_at) VALUES "
+        "(?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))",
+        ("totally_unknown", "test", "domain:test.com", "Test", 0.5, "{}"),
+    )
+    conn.commit()
+    conn.close()
+
+    result = await run(
+        db_path=db_with_signals, dry_run=False,
+        baseline_unknown_rate=0.0, unknown_delta_max_pp=5.0,
+    )
+
+    assert result["delta_exceeded"] is True
+
+    conn = sqlite3.connect(db_with_signals)
+    nulls = conn.execute(
+        "SELECT COUNT(*) FROM signals WHERE evidence_family IS NULL"
+    ).fetchone()[0]
+    conn.close()
+    assert nulls == 4, "Delta-gate failure should roll back all tentative writes"
+
+
+@pytest.mark.asyncio
 async def test_rerun_idempotent(db_with_signals):
     """Running commit twice is idempotent — second run finds no NULL rows."""
     from scripts.backfill_evidence_family import run

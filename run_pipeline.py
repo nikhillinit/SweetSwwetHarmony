@@ -7452,15 +7452,47 @@ async def cmd_canary_preflight(args):
 async def cmd_backfill_evidence_family(args):
     """Backfill evidence_family column for existing signals."""
     from datetime import datetime, timezone
+    from utils.db_ops_ledger import append_db_ops_ledger
     from utils.db_path_helper import resolve_db_path
+    from utils.db_tool_errors import DBToolError
+    from utils.db_tool_lock import DBToolLock
     from utils.report_envelope import create_report, write_report
 
     started_at = datetime.now(timezone.utc)
     db_path = resolve_db_path(args)
     report_path = getattr(args, "report", None)
     dry_run = getattr(args, "dry_run", True)
+    commit_mode = not dry_run
+    tool_name = "backfill_evidence_family"
+    command_name = "backfill-evidence-family"
+    lock = None
 
     try:
+        if commit_mode:
+            lock = DBToolLock(db_path, tool_name=tool_name)
+            if not lock.acquire(timeout_seconds=5):
+                holder = lock.get_holder_info()
+                error = f"Could not acquire DB tool lock. Holder: {holder}"
+                append_db_ops_ledger(
+                    tool_name=tool_name,
+                    db_path=db_path,
+                    action=command_name,
+                    status="lock_blocked",
+                    details={"holder": holder, "commit": True},
+                )
+                report = create_report(
+                    command=command_name,
+                    ok=False,
+                    db_path=db_path,
+                    started_at=started_at,
+                    metrics={"holder": holder},
+                    errors=[error],
+                )
+                if report_path:
+                    write_report(report, report_path)
+                print(f"Backfill evidence_family: FATAL ({error})")
+                return 2
+
         from scripts.backfill_evidence_family import run as run_backfill
 
         result = await run_backfill(
@@ -7475,41 +7507,115 @@ async def cmd_backfill_evidence_family(args):
         )
 
         ok = not result.get("delta_exceeded", False)
+        errors = ["Unknown-rate delta exceeded"] if not ok else []
         report = create_report(
-            command="backfill-evidence-family", ok=ok, db_path=db_path,
-            started_at=started_at, metrics=result,
+            command=command_name, ok=ok, db_path=db_path,
+            started_at=started_at, metrics=result, errors=errors,
         )
         if report_path:
             write_report(report, report_path)
+
+        if commit_mode:
+            append_db_ops_ledger(
+                tool_name=tool_name,
+                db_path=db_path,
+                action=command_name,
+                status="success" if ok else "error",
+                details={
+                    **result,
+                    **({"error": errors[0]} if errors else {}),
+                },
+            )
 
         mode = "DRY RUN" if dry_run else "COMMIT"
         print(f"Backfill evidence_family [{mode}]: {result['rows_updated']}/{result['rows_scanned']} rows")
         print(f"  Unknown rate: {result['unknown_rate']}%")
         return 0 if ok else 1
 
-    except Exception as exc:
+    except DBToolError as exc:
+        details = {**exc.partial_evidence, "error": str(exc)}
+        if commit_mode:
+            append_db_ops_ledger(
+                tool_name=tool_name,
+                db_path=db_path,
+                action=command_name,
+                status="error",
+                details=details,
+            )
         report = create_report(
-            command="backfill-evidence-family", ok=False, db_path=db_path,
+            command=command_name, ok=False, db_path=db_path,
+            started_at=started_at, metrics=exc.partial_evidence, errors=[str(exc)],
+        )
+        if report_path:
+            write_report(report, report_path)
+        print(f"Backfill evidence_family: FATAL ({exc})")
+        return 1
+    except Exception as exc:
+        if commit_mode:
+            append_db_ops_ledger(
+                tool_name=tool_name,
+                db_path=db_path,
+                action=command_name,
+                status="error",
+                details={"error": str(exc)},
+            )
+        report = create_report(
+            command=command_name, ok=False, db_path=db_path,
             started_at=started_at, errors=[str(exc)],
         )
         if report_path:
             write_report(report, report_path)
         print(f"Backfill evidence_family: FATAL ({exc})")
         return 1
+    finally:
+        if lock is not None:
+            lock.release()
 
 
 async def cmd_rehydrate_canonical_keys_v2(args):
     """Rehydrate canonical_key_v2 column for existing signals."""
     from datetime import datetime, timezone
+    from utils.db_ops_ledger import append_db_ops_ledger
     from utils.db_path_helper import resolve_db_path
+    from utils.db_tool_errors import DBToolError
+    from utils.db_tool_lock import DBToolLock
     from utils.report_envelope import create_report, write_report
 
     started_at = datetime.now(timezone.utc)
     db_path = resolve_db_path(args)
     report_path = getattr(args, "report", None)
     dry_run = getattr(args, "dry_run", True)
+    commit_mode = not dry_run
+    tool_name = "rehydrate_canonical_keys_v2"
+    command_name = "rehydrate-canonical-keys-v2"
+    lock = None
 
     try:
+        if commit_mode:
+            lock = DBToolLock(db_path, tool_name=tool_name)
+            if not lock.acquire(timeout_seconds=5):
+                holder = lock.get_holder_info()
+                error = f"Could not acquire DB tool lock. Holder: {holder}"
+                append_db_ops_ledger(
+                    tool_name=tool_name,
+                    db_path=db_path,
+                    action=command_name,
+                    status="lock_blocked",
+                    details={"holder": holder, "commit": True},
+                )
+                report = create_report(
+                    command=command_name,
+                    ok=False,
+                    db_path=db_path,
+                    started_at=started_at,
+                    metrics={"holder": holder},
+                    errors=[error],
+                )
+                if report_path:
+                    write_report(report, report_path)
+                print(f"Rehydrate canonical_key_v2: FATAL ({error})")
+                return 2
+
         from scripts.rehydrate_canonical_keys_v2 import run as run_rehydrate
 
         result = await run_rehydrate(
@@ -7525,12 +7631,25 @@ async def cmd_rehydrate_canonical_keys_v2(args):
         )
 
         ok = len(result.get("fanin_violations", [])) == 0
+        errors = ["Fan-in violations detected"] if not ok else []
         report = create_report(
-            command="rehydrate-canonical-keys-v2", ok=ok, db_path=db_path,
-            started_at=started_at, metrics=result,
+            command=command_name, ok=ok, db_path=db_path,
+            started_at=started_at, metrics=result, errors=errors,
         )
         if report_path:
             write_report(report, report_path)
+
+        if commit_mode:
+            append_db_ops_ledger(
+                tool_name=tool_name,
+                db_path=db_path,
+                action=command_name,
+                status="success" if ok else "error",
+                details={
+                    **result,
+                    **({"error": errors[0]} if errors else {}),
+                },
+            )
 
         mode = "DRY RUN" if dry_run else "COMMIT"
         print(f"Rehydrate canonical_key_v2 [{mode}]: {result['rows_updated']}/{result['rows_scanned']} rows")
@@ -7539,15 +7658,44 @@ async def cmd_rehydrate_canonical_keys_v2(args):
             print(f"  Fan-in violations: {len(result['fanin_violations'])}")
         return 0 if ok else 1
 
-    except Exception as exc:
+    except DBToolError as exc:
+        details = {**exc.partial_evidence, "error": str(exc)}
+        if commit_mode:
+            append_db_ops_ledger(
+                tool_name=tool_name,
+                db_path=db_path,
+                action=command_name,
+                status="error",
+                details=details,
+            )
         report = create_report(
-            command="rehydrate-canonical-keys-v2", ok=False, db_path=db_path,
+            command=command_name, ok=False, db_path=db_path,
+            started_at=started_at, metrics=exc.partial_evidence, errors=[str(exc)],
+        )
+        if report_path:
+            write_report(report, report_path)
+        print(f"Rehydrate canonical_key_v2: FATAL ({exc})")
+        return 1
+    except Exception as exc:
+        if commit_mode:
+            append_db_ops_ledger(
+                tool_name=tool_name,
+                db_path=db_path,
+                action=command_name,
+                status="error",
+                details={"error": str(exc)},
+            )
+        report = create_report(
+            command=command_name, ok=False, db_path=db_path,
             started_at=started_at, errors=[str(exc)],
         )
         if report_path:
             write_report(report, report_path)
         print(f"Rehydrate canonical_key_v2: FATAL ({exc})")
         return 1
+    finally:
+        if lock is not None:
+            lock.release()
 
 
 async def cmd_convergence_kpi(args):
