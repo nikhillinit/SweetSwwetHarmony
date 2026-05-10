@@ -51,6 +51,7 @@ Tranche-1 hardening applies to:
 - `scripts/e2e_batch_approve.py`
 - `scripts/export_labeling_review.py`
 - `scripts/run_backfill.py`
+- `scripts/backup_db.py`
 - `scripts/restore_db.py`
 
 This does not imply a repo-wide ban on every `"signals.db"` mention in docs, help text, or lower-risk parser defaults.
