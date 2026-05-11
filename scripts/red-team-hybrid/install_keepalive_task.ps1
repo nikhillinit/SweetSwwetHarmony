@@ -36,6 +36,33 @@
     use a venv, pass the venv's python.exe absolute path here so the
     scheduled task picks up your venv environment (and your .env).
 
+.PARAMETER Collectors
+    Comma-separated collector list for the run_pipeline.py collect step.
+    Default preserves the original daily keepalive set.
+
+.PARAMETER WatchdogOperational
+    Comma-separated source_api list passed to freshness_watchdog.py
+    --operational. Default preserves the original watchdog operational set.
+
+.PARAMETER WatchdogThresholdHours
+    Freshness threshold passed to freshness_watchdog.py --threshold-hours.
+    Default preserves the original 36-hour watchdog behavior.
+
+.PARAMETER JobPostingDomains
+    Optional comma-separated domain fixture list exported as JOB_POSTING_DOMAINS
+    inside the generated runner. Use this for omission drills where
+    job_postings is the positive DB-progress control.
+
+.PARAMETER IgnoreWatchdogExitCode
+    If specified, the generated cmd runner exits 0 after writing the watchdog
+    JSON even when freshness_watchdog.py exits non-zero. Use this only for
+    omission drills where the watchdog FAIL status is the expected evidence and
+    Task Scheduler retries would muddy the observation window.
+
+.PARAMETER GenerateOnly
+    Writes the inner runner cmd file, prints its path, and exits before any
+    ScheduledTasks cmdlet is called. Use this for tests and preview generation.
+
 .PARAMETER TestRun
     If specified, triggers the task immediately after registering, so the
     first artifacts/keepalive/YYYY-MM-DD.json is produced without waiting
@@ -46,6 +73,7 @@
     .\install_keepalive_task.ps1 -TestRun
     .\install_keepalive_task.ps1 -RunAt "07:30" -TestRun
     .\install_keepalive_task.ps1 -PythonExe "C:\dev\Harmonic\.venv\Scripts\python.exe" -TestRun
+    powershell -NoProfile -ExecutionPolicy Bypass -File .\install_keepalive_task.ps1 -TaskName "HarmonicFreezeDrillPreview" -Collectors "job_postings,github" -WatchdogOperational "rss_feeds,greenhouse_jobs,ashby_jobs" -WatchdogThresholdHours 12 -JobPostingDomains "10beauty.com,cofertility.com,openai.com" -IgnoreWatchdogExitCode -GenerateOnly
 
 .NOTES
     REQ: Phase 1 keep-alive (CONTEXT.md D-22, R19 root cause fix)
@@ -59,6 +87,10 @@
     the machine's locale renders DATE as "Day MM/DD/YYYY". On non-en-US
     locales the slice positions may shift; the task still runs but the
     filename layout drifts. Document and adjust per machine.
+
+    Active drill safety: before the Monday, 2026-05-11 readout, do not invoke
+    this installer against the live repo/task with -TaskName HarmonicFreezeDrill.
+    Doing so can rewrite the live wrapper and/or re-register the active task.
 #>
 
 [CmdletBinding()]
@@ -67,6 +99,12 @@ param(
     [string]$RunAt = "08:00",
     [string]$ProjectRoot = (Get-Location).Path,
     [string]$PythonExe = "python",
+    [string]$Collectors = "hacker_news,arxiv,rss_feeds,news_api",
+    [string]$WatchdogOperational = "hacker_news,arxiv,rss_feeds,news_api",
+    [double]$WatchdogThresholdHours = 36,
+    [string]$JobPostingDomains = "",
+    [switch]$IgnoreWatchdogExitCode,
+    [switch]$GenerateOnly,
     [switch]$TestRun
 )
 
@@ -88,19 +126,40 @@ if (-not (Test-Path $ArtifactsDir)) {
 # to a date-stamped file is far more reliable through cmd than through
 # powershell piped-redirection, especially across user-context and
 # system-context execution boundaries.
-$PipelineCmd = "$PythonExe run_pipeline.py collect --collectors hacker_news,arxiv,rss_feeds,news_api"
-$WatchdogCmd = "$PythonExe scripts/red-team-hybrid/freshness_watchdog.py --json"
+$PipelineCmd = "$PythonExe run_pipeline.py collect --collectors $Collectors"
+$WatchdogCmd = "$PythonExe scripts/red-team-hybrid/freshness_watchdog.py --json --threshold-hours $WatchdogThresholdHours"
+if ($WatchdogOperational.Trim()) {
+    $WatchdogCmd = "$WatchdogCmd --operational $WatchdogOperational"
+}
+
+$EnvLines = @()
+if ($JobPostingDomains.Trim()) {
+    $EnvLines += "set ""JOB_POSTING_DOMAINS=$JobPostingDomains"""
+}
+
+$ExitLine = if ($IgnoreWatchdogExitCode) { "exit /b 0" } else { "" }
 
 $DailyScript = @"
 @echo off
 cd /d "$ProjectRoot"
+$($EnvLines -join "`r`n")
 $PipelineCmd
 $WatchdogCmd > "$ArtifactsDir\%DATE:~10,4%-%DATE:~4,2%-%DATE:~7,2%.json"
+$ExitLine
 "@
 
-$ScriptPath = Join-Path $ProjectRoot "scripts\red-team-hybrid\_keepalive_daily.cmd"
+$SafeTaskName = ($TaskName -replace '[^A-Za-z0-9_-]', '_')
+$ScriptName = if ($TaskName -eq "HarmonicKeepAlive") { "_keepalive_daily.cmd" } else { "_keepalive_$SafeTaskName.cmd" }
+$ScriptPath = Join-Path $ProjectRoot "scripts\red-team-hybrid\$ScriptName"
 Set-Content -Path $ScriptPath -Value $DailyScript -Encoding ASCII
 Write-Host "Wrote inner runner: $ScriptPath"
+if ($GenerateOnly) {
+    Write-Host "GenerateOnly specified; skipping all ScheduledTasks cmdlets."
+    Write-Host "Task name preview: $TaskName"
+    Write-Host "Evidence directory: $ArtifactsDir"
+    Write-Host "Inner script:       $ScriptPath"
+    return
+}
 
 # Build the scheduled task primitives. All stdlib ScheduledTasks cmdlets;
 # no Install-Module, no third-party dependencies, no admin elevation.
