@@ -78,6 +78,50 @@ class TestNewsArticle:
         )
         assert article.domain == "example.com"
 
+
+class TestNewsAPIIdentityExtraction:
+    """Regression tests for article-subject identity extraction."""
+
+    def test_wonderbelly_uses_subject_name_not_publisher_domain(self, collector, monkeypatch):
+        monkeypatch.setenv("COMPANY_EXTRACTION_MODE", "baseline")
+        article = NewsArticle(
+            title="5 Startup Lessons That Helped Wonderbelly Land a 9-Figure Exit",
+            description=(
+                "The brothers behind Wonderbelly didn't have a background in CPG "
+                "or wellness, but they had a personal story and a vision."
+            ),
+            url="https://www.inc.com/leila-sheridan/5-startup-lessons-that-helped-wonderbelly-land-a-nine-figure-exit/91297579",
+            source="Inc.",
+            published_at=datetime.now(timezone.utc),
+        )
+
+        signal = collector._article_to_signal(article)
+
+        assert signal.raw_data["company_name"] == "Wonderbelly"
+        assert "name_loc:wonderbelly" in signal.raw_data["canonical_key_candidates"]
+        assert "domain:inc.com" not in signal.raw_data["canonical_key_candidates"]
+        assert "name_loc:lessons-that-helped" not in signal.raw_data["canonical_key_candidates"]
+
+    def test_sollos_uses_subject_name_not_news_hash_fallback(self, collector, monkeypatch):
+        monkeypatch.setenv("COMPANY_EXTRACTION_MODE", "baseline")
+        article = NewsArticle(
+            title="Barron Trump linked to beverage company based near Mar-a-Lago",
+            description=(
+                "Barron Trump is listed in public records as a partner in "
+                "SOLLOS Yerba Mate Inc., a beverage startup headquartered near "
+                "Mar-a-Lago in Palm Beach, Florida, according to January filings."
+            ),
+            url="https://www.foxbusiness.com/politics/barron-trump-linked-beverage-company-based-near-mar-a-lago",
+            source="Fox Business",
+            published_at=datetime.now(timezone.utc),
+        )
+
+        signal = collector._article_to_signal(article)
+
+        assert signal.raw_data["company_name"] == "SOLLOS Yerba Mate"
+        assert "name_loc:sollos-yerba-mate" in signal.raw_data["canonical_key_candidates"]
+        assert "domain:foxbusiness.com" not in signal.raw_data["canonical_key_candidates"]
+
     def test_domain_removes_www(self):
         """www prefix is removed from domain."""
         article = NewsArticle(

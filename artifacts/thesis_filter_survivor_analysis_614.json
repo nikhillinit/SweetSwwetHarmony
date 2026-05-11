@@ -1,0 +1,2639 @@
+{
+  "auxiliary_whole_baseline_census": {
+    "signal_type_counts": {
+      "funding_announcement": 7,
+      "github_repo": 2,
+      "hacker_news_mention": 191,
+      "hiring_signal": 22,
+      "hunter_discovery": 1,
+      "news_mention": 34,
+      "press_release": 77,
+      "product_hunt": 2,
+      "product_launch": 3,
+      "research_paper": 275
+    },
+    "source_api_counts": {
+      "arxiv": 275,
+      "ashby_jobs": 5,
+      "github": 2,
+      "greenhouse_jobs": 14,
+      "hacker_news": 192,
+      "lever_jobs": 3,
+      "manual_seed_buzz": 20,
+      "news_api": 14,
+      "product_hunt": 2,
+      "rss_feeds": 87
+    },
+    "status_counts": {
+      "held": 464,
+      "missing_processing_row": 1,
+      "pending": 34,
+      "pushed": 15,
+      "queued": 2,
+      "rejected": 98
+    }
+  },
+  "baseline": {
+    "canonical_keys": 588,
+    "max_schema_migrations_version": 53,
+    "pending_canonical_keys": 34,
+    "pending_rows": 34,
+    "signal_rows": 614,
+    "user_version": 0
+  },
+  "canonical_results": [
+    {
+      "b2b_soft_score": 0.0,
+      "canonical_key": "domain:openai.com",
+      "company_name": "Openai",
+      "consumer_anchor_count": 0,
+      "consumer_signal_score": 0.0,
+      "decision_path_code": "hold_default",
+      "description_length": 0,
+      "description_present": false,
+      "keyword_category": "unknown",
+      "keyword_matches": [],
+      "keyword_score": 0.0,
+      "llm_eligible": false,
+      "negative_keywords": [],
+      "routing": "held",
+      "signal_count": 1,
+      "signal_ids": [
+        614
+      ],
+      "signal_types": [
+        "hiring_signal"
+      ],
+      "source_apis": [
+        "ashby_jobs"
+      ],
+      "thesis_result": {
+        "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+        "b2b_soft_score": 0.0,
+        "cascade_config_snapshot": {
+          "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+          "cascade_mode_used": "disabled",
+          "cascade_routing_enablement": "disabled",
+          "consumer_anchor_min": 1,
+          "consumer_dominance_margin": 0.1,
+          "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+          "consumer_rescue_threshold": 0.25,
+          "hold_threshold": 0.3,
+          "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+          "signal_ratio_min": 2.0,
+          "skip_llm_if_keyword_below": 0.2
+        },
+        "confidence_adjustment": -0.08,
+        "consumer_anchor_count": 0,
+        "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+        "consumer_signal_score": 0.0,
+        "decision_path_code": "hold_default",
+        "domain_blacklist_reason_code": "clean",
+        "domain_blacklisted": false,
+        "domain_match": false,
+        "intent_phrases_matched": [],
+        "keyword_category": "unknown",
+        "keyword_matches": [],
+        "keyword_score": 0.0,
+        "llm_category": null,
+        "llm_classification_status": null,
+        "llm_model": null,
+        "llm_paying_customer": null,
+        "llm_primary_end_user": null,
+        "llm_prompt_version": null,
+        "llm_rationale": null,
+        "llm_score": null,
+        "llm_sells_to_or_operates_in": null,
+        "llm_skipped": true,
+        "matcher_ms": 0.0,
+        "negative_keywords": [],
+        "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+        "routing": "held",
+        "web3_reason_code": "clean"
+      }
+    },
+    {
+      "b2b_soft_score": 0.0,
+      "canonical_key": "domain:10beauty.com",
+      "company_name": "10Beauty",
+      "consumer_anchor_count": 0,
+      "consumer_signal_score": 0.0,
+      "decision_path_code": "hold_default",
+      "description_length": 0,
+      "description_present": false,
+      "keyword_category": "unknown",
+      "keyword_matches": [],
+      "keyword_score": 0.0,
+      "llm_eligible": false,
+      "negative_keywords": [],
+      "routing": "held",
+      "signal_count": 1,
+      "signal_ids": [
+        613
+      ],
+      "signal_types": [
+        "hiring_signal"
+      ],
+      "source_apis": [
+        "greenhouse_jobs"
+      ],
+      "thesis_result": {
+        "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+        "b2b_soft_score": 0.0,
+        "cascade_config_snapshot": {
+          "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+          "cascade_mode_used": "disabled",
+          "cascade_routing_enablement": "disabled",
+          "consumer_anchor_min": 1,
+          "consumer_dominance_margin": 0.1,
+          "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+          "consumer_rescue_threshold": 0.25,
+          "hold_threshold": 0.3,
+          "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+          "signal_ratio_min": 2.0,
+          "skip_llm_if_keyword_below": 0.2
+        },
+        "confidence_adjustment": -0.08,
+        "consumer_anchor_count": 0,
+        "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+        "consumer_signal_score": 0.0,
+        "decision_path_code": "hold_default",
+        "domain_blacklist_reason_code": "clean",
+        "domain_blacklisted": false,
+        "domain_match": false,
+        "intent_phrases_matched": [],
+        "keyword_category": "unknown",
+        "keyword_matches": [],
+        "keyword_score": 0.0,
+        "llm_category": null,
+        "llm_classification_status": null,
+        "llm_model": null,
+        "llm_paying_customer": null,
+        "llm_primary_end_user": null,
+        "llm_prompt_version": null,
+        "llm_rationale": null,
+        "llm_score": null,
+        "llm_sells_to_or_operates_in": null,
+        "llm_skipped": true,
+        "matcher_ms": 0.0,
+        "negative_keywords": [],
+        "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+        "routing": "held",
+        "web3_reason_code": "clean"
+      }
+    },
+    {
+      "b2b_soft_score": 0.0,
+      "canonical_key": "name_loc:victor-pet-food",
+      "company_name": "VICTOR PET FOOD",
+      "consumer_anchor_count": 0,
+      "consumer_signal_score": 0.0,
+      "decision_path_code": "qualify_sector",
+      "description_length": 289,
+      "description_present": true,
+      "keyword_category": "consumer_cpg",
+      "keyword_matches": [
+        "pet food",
+        "food"
+      ],
+      "keyword_score": 0.38596491228070196,
+      "llm_eligible": true,
+      "negative_keywords": [],
+      "routing": "qualified",
+      "signal_count": 1,
+      "signal_ids": [
+        597
+      ],
+      "signal_types": [
+        "press_release"
+      ],
+      "source_apis": [
+        "rss_feeds"
+      ],
+      "thesis_result": {
+        "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+        "b2b_soft_score": 0.0,
+        "cascade_config_snapshot": {
+          "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+          "cascade_mode_used": "disabled",
+          "cascade_routing_enablement": "disabled",
+          "consumer_anchor_min": 1,
+          "consumer_dominance_margin": 0.1,
+          "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+          "consumer_rescue_threshold": 0.25,
+          "hold_threshold": 0.3,
+          "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+          "signal_ratio_min": 2.0,
+          "skip_llm_if_keyword_below": 0.2
+        },
+        "confidence_adjustment": -0.08,
+        "consumer_anchor_count": 0,
+        "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+        "consumer_signal_score": 0.0,
+        "decision_path_code": "qualify_sector",
+        "domain_blacklist_reason_code": "clean",
+        "domain_blacklisted": false,
+        "domain_match": false,
+        "intent_phrases_matched": [],
+        "keyword_category": "consumer_cpg",
+        "keyword_matches": [
+          "pet food",
+          "food"
+        ],
+        "keyword_score": 0.38596491228070196,
+        "llm_category": null,
+        "llm_classification_status": null,
+        "llm_model": null,
+        "llm_paying_customer": null,
+        "llm_primary_end_user": null,
+        "llm_prompt_version": null,
+        "llm_rationale": null,
+        "llm_score": null,
+        "llm_sells_to_or_operates_in": null,
+        "llm_skipped": true,
+        "matcher_ms": 16.0,
+        "negative_keywords": [],
+        "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+        "routing": "qualified",
+        "web3_reason_code": "clean"
+      }
+    },
+    {
+      "b2b_soft_score": 0.0,
+      "canonical_key": "name_loc:purito-seoul",
+      "company_name": "Purito Seoul",
+      "consumer_anchor_count": 0,
+      "consumer_signal_score": 0.15,
+      "decision_path_code": "qualify_sector",
+      "description_length": 291,
+      "description_present": true,
+      "keyword_category": "consumer_cpg",
+      "keyword_matches": [
+        "skincare brand",
+        "skincare"
+      ],
+      "keyword_score": 0.4912280701754388,
+      "llm_eligible": true,
+      "negative_keywords": [],
+      "routing": "qualified",
+      "signal_count": 1,
+      "signal_ids": [
+        600
+      ],
+      "signal_types": [
+        "press_release"
+      ],
+      "source_apis": [
+        "rss_feeds"
+      ],
+      "thesis_result": {
+        "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+        "b2b_soft_score": 0.0,
+        "cascade_config_snapshot": {
+          "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+          "cascade_mode_used": "disabled",
+          "cascade_routing_enablement": "disabled",
+          "consumer_anchor_min": 1,
+          "consumer_dominance_margin": 0.1,
+          "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+          "consumer_rescue_threshold": 0.25,
+          "hold_threshold": 0.3,
+          "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+          "signal_ratio_min": 2.0,
+          "skip_llm_if_keyword_below": 0.2
+        },
+        "confidence_adjustment": 0.0,
+        "consumer_anchor_count": 0,
+        "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+        "consumer_signal_score": 0.15,
+        "decision_path_code": "qualify_sector",
+        "domain_blacklist_reason_code": "clean",
+        "domain_blacklisted": false,
+        "domain_match": false,
+        "intent_phrases_matched": [],
+        "keyword_category": "consumer_cpg",
+        "keyword_matches": [
+          "skincare brand",
+          "skincare"
+        ],
+        "keyword_score": 0.4912280701754388,
+        "llm_category": null,
+        "llm_classification_status": null,
+        "llm_model": null,
+        "llm_paying_customer": null,
+        "llm_primary_end_user": null,
+        "llm_prompt_version": null,
+        "llm_rationale": null,
+        "llm_score": null,
+        "llm_sells_to_or_operates_in": null,
+        "llm_skipped": true,
+        "matcher_ms": 15.0,
+        "negative_keywords": [],
+        "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+        "routing": "qualified",
+        "web3_reason_code": "clean"
+      }
+    },
+    {
+      "b2b_soft_score": 0.0,
+      "canonical_key": "rss_de7d447ac9ff",
+      "company_name": "Unknown Company",
+      "consumer_anchor_count": 0,
+      "consumer_signal_score": 0.0,
+      "decision_path_code": "qualify_sector",
+      "description_length": 94,
+      "description_present": true,
+      "keyword_category": "consumer_marketplace",
+      "keyword_matches": [
+        "marketplace"
+      ],
+      "keyword_score": 0.48192771084337344,
+      "llm_eligible": true,
+      "negative_keywords": [],
+      "routing": "qualified",
+      "signal_count": 1,
+      "signal_ids": [
+        476
+      ],
+      "signal_types": [
+        "funding_announcement"
+      ],
+      "source_apis": [
+        "rss_feeds"
+      ],
+      "thesis_result": {
+        "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+        "b2b_soft_score": 0.0,
+        "cascade_config_snapshot": {
+          "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+          "cascade_mode_used": "disabled",
+          "cascade_routing_enablement": "disabled",
+          "consumer_anchor_min": 1,
+          "consumer_dominance_margin": 0.1,
+          "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+          "consumer_rescue_threshold": 0.25,
+          "hold_threshold": 0.3,
+          "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+          "signal_ratio_min": 2.0,
+          "skip_llm_if_keyword_below": 0.2
+        },
+        "confidence_adjustment": 0.0,
+        "consumer_anchor_count": 0,
+        "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+        "consumer_signal_score": 0.0,
+        "decision_path_code": "qualify_sector",
+        "domain_blacklist_reason_code": "clean",
+        "domain_blacklisted": false,
+        "domain_match": false,
+        "intent_phrases_matched": [],
+        "keyword_category": "consumer_marketplace",
+        "keyword_matches": [
+          "marketplace"
+        ],
+        "keyword_score": 0.48192771084337344,
+        "llm_category": null,
+        "llm_classification_status": null,
+        "llm_model": null,
+        "llm_paying_customer": null,
+        "llm_primary_end_user": null,
+        "llm_prompt_version": null,
+        "llm_rationale": null,
+        "llm_score": null,
+        "llm_sells_to_or_operates_in": null,
+        "llm_skipped": true,
+        "matcher_ms": 0.0,
+        "negative_keywords": [],
+        "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+        "routing": "qualified",
+        "web3_reason_code": "clean"
+      }
+    },
+    {
+      "b2b_soft_score": 0.0,
+      "canonical_key": "rss_8af00a1b2a57",
+      "company_name": "Unknown Company",
+      "consumer_anchor_count": 0,
+      "consumer_signal_score": 0.0,
+      "decision_path_code": "qualify_sector",
+      "description_length": 285,
+      "description_present": true,
+      "keyword_category": "travel_hospitality",
+      "keyword_matches": [
+        "travel"
+      ],
+      "keyword_score": 0.3205128205128205,
+      "llm_eligible": true,
+      "negative_keywords": [],
+      "routing": "qualified",
+      "signal_count": 1,
+      "signal_ids": [
+        424
+      ],
+      "signal_types": [
+        "press_release"
+      ],
+      "source_apis": [
+        "rss_feeds"
+      ],
+      "thesis_result": {
+        "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+        "b2b_soft_score": 0.0,
+        "cascade_config_snapshot": {
+          "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+          "cascade_mode_used": "disabled",
+          "cascade_routing_enablement": "disabled",
+          "consumer_anchor_min": 1,
+          "consumer_dominance_margin": 0.1,
+          "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+          "consumer_rescue_threshold": 0.25,
+          "hold_threshold": 0.3,
+          "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+          "signal_ratio_min": 2.0,
+          "skip_llm_if_keyword_below": 0.2
+        },
+        "confidence_adjustment": -0.08,
+        "consumer_anchor_count": 0,
+        "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+        "consumer_signal_score": 0.0,
+        "decision_path_code": "qualify_sector",
+        "domain_blacklist_reason_code": "clean",
+        "domain_blacklisted": false,
+        "domain_match": false,
+        "intent_phrases_matched": [],
+        "keyword_category": "travel_hospitality",
+        "keyword_matches": [
+          "travel"
+        ],
+        "keyword_score": 0.3205128205128205,
+        "llm_category": null,
+        "llm_classification_status": null,
+        "llm_model": null,
+        "llm_paying_customer": null,
+        "llm_primary_end_user": null,
+        "llm_prompt_version": null,
+        "llm_rationale": null,
+        "llm_score": null,
+        "llm_sells_to_or_operates_in": null,
+        "llm_skipped": true,
+        "matcher_ms": 0.0,
+        "negative_keywords": [],
+        "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+        "routing": "qualified",
+        "web3_reason_code": "clean"
+      }
+    },
+    {
+      "b2b_soft_score": 0.0,
+      "canonical_key": "name_loc:culinary",
+      "company_name": "CULINARY",
+      "consumer_anchor_count": 0,
+      "consumer_signal_score": 0.0,
+      "decision_path_code": "qualify_sector",
+      "description_length": 285,
+      "description_present": true,
+      "keyword_category": "travel_hospitality",
+      "keyword_matches": [
+        "travel"
+      ],
+      "keyword_score": 0.3205128205128205,
+      "llm_eligible": true,
+      "negative_keywords": [],
+      "routing": "qualified",
+      "signal_count": 1,
+      "signal_ids": [
+        471
+      ],
+      "signal_types": [
+        "press_release"
+      ],
+      "source_apis": [
+        "rss_feeds"
+      ],
+      "thesis_result": {
+        "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+        "b2b_soft_score": 0.0,
+        "cascade_config_snapshot": {
+          "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+          "cascade_mode_used": "disabled",
+          "cascade_routing_enablement": "disabled",
+          "consumer_anchor_min": 1,
+          "consumer_dominance_margin": 0.1,
+          "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+          "consumer_rescue_threshold": 0.25,
+          "hold_threshold": 0.3,
+          "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+          "signal_ratio_min": 2.0,
+          "skip_llm_if_keyword_below": 0.2
+        },
+        "confidence_adjustment": -0.08,
+        "consumer_anchor_count": 0,
+        "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+        "consumer_signal_score": 0.0,
+        "decision_path_code": "qualify_sector",
+        "domain_blacklist_reason_code": "clean",
+        "domain_blacklisted": false,
+        "domain_match": false,
+        "intent_phrases_matched": [],
+        "keyword_category": "travel_hospitality",
+        "keyword_matches": [
+          "travel"
+        ],
+        "keyword_score": 0.3205128205128205,
+        "llm_category": null,
+        "llm_classification_status": null,
+        "llm_model": null,
+        "llm_paying_customer": null,
+        "llm_primary_end_user": null,
+        "llm_prompt_version": null,
+        "llm_rationale": null,
+        "llm_score": null,
+        "llm_sells_to_or_operates_in": null,
+        "llm_skipped": true,
+        "matcher_ms": 0.0,
+        "negative_keywords": [],
+        "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+        "routing": "qualified",
+        "web3_reason_code": "clean"
+      }
+    },
+    {
+      "b2b_soft_score": 0.0,
+      "canonical_key": "rss_44808fce19d5",
+      "company_name": "Unknown Company",
+      "consumer_anchor_count": 0,
+      "consumer_signal_score": 0.08,
+      "decision_path_code": "qualify_sector",
+      "description_length": 68,
+      "description_present": true,
+      "keyword_category": "travel_hospitality",
+      "keyword_matches": [
+        "travel"
+      ],
+      "keyword_score": 0.3205128205128205,
+      "llm_eligible": true,
+      "negative_keywords": [],
+      "routing": "qualified",
+      "signal_count": 1,
+      "signal_ids": [
+        417
+      ],
+      "signal_types": [
+        "news_mention"
+      ],
+      "source_apis": [
+        "rss_feeds"
+      ],
+      "thesis_result": {
+        "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+        "b2b_soft_score": 0.0,
+        "cascade_config_snapshot": {
+          "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+          "cascade_mode_used": "disabled",
+          "cascade_routing_enablement": "disabled",
+          "consumer_anchor_min": 1,
+          "consumer_dominance_margin": 0.1,
+          "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+          "consumer_rescue_threshold": 0.25,
+          "hold_threshold": 0.3,
+          "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+          "signal_ratio_min": 2.0,
+          "skip_llm_if_keyword_below": 0.2
+        },
+        "confidence_adjustment": -0.08,
+        "consumer_anchor_count": 0,
+        "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+        "consumer_signal_score": 0.08,
+        "decision_path_code": "qualify_sector",
+        "domain_blacklist_reason_code": "clean",
+        "domain_blacklisted": false,
+        "domain_match": false,
+        "intent_phrases_matched": [],
+        "keyword_category": "travel_hospitality",
+        "keyword_matches": [
+          "travel"
+        ],
+        "keyword_score": 0.3205128205128205,
+        "llm_category": null,
+        "llm_classification_status": null,
+        "llm_model": null,
+        "llm_paying_customer": null,
+        "llm_primary_end_user": null,
+        "llm_prompt_version": null,
+        "llm_rationale": null,
+        "llm_score": null,
+        "llm_sells_to_or_operates_in": null,
+        "llm_skipped": true,
+        "matcher_ms": 0.0,
+        "negative_keywords": [],
+        "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+        "routing": "qualified",
+        "web3_reason_code": "clean"
+      }
+    },
+    {
+      "b2b_soft_score": 0.0,
+      "canonical_key": "name_loc:custom-models",
+      "company_name": "Custom Models",
+      "consumer_anchor_count": 0,
+      "consumer_signal_score": 0.08,
+      "decision_path_code": "qualify_sector",
+      "description_length": 68,
+      "description_present": true,
+      "keyword_category": "travel_hospitality",
+      "keyword_matches": [
+        "travel"
+      ],
+      "keyword_score": 0.3205128205128205,
+      "llm_eligible": true,
+      "negative_keywords": [],
+      "routing": "qualified",
+      "signal_count": 1,
+      "signal_ids": [
+        469
+      ],
+      "signal_types": [
+        "news_mention"
+      ],
+      "source_apis": [
+        "rss_feeds"
+      ],
+      "thesis_result": {
+        "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+        "b2b_soft_score": 0.0,
+        "cascade_config_snapshot": {
+          "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+          "cascade_mode_used": "disabled",
+          "cascade_routing_enablement": "disabled",
+          "consumer_anchor_min": 1,
+          "consumer_dominance_margin": 0.1,
+          "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+          "consumer_rescue_threshold": 0.25,
+          "hold_threshold": 0.3,
+          "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+          "signal_ratio_min": 2.0,
+          "skip_llm_if_keyword_below": 0.2
+        },
+        "confidence_adjustment": -0.08,
+        "consumer_anchor_count": 0,
+        "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+        "consumer_signal_score": 0.08,
+        "decision_path_code": "qualify_sector",
+        "domain_blacklist_reason_code": "clean",
+        "domain_blacklisted": false,
+        "domain_match": false,
+        "intent_phrases_matched": [],
+        "keyword_category": "travel_hospitality",
+        "keyword_matches": [
+          "travel"
+        ],
+        "keyword_score": 0.3205128205128205,
+        "llm_category": null,
+        "llm_classification_status": null,
+        "llm_model": null,
+        "llm_paying_customer": null,
+        "llm_primary_end_user": null,
+        "llm_prompt_version": null,
+        "llm_rationale": null,
+        "llm_score": null,
+        "llm_sells_to_or_operates_in": null,
+        "llm_skipped": true,
+        "matcher_ms": 0.0,
+        "negative_keywords": [],
+        "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+        "routing": "qualified",
+        "web3_reason_code": "clean"
+      }
+    },
+    {
+      "b2b_soft_score": 0.0,
+      "canonical_key": "rss_b1314eddb9ae",
+      "company_name": "Unknown Company",
+      "consumer_anchor_count": 0,
+      "consumer_signal_score": 0.15,
+      "decision_path_code": "qualify_sector",
+      "description_length": 289,
+      "description_present": true,
+      "keyword_category": "consumer_cpg",
+      "keyword_matches": [
+        "beauty brand",
+        "beauty",
+        "skincare"
+      ],
+      "keyword_score": 0.5964912280701757,
+      "llm_eligible": true,
+      "negative_keywords": [],
+      "routing": "qualified",
+      "signal_count": 1,
+      "signal_ids": [
+        324
+      ],
+      "signal_types": [
+        "press_release"
+      ],
+      "source_apis": [
+        "rss_feeds"
+      ],
+      "thesis_result": {
+        "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+        "b2b_soft_score": 0.0,
+        "cascade_config_snapshot": {
+          "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+          "cascade_mode_used": "disabled",
+          "cascade_routing_enablement": "disabled",
+          "consumer_anchor_min": 1,
+          "consumer_dominance_margin": 0.1,
+          "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+          "consumer_rescue_threshold": 0.25,
+          "hold_threshold": 0.3,
+          "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+          "signal_ratio_min": 2.0,
+          "skip_llm_if_keyword_below": 0.2
+        },
+        "confidence_adjustment": 0.0,
+        "consumer_anchor_count": 0,
+        "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+        "consumer_signal_score": 0.15,
+        "decision_path_code": "qualify_sector",
+        "domain_blacklist_reason_code": "clean",
+        "domain_blacklisted": false,
+        "domain_match": false,
+        "intent_phrases_matched": [],
+        "keyword_category": "consumer_cpg",
+        "keyword_matches": [
+          "beauty brand",
+          "beauty",
+          "skincare"
+        ],
+        "keyword_score": 0.5964912280701757,
+        "llm_category": null,
+        "llm_classification_status": null,
+        "llm_model": null,
+        "llm_paying_customer": null,
+        "llm_primary_end_user": null,
+        "llm_prompt_version": null,
+        "llm_rationale": null,
+        "llm_score": null,
+        "llm_sells_to_or_operates_in": null,
+        "llm_skipped": true,
+        "matcher_ms": 0.0,
+        "negative_keywords": [],
+        "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+        "routing": "qualified",
+        "web3_reason_code": "clean"
+      }
+    },
+    {
+      "b2b_soft_score": 0.0,
+      "canonical_key": "name_loc:hydrinity-accelerated-skin-science",
+      "company_name": "HYDRINITY Accelerated Skin Science",
+      "consumer_anchor_count": 0,
+      "consumer_signal_score": 0.15,
+      "decision_path_code": "qualify_sector",
+      "description_length": 291,
+      "description_present": true,
+      "keyword_category": "consumer_cpg",
+      "keyword_matches": [
+        "skincare brand",
+        "skincare"
+      ],
+      "keyword_score": 0.4912280701754388,
+      "llm_eligible": true,
+      "negative_keywords": [],
+      "routing": "qualified",
+      "signal_count": 1,
+      "signal_ids": [
+        314
+      ],
+      "signal_types": [
+        "press_release"
+      ],
+      "source_apis": [
+        "rss_feeds"
+      ],
+      "thesis_result": {
+        "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+        "b2b_soft_score": 0.0,
+        "cascade_config_snapshot": {
+          "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+          "cascade_mode_used": "disabled",
+          "cascade_routing_enablement": "disabled",
+          "consumer_anchor_min": 1,
+          "consumer_dominance_margin": 0.1,
+          "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+          "consumer_rescue_threshold": 0.25,
+          "hold_threshold": 0.3,
+          "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+          "signal_ratio_min": 2.0,
+          "skip_llm_if_keyword_below": 0.2
+        },
+        "confidence_adjustment": 0.0,
+        "consumer_anchor_count": 0,
+        "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+        "consumer_signal_score": 0.15,
+        "decision_path_code": "qualify_sector",
+        "domain_blacklist_reason_code": "clean",
+        "domain_blacklisted": false,
+        "domain_match": false,
+        "intent_phrases_matched": [],
+        "keyword_category": "consumer_cpg",
+        "keyword_matches": [
+          "skincare brand",
+          "skincare"
+        ],
+        "keyword_score": 0.4912280701754388,
+        "llm_category": null,
+        "llm_classification_status": null,
+        "llm_model": null,
+        "llm_paying_customer": null,
+        "llm_primary_end_user": null,
+        "llm_prompt_version": null,
+        "llm_rationale": null,
+        "llm_score": null,
+        "llm_sells_to_or_operates_in": null,
+        "llm_skipped": true,
+        "matcher_ms": 0.0,
+        "negative_keywords": [],
+        "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+        "routing": "qualified",
+        "web3_reason_code": "clean"
+      }
+    },
+    {
+      "b2b_soft_score": 0.0,
+      "canonical_key": "rss_f12e44cdbb53",
+      "company_name": "Unknown Company",
+      "consumer_anchor_count": 0,
+      "consumer_signal_score": 0.35,
+      "decision_path_code": "qualify_sector",
+      "description_length": 291,
+      "description_present": true,
+      "keyword_category": "consumer_cpg",
+      "keyword_matches": [
+        "beverage brand",
+        "beverage"
+      ],
+      "keyword_score": 0.4912280701754388,
+      "llm_eligible": true,
+      "negative_keywords": [],
+      "routing": "qualified",
+      "signal_count": 1,
+      "signal_ids": [
+        315
+      ],
+      "signal_types": [
+        "press_release"
+      ],
+      "source_apis": [
+        "rss_feeds"
+      ],
+      "thesis_result": {
+        "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+        "b2b_soft_score": 0.0,
+        "cascade_config_snapshot": {
+          "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+          "cascade_mode_used": "disabled",
+          "cascade_routing_enablement": "disabled",
+          "consumer_anchor_min": 1,
+          "consumer_dominance_margin": 0.1,
+          "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+          "consumer_rescue_threshold": 0.25,
+          "hold_threshold": 0.3,
+          "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+          "signal_ratio_min": 2.0,
+          "skip_llm_if_keyword_below": 0.2
+        },
+        "confidence_adjustment": 0.0,
+        "consumer_anchor_count": 0,
+        "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+        "consumer_signal_score": 0.35,
+        "decision_path_code": "qualify_sector",
+        "domain_blacklist_reason_code": "clean",
+        "domain_blacklisted": false,
+        "domain_match": false,
+        "intent_phrases_matched": [],
+        "keyword_category": "consumer_cpg",
+        "keyword_matches": [
+          "beverage brand",
+          "beverage"
+        ],
+        "keyword_score": 0.4912280701754388,
+        "llm_category": null,
+        "llm_classification_status": null,
+        "llm_model": null,
+        "llm_paying_customer": null,
+        "llm_primary_end_user": null,
+        "llm_prompt_version": null,
+        "llm_rationale": null,
+        "llm_score": null,
+        "llm_sells_to_or_operates_in": null,
+        "llm_skipped": true,
+        "matcher_ms": 0.0,
+        "negative_keywords": [],
+        "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+        "routing": "qualified",
+        "web3_reason_code": "clean"
+      }
+    },
+    {
+      "b2b_soft_score": 0.0,
+      "canonical_key": "rss_a72e32a90bdf",
+      "company_name": "Unknown Company",
+      "consumer_anchor_count": 0,
+      "consumer_signal_score": 0.15,
+      "decision_path_code": "qualify_sector",
+      "description_length": 292,
+      "description_present": true,
+      "keyword_category": "consumer_cpg",
+      "keyword_matches": [
+        "skincare brand",
+        "beauty",
+        "skincare"
+      ],
+      "keyword_score": 0.6315789473684214,
+      "llm_eligible": true,
+      "negative_keywords": [],
+      "routing": "qualified",
+      "signal_count": 1,
+      "signal_ids": [
+        184
+      ],
+      "signal_types": [
+        "press_release"
+      ],
+      "source_apis": [
+        "rss_feeds"
+      ],
+      "thesis_result": {
+        "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+        "b2b_soft_score": 0.0,
+        "cascade_config_snapshot": {
+          "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+          "cascade_mode_used": "disabled",
+          "cascade_routing_enablement": "disabled",
+          "consumer_anchor_min": 1,
+          "consumer_dominance_margin": 0.1,
+          "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+          "consumer_rescue_threshold": 0.25,
+          "hold_threshold": 0.3,
+          "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+          "signal_ratio_min": 2.0,
+          "skip_llm_if_keyword_below": 0.2
+        },
+        "confidence_adjustment": 0.0,
+        "consumer_anchor_count": 0,
+        "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+        "consumer_signal_score": 0.15,
+        "decision_path_code": "qualify_sector",
+        "domain_blacklist_reason_code": "clean",
+        "domain_blacklisted": false,
+        "domain_match": false,
+        "intent_phrases_matched": [],
+        "keyword_category": "consumer_cpg",
+        "keyword_matches": [
+          "skincare brand",
+          "beauty",
+          "skincare"
+        ],
+        "keyword_score": 0.6315789473684214,
+        "llm_category": null,
+        "llm_classification_status": null,
+        "llm_model": null,
+        "llm_paying_customer": null,
+        "llm_primary_end_user": null,
+        "llm_prompt_version": null,
+        "llm_rationale": null,
+        "llm_score": null,
+        "llm_sells_to_or_operates_in": null,
+        "llm_skipped": true,
+        "matcher_ms": 0.0,
+        "negative_keywords": [],
+        "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+        "routing": "qualified",
+        "web3_reason_code": "clean"
+      }
+    },
+    {
+      "b2b_soft_score": 0.0,
+      "canonical_key": "rss_b06f935b7dc4",
+      "company_name": "Unknown Company",
+      "consumer_anchor_count": 0,
+      "consumer_signal_score": 0.0,
+      "decision_path_code": "qualify_sector",
+      "description_length": 56,
+      "description_present": true,
+      "keyword_category": "travel_hospitality",
+      "keyword_matches": [
+        "travel"
+      ],
+      "keyword_score": 0.3205128205128205,
+      "llm_eligible": true,
+      "negative_keywords": [],
+      "routing": "qualified",
+      "signal_count": 1,
+      "signal_ids": [
+        477
+      ],
+      "signal_types": [
+        "news_mention"
+      ],
+      "source_apis": [
+        "rss_feeds"
+      ],
+      "thesis_result": {
+        "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+        "b2b_soft_score": 0.0,
+        "cascade_config_snapshot": {
+          "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+          "cascade_mode_used": "disabled",
+          "cascade_routing_enablement": "disabled",
+          "consumer_anchor_min": 1,
+          "consumer_dominance_margin": 0.1,
+          "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+          "consumer_rescue_threshold": 0.25,
+          "hold_threshold": 0.3,
+          "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+          "signal_ratio_min": 2.0,
+          "skip_llm_if_keyword_below": 0.2
+        },
+        "confidence_adjustment": -0.08,
+        "consumer_anchor_count": 0,
+        "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+        "consumer_signal_score": 0.0,
+        "decision_path_code": "qualify_sector",
+        "domain_blacklist_reason_code": "clean",
+        "domain_blacklisted": false,
+        "domain_match": false,
+        "intent_phrases_matched": [],
+        "keyword_category": "travel_hospitality",
+        "keyword_matches": [
+          "travel"
+        ],
+        "keyword_score": 0.3205128205128205,
+        "llm_category": null,
+        "llm_classification_status": null,
+        "llm_model": null,
+        "llm_paying_customer": null,
+        "llm_primary_end_user": null,
+        "llm_prompt_version": null,
+        "llm_rationale": null,
+        "llm_score": null,
+        "llm_sells_to_or_operates_in": null,
+        "llm_skipped": true,
+        "matcher_ms": 0.0,
+        "negative_keywords": [],
+        "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+        "routing": "qualified",
+        "web3_reason_code": "clean"
+      }
+    },
+    {
+      "b2b_soft_score": 0.0,
+      "canonical_key": "rss_b1cc5250f3fe",
+      "company_name": "Unknown Company",
+      "consumer_anchor_count": 0,
+      "consumer_signal_score": 0.35,
+      "decision_path_code": "qualify_sector",
+      "description_length": 290,
+      "description_present": true,
+      "keyword_category": "consumer_cpg",
+      "keyword_matches": [
+        "beauty brand",
+        "beauty"
+      ],
+      "keyword_score": 0.4210526315789476,
+      "llm_eligible": true,
+      "negative_keywords": [],
+      "routing": "qualified",
+      "signal_count": 1,
+      "signal_ids": [
+        185
+      ],
+      "signal_types": [
+        "press_release"
+      ],
+      "source_apis": [
+        "rss_feeds"
+      ],
+      "thesis_result": {
+        "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+        "b2b_soft_score": 0.0,
+        "cascade_config_snapshot": {
+          "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+          "cascade_mode_used": "disabled",
+          "cascade_routing_enablement": "disabled",
+          "consumer_anchor_min": 1,
+          "consumer_dominance_margin": 0.1,
+          "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+          "consumer_rescue_threshold": 0.25,
+          "hold_threshold": 0.3,
+          "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+          "signal_ratio_min": 2.0,
+          "skip_llm_if_keyword_below": 0.2
+        },
+        "confidence_adjustment": 0.0,
+        "consumer_anchor_count": 0,
+        "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+        "consumer_signal_score": 0.35,
+        "decision_path_code": "qualify_sector",
+        "domain_blacklist_reason_code": "clean",
+        "domain_blacklisted": false,
+        "domain_match": false,
+        "intent_phrases_matched": [],
+        "keyword_category": "consumer_cpg",
+        "keyword_matches": [
+          "beauty brand",
+          "beauty"
+        ],
+        "keyword_score": 0.4210526315789476,
+        "llm_category": null,
+        "llm_classification_status": null,
+        "llm_model": null,
+        "llm_paying_customer": null,
+        "llm_primary_end_user": null,
+        "llm_prompt_version": null,
+        "llm_rationale": null,
+        "llm_score": null,
+        "llm_sells_to_or_operates_in": null,
+        "llm_skipped": true,
+        "matcher_ms": 0.0,
+        "negative_keywords": [],
+        "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+        "routing": "qualified",
+        "web3_reason_code": "clean"
+      }
+    },
+    {
+      "b2b_soft_score": 0.0,
+      "canonical_key": "rss_14f43b2ae2f9",
+      "company_name": "Unknown Company",
+      "consumer_anchor_count": 0,
+      "consumer_signal_score": 0.0,
+      "decision_path_code": "hold_default",
+      "description_length": 285,
+      "description_present": true,
+      "keyword_category": "consumer_cpg",
+      "keyword_matches": [
+        "food"
+      ],
+      "keyword_score": 0.14035087719298253,
+      "llm_eligible": false,
+      "negative_keywords": [],
+      "routing": "held",
+      "signal_count": 1,
+      "signal_ids": [
+        170
+      ],
+      "signal_types": [
+        "press_release"
+      ],
+      "source_apis": [
+        "rss_feeds"
+      ],
+      "thesis_result": {
+        "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+        "b2b_soft_score": 0.0,
+        "cascade_config_snapshot": {
+          "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+          "cascade_mode_used": "disabled",
+          "cascade_routing_enablement": "disabled",
+          "consumer_anchor_min": 1,
+          "consumer_dominance_margin": 0.1,
+          "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+          "consumer_rescue_threshold": 0.25,
+          "hold_threshold": 0.3,
+          "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+          "signal_ratio_min": 2.0,
+          "skip_llm_if_keyword_below": 0.2
+        },
+        "confidence_adjustment": -0.08,
+        "consumer_anchor_count": 0,
+        "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+        "consumer_signal_score": 0.0,
+        "decision_path_code": "hold_default",
+        "domain_blacklist_reason_code": "clean",
+        "domain_blacklisted": false,
+        "domain_match": false,
+        "intent_phrases_matched": [],
+        "keyword_category": "consumer_cpg",
+        "keyword_matches": [
+          "food"
+        ],
+        "keyword_score": 0.14035087719298253,
+        "llm_category": null,
+        "llm_classification_status": null,
+        "llm_model": null,
+        "llm_paying_customer": null,
+        "llm_primary_end_user": null,
+        "llm_prompt_version": null,
+        "llm_rationale": null,
+        "llm_score": null,
+        "llm_sells_to_or_operates_in": null,
+        "llm_skipped": true,
+        "matcher_ms": 0.0,
+        "negative_keywords": [],
+        "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+        "routing": "held",
+        "web3_reason_code": "clean"
+      }
+    },
+    {
+      "b2b_soft_score": 0.0,
+      "canonical_key": "rss_76b8cd9dea08",
+      "company_name": "Unknown Company",
+      "consumer_anchor_count": 0,
+      "consumer_signal_score": 0.2,
+      "decision_path_code": "hold_default",
+      "description_length": 284,
+      "description_present": true,
+      "keyword_category": "consumer_cpg",
+      "keyword_matches": [
+        "beauty"
+      ],
+      "keyword_score": 0.14035087719298253,
+      "llm_eligible": false,
+      "negative_keywords": [],
+      "routing": "held",
+      "signal_count": 1,
+      "signal_ids": [
+        172
+      ],
+      "signal_types": [
+        "press_release"
+      ],
+      "source_apis": [
+        "rss_feeds"
+      ],
+      "thesis_result": {
+        "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+        "b2b_soft_score": 0.0,
+        "cascade_config_snapshot": {
+          "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+          "cascade_mode_used": "disabled",
+          "cascade_routing_enablement": "disabled",
+          "consumer_anchor_min": 1,
+          "consumer_dominance_margin": 0.1,
+          "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+          "consumer_rescue_threshold": 0.25,
+          "hold_threshold": 0.3,
+          "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+          "signal_ratio_min": 2.0,
+          "skip_llm_if_keyword_below": 0.2
+        },
+        "confidence_adjustment": -0.08,
+        "consumer_anchor_count": 0,
+        "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+        "consumer_signal_score": 0.2,
+        "decision_path_code": "hold_default",
+        "domain_blacklist_reason_code": "clean",
+        "domain_blacklisted": false,
+        "domain_match": false,
+        "intent_phrases_matched": [],
+        "keyword_category": "consumer_cpg",
+        "keyword_matches": [
+          "beauty"
+        ],
+        "keyword_score": 0.14035087719298253,
+        "llm_category": null,
+        "llm_classification_status": null,
+        "llm_model": null,
+        "llm_paying_customer": null,
+        "llm_primary_end_user": null,
+        "llm_prompt_version": null,
+        "llm_rationale": null,
+        "llm_score": null,
+        "llm_sells_to_or_operates_in": null,
+        "llm_skipped": true,
+        "matcher_ms": 0.0,
+        "negative_keywords": [],
+        "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+        "routing": "held",
+        "web3_reason_code": "clean"
+      }
+    },
+    {
+      "b2b_soft_score": 0.0,
+      "canonical_key": "name_loc:litehouse-foods",
+      "company_name": "Litehouse Foods",
+      "consumer_anchor_count": 0,
+      "consumer_signal_score": 0.0,
+      "decision_path_code": "hold_default",
+      "description_length": 282,
+      "description_present": true,
+      "keyword_category": "unknown",
+      "keyword_matches": [],
+      "keyword_score": 0.0,
+      "llm_eligible": false,
+      "negative_keywords": [],
+      "routing": "held",
+      "signal_count": 1,
+      "signal_ids": [
+        173
+      ],
+      "signal_types": [
+        "press_release"
+      ],
+      "source_apis": [
+        "rss_feeds"
+      ],
+      "thesis_result": {
+        "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+        "b2b_soft_score": 0.0,
+        "cascade_config_snapshot": {
+          "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+          "cascade_mode_used": "disabled",
+          "cascade_routing_enablement": "disabled",
+          "consumer_anchor_min": 1,
+          "consumer_dominance_margin": 0.1,
+          "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+          "consumer_rescue_threshold": 0.25,
+          "hold_threshold": 0.3,
+          "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+          "signal_ratio_min": 2.0,
+          "skip_llm_if_keyword_below": 0.2
+        },
+        "confidence_adjustment": -0.08,
+        "consumer_anchor_count": 0,
+        "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+        "consumer_signal_score": 0.0,
+        "decision_path_code": "hold_default",
+        "domain_blacklist_reason_code": "clean",
+        "domain_blacklisted": false,
+        "domain_match": false,
+        "intent_phrases_matched": [],
+        "keyword_category": "unknown",
+        "keyword_matches": [],
+        "keyword_score": 0.0,
+        "llm_category": null,
+        "llm_classification_status": null,
+        "llm_model": null,
+        "llm_paying_customer": null,
+        "llm_primary_end_user": null,
+        "llm_prompt_version": null,
+        "llm_rationale": null,
+        "llm_score": null,
+        "llm_sells_to_or_operates_in": null,
+        "llm_skipped": true,
+        "matcher_ms": 0.0,
+        "negative_keywords": [],
+        "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+        "routing": "held",
+        "web3_reason_code": "clean"
+      }
+    },
+    {
+      "b2b_soft_score": 0.0,
+      "canonical_key": "rss_ff91d3e83e8b",
+      "company_name": "Unknown Company",
+      "consumer_anchor_count": 0,
+      "consumer_signal_score": 0.0,
+      "decision_path_code": "hold_default",
+      "description_length": 284,
+      "description_present": true,
+      "keyword_category": "consumer_cpg",
+      "keyword_matches": [
+        "food"
+      ],
+      "keyword_score": 0.14035087719298253,
+      "llm_eligible": false,
+      "negative_keywords": [],
+      "routing": "held",
+      "signal_count": 1,
+      "signal_ids": [
+        174
+      ],
+      "signal_types": [
+        "press_release"
+      ],
+      "source_apis": [
+        "rss_feeds"
+      ],
+      "thesis_result": {
+        "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+        "b2b_soft_score": 0.0,
+        "cascade_config_snapshot": {
+          "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+          "cascade_mode_used": "disabled",
+          "cascade_routing_enablement": "disabled",
+          "consumer_anchor_min": 1,
+          "consumer_dominance_margin": 0.1,
+          "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+          "consumer_rescue_threshold": 0.25,
+          "hold_threshold": 0.3,
+          "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+          "signal_ratio_min": 2.0,
+          "skip_llm_if_keyword_below": 0.2
+        },
+        "confidence_adjustment": -0.08,
+        "consumer_anchor_count": 0,
+        "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+        "consumer_signal_score": 0.0,
+        "decision_path_code": "hold_default",
+        "domain_blacklist_reason_code": "clean",
+        "domain_blacklisted": false,
+        "domain_match": false,
+        "intent_phrases_matched": [],
+        "keyword_category": "consumer_cpg",
+        "keyword_matches": [
+          "food"
+        ],
+        "keyword_score": 0.14035087719298253,
+        "llm_category": null,
+        "llm_classification_status": null,
+        "llm_model": null,
+        "llm_paying_customer": null,
+        "llm_primary_end_user": null,
+        "llm_prompt_version": null,
+        "llm_rationale": null,
+        "llm_score": null,
+        "llm_sells_to_or_operates_in": null,
+        "llm_skipped": true,
+        "matcher_ms": 0.0,
+        "negative_keywords": [],
+        "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+        "routing": "held",
+        "web3_reason_code": "clean"
+      }
+    },
+    {
+      "b2b_soft_score": 0.0,
+      "canonical_key": "rss_9756f5bab7a3",
+      "company_name": "Unknown Company",
+      "consumer_anchor_count": 0,
+      "consumer_signal_score": 0.15,
+      "decision_path_code": "qualify_sector",
+      "description_length": 288,
+      "description_present": true,
+      "keyword_category": "consumer_cpg",
+      "keyword_matches": [
+        "beverage brand",
+        "beverage"
+      ],
+      "keyword_score": 0.4912280701754388,
+      "llm_eligible": true,
+      "negative_keywords": [],
+      "routing": "qualified",
+      "signal_count": 1,
+      "signal_ids": [
+        144
+      ],
+      "signal_types": [
+        "press_release"
+      ],
+      "source_apis": [
+        "rss_feeds"
+      ],
+      "thesis_result": {
+        "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+        "b2b_soft_score": 0.0,
+        "cascade_config_snapshot": {
+          "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+          "cascade_mode_used": "disabled",
+          "cascade_routing_enablement": "disabled",
+          "consumer_anchor_min": 1,
+          "consumer_dominance_margin": 0.1,
+          "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+          "consumer_rescue_threshold": 0.25,
+          "hold_threshold": 0.3,
+          "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+          "signal_ratio_min": 2.0,
+          "skip_llm_if_keyword_below": 0.2
+        },
+        "confidence_adjustment": 0.0,
+        "consumer_anchor_count": 0,
+        "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+        "consumer_signal_score": 0.15,
+        "decision_path_code": "qualify_sector",
+        "domain_blacklist_reason_code": "clean",
+        "domain_blacklisted": false,
+        "domain_match": false,
+        "intent_phrases_matched": [],
+        "keyword_category": "consumer_cpg",
+        "keyword_matches": [
+          "beverage brand",
+          "beverage"
+        ],
+        "keyword_score": 0.4912280701754388,
+        "llm_category": null,
+        "llm_classification_status": null,
+        "llm_model": null,
+        "llm_paying_customer": null,
+        "llm_primary_end_user": null,
+        "llm_prompt_version": null,
+        "llm_rationale": null,
+        "llm_score": null,
+        "llm_sells_to_or_operates_in": null,
+        "llm_skipped": true,
+        "matcher_ms": 0.0,
+        "negative_keywords": [],
+        "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+        "routing": "qualified",
+        "web3_reason_code": "clean"
+      }
+    },
+    {
+      "b2b_soft_score": 0.0,
+      "canonical_key": "rss_2fc4202ee977",
+      "company_name": "Unknown Company",
+      "consumer_anchor_count": 0,
+      "consumer_signal_score": 0.0,
+      "decision_path_code": "qualify_sector",
+      "description_length": 291,
+      "description_present": true,
+      "keyword_category": "consumer_marketplace",
+      "keyword_matches": [
+        "marketplace"
+      ],
+      "keyword_score": 0.48192771084337344,
+      "llm_eligible": true,
+      "negative_keywords": [],
+      "routing": "qualified",
+      "signal_count": 1,
+      "signal_ids": [
+        146
+      ],
+      "signal_types": [
+        "press_release"
+      ],
+      "source_apis": [
+        "rss_feeds"
+      ],
+      "thesis_result": {
+        "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+        "b2b_soft_score": 0.0,
+        "cascade_config_snapshot": {
+          "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+          "cascade_mode_used": "disabled",
+          "cascade_routing_enablement": "disabled",
+          "consumer_anchor_min": 1,
+          "consumer_dominance_margin": 0.1,
+          "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+          "consumer_rescue_threshold": 0.25,
+          "hold_threshold": 0.3,
+          "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+          "signal_ratio_min": 2.0,
+          "skip_llm_if_keyword_below": 0.2
+        },
+        "confidence_adjustment": 0.0,
+        "consumer_anchor_count": 0,
+        "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+        "consumer_signal_score": 0.0,
+        "decision_path_code": "qualify_sector",
+        "domain_blacklist_reason_code": "clean",
+        "domain_blacklisted": false,
+        "domain_match": false,
+        "intent_phrases_matched": [],
+        "keyword_category": "consumer_marketplace",
+        "keyword_matches": [
+          "marketplace"
+        ],
+        "keyword_score": 0.48192771084337344,
+        "llm_category": null,
+        "llm_classification_status": null,
+        "llm_model": null,
+        "llm_paying_customer": null,
+        "llm_primary_end_user": null,
+        "llm_prompt_version": null,
+        "llm_rationale": null,
+        "llm_score": null,
+        "llm_sells_to_or_operates_in": null,
+        "llm_skipped": true,
+        "matcher_ms": 0.0,
+        "negative_keywords": [],
+        "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+        "routing": "qualified",
+        "web3_reason_code": "clean"
+      }
+    },
+    {
+      "b2b_soft_score": 0.0,
+      "canonical_key": "rss_bd1d919951b7",
+      "company_name": "Unknown Company",
+      "consumer_anchor_count": 0,
+      "consumer_signal_score": 0.15,
+      "decision_path_code": "qualify_sector",
+      "description_length": 289,
+      "description_present": true,
+      "keyword_category": "consumer_cpg",
+      "keyword_matches": [
+        "beauty",
+        "cosmetics"
+      ],
+      "keyword_score": 0.3157894736842107,
+      "llm_eligible": true,
+      "negative_keywords": [],
+      "routing": "qualified",
+      "signal_count": 1,
+      "signal_ids": [
+        148
+      ],
+      "signal_types": [
+        "press_release"
+      ],
+      "source_apis": [
+        "rss_feeds"
+      ],
+      "thesis_result": {
+        "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+        "b2b_soft_score": 0.0,
+        "cascade_config_snapshot": {
+          "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+          "cascade_mode_used": "disabled",
+          "cascade_routing_enablement": "disabled",
+          "consumer_anchor_min": 1,
+          "consumer_dominance_margin": 0.1,
+          "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+          "consumer_rescue_threshold": 0.25,
+          "hold_threshold": 0.3,
+          "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+          "signal_ratio_min": 2.0,
+          "skip_llm_if_keyword_below": 0.2
+        },
+        "confidence_adjustment": -0.08,
+        "consumer_anchor_count": 0,
+        "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+        "consumer_signal_score": 0.15,
+        "decision_path_code": "qualify_sector",
+        "domain_blacklist_reason_code": "clean",
+        "domain_blacklisted": false,
+        "domain_match": false,
+        "intent_phrases_matched": [],
+        "keyword_category": "consumer_cpg",
+        "keyword_matches": [
+          "beauty",
+          "cosmetics"
+        ],
+        "keyword_score": 0.3157894736842107,
+        "llm_category": null,
+        "llm_classification_status": null,
+        "llm_model": null,
+        "llm_paying_customer": null,
+        "llm_primary_end_user": null,
+        "llm_prompt_version": null,
+        "llm_rationale": null,
+        "llm_score": null,
+        "llm_sells_to_or_operates_in": null,
+        "llm_skipped": true,
+        "matcher_ms": 0.0,
+        "negative_keywords": [],
+        "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+        "routing": "qualified",
+        "web3_reason_code": "clean"
+      }
+    },
+    {
+      "b2b_soft_score": 0.0,
+      "canonical_key": "rss_6a307c99c052",
+      "company_name": "Unknown Company",
+      "consumer_anchor_count": 0,
+      "consumer_signal_score": 0.15,
+      "decision_path_code": "qualify_sector",
+      "description_length": 287,
+      "description_present": true,
+      "keyword_category": "travel_hospitality",
+      "keyword_matches": [
+        "travel"
+      ],
+      "keyword_score": 0.3205128205128205,
+      "llm_eligible": true,
+      "negative_keywords": [],
+      "routing": "qualified",
+      "signal_count": 1,
+      "signal_ids": [
+        107
+      ],
+      "signal_types": [
+        "press_release"
+      ],
+      "source_apis": [
+        "rss_feeds"
+      ],
+      "thesis_result": {
+        "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+        "b2b_soft_score": 0.0,
+        "cascade_config_snapshot": {
+          "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+          "cascade_mode_used": "disabled",
+          "cascade_routing_enablement": "disabled",
+          "consumer_anchor_min": 1,
+          "consumer_dominance_margin": 0.1,
+          "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+          "consumer_rescue_threshold": 0.25,
+          "hold_threshold": 0.3,
+          "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+          "signal_ratio_min": 2.0,
+          "skip_llm_if_keyword_below": 0.2
+        },
+        "confidence_adjustment": -0.08,
+        "consumer_anchor_count": 0,
+        "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+        "consumer_signal_score": 0.15,
+        "decision_path_code": "qualify_sector",
+        "domain_blacklist_reason_code": "clean",
+        "domain_blacklisted": false,
+        "domain_match": false,
+        "intent_phrases_matched": [],
+        "keyword_category": "travel_hospitality",
+        "keyword_matches": [
+          "travel"
+        ],
+        "keyword_score": 0.3205128205128205,
+        "llm_category": null,
+        "llm_classification_status": null,
+        "llm_model": null,
+        "llm_paying_customer": null,
+        "llm_primary_end_user": null,
+        "llm_prompt_version": null,
+        "llm_rationale": null,
+        "llm_score": null,
+        "llm_sells_to_or_operates_in": null,
+        "llm_skipped": true,
+        "matcher_ms": 15.0,
+        "negative_keywords": [],
+        "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+        "routing": "qualified",
+        "web3_reason_code": "clean"
+      }
+    },
+    {
+      "b2b_soft_score": 0.0,
+      "canonical_key": "rss_5dd19433f2b9",
+      "company_name": "Unknown Company",
+      "consumer_anchor_count": 0,
+      "consumer_signal_score": 0.0,
+      "decision_path_code": "qualify_sector",
+      "description_length": 280,
+      "description_present": true,
+      "keyword_category": "travel_hospitality",
+      "keyword_matches": [
+        "travel"
+      ],
+      "keyword_score": 0.3205128205128205,
+      "llm_eligible": true,
+      "negative_keywords": [],
+      "routing": "qualified",
+      "signal_count": 1,
+      "signal_ids": [
+        102
+      ],
+      "signal_types": [
+        "press_release"
+      ],
+      "source_apis": [
+        "rss_feeds"
+      ],
+      "thesis_result": {
+        "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+        "b2b_soft_score": 0.0,
+        "cascade_config_snapshot": {
+          "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+          "cascade_mode_used": "disabled",
+          "cascade_routing_enablement": "disabled",
+          "consumer_anchor_min": 1,
+          "consumer_dominance_margin": 0.1,
+          "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+          "consumer_rescue_threshold": 0.25,
+          "hold_threshold": 0.3,
+          "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+          "signal_ratio_min": 2.0,
+          "skip_llm_if_keyword_below": 0.2
+        },
+        "confidence_adjustment": -0.08,
+        "consumer_anchor_count": 0,
+        "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+        "consumer_signal_score": 0.0,
+        "decision_path_code": "qualify_sector",
+        "domain_blacklist_reason_code": "clean",
+        "domain_blacklisted": false,
+        "domain_match": false,
+        "intent_phrases_matched": [],
+        "keyword_category": "travel_hospitality",
+        "keyword_matches": [
+          "travel"
+        ],
+        "keyword_score": 0.3205128205128205,
+        "llm_category": null,
+        "llm_classification_status": null,
+        "llm_model": null,
+        "llm_paying_customer": null,
+        "llm_primary_end_user": null,
+        "llm_prompt_version": null,
+        "llm_rationale": null,
+        "llm_score": null,
+        "llm_sells_to_or_operates_in": null,
+        "llm_skipped": true,
+        "matcher_ms": 0.0,
+        "negative_keywords": [],
+        "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+        "routing": "qualified",
+        "web3_reason_code": "clean"
+      }
+    },
+    {
+      "b2b_soft_score": 0.0,
+      "canonical_key": "rss_f927a29bb3c6",
+      "company_name": "Unknown Company",
+      "consumer_anchor_count": 0,
+      "consumer_signal_score": 0.0,
+      "decision_path_code": "qualify_sector",
+      "description_length": 280,
+      "description_present": true,
+      "keyword_category": "travel_hospitality",
+      "keyword_matches": [
+        "travel"
+      ],
+      "keyword_score": 0.3205128205128205,
+      "llm_eligible": true,
+      "negative_keywords": [],
+      "routing": "qualified",
+      "signal_count": 1,
+      "signal_ids": [
+        104
+      ],
+      "signal_types": [
+        "press_release"
+      ],
+      "source_apis": [
+        "rss_feeds"
+      ],
+      "thesis_result": {
+        "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+        "b2b_soft_score": 0.0,
+        "cascade_config_snapshot": {
+          "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+          "cascade_mode_used": "disabled",
+          "cascade_routing_enablement": "disabled",
+          "consumer_anchor_min": 1,
+          "consumer_dominance_margin": 0.1,
+          "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+          "consumer_rescue_threshold": 0.25,
+          "hold_threshold": 0.3,
+          "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+          "signal_ratio_min": 2.0,
+          "skip_llm_if_keyword_below": 0.2
+        },
+        "confidence_adjustment": -0.08,
+        "consumer_anchor_count": 0,
+        "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+        "consumer_signal_score": 0.0,
+        "decision_path_code": "qualify_sector",
+        "domain_blacklist_reason_code": "clean",
+        "domain_blacklisted": false,
+        "domain_match": false,
+        "intent_phrases_matched": [],
+        "keyword_category": "travel_hospitality",
+        "keyword_matches": [
+          "travel"
+        ],
+        "keyword_score": 0.3205128205128205,
+        "llm_category": null,
+        "llm_classification_status": null,
+        "llm_model": null,
+        "llm_paying_customer": null,
+        "llm_primary_end_user": null,
+        "llm_prompt_version": null,
+        "llm_rationale": null,
+        "llm_score": null,
+        "llm_sells_to_or_operates_in": null,
+        "llm_skipped": true,
+        "matcher_ms": 0.0,
+        "negative_keywords": [],
+        "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+        "routing": "qualified",
+        "web3_reason_code": "clean"
+      }
+    },
+    {
+      "b2b_soft_score": 0.0,
+      "canonical_key": "rss_863f463ee0fe",
+      "company_name": "Unknown Company",
+      "consumer_anchor_count": 0,
+      "consumer_signal_score": 0.0,
+      "decision_path_code": "hold_default",
+      "description_length": 290,
+      "description_present": true,
+      "keyword_category": "consumer_health_tech",
+      "keyword_matches": [
+        "fitness",
+        "wellness"
+      ],
+      "keyword_score": 0.29268292682926844,
+      "llm_eligible": true,
+      "negative_keywords": [],
+      "routing": "held",
+      "signal_count": 1,
+      "signal_ids": [
+        97
+      ],
+      "signal_types": [
+        "press_release"
+      ],
+      "source_apis": [
+        "rss_feeds"
+      ],
+      "thesis_result": {
+        "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+        "b2b_soft_score": 0.0,
+        "cascade_config_snapshot": {
+          "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+          "cascade_mode_used": "disabled",
+          "cascade_routing_enablement": "disabled",
+          "consumer_anchor_min": 1,
+          "consumer_dominance_margin": 0.1,
+          "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+          "consumer_rescue_threshold": 0.25,
+          "hold_threshold": 0.3,
+          "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+          "signal_ratio_min": 2.0,
+          "skip_llm_if_keyword_below": 0.2
+        },
+        "confidence_adjustment": -0.08,
+        "consumer_anchor_count": 0,
+        "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+        "consumer_signal_score": 0.0,
+        "decision_path_code": "hold_default",
+        "domain_blacklist_reason_code": "clean",
+        "domain_blacklisted": false,
+        "domain_match": false,
+        "intent_phrases_matched": [],
+        "keyword_category": "consumer_health_tech",
+        "keyword_matches": [
+          "fitness",
+          "wellness"
+        ],
+        "keyword_score": 0.29268292682926844,
+        "llm_category": null,
+        "llm_classification_status": null,
+        "llm_model": null,
+        "llm_paying_customer": null,
+        "llm_primary_end_user": null,
+        "llm_prompt_version": null,
+        "llm_rationale": null,
+        "llm_score": null,
+        "llm_sells_to_or_operates_in": null,
+        "llm_skipped": true,
+        "matcher_ms": 0.0,
+        "negative_keywords": [],
+        "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+        "routing": "held",
+        "web3_reason_code": "clean"
+      }
+    },
+    {
+      "b2b_soft_score": 0.0,
+      "canonical_key": "news_65a775980f1f",
+      "company_name": "Unknown Company",
+      "consumer_anchor_count": 0,
+      "consumer_signal_score": 0.0,
+      "decision_path_code": "hold_default",
+      "description_length": 183,
+      "description_present": true,
+      "keyword_category": "consumer_cpg",
+      "keyword_matches": [
+        "beverage"
+      ],
+      "keyword_score": 0.17543859649122814,
+      "llm_eligible": false,
+      "negative_keywords": [],
+      "routing": "held",
+      "signal_count": 1,
+      "signal_ids": [
+        175
+      ],
+      "signal_types": [
+        "news_mention"
+      ],
+      "source_apis": [
+        "news_api"
+      ],
+      "thesis_result": {
+        "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+        "b2b_soft_score": 0.0,
+        "cascade_config_snapshot": {
+          "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+          "cascade_mode_used": "disabled",
+          "cascade_routing_enablement": "disabled",
+          "consumer_anchor_min": 1,
+          "consumer_dominance_margin": 0.1,
+          "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+          "consumer_rescue_threshold": 0.25,
+          "hold_threshold": 0.3,
+          "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+          "signal_ratio_min": 2.0,
+          "skip_llm_if_keyword_below": 0.2
+        },
+        "confidence_adjustment": -0.08,
+        "consumer_anchor_count": 0,
+        "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+        "consumer_signal_score": 0.0,
+        "decision_path_code": "hold_default",
+        "domain_blacklist_reason_code": "clean",
+        "domain_blacklisted": false,
+        "domain_match": false,
+        "intent_phrases_matched": [],
+        "keyword_category": "consumer_cpg",
+        "keyword_matches": [
+          "beverage"
+        ],
+        "keyword_score": 0.17543859649122814,
+        "llm_category": null,
+        "llm_classification_status": null,
+        "llm_model": null,
+        "llm_paying_customer": null,
+        "llm_primary_end_user": null,
+        "llm_prompt_version": null,
+        "llm_rationale": null,
+        "llm_score": null,
+        "llm_sells_to_or_operates_in": null,
+        "llm_skipped": true,
+        "matcher_ms": 0.0,
+        "negative_keywords": [],
+        "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+        "routing": "held",
+        "web3_reason_code": "clean"
+      }
+    },
+    {
+      "b2b_soft_score": 0.0,
+      "canonical_key": "name_loc:yerba-mate-inc",
+      "company_name": "Yerba Mate Inc.",
+      "consumer_anchor_count": 0,
+      "consumer_signal_score": 0.0,
+      "decision_path_code": "hold_default",
+      "description_length": 183,
+      "description_present": true,
+      "keyword_category": "consumer_cpg",
+      "keyword_matches": [
+        "beverage"
+      ],
+      "keyword_score": 0.17543859649122814,
+      "llm_eligible": false,
+      "negative_keywords": [],
+      "routing": "held",
+      "signal_count": 1,
+      "signal_ids": [
+        474
+      ],
+      "signal_types": [
+        "news_mention"
+      ],
+      "source_apis": [
+        "news_api"
+      ],
+      "thesis_result": {
+        "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+        "b2b_soft_score": 0.0,
+        "cascade_config_snapshot": {
+          "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+          "cascade_mode_used": "disabled",
+          "cascade_routing_enablement": "disabled",
+          "consumer_anchor_min": 1,
+          "consumer_dominance_margin": 0.1,
+          "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+          "consumer_rescue_threshold": 0.25,
+          "hold_threshold": 0.3,
+          "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+          "signal_ratio_min": 2.0,
+          "skip_llm_if_keyword_below": 0.2
+        },
+        "confidence_adjustment": -0.08,
+        "consumer_anchor_count": 0,
+        "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+        "consumer_signal_score": 0.0,
+        "decision_path_code": "hold_default",
+        "domain_blacklist_reason_code": "clean",
+        "domain_blacklisted": false,
+        "domain_match": false,
+        "intent_phrases_matched": [],
+        "keyword_category": "consumer_cpg",
+        "keyword_matches": [
+          "beverage"
+        ],
+        "keyword_score": 0.17543859649122814,
+        "llm_category": null,
+        "llm_classification_status": null,
+        "llm_model": null,
+        "llm_paying_customer": null,
+        "llm_primary_end_user": null,
+        "llm_prompt_version": null,
+        "llm_rationale": null,
+        "llm_score": null,
+        "llm_sells_to_or_operates_in": null,
+        "llm_skipped": true,
+        "matcher_ms": 0.0,
+        "negative_keywords": [],
+        "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+        "routing": "held",
+        "web3_reason_code": "clean"
+      }
+    },
+    {
+      "b2b_soft_score": 0.0,
+      "canonical_key": "domain:inc.com",
+      "company_name": "Unknown Company",
+      "consumer_anchor_count": 0,
+      "consumer_signal_score": 0.0,
+      "decision_path_code": "hold_default",
+      "description_length": 120,
+      "description_present": true,
+      "keyword_category": "consumer_cpg",
+      "keyword_matches": [
+        "cpg"
+      ],
+      "keyword_score": 0.28070175438596506,
+      "llm_eligible": true,
+      "negative_keywords": [],
+      "routing": "held",
+      "signal_count": 1,
+      "signal_ids": [
+        41
+      ],
+      "signal_types": [
+        "news_mention"
+      ],
+      "source_apis": [
+        "news_api"
+      ],
+      "thesis_result": {
+        "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+        "b2b_soft_score": 0.0,
+        "cascade_config_snapshot": {
+          "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+          "cascade_mode_used": "disabled",
+          "cascade_routing_enablement": "disabled",
+          "consumer_anchor_min": 1,
+          "consumer_dominance_margin": 0.1,
+          "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+          "consumer_rescue_threshold": 0.25,
+          "hold_threshold": 0.3,
+          "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+          "signal_ratio_min": 2.0,
+          "skip_llm_if_keyword_below": 0.2
+        },
+        "confidence_adjustment": -0.08,
+        "consumer_anchor_count": 0,
+        "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+        "consumer_signal_score": 0.0,
+        "decision_path_code": "hold_default",
+        "domain_blacklist_reason_code": "clean",
+        "domain_blacklisted": false,
+        "domain_match": false,
+        "intent_phrases_matched": [],
+        "keyword_category": "consumer_cpg",
+        "keyword_matches": [
+          "cpg"
+        ],
+        "keyword_score": 0.28070175438596506,
+        "llm_category": null,
+        "llm_classification_status": null,
+        "llm_model": null,
+        "llm_paying_customer": null,
+        "llm_primary_end_user": null,
+        "llm_prompt_version": null,
+        "llm_rationale": null,
+        "llm_score": null,
+        "llm_sells_to_or_operates_in": null,
+        "llm_skipped": true,
+        "matcher_ms": 0.0,
+        "negative_keywords": [],
+        "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+        "routing": "held",
+        "web3_reason_code": "clean"
+      }
+    },
+    {
+      "b2b_soft_score": 0.0,
+      "canonical_key": "news_9f117929355f",
+      "company_name": "Unknown Company",
+      "consumer_anchor_count": 0,
+      "consumer_signal_score": 0.0,
+      "decision_path_code": "hold_default",
+      "description_length": 120,
+      "description_present": true,
+      "keyword_category": "consumer_cpg",
+      "keyword_matches": [
+        "cpg"
+      ],
+      "keyword_score": 0.28070175438596506,
+      "llm_eligible": true,
+      "negative_keywords": [],
+      "routing": "held",
+      "signal_count": 1,
+      "signal_ids": [
+        178
+      ],
+      "signal_types": [
+        "news_mention"
+      ],
+      "source_apis": [
+        "news_api"
+      ],
+      "thesis_result": {
+        "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+        "b2b_soft_score": 0.0,
+        "cascade_config_snapshot": {
+          "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+          "cascade_mode_used": "disabled",
+          "cascade_routing_enablement": "disabled",
+          "consumer_anchor_min": 1,
+          "consumer_dominance_margin": 0.1,
+          "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+          "consumer_rescue_threshold": 0.25,
+          "hold_threshold": 0.3,
+          "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+          "signal_ratio_min": 2.0,
+          "skip_llm_if_keyword_below": 0.2
+        },
+        "confidence_adjustment": -0.08,
+        "consumer_anchor_count": 0,
+        "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+        "consumer_signal_score": 0.0,
+        "decision_path_code": "hold_default",
+        "domain_blacklist_reason_code": "clean",
+        "domain_blacklisted": false,
+        "domain_match": false,
+        "intent_phrases_matched": [],
+        "keyword_category": "consumer_cpg",
+        "keyword_matches": [
+          "cpg"
+        ],
+        "keyword_score": 0.28070175438596506,
+        "llm_category": null,
+        "llm_classification_status": null,
+        "llm_model": null,
+        "llm_paying_customer": null,
+        "llm_primary_end_user": null,
+        "llm_prompt_version": null,
+        "llm_rationale": null,
+        "llm_score": null,
+        "llm_sells_to_or_operates_in": null,
+        "llm_skipped": true,
+        "matcher_ms": 16.0,
+        "negative_keywords": [],
+        "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+        "routing": "held",
+        "web3_reason_code": "clean"
+      }
+    },
+    {
+      "b2b_soft_score": 0.0,
+      "canonical_key": "name_loc:lessons-that-helped",
+      "company_name": "Lessons That Helped",
+      "consumer_anchor_count": 0,
+      "consumer_signal_score": 0.0,
+      "decision_path_code": "hold_default",
+      "description_length": 120,
+      "description_present": true,
+      "keyword_category": "consumer_cpg",
+      "keyword_matches": [
+        "cpg"
+      ],
+      "keyword_score": 0.28070175438596506,
+      "llm_eligible": true,
+      "negative_keywords": [],
+      "routing": "held",
+      "signal_count": 1,
+      "signal_ids": [
+        210
+      ],
+      "signal_types": [
+        "news_mention"
+      ],
+      "source_apis": [
+        "news_api"
+      ],
+      "thesis_result": {
+        "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+        "b2b_soft_score": 0.0,
+        "cascade_config_snapshot": {
+          "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+          "cascade_mode_used": "disabled",
+          "cascade_routing_enablement": "disabled",
+          "consumer_anchor_min": 1,
+          "consumer_dominance_margin": 0.1,
+          "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+          "consumer_rescue_threshold": 0.25,
+          "hold_threshold": 0.3,
+          "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+          "signal_ratio_min": 2.0,
+          "skip_llm_if_keyword_below": 0.2
+        },
+        "confidence_adjustment": -0.08,
+        "consumer_anchor_count": 0,
+        "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+        "consumer_signal_score": 0.0,
+        "decision_path_code": "hold_default",
+        "domain_blacklist_reason_code": "clean",
+        "domain_blacklisted": false,
+        "domain_match": false,
+        "intent_phrases_matched": [],
+        "keyword_category": "consumer_cpg",
+        "keyword_matches": [
+          "cpg"
+        ],
+        "keyword_score": 0.28070175438596506,
+        "llm_category": null,
+        "llm_classification_status": null,
+        "llm_model": null,
+        "llm_paying_customer": null,
+        "llm_primary_end_user": null,
+        "llm_prompt_version": null,
+        "llm_rationale": null,
+        "llm_score": null,
+        "llm_sells_to_or_operates_in": null,
+        "llm_skipped": true,
+        "matcher_ms": 0.0,
+        "negative_keywords": [],
+        "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+        "routing": "held",
+        "web3_reason_code": "clean"
+      }
+    },
+    {
+      "b2b_soft_score": 0.0,
+      "canonical_key": "domain:fastcompany.com",
+      "company_name": "Unknown Company",
+      "consumer_anchor_count": 0,
+      "consumer_signal_score": 0.0,
+      "decision_path_code": "qualify_sector",
+      "description_length": 137,
+      "description_present": true,
+      "keyword_category": "consumer_cpg",
+      "keyword_matches": [
+        "personal care",
+        "beauty"
+      ],
+      "keyword_score": 0.4210526315789476,
+      "llm_eligible": true,
+      "negative_keywords": [],
+      "routing": "qualified",
+      "signal_count": 1,
+      "signal_ids": [
+        39
+      ],
+      "signal_types": [
+        "product_launch"
+      ],
+      "source_apis": [
+        "news_api"
+      ],
+      "thesis_result": {
+        "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+        "b2b_soft_score": 0.0,
+        "cascade_config_snapshot": {
+          "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+          "cascade_mode_used": "disabled",
+          "cascade_routing_enablement": "disabled",
+          "consumer_anchor_min": 1,
+          "consumer_dominance_margin": 0.1,
+          "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+          "consumer_rescue_threshold": 0.25,
+          "hold_threshold": 0.3,
+          "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+          "signal_ratio_min": 2.0,
+          "skip_llm_if_keyword_below": 0.2
+        },
+        "confidence_adjustment": 0.0,
+        "consumer_anchor_count": 0,
+        "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+        "consumer_signal_score": 0.0,
+        "decision_path_code": "qualify_sector",
+        "domain_blacklist_reason_code": "clean",
+        "domain_blacklisted": false,
+        "domain_match": false,
+        "intent_phrases_matched": [],
+        "keyword_category": "consumer_cpg",
+        "keyword_matches": [
+          "personal care",
+          "beauty"
+        ],
+        "keyword_score": 0.4210526315789476,
+        "llm_category": null,
+        "llm_classification_status": null,
+        "llm_model": null,
+        "llm_paying_customer": null,
+        "llm_primary_end_user": null,
+        "llm_prompt_version": null,
+        "llm_rationale": null,
+        "llm_score": null,
+        "llm_sells_to_or_operates_in": null,
+        "llm_skipped": true,
+        "matcher_ms": 0.0,
+        "negative_keywords": [],
+        "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+        "routing": "qualified",
+        "web3_reason_code": "clean"
+      }
+    },
+    {
+      "b2b_soft_score": 0.0,
+      "canonical_key": "news_b197fd88ca98",
+      "company_name": "Unknown Company",
+      "consumer_anchor_count": 0,
+      "consumer_signal_score": 0.0,
+      "decision_path_code": "qualify_sector",
+      "description_length": 137,
+      "description_present": true,
+      "keyword_category": "consumer_cpg",
+      "keyword_matches": [
+        "personal care",
+        "beauty"
+      ],
+      "keyword_score": 0.4210526315789476,
+      "llm_eligible": true,
+      "negative_keywords": [],
+      "routing": "qualified",
+      "signal_count": 1,
+      "signal_ids": [
+        177
+      ],
+      "signal_types": [
+        "product_launch"
+      ],
+      "source_apis": [
+        "news_api"
+      ],
+      "thesis_result": {
+        "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+        "b2b_soft_score": 0.0,
+        "cascade_config_snapshot": {
+          "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+          "cascade_mode_used": "disabled",
+          "cascade_routing_enablement": "disabled",
+          "consumer_anchor_min": 1,
+          "consumer_dominance_margin": 0.1,
+          "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+          "consumer_rescue_threshold": 0.25,
+          "hold_threshold": 0.3,
+          "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+          "signal_ratio_min": 2.0,
+          "skip_llm_if_keyword_below": 0.2
+        },
+        "confidence_adjustment": 0.0,
+        "consumer_anchor_count": 0,
+        "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+        "consumer_signal_score": 0.0,
+        "decision_path_code": "qualify_sector",
+        "domain_blacklist_reason_code": "clean",
+        "domain_blacklisted": false,
+        "domain_match": false,
+        "intent_phrases_matched": [],
+        "keyword_category": "consumer_cpg",
+        "keyword_matches": [
+          "personal care",
+          "beauty"
+        ],
+        "keyword_score": 0.4210526315789476,
+        "llm_category": null,
+        "llm_classification_status": null,
+        "llm_model": null,
+        "llm_paying_customer": null,
+        "llm_primary_end_user": null,
+        "llm_prompt_version": null,
+        "llm_rationale": null,
+        "llm_score": null,
+        "llm_sells_to_or_operates_in": null,
+        "llm_skipped": true,
+        "matcher_ms": 0.0,
+        "negative_keywords": [],
+        "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+        "routing": "qualified",
+        "web3_reason_code": "clean"
+      }
+    },
+    {
+      "b2b_soft_score": 0.0,
+      "canonical_key": "domain:interestingengineering.com",
+      "company_name": "Unknown Company",
+      "consumer_anchor_count": 0,
+      "consumer_signal_score": 0.0,
+      "decision_path_code": "hold_default",
+      "description_length": 134,
+      "description_present": true,
+      "keyword_category": "consumer_health_tech",
+      "keyword_matches": [
+        "wellness",
+        "therapy"
+      ],
+      "keyword_score": 0.2601626016260164,
+      "llm_eligible": true,
+      "negative_keywords": [],
+      "routing": "held",
+      "signal_count": 1,
+      "signal_ids": [
+        43
+      ],
+      "signal_types": [
+        "product_launch"
+      ],
+      "source_apis": [
+        "news_api"
+      ],
+      "thesis_result": {
+        "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+        "b2b_soft_score": 0.0,
+        "cascade_config_snapshot": {
+          "b2b_lexicon_sha256": "2153c4dbb30ec78443af1f362bdc1c8966fe81e9f99ae22e1f200a0cfe4b5196",
+          "cascade_mode_used": "disabled",
+          "cascade_routing_enablement": "disabled",
+          "consumer_anchor_min": 1,
+          "consumer_dominance_margin": 0.1,
+          "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+          "consumer_rescue_threshold": 0.25,
+          "hold_threshold": 0.3,
+          "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+          "signal_ratio_min": 2.0,
+          "skip_llm_if_keyword_below": 0.2
+        },
+        "confidence_adjustment": -0.08,
+        "consumer_anchor_count": 0,
+        "consumer_lexicon_sha256": "077aefa4227f50521be16f5f468da4c97a034fece10c307886ed36d515dd61d7",
+        "consumer_signal_score": 0.0,
+        "decision_path_code": "hold_default",
+        "domain_blacklist_reason_code": "clean",
+        "domain_blacklisted": false,
+        "domain_match": false,
+        "intent_phrases_matched": [],
+        "keyword_category": "consumer_health_tech",
+        "keyword_matches": [
+          "wellness",
+          "therapy"
+        ],
+        "keyword_score": 0.2601626016260164,
+        "llm_category": null,
+        "llm_classification_status": null,
+        "llm_model": null,
+        "llm_paying_customer": null,
+        "llm_primary_end_user": null,
+        "llm_prompt_version": null,
+        "llm_rationale": null,
+        "llm_score": null,
+        "llm_sells_to_or_operates_in": null,
+        "llm_skipped": true,
+        "matcher_ms": 0.0,
+        "negative_keywords": [],
+        "negative_policy_sha256": "6d99fa5df0bbb8a96db01f7e7a750d5121ff2d110e4d4c3469456032e95246a6",
+        "routing": "held",
+        "web3_reason_code": "clean"
+      }
+    }
+  ],
+  "canonical_summary": {
+    "canonical_companies": 34,
+    "decision_path_code_counts": {
+      "hold_default": 13,
+      "qualify_sector": 21
+    },
+    "llm_eligible_count": 26,
+    "routing_counts": {
+      "held": 13,
+      "qualified": 21
+    },
+    "top_negative_keywords": {}
+  },
+  "metadata": {
+    "analysis_version": 1,
+    "canonical_entrypoint": "ThesisFilter.classify(skip_llm=True)",
+    "canonical_unit": "pending_consolidated_company",
+    "db_open_mode": "sqlite_uri_mode_ro",
+    "db_path": "signals.db",
+    "domain_name_mode": "omitted_for_canonical_parity",
+    "effective_config_snapshot": {
+      "cascade_routing_enablement": "disabled",
+      "consumer_anchor_min": 1,
+      "consumer_dominance_margin": 0.1,
+      "consumer_rescue_threshold": 0.25,
+      "high_boost": 0.08,
+      "hold_threshold": 0.3,
+      "keyword_high_threshold": 0.7,
+      "keyword_low_threshold": 0.4,
+      "low_penalty": -0.08,
+      "negative_keyword_penalty": -0.12,
+      "signal_ratio_min": 2.0,
+      "skip_llm_if_keyword_below": 0.2
+    },
+    "generated_at_utc": "2026-05-11T07:46:20.117842Z",
+    "llm_calls_made": 0,
+    "matcher_runtime": {
+      "ml_enablement": "disabled",
+      "policy_loader_mode": "permissive",
+      "v2_enablement": "disabled",
+      "v2_execution_enabled": false
+    },
+    "pipeline_hold_threshold_override": null
+  },
+  "repeated_rejection_motifs": [
+    {
+      "count": 13,
+      "decision_path_code": "hold_default",
+      "example_canonical_keys": [
+        "domain:openai.com",
+        "domain:10beauty.com",
+        "rss_14f43b2ae2f9",
+        "rss_76b8cd9dea08",
+        "name_loc:litehouse-foods"
+      ],
+      "negative_keyword_cluster": "no_negative_keywords",
+      "routing": "held"
+    }
+  ]
+}
