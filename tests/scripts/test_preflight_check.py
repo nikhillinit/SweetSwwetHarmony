@@ -20,6 +20,7 @@ from scripts.preflight_check import (
     _check_api_health,
     PASS, WARN, FAIL, SKIP,
 )
+from storage.signal_store import CURRENT_SCHEMA_VERSION
 
 
 # ---------------------------------------------------------------------------
@@ -30,7 +31,7 @@ def _create_full_db(path: Path) -> Path:
     """Create a DB with schema_migrations and canary_runs tables."""
     conn = sqlite3.connect(str(path))
     conn.execute("CREATE TABLE schema_migrations (version INTEGER)")
-    conn.execute("INSERT INTO schema_migrations VALUES (41)")
+    conn.execute("INSERT INTO schema_migrations VALUES (?)", (CURRENT_SCHEMA_VERSION,))
     conn.execute(
         "CREATE TABLE canary_runs (id INTEGER PRIMARY KEY, verdict TEXT, pass_rate REAL, created_at TEXT)"
     )
