@@ -5,7 +5,8 @@
 **Project:** Harmonic Discovery Engine, Python VC deal-sourcing engine
 **Repo:** `C:\dev\Harmonic`
 **Current repo head at planning time:** `fa87071`
-**Document status:** Execution-ready replacement for the stale untracked draft
+**Gate A execution head:** `c3c190e`
+**Document status:** Gate A verified 2026-05-11; downstream work remains sequenced by the gates below
 **Goal:** Restore full deal-sourcing capability without building on stale baseline, schema, or liveness assumptions.
 
 ### 1.1 Current Runtime Evidence
@@ -44,11 +45,31 @@ MAX(schema_migrations.version) == storage.signal_store.CURRENT_SCHEMA_VERSION ==
 
 | ID | Decision | Status | Rationale |
 |---|---|---|---|
-| D1 | Declare baseline from live/backup evidence, not fixed 612-row text | Open under Gate A | Live DB is 614 rows; inspected backups are 612 rows |
+| D1 | Declare baseline from live/backup evidence, not fixed 612-row text | Passed Gate A 2026-05-11 | Live DB is 614 rows; inspected backups are 612 rows |
 | D2 | Start thesis-filter survivor analysis from `utils.thesis_filter` | Current runtime fact | `workflows/pipeline.py` imports and uses this path |
 | D3 | Treat Phase G as current custom `PhaseGEntityResolver` | Current runtime fact | Splink/DuckDB remains a possible future ADR option only |
 | D4 | DtACI adaptive lookback remains future IOF candidate | Deferred | Corpus-level calibration is blocked until Gate A passes |
 | D5 | `tach` over `import-linter` remains future enforcement candidate | Deferred | Do not imply current enforcement until a repo PR adds it |
+
+### 1.5 Gate A Execution Record
+
+**Status:** Passed on 2026-05-11 at repo head `c3c190e`.
+
+**Execution note:** The planning-time head was `fa87071`; execution happened after the strategy branch advanced to `c3c190e`. Runtime facts were rechecked at execution time, so downstream work should treat `c3c190e` or a freshly synced equivalent as the verified Gate A baseline.
+
+**Read-only evidence:**
+
+| Check | Result |
+|---|---|
+| `signals.db` | 614 `signals` rows, `PRAGMA user_version=0`, `MAX(schema_migrations.version)=53` |
+| `backups/signals-20260511-030832.db` | 612 `signals` rows, `PRAGMA user_version=0`, `MAX(schema_migrations.version)=53` |
+| `backups/signals-20260404-072102.db` | 612 `signals` rows, `PRAGMA user_version=0`, `MAX(schema_migrations.version)=53` |
+| Runtime schema contract | `storage/signal_store.py` declares `CURRENT_SCHEMA_VERSION = 53` |
+| Thesis-filter survivor path | `workflows/pipeline.py` imports and instantiates `utils.thesis_filter.ThesisFilter` |
+| Phase G current path | `workflows/pipeline.py` imports and instantiates `utils.phase_g_entity_resolver.PhaseGEntityResolver` |
+| External-vault path hygiene | No repo-path assumptions found in this strategy document |
+
+**Gate result:** Gate A is green for documentation, read-only diagnostics, and the next gated implementation slice. Runner changes, keepalive changes, Indiegogo work, live Phase G activation, and corpus-level calibration remain subject to their later gate criteria.
 
 ## 2. Dependency Graph And Execution Order
 
@@ -330,7 +351,7 @@ git status --short docs/plans/harmonic-dev-strategy-2026-05-11.md
 
 Pass condition:
 
-- `git rev-parse --short HEAD` returns `fa87071` before follow-up work starts.
+- `git rev-parse --short HEAD` returns the head recorded for the current execution. For this Gate A execution, it returned `c3c190e`; the planning-time head remains `fa87071`.
 - The strategy file is shown as untracked or modified according to the current packaging state.
 
 ### 6.2 Schema And Row Counts
