@@ -160,6 +160,18 @@ def _is_valid_startup_prefix_candidate(name: str) -> bool:
     return tokens[0].lower() not in _STARTUP_PREFIX_EDITORIAL_TOKENS
 
 
+def _strip_trailing_legal_suffix(name: str) -> str:
+    """Remove narrow legal suffixes from extracted display names."""
+    cleaned = name.strip()
+    cleaned = re.sub(
+        r"\s+(?:inc\.?|llc|ltd\.?|corp\.?|corporation)\.?$",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    return cleaned.strip()
+
+
 def extract_via_regex(title: str) -> Optional[str]:
     """
     Extract company name from article title using regex patterns.
@@ -195,6 +207,13 @@ def extract_via_regex(title: str) -> Optional[str]:
         r"(?i:backs|invests\s+in|funds|supports)\s+(?:[a-z][\w-]*\s+){1,3}([A-Z][a-zA-Z0-9/]+(?:\s+[A-Z][a-zA-Z0-9/]*)?)(?:\s+in\b|\s+with\b|\s*,|\s*$)",
     ]
 
+    # Group 3b: Article-subject context patterns used by news/RSS rows where
+    # the headline is editorial but the lede names the company.
+    subject_context_patterns = [
+        r"(?i:\bbehind)\s+([A-Z][a-zA-Z0-9'&.]+(?:\s+[A-Z][a-zA-Z0-9'&.]+){0,3}?)(?=\s+(?:didn['\u2019]t|did\s+not|doesn['\u2019]t|does\s+not|has|have|had|is|was|were)\b|[,.])",
+        r"(?i:\bpartner\s+in)\s+([A-Z][a-zA-Z0-9'&.]+(?:\s+[A-Z][a-zA-Z0-9'&.]+){0,4}?)(?=,\s+(?:a|an|the)\s+|[,.])",
+    ]
+
     # Group 4: Quoted company names
     quoted_patterns = [
         rf"""['\u2018\u201C"]([A-Z][a-zA-Z0-9\s]{{1,25}}?)['\u2019\u201D"]\s+{_VERBS}""",
@@ -215,6 +234,7 @@ def extract_via_regex(title: str) -> Optional[str]:
         ("single_word", single_word_patterns),
         ("multi_word", multi_word_patterns),
         ("mid_sentence", mid_sentence_patterns),
+        ("subject_context", subject_context_patterns),
         ("quoted", quoted_patterns),
         ("startup_prefix", startup_prefix_patterns),
         ("appositive", appositive_patterns),
@@ -224,6 +244,8 @@ def extract_via_regex(title: str) -> Optional[str]:
             match = re.search(pattern, title)
             if match:
                 company = match.group(1).strip()
+                if group_name == "subject_context":
+                    company = _strip_trailing_legal_suffix(company)
                 if group_name == "startup_prefix" and not _is_valid_startup_prefix_candidate(company):
                     continue
                 if (company.lower() not in _COMMON_WORDS

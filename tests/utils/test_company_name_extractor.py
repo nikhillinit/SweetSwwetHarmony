@@ -948,6 +948,33 @@ class TestDescriptionRegexFallback:
         assert result.company_name == "SOLLOS Yerba Mate"
         assert result.company_name_method == "regex"
 
+    def test_wonderbelly_description_subject_not_editorial_title(self):
+        """Signal 41/178 regression: recover article subject from description."""
+        result = extract_company_info(
+            title="5 Startup Lessons That Helped Wonderbelly Land a 9-Figure Exit",
+            description=(
+                "The brothers behind Wonderbelly didn't have a background in CPG "
+                "or wellness, but they had a personal story and a vision."
+            ),
+            mode="baseline",
+        )
+        assert result.company_name == "Wonderbelly"
+        assert result.company_name_method == "regex"
+
+    def test_partner_in_description_strips_legal_suffix(self):
+        """Signal 175/474 regression: recover SOLLOS from public-record wording."""
+        result = extract_company_info(
+            title="Barron Trump linked to beverage company based near Mar-a-Lago",
+            description=(
+                "Barron Trump is listed in public records as a partner in "
+                "SOLLOS Yerba Mate Inc., a beverage startup headquartered near "
+                "Mar-a-Lago in Palm Beach, Florida, according to January filings."
+            ),
+            mode="baseline",
+        )
+        assert result.company_name == "SOLLOS Yerba Mate"
+        assert result.company_name_method == "regex"
+
     @patch("utils.company_name_extractor.extract_via_ner", return_value=None)
     def test_title_miss_description_miss_falls_through(self, mock_ner):
         """Title regex miss + description regex miss -> falls through to NER."""
