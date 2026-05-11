@@ -4,6 +4,8 @@
 
 Define what the repo's DB safety surfaces can prove, what they cannot prove, and the minimum operator rules for manual or external SQLite work.
 
+ADR-043 accepts this policy as the Phase 5 Tranche-1 DB-tooling discipline: repo-supported DB mutators use explicit lock ownership, ledger rows, typed partial-evidence errors, and init-time `PRAGMA data_version` evidence.
+
 ## Repo-Local Guarantees
 
 The repo can enforce or verify:
@@ -105,9 +107,46 @@ DB-tool tests should use the smallest contract that fits the script's mutation s
 
 ## Phase 5.2 Cloud Durability Direction
 
-Cloud durability for `signals.db` should use Litestream-style WAL streaming and restore workflows, not remote-mounted SQLite. ADR-043 planning should assume tuned restore configuration can target roughly 5 minutes for a 100GB database; do not plan around untuned default restore timings as the operating target.
+Cloud durability for `signals.db` should use Litestream-style WAL streaming and restore workflows, not remote-mounted SQLite. ADR-043 accepts this direction, but Phase 5.2 restore objectives are provisional until backed by host sizing, storage throughput, and restore-drill benchmarks. Do not combine a small-runner assumption with a 100GB restore-time target unless the chosen host and storage tier have measured support for it.
 
 Phase 5.2 archival outputs should be Arrow- or Parquet-readable so future analysis can consume cold artifacts without binding to the live SQLite file format. Off-host ledger retention should be append-only where possible.
+
+Phase 5.2 also owns the always-on runner decision. Production collection should move off the operator laptop and onto a dedicated always-on host or service, such as a small VPS, NUC, Mac mini, or equivalent single-tenant appliance. The live `signals.db` still stays on that host's local filesystem; do not use a remote mount, cloud-drive sync folder, or object-store filesystem as the SQLite live path. The always-on runner is responsible for scheduled collectors, heartbeat payloads, host-availability evidence, and WAL/ledger shipping. The operator laptop should become a development/control-plane machine, not the required production scheduler.
+
+Until that runner exists and passes a restore drill plus liveness drill, device-availability gaps from the laptop remain `unknown collection opportunity` evidence, not proof that source channels were empty or that collector logic failed.
+
+The liveness drill should keep `rss_feeds` as the intentionally omitted/frozen target and use `signals.created_at` as the freshness source of record. `ops.collector_health --format json` is health, config, and heartbeat corroboration only; it is not the freshness clock. The positive-progress peer should be `job_postings` with an explicit runner-scoped `JOB_POSTING_DOMAINS` value and positive inserted rows. Watch freshness on the source APIs emitted by that collector, such as `greenhouse_jobs`, `ashby_jobs`, and `lever_jobs`; require only the source APIs that are baseline-positive for the chosen fixture domains.
+
+GitHub token availability is a runner precondition only when the `github` collector is included. A live `GITHUB_TOKEN` proves authenticated API access, but a successful GitHub run with zero inserted rows is plumbing corroboration, not positive DB-progress evidence. File or runner witnesses similarly prove the runner fired and help classify host opportunity; they do not prove source freshness. Synthetic canaries belong in the Phase 5.2 durability tranche and should not substitute for real collector peers in the induced-freeze proof.
+
+For local Windows drill setup, `scripts/red-team-hybrid/install_keepalive_task.ps1` supports an explicit freeze-drill task without changing the historical default `HarmonicKeepAlive` behavior. Before the Monday, 2026-05-11 readout, do not invoke the installer against the live repo/task with `-TaskName HarmonicFreezeDrill`; doing so can rewrite the live wrapper and/or re-register the active task.
+
+Use `-GenerateOnly` with a temp project root or non-live task name for preview checks:
+
+```powershell
+New-Item -ItemType Directory -Force "C:\tmp\harmonic-freeze-preview\scripts\red-team-hybrid" | Out-Null
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\red-team-hybrid\install_keepalive_task.ps1 `
+  -ProjectRoot "C:\tmp\harmonic-freeze-preview" `
+  -TaskName "HarmonicFreezeDrillPreview" `
+  -Collectors "job_postings,github" `
+  -WatchdogOperational "rss_feeds,greenhouse_jobs,ashby_jobs" `
+  -WatchdogThresholdHours 12 `
+  -JobPostingDomains "10beauty.com,cofertility.com,openai.com" `
+  -IgnoreWatchdogExitCode `
+  -GenerateOnly
+```
+
+Use `-IgnoreWatchdogExitCode` for the induced-freeze drill because the
+watchdog JSON should record the intentional `rss_feeds` failure, but Task
+Scheduler should not retry and add noisy duplicate drill runs.
+
+For the Monday operator procedure, use
+`docs/runbooks/monday-am-freeze-drill-readout.md`. The pass condition requires
+both watchdog JSON evidence and required peer `MAX(signals.created_at)` values
+after the observed scheduled run start; under-threshold freshness carried from
+baseline is not enough. GitHub remains auth/plumbing corroboration unless it
+inserts rows during the window. Email alerts are deferred until after the
+Monday readout.
 
 ## Support Tooling Quarantine
 
