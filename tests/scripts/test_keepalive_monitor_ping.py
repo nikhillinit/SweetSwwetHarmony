@@ -22,10 +22,16 @@ def _load_module():
     return module
 
 
-def _watchdog_payload(status: str = "PASS", exit_code: int = 0) -> dict:
+def _watchdog_payload(
+    status: str = "PASS",
+    exit_code: int = 0,
+    *,
+    min_created_at: str = "2026-05-13T15:00:00+00:00",
+) -> dict:
     return {
         "checked_at": "2026-05-13T15:10:00+00:00",
         "threshold_hours": 12,
+        "min_created_at": min_created_at,
         "exit_code": exit_code,
         "status": status,
         "collectors": [
@@ -35,6 +41,7 @@ def _watchdog_payload(status: str = "PASS", exit_code: int = 0) -> dict:
                 "last_created": "2026-05-13T15:00:22+00:00",
                 "age_hours": 0.16,
                 "status": "FRESH",
+                "required_after": min_created_at,
             },
             {
                 "source_api": "ashby_jobs",
@@ -42,6 +49,7 @@ def _watchdog_payload(status: str = "PASS", exit_code: int = 0) -> dict:
                 "last_created": "2026-05-13T15:00:23+00:00",
                 "age_hours": 0.15,
                 "status": "FRESH",
+                "required_after": min_created_at,
             },
         ],
         "failures": [] if status == "PASS" else ["greenhouse_jobs: stale"],
@@ -61,10 +69,41 @@ def test_build_monitor_payload_carries_post_run_db_proof_fields() -> None:
     assert payload["source_of_record"] == "signals.created_at"
     assert payload["artifact"] == "2026-05-13.json"
     assert payload["watchdog"]["threshold_hours"] == 12
+    assert payload["watchdog"]["min_created_at"] == "2026-05-13T15:00:00+00:00"
     assert payload["watchdog"]["status"] == "PASS"
     assert payload["watchdog"]["sources"]["greenhouse_jobs"]["last_created"] == "2026-05-13T15:00:22+00:00"
+    assert payload["watchdog"]["sources"]["greenhouse_jobs"]["required_after"] == "2026-05-13T15:00:00+00:00"
     assert payload["watchdog"]["sources"]["ashby_jobs"]["status"] == "FRESH"
     assert "watchdog.sources.<source_api>.last_created" in payload["post_run_db_proof_fields"]
+    assert "watchdog.sources.<source_api>.required_after" in payload["post_run_db_proof_fields"]
+    assert "watchdog.min_created_at" in payload["post_run_db_proof_fields"]
+
+
+def test_build_monitor_payload_carries_no_post_run_rows_failure_reason() -> None:
+    module = _load_module()
+    watchdog = _watchdog_payload(status="FAIL", exit_code=1)
+    watchdog["collectors"][0] = {
+        **watchdog["collectors"][0],
+        "last_created": "2026-05-13T08:53:22+00:00",
+        "age_hours": 6.28,
+        "status": "STALE",
+        "stale_reason": "no_post_run_rows",
+    }
+    watchdog["failures"] = ["greenhouse_jobs: no_post_run_rows"]
+
+    payload = module.build_monitor_payload(
+        watchdog,
+        task_name="HarmonicKeepAlive",
+        artifact_path=Path("artifacts/keepalive/2026-05-13-HarmonicKeepAlive.json"),
+    )
+
+    source = payload["watchdog"]["sources"]["greenhouse_jobs"]
+    assert payload["watchdog"]["status"] == "FAIL"
+    assert payload["watchdog"]["min_created_at"] == "2026-05-13T15:00:00+00:00"
+    assert source["status"] == "STALE"
+    assert source["required_after"] == "2026-05-13T15:00:00+00:00"
+    assert source["stale_reason"] == "no_post_run_rows"
+    assert "watchdog.sources.<source_api>.stale_reason" in payload["post_run_db_proof_fields"]
 
 
 def test_ping_url_uses_exit_status_suffix() -> None:
