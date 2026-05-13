@@ -15,15 +15,10 @@
     },
     "api-no-body-actor-authority": {
       "metadata": {
-        "total_files": 1,
-        "total_occurrences": 4
+        "total_files": 0,
+        "total_occurrences": 0
       },
-      "files": {
-        "api/routers/actions.py": {
-          "count": 4,
-          "note": "Known pre-RBAC actions route debt."
-        }
-      }
+      "files": {}
     },
     "api-http-exception-below-boundary": {
       "metadata": {
