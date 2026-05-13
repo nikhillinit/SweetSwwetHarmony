@@ -159,7 +159,7 @@ async def list_canary_runs(
         data=items,
         meta=ListMeta(
             total=len(items),
-            cursor=next_cursor,
+            next_cursor=next_cursor,
             has_more=len(items) == limit,
         ),
     ).model_dump()
@@ -340,7 +340,7 @@ async def list_drift_alerts(
         data=items,
         meta=ListMeta(
             total=len(items),
-            cursor=next_cursor,
+            next_cursor=next_cursor,
             has_more=len(items) == limit,
         ),
     ).model_dump()
