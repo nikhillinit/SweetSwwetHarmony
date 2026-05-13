@@ -45,6 +45,7 @@ class Permission(str, Enum):
     TRIAGE_APPROVE = "triage_approve"
     TRIAGE_REJECT = "triage_reject"
     TRIAGE_DEFER = "triage_defer"
+    COMPANY_ACTION = "company_action"
     HUNTER_RUN = "hunter_run"
     HUNTER_PROMOTE = "hunter_promote"
     CANARY_RUN = "canary_run"
@@ -72,6 +73,7 @@ _ROLE_PERMISSIONS: dict[Role, set[Permission]] = {
         Permission.TRIAGE_APPROVE,
         Permission.TRIAGE_REJECT,
         Permission.TRIAGE_DEFER,
+        Permission.COMPANY_ACTION,
         Permission.HUNTER_RUN,
         Permission.HUNTER_PROMOTE,
         Permission.CANARY_RUN,
