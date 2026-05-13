@@ -1,0 +1,81 @@
+{
+  "checked_at": "2026-05-12T15:00:23.993458+00:00",
+  "threshold_hours": 12,
+  "exit_code": 1,
+  "status": "FAIL",
+  "collectors": [
+    {
+      "source_api": "arxiv",
+      "category": "informational",
+      "last_created": "2026-02-27T23:00:01.609666+00:00",
+      "age_hours": 1768.01,
+      "status": "UNKNOWN"
+    },
+    {
+      "source_api": "ashby_jobs",
+      "category": "operational",
+      "last_created": "2026-05-12T15:00:23.174852+00:00",
+      "age_hours": 0.0,
+      "status": "FRESH"
+    },
+    {
+      "source_api": "github",
+      "category": "informational",
+      "last_created": "2026-01-10T12:18:09.019836+00:00",
+      "age_hours": 2930.7,
+      "status": "UNKNOWN"
+    },
+    {
+      "source_api": "greenhouse_jobs",
+      "category": "operational",
+      "last_created": "2026-05-12T15:00:22.219611+00:00",
+      "age_hours": 0.0,
+      "status": "FRESH"
+    },
+    {
+      "source_api": "hacker_news",
+      "category": "informational",
+      "last_created": "2026-03-01T19:33:33.650304+00:00",
+      "age_hours": 1723.45,
+      "status": "UNKNOWN"
+    },
+    {
+      "source_api": "lever_jobs",
+      "category": "informational",
+      "last_created": "2026-02-26T06:33:29.284244+00:00",
+      "age_hours": 1808.45,
+      "status": "UNKNOWN"
+    },
+    {
+      "source_api": "manual_seed_buzz",
+      "category": "informational",
+      "last_created": "2026-02-26T07:31:31.247155+00:00",
+      "age_hours": 1807.48,
+      "status": "UNKNOWN"
+    },
+    {
+      "source_api": "news_api",
+      "category": "informational",
+      "last_created": "2026-02-26T07:54:30.771529+00:00",
+      "age_hours": 1807.1,
+      "status": "UNKNOWN"
+    },
+    {
+      "source_api": "product_hunt",
+      "category": "informational",
+      "last_created": "2026-01-10T12:18:09.035890+00:00",
+      "age_hours": 2930.7,
+      "status": "UNKNOWN"
+    },
+    {
+      "source_api": "rss_feeds",
+      "category": "operational",
+      "last_created": "2026-02-27T23:00:03.976742+00:00",
+      "age_hours": 1768.01,
+      "status": "STALE"
+    }
+  ],
+  "failures": [
+    "rss_feeds: 1768.01h since last ingest"
+  ]
+}
