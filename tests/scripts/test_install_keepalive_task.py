@@ -79,6 +79,8 @@ def test_generate_only_preserves_default_keepalive_runner(tmp_path: Path) -> Non
 
     assert 'call "python" run_pipeline.py collect --collectors hacker_news,arxiv,rss_feeds,news_api' in content
     assert "--threshold-hours 36" in content
+    assert "--min-created-at \"%KEEPALIVE_RUN_START_UTC%\"" in content
+    assert "-HarmonicKeepAlive.json" in content
     assert "JOB_POSTING_DOMAINS" not in content
     assert "exit /b 0" not in content
 
@@ -114,6 +116,8 @@ def test_generate_only_writes_non_live_freeze_preview_runner(tmp_path: Path) -> 
     assert 'call "python" run_pipeline.py collect --collectors job_postings,github' in content
     assert "--threshold-hours 12" in content
     assert "--operational rss_feeds,greenhouse_jobs,ashby_jobs" in content
+    assert "--min-created-at \"%KEEPALIVE_RUN_START_UTC%\"" in content
+    assert "-HarmonicFreezeDrillPreview.json" in content
     assert "exit /b 0" in content
 
 
@@ -143,6 +147,8 @@ def test_generate_only_writes_positive_peer_keepalive_trial_runner(tmp_path: Pat
     assert 'call "python" run_pipeline.py collect --collectors job_postings' in content
     assert "--threshold-hours 12" in content
     assert "--operational greenhouse_jobs,ashby_jobs" in content
+    assert "--min-created-at \"%KEEPALIVE_RUN_START_UTC%\"" in content
+    assert "-HarmonicKeepAlive.json" in content
     assert "rss_feeds" not in content
     assert "scripts/red-team-hybrid/keepalive_monitor_ping.py" in content
     assert "--ping-url-env \"HARMONIC_KEEPALIVE_PING_URL\"" in content

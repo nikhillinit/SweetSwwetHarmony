@@ -6,7 +6,7 @@
     Closes the R19 root cause by scheduling a daily local run of:
       1. python run_pipeline.py collect --collectors hacker_news,arxiv,rss_feeds,news_api
       2. python scripts/red-team-hybrid/freshness_watchdog.py --json
-         (output appended to artifacts/keepalive/YYYY-MM-DD.json)
+         (output appended to artifacts/keepalive/YYYY-MM-DD-<TaskName>.json)
 
     This script must be run ONCE per machine. It is idempotent -- re-running
     unregisters the previous task before re-registering, so no duplicates
@@ -85,7 +85,7 @@
 
 .PARAMETER TestRun
     If specified, triggers the task immediately after registering, so the
-    first artifacts/keepalive/YYYY-MM-DD.json is produced without waiting
+    first artifacts/keepalive/YYYY-MM-DD-<TaskName>.json is produced without waiting
     until 08:00 tomorrow.
 
 .EXAMPLE
@@ -98,7 +98,7 @@
 .NOTES
     REQ: Phase 1 keep-alive (CONTEXT.md D-22, R19 root cause fix)
     Plan: .planning/phases/01-move-0-prep-liveness-prep/01-05-PLAN.md
-    Evidence: artifacts/keepalive/YYYY-MM-DD.json per run
+    Evidence: artifacts/keepalive/YYYY-MM-DD-<TaskName>.json per run
     Hard rubric gate 5 requires at least 2 successful runs captured before
     2026-04-18 (Step 4B regret check).
 
@@ -176,6 +176,7 @@ $WatchdogCmd = "$PythonCmd scripts/red-team-hybrid/freshness_watchdog.py --json 
 if ($WatchdogOperational.Trim()) {
     $WatchdogCmd = "$WatchdogCmd --operational $WatchdogOperational"
 }
+$WatchdogCmd = "$WatchdogCmd --min-created-at ""%KEEPALIVE_RUN_START_UTC%"""
 
 $EnvLines = @()
 if ($JobPostingDomains.Trim()) {
@@ -199,11 +200,14 @@ if ($IgnoreWatchdogExitCode) {
     $ExitLines += "exit /b 0"
 }
 
+$SafeTaskName = ($TaskName -replace '[^A-Za-z0-9_-]', '_')
+
 $DailyScript = @"
 @echo off
 cd /d "$ProjectRoot"
 $($EnvLines -join "`r`n")
-set "KEEPALIVE_ARTIFACT=$ArtifactsDir\%DATE:~10,4%-%DATE:~4,2%-%DATE:~7,2%.json"
+for /f %%I in ('powershell -NoProfile -Command "[DateTime]::UtcNow.ToString(""o"")"') do set "KEEPALIVE_RUN_START_UTC=%%I"
+set "KEEPALIVE_ARTIFACT=$ArtifactsDir\%KEEPALIVE_RUN_START_UTC:~0,10%-$SafeTaskName.json"
 $PipelineCmd
 $WatchdogCmd > "%KEEPALIVE_ARTIFACT%"
 set "KEEPALIVE_WATCHDOG_EXIT=%ERRORLEVEL%"
@@ -211,7 +215,6 @@ $($MonitorLines -join "`r`n")
 $($ExitLines -join "`r`n")
 "@
 
-$SafeTaskName = ($TaskName -replace '[^A-Za-z0-9_-]', '_')
 $ScriptName = if ($TaskName -eq "HarmonicKeepAlive") { "_keepalive_daily.cmd" } else { "_keepalive_$SafeTaskName.cmd" }
 $ScriptPath = Join-Path $ProjectRoot "scripts\red-team-hybrid\$ScriptName"
 Set-Content -Path $ScriptPath -Value $DailyScript -Encoding ASCII

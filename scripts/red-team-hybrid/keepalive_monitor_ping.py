@@ -52,12 +52,16 @@ def build_monitor_payload(
         if not isinstance(source_api, str) or not source_api:
             raise ValueError("watchdog collector entry is missing source_api")
 
-        sources[source_api] = {
+        source = {
             "category": record.get("category"),
             "last_created": record.get("last_created"),
             "age_hours": record.get("age_hours"),
             "status": record.get("status"),
         }
+        for optional_field in ("required_after", "stale_reason"):
+            if optional_field in record:
+                source[optional_field] = record.get(optional_field)
+        sources[source_api] = source
 
     if not sources:
         raise ValueError("watchdog JSON contains no source proof fields")
@@ -70,6 +74,7 @@ def build_monitor_payload(
         "watchdog": {
             "checked_at": watchdog_payload.get("checked_at"),
             "threshold_hours": watchdog_payload.get("threshold_hours"),
+            "min_created_at": watchdog_payload.get("min_created_at"),
             "status": watchdog_payload.get("status"),
             "exit_code": watchdog_payload.get("exit_code"),
             "failures": watchdog_payload.get("failures", []),
@@ -77,8 +82,11 @@ def build_monitor_payload(
         },
         "post_run_db_proof_fields": [
             "watchdog.sources.<source_api>.last_created",
+            "watchdog.sources.<source_api>.required_after",
+            "watchdog.sources.<source_api>.stale_reason",
             "watchdog.sources.<source_api>.status",
             "watchdog.threshold_hours",
+            "watchdog.min_created_at",
         ],
     }
 
