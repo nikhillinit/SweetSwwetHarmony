@@ -47,6 +47,9 @@ Usage
     # Override operational set
     python scripts/red-team-hybrid/freshness_watchdog.py --operational hacker_news,arxiv
 
+    # Require proof that rows were created after this run started
+    python scripts/red-team-hybrid/freshness_watchdog.py --json --min-created-at 2026-05-13T15:00:00+00:00
+
     # Alternate DB path
     python scripts/red-team-hybrid/freshness_watchdog.py --db /path/to/signals.db
 
@@ -94,7 +97,7 @@ def _parse_iso(ts: str) -> datetime:
     datetime.fromisoformat handles all of these in Python 3.11+. For naive
     timestamps we assume UTC, matching how recent rows are written.
     """
-    dt = datetime.fromisoformat(ts)
+    dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
     return dt
@@ -134,6 +137,7 @@ def classify(
     operational: tuple[str, ...],
     threshold: timedelta,
     now: datetime,
+    min_created_at: datetime | None = None,
 ) -> list[dict[str, Any]]:
     """
     Build per-collector status records.
@@ -144,6 +148,8 @@ def classify(
         last_created:  ISO string or None
         age_hours:     float or None
         status:        "FRESH" | "STALE" | "MISSING" | "UNKNOWN"
+        required_after: ISO string when min_created_at is enforced
+        stale_reason:  failure reason when operational status is not fresh
     """
     all_collectors = set(freshness.keys()) | set(operational)
     records: list[dict[str, Any]] = []
@@ -155,35 +161,47 @@ def classify(
 
         if last_created is None:
             status = "MISSING" if is_operational else "UNKNOWN"
-            records.append(
-                {
-                    "source_api": source_api,
-                    "category": category,
-                    "last_created": None,
-                    "age_hours": None,
-                    "status": status,
-                }
-            )
+            record: dict[str, Any] = {
+                "source_api": source_api,
+                "category": category,
+                "last_created": None,
+                "age_hours": None,
+                "status": status,
+            }
+            if is_operational and min_created_at is not None:
+                record["required_after"] = min_created_at.isoformat()
+            if is_operational:
+                record["stale_reason"] = "missing"
+            records.append(record)
             continue
 
         age = now - last_created
         age_hours = age.total_seconds() / 3600.0
+        stale_reason = None
         if is_operational:
             status = "FRESH" if age <= threshold else "STALE"
+            if status == "STALE":
+                stale_reason = "threshold_exceeded"
+            if min_created_at is not None and last_created <= min_created_at:
+                status = "STALE"
+                stale_reason = "no_post_run_rows"
         else:
             # Informational collectors always report UNKNOWN for the gate;
             # we still surface the age so operators can eyeball them.
             status = "UNKNOWN"
 
-        records.append(
-            {
-                "source_api": source_api,
-                "category": category,
-                "last_created": last_created.isoformat(),
-                "age_hours": round(age_hours, 2),
-                "status": status,
-            }
-        )
+        record = {
+            "source_api": source_api,
+            "category": category,
+            "last_created": last_created.isoformat(),
+            "age_hours": round(age_hours, 2),
+            "status": status,
+        }
+        if is_operational and min_created_at is not None:
+            record["required_after"] = min_created_at.isoformat()
+        if stale_reason is not None:
+            record["stale_reason"] = stale_reason
+        records.append(record)
     return records
 
 
@@ -198,9 +216,15 @@ def verdict(records: list[dict[str, Any]]) -> tuple[int, list[str]]:
         if rec["category"] != "operational":
             continue
         if rec["status"] == "STALE":
-            failures.append(
-                f"{rec['source_api']}: {rec['age_hours']}h since last ingest"
-            )
+            if rec.get("stale_reason") == "no_post_run_rows":
+                failures.append(
+                    f"{rec['source_api']}: last row {rec['last_created']} "
+                    f"not after required {rec['required_after']}"
+                )
+            else:
+                failures.append(
+                    f"{rec['source_api']}: {rec['age_hours']}h since last ingest"
+                )
         elif rec["status"] == "MISSING":
             failures.append(
                 f"{rec['source_api']}: no signals in DB (operational collector)"
@@ -269,6 +293,7 @@ def render_json(
     now: datetime,
     failures: list[str],
     exit_code: int,
+    min_created_at: datetime | None = None,
 ) -> str:
     """Machine-readable output for CI, cron, dashboards."""
     payload = {
@@ -279,6 +304,8 @@ def render_json(
         "collectors": records,
         "failures": failures,
     }
+    if min_created_at is not None:
+        payload["min_created_at"] = min_created_at.isoformat()
     return json.dumps(payload, indent=2)
 
 
@@ -314,6 +341,14 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="emit JSON instead of human-readable text",
     )
+    parser.add_argument(
+        "--min-created-at",
+        help=(
+            "require operational collectors to have signals.created_at after "
+            "this ISO timestamp; use the observed runner start for live "
+            "keepalive proof"
+        ),
+    )
     args = parser.parse_args(argv)
 
     operational = tuple(
@@ -321,6 +356,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     threshold = timedelta(hours=args.threshold_hours)
     now = datetime.now(tz=timezone.utc)
+    min_created_at = None
+    if args.min_created_at:
+        try:
+            min_created_at = _parse_iso(args.min_created_at)
+        except ValueError as exc:
+            sys.stderr.write(f"ERROR: invalid --min-created-at: {exc}\n")
+            return 2
 
     try:
         freshness = query_freshness(Path(args.db))
@@ -331,11 +373,19 @@ def main(argv: list[str] | None = None) -> int:
         sys.stderr.write(f"ERROR: database read failed: {exc}\n")
         return 2
 
-    records = classify(freshness, operational, threshold, now)
+    records = classify(
+        freshness,
+        operational,
+        threshold,
+        now,
+        min_created_at=min_created_at,
+    )
     exit_code, failures = verdict(records)
 
     if args.json:
-        sys.stdout.write(render_json(records, threshold, now, failures, exit_code))
+        sys.stdout.write(
+            render_json(records, threshold, now, failures, exit_code, min_created_at)
+        )
         sys.stdout.write("\n")
     else:
         sys.stdout.write(render_text(records, threshold, now, failures))
