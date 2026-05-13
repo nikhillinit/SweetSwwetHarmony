@@ -73,12 +73,25 @@ fields in the POST body:
 
 - `source_of_record = signals.created_at`
 - `watchdog.threshold_hours`
+- `watchdog.min_created_at`
 - `watchdog.status`
 - `watchdog.sources.<source_api>.last_created`
+- `watchdog.sources.<source_api>.required_after`
+- `watchdog.sources.<source_api>.stale_reason`
 - `watchdog.sources.<source_api>.status`
 
 Reference for compatible endpoints: Healthchecks.io supports POST bodies on
 ping requests and `/<exit-status>` URL suffixes for success or failure signals.
+
+For live runs, the generated wrapper captures the observed run start and passes
+it to `freshness_watchdog.py` as `--min-created-at`. A source with rows inside
+the rolling threshold but no row after that boundary fails with
+`no_post_run_rows`. This prevents a duplicate-only collector run from being
+reported as fresh liveness.
+
+Generated watchdog artifacts are task-specific:
+`artifacts/keepalive/YYYY-MM-DD-<TaskName>.json`. Sibling tasks must not share
+the same artifact path.
 
 `collector_health`, scheduler metadata, wrapper files, and
 `state/collectors.json` are corroboration. They are not the freshness clock.
@@ -127,6 +140,7 @@ The task result must remain meaningful:
 
 - watchdog exit `0` means the positive peers are fresh
 - watchdog non-zero means the task fails
+- `no_post_run_rows` means the collector did not prove post-run DB progress
 - monitor delivery failure means the task fails
 
 ## Trial Pass Criteria
@@ -135,10 +149,14 @@ Pass only if all are true:
 
 - host opportunity is proven for the trial window
 - `HarmonicKeepAlive` ran and `HarmonicFreezeDrill` did not overlap
+- the watchdog artifact name is task-specific:
+  `YYYY-MM-DD-<TaskName>.json`
 - the watchdog threshold is 12 hours
+- the watchdog used `--min-created-at` from the observed run start
 - `JOB_POSTING_DOMAINS` is explicit
 - `greenhouse_jobs,ashby_jobs` are the operational watchdog sources
-- the monitor received a success ping with the DB proof payload
+- the monitor received a success ping with the DB proof payload, including
+  `min_created_at`, `required_after`, and any `stale_reason`
 - the human alert recipient is known and verified
 - both peer source APIs have `MAX(signals.created_at)` after the observed run
   start
