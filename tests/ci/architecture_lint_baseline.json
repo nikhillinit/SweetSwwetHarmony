@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "metadata": {
+    "description": "Sprint 0 architecture-lint ratchet baseline. New files or count increases fail; decreases are allowed.",
+    "generated_from_commit": "6392557",
+    "generated_for_branch": "test/refactor-sprint0-arch-lint"
+  },
+  "rules": {
+    "api-no-threading-lock-in-async-middleware": {
+      "metadata": {
+        "total_files": 1,
+        "total_occurrences": 1
+      },
+      "files": {
+        "api/middleware.py": {
+          "count": 1,
+          "note": "Known async-blocking rate limiter debt."
+        }
+      }
+    },
+    "api-no-body-actor-authority": {
+      "metadata": {
+        "total_files": 1,
+        "total_occurrences": 4
+      },
+      "files": {
+        "api/routers/actions.py": {
+          "count": 4,
+          "note": "Known pre-RBAC actions route debt."
+        }
+      }
+    },
+    "api-http-exception-below-boundary": {
+      "metadata": {
+        "total_files": 0,
+        "total_occurrences": 0
+      },
+      "files": {}
+    },
+    "strategy-no-placeholder-consensus": {
+      "metadata": {
+        "total_files": 1,
+        "total_occurrences": 1
+      },
+      "files": {
+        "integrations/strategy_iterator.py": {
+          "count": 1,
+          "note": "Known placeholder Claude perspective in StrategyIterator."
+        }
+      }
+    },
+    "services-no-empty-module": {
+      "metadata": {
+        "total_files": 1,
+        "total_occurrences": 1
+      },
+      "files": {
+        "services/classification_service.py": {
+          "count": 1,
+          "note": "Known zero-byte service module from the refactor roadmap."
+        }
+      }
+    },
+    "api-listmeta-next-cursor": {
+      "metadata": {
+        "total_files": 0,
+        "total_occurrences": 0
+      },
+      "files": {}
+    }
+  }
+}
