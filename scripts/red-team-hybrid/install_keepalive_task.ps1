@@ -59,6 +59,26 @@
     omission drills where the watchdog FAIL status is the expected evidence and
     Task Scheduler retries would muddy the observation window.
 
+.PARAMETER MonitorPingUrlEnvVar
+    Optional environment variable name containing a Healthchecks.io-compatible
+    ping URL. When set, the generated runner posts the watchdog JSON through
+    keepalive_monitor_ping.py after every run. The helper appends the watchdog
+    exit status to the ping URL and includes DB freshness proof fields in the
+    POST body. Use an environment variable rather than embedding the URL in
+    the generated runner because ping URLs are secrets.
+
+.PARAMETER MonitorAlertVerified
+    Required for live HarmonicKeepAlive registration. Confirms that the ping
+    URL configured in MonitorPingUrlEnvVar alerts a real human on missed or
+    failed runs. This is an operator assertion; GenerateOnly previews do not
+    require it.
+
+.PARAMETER HostMode
+    Required for live HarmonicKeepAlive registration. Use LocalHost for a
+    provisional local-machine trial or DedicatedHost for an always-on host
+    trial. This scopes the claim made after the run; it does not close Phase
+    5.2 durability.
+
 .PARAMETER GenerateOnly
     Writes the inner runner cmd file, prints its path, and exits before any
     ScheduledTasks cmdlet is called. Use this for tests and preview generation.
@@ -104,11 +124,36 @@ param(
     [double]$WatchdogThresholdHours = 36,
     [string]$JobPostingDomains = "",
     [switch]$IgnoreWatchdogExitCode,
+    [string]$MonitorPingUrlEnvVar = "",
+    [switch]$MonitorAlertVerified,
+    [ValidateSet("", "LocalHost", "DedicatedHost")]
+    [string]$HostMode = "",
     [switch]$GenerateOnly,
     [switch]$TestRun
 )
 
 $ErrorActionPreference = "Stop"
+
+if ($PythonExe.Contains('"')) {
+    throw "PythonExe must not contain double quotes."
+}
+$PythonCmd = "call ""$PythonExe"""
+
+$LiveKeepAliveMutation = $TaskName -eq "HarmonicKeepAlive" -and -not $GenerateOnly
+if ($LiveKeepAliveMutation) {
+    if (-not $HostMode.Trim()) {
+        throw "HostMode is required for live HarmonicKeepAlive registration. Use -HostMode LocalHost or -HostMode DedicatedHost."
+    }
+    if (-not $MonitorPingUrlEnvVar.Trim()) {
+        throw "MonitorPingUrlEnvVar is required for live HarmonicKeepAlive registration."
+    }
+    if (-not $MonitorAlertVerified) {
+        throw "MonitorAlertVerified is required for live HarmonicKeepAlive registration after human alert delivery is verified."
+    }
+    if (-not [Environment]::GetEnvironmentVariable($MonitorPingUrlEnvVar)) {
+        throw "Environment variable $MonitorPingUrlEnvVar is not set; live HarmonicKeepAlive registration requires a monitor ping URL."
+    }
+}
 
 # Resolve absolute paths for everything so the scheduled task is location-stable
 $ProjectRoot = (Resolve-Path $ProjectRoot).Path
@@ -123,11 +168,11 @@ if (-not (Test-Path $ArtifactsDir)) {
 # (even if collect errors) so we always capture a freshness snapshot.
 #
 # Why cmd.exe instead of pure PowerShell: scheduled-task output redirection
-# to a date-stamped file is far more reliable through cmd than through
+# to a date-stamped file is more reliable through cmd than through
 # powershell piped-redirection, especially across user-context and
 # system-context execution boundaries.
-$PipelineCmd = "$PythonExe run_pipeline.py collect --collectors $Collectors"
-$WatchdogCmd = "$PythonExe scripts/red-team-hybrid/freshness_watchdog.py --json --threshold-hours $WatchdogThresholdHours"
+$PipelineCmd = "$PythonCmd run_pipeline.py collect --collectors $Collectors"
+$WatchdogCmd = "$PythonCmd scripts/red-team-hybrid/freshness_watchdog.py --json --threshold-hours $WatchdogThresholdHours"
 if ($WatchdogOperational.Trim()) {
     $WatchdogCmd = "$WatchdogCmd --operational $WatchdogOperational"
 }
@@ -137,15 +182,33 @@ if ($JobPostingDomains.Trim()) {
     $EnvLines += "set ""JOB_POSTING_DOMAINS=$JobPostingDomains"""
 }
 
-$ExitLine = if ($IgnoreWatchdogExitCode) { "exit /b 0" } else { "" }
+$MonitorLines = @()
+if ($MonitorPingUrlEnvVar.Trim()) {
+    $MonitorLines += "$PythonCmd scripts/red-team-hybrid/keepalive_monitor_ping.py --watchdog-json ""%KEEPALIVE_ARTIFACT%"" --task-name ""$TaskName"" --ping-url-env ""$MonitorPingUrlEnvVar"""
+    $MonitorLines += "set ""KEEPALIVE_MONITOR_EXIT=%ERRORLEVEL%"""
+}
+
+$ExitLines = @()
+if (-not $IgnoreWatchdogExitCode) {
+    $ExitLines += 'if not "%KEEPALIVE_WATCHDOG_EXIT%"=="0" exit /b %KEEPALIVE_WATCHDOG_EXIT%'
+}
+if ($MonitorPingUrlEnvVar.Trim()) {
+    $ExitLines += 'if not "%KEEPALIVE_MONITOR_EXIT%"=="0" exit /b %KEEPALIVE_MONITOR_EXIT%'
+}
+if ($IgnoreWatchdogExitCode) {
+    $ExitLines += "exit /b 0"
+}
 
 $DailyScript = @"
 @echo off
 cd /d "$ProjectRoot"
 $($EnvLines -join "`r`n")
+set "KEEPALIVE_ARTIFACT=$ArtifactsDir\%DATE:~10,4%-%DATE:~4,2%-%DATE:~7,2%.json"
 $PipelineCmd
-$WatchdogCmd > "$ArtifactsDir\%DATE:~10,4%-%DATE:~4,2%-%DATE:~7,2%.json"
-$ExitLine
+$WatchdogCmd > "%KEEPALIVE_ARTIFACT%"
+set "KEEPALIVE_WATCHDOG_EXIT=%ERRORLEVEL%"
+$($MonitorLines -join "`r`n")
+$($ExitLines -join "`r`n")
 "@
 
 $SafeTaskName = ($TaskName -replace '[^A-Za-z0-9_-]', '_')
@@ -200,6 +263,9 @@ Register-ScheduledTask -TaskName $TaskName `
                        -Force | Out-Null
 
 Write-Host "Task registered. Scheduled to run daily at $RunAt local time."
+if ($LiveKeepAliveMutation) {
+    Write-Host "Live re-enable gate satisfied. HostMode: $HostMode. Monitor env var: $MonitorPingUrlEnvVar."
+}
 Write-Host "Evidence directory: $ArtifactsDir"
 Write-Host "Inner script:       $ScriptPath"
 
