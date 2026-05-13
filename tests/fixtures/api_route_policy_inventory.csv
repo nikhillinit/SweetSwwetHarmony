@@ -1,8 +1,8 @@
 method,path,current_auth_marker,intended_policy,sprint_0_note,public_rationale
-POST,/api/v1/actions/track,body actor only,AUTH_OPERATOR,gap: mutates status without auth dependency,
-POST,/api/v1/actions/pass,body actor only,AUTH_OPERATOR,gap: mutates status without auth dependency,
-POST,/api/v1/actions/pipeline,body actor only,AUTH_OPERATOR,gap: queues Notion work without auth dependency,
-POST,/api/v1/actions/snooze,body actor only,AUTH_OPERATOR,gap: mutates status without auth dependency,
+POST,/api/v1/actions/track,require_permission(COMPANY_ACTION),AUTH_OPERATOR,current policy acceptable,
+POST,/api/v1/actions/pass,require_permission(COMPANY_ACTION),AUTH_OPERATOR,current policy acceptable,
+POST,/api/v1/actions/pipeline,require_permission(COMPANY_ACTION),AUTH_OPERATOR,current policy acceptable,
+POST,/api/v1/actions/snooze,require_permission(COMPANY_ACTION),AUTH_OPERATOR,current policy acceptable,
 GET,/api/v1/actions/execute,magic token peek,PUBLIC_SHARE,keep public; token validation is the authority,
 POST,/api/v1/actions/execute,magic token consume,PUBLIC_SHARE,keep public; one-time token is the authority,one-time magic token is the authority
 POST,/api/v1/auth/login,none,PUBLIC_AUTH,expected bootstrap route,authentication bootstrap endpoint

@@ -30,6 +30,7 @@ class TestPermissionModel:
 
     def test_readonly_cannot_approve(self):
         assert not has_permission(Role.READONLY, Permission.TRIAGE_APPROVE)
+        assert not has_permission(Role.READONLY, Permission.COMPANY_ACTION)
         assert not has_permission(Role.READONLY, Permission.ENTITY_MERGE)
         assert not has_permission(Role.READONLY, Permission.BATCH_COMMIT)
 
@@ -37,6 +38,7 @@ class TestPermissionModel:
         assert has_permission(Role.ANALYST, Permission.TRIAGE_APPROVE)
         assert has_permission(Role.ANALYST, Permission.TRIAGE_REJECT)
         assert has_permission(Role.ANALYST, Permission.TRIAGE_DEFER)
+        assert has_permission(Role.ANALYST, Permission.COMPANY_ACTION)
         assert has_permission(Role.ANALYST, Permission.HUNTER_RUN)
         assert has_permission(Role.ANALYST, Permission.HUNTER_PROMOTE)
 
