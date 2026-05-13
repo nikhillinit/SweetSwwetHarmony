@@ -123,7 +123,7 @@ async def list_merge_suggestions(
         data=items,
         meta=ListMeta(
             total=len(items),
-            cursor=next_cursor,
+            next_cursor=next_cursor,
             has_more=len(items) == limit,
         ),
     ).model_dump()
@@ -274,7 +274,7 @@ async def list_shadow_runs(
         data=items,
         meta=ListMeta(
             total=len(items),
-            cursor=next_cursor,
+            next_cursor=next_cursor,
             has_more=len(items) == limit,
         ),
     ).model_dump()
@@ -474,7 +474,7 @@ async def list_merge_proposals(
         data=items,
         meta=ListMeta(
             total=len(items),
-            cursor=next_cursor,
+            next_cursor=next_cursor,
             has_more=len(items) == limit,
         ),
     ).model_dump()
