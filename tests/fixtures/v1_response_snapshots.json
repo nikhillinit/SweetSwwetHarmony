@@ -1,0 +1,272 @@
+{
+  "auth_roles": {
+    "body": {
+      "roles": [
+        {
+          "description": "<str>",
+          "id": "<str>",
+          "name": "<str>"
+        }
+      ]
+    },
+    "method": "GET",
+    "path": "/api/v1/auth/roles",
+    "status_code": 200
+  },
+  "batch_create_no_approved_reviews": {
+    "body": {
+      "detail": {
+        "code": "BATCH_CREATE_FAILED",
+        "error": "bad_request",
+        "message": "<str>"
+      }
+    },
+    "method": "POST",
+    "path": "/api/v1/batches",
+    "status_code": 400
+  },
+  "batches_list": {
+    "body": {
+      "data": [],
+      "meta": {
+        "has_more": "<bool>",
+        "next_cursor": null,
+        "total": null
+      }
+    },
+    "method": "GET",
+    "path": "/api/v1/batches",
+    "status_code": 200
+  },
+  "canary_status": {
+    "body": {
+      "data": {
+        "latest_pass_rate": null,
+        "latest_run_at": null,
+        "latest_verdict": null,
+        "open_alerts": "<int>",
+        "total_runs": "<int>"
+      },
+      "meta": null
+    },
+    "method": "GET",
+    "path": "/api/v1/canary/status",
+    "status_code": 200
+  },
+  "companies_inbox": {
+    "body": {
+      "companies": [],
+      "page": "<int>",
+      "page_size": "<int>",
+      "total": "<int>"
+    },
+    "method": "GET",
+    "path": "/api/v1/companies/inbox",
+    "status_code": 200
+  },
+  "entities_list": {
+    "body": {
+      "entities": [],
+      "page": "<int>",
+      "page_size": "<int>",
+      "stages": {},
+      "total": "<int>"
+    },
+    "method": "GET",
+    "path": "/api/v1/entities",
+    "status_code": 200
+  },
+  "health_collectors": {
+    "body": [
+      {
+        "error_rate": "<float>",
+        "last_run": null,
+        "last_success": null,
+        "message": "<str>",
+        "name": "<str>",
+        "signals_last_run": "<int>",
+        "status": "<str>"
+      }
+    ],
+    "method": "GET",
+    "path": "/api/v1/health/collectors",
+    "status_code": 200
+  },
+  "health_detailed": {
+    "body": {
+      "alerts": [],
+      "collectors": null,
+      "components": [
+        {
+          "details": {
+            "schema_version": "<int>",
+            "total_signals": "<int>"
+          },
+          "last_checked": "<str>",
+          "message": "<str>",
+          "name": "<str>",
+          "status": "<str>"
+        },
+        {
+          "details": {
+            "anomalies": [],
+            "critically_stale_signals": "<int>",
+            "generated_at": "<str>",
+            "overall_status": "<str>",
+            "signals_last_24h": "<int>",
+            "signals_last_7d": "<int>",
+            "source_health": {},
+            "stale_signals": "<int>",
+            "suspicious_signals": "<int>",
+            "total_signals": "<int>",
+            "total_sources": "<int>"
+          },
+          "last_checked": "<str>",
+          "message": "<str>",
+          "name": "<str>",
+          "status": "<str>"
+        },
+        {
+          "details": {
+            "alerts": {
+              "open_critical": "<int>",
+              "open_warning": "<int>"
+            },
+            "can_proceed": "<bool>",
+            "canary": {
+              "pass_rate": null,
+              "run_age_hours": null,
+              "verdict": null
+            },
+            "checked_at": "<str>",
+            "drift_coverage": {},
+            "reasons": [
+              "<str>"
+            ],
+            "step": "<int>",
+            "verdict": "<str>"
+          },
+          "last_checked": "<str>",
+          "message": "<str>",
+          "name": "<str>",
+          "status": "<str>"
+        },
+        {
+          "details": null,
+          "last_checked": null,
+          "message": "<str>",
+          "name": "<str>",
+          "status": "<str>"
+        }
+      ],
+      "database": null,
+      "environment": "<str>",
+      "relationships": null,
+      "status": "<str>",
+      "timestamp": "<str>",
+      "uptime_seconds": null,
+      "version": "<str>"
+    },
+    "method": "GET",
+    "path": "/api/v1/health/detailed",
+    "status_code": 200
+  },
+  "hunter_runs": {
+    "body": {
+      "data": [],
+      "meta": {
+        "has_more": "<bool>",
+        "next_cursor": null,
+        "total": null
+      }
+    },
+    "method": "GET",
+    "path": "/api/v1/hunter/runs",
+    "status_code": 200
+  },
+  "jobs_types": {
+    "body": {
+      "collectors": [
+        "<str>"
+      ],
+      "job_types": [
+        "<str>"
+      ]
+    },
+    "method": "GET",
+    "path": "/api/v1/jobs/types",
+    "status_code": 200
+  },
+  "merge_suggestions_main_shadowed": {
+    "body": {
+      "detail": "<str>"
+    },
+    "method": "GET",
+    "path": "/api/v1/entities/merge-suggestions",
+    "status_code": 404
+  },
+  "merge_suggestions_router": {
+    "body": {
+      "data": [],
+      "meta": {
+        "has_more": "<bool>",
+        "next_cursor": null,
+        "total": "<int>"
+      }
+    },
+    "method": "GET",
+    "path": "/api/v1/entities/merge-suggestions",
+    "status_code": 200
+  },
+  "merge_suggestions_router_paginated": {
+    "body": {
+      "data": [
+        {
+          "created_at": "<str>",
+          "entity_a_canonical_key": "<str>",
+          "entity_a_company_id": "<str>",
+          "entity_a_company_name": "<str>",
+          "entity_b_canonical_key": "<str>",
+          "entity_b_company_id": "<str>",
+          "entity_b_company_name": "<str>",
+          "id": "<int>",
+          "match_type": "<str>",
+          "pair_key": "<str>",
+          "similarity_score": "<float>",
+          "status": "<str>"
+        }
+      ],
+      "meta": {
+        "has_more": "<bool>",
+        "next_cursor": "<str>",
+        "total": "<int>"
+      }
+    },
+    "method": "GET",
+    "path": "/api/v1/entities/merge-suggestions?limit=1",
+    "status_code": 200
+  },
+  "root_health": {
+    "body": {
+      "database": "<str>",
+      "status": "<str>",
+      "total_signals": "<int>"
+    },
+    "method": "GET",
+    "path": "/health",
+    "status_code": 200
+  },
+  "triage_list": {
+    "body": {
+      "data": [],
+      "meta": {
+        "has_more": "<bool>",
+        "next_cursor": null,
+        "total": null
+      }
+    },
+    "method": "GET",
+    "path": "/api/v1/triage",
+    "status_code": 200
+  }
+}
