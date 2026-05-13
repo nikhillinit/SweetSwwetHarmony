@@ -111,42 +111,7 @@ Cloud durability for `signals.db` should use Litestream-style WAL streaming and 
 
 Phase 5.2 archival outputs should be Arrow- or Parquet-readable so future analysis can consume cold artifacts without binding to the live SQLite file format. Off-host ledger retention should be append-only where possible.
 
-Phase 5.2 also owns the always-on runner decision. Production collection should move off the operator laptop and onto a dedicated always-on host or service, such as a small VPS, NUC, Mac mini, or equivalent single-tenant appliance. The live `signals.db` still stays on that host's local filesystem; do not use a remote mount, cloud-drive sync folder, or object-store filesystem as the SQLite live path. The always-on runner is responsible for scheduled collectors, heartbeat payloads, host-availability evidence, and WAL/ledger shipping. The operator laptop should become a development/control-plane machine, not the required production scheduler.
-
-Until that runner exists and passes a restore drill plus liveness drill, device-availability gaps from the laptop remain `unknown collection opportunity` evidence, not proof that source channels were empty or that collector logic failed.
-
-The liveness drill should keep `rss_feeds` as the intentionally omitted/frozen target and use `signals.created_at` as the freshness source of record. `ops.collector_health --format json` is health, config, and heartbeat corroboration only; it is not the freshness clock. The positive-progress peer should be `job_postings` with an explicit runner-scoped `JOB_POSTING_DOMAINS` value and positive inserted rows. Watch freshness on the source APIs emitted by that collector, such as `greenhouse_jobs`, `ashby_jobs`, and `lever_jobs`; require only the source APIs that are baseline-positive for the chosen fixture domains.
-
-GitHub token availability is a runner precondition only when the `github` collector is included. A live `GITHUB_TOKEN` proves authenticated API access, but a successful GitHub run with zero inserted rows is plumbing corroboration, not positive DB-progress evidence. File or runner witnesses similarly prove the runner fired and help classify host opportunity; they do not prove source freshness. Synthetic canaries belong in the Phase 5.2 durability tranche and should not substitute for real collector peers in the induced-freeze proof.
-
-For local Windows drill setup, `scripts/red-team-hybrid/install_keepalive_task.ps1` supports an explicit freeze-drill task without changing the historical default `HarmonicKeepAlive` behavior. Before the Monday, 2026-05-11 readout, do not invoke the installer against the live repo/task with `-TaskName HarmonicFreezeDrill`; doing so can rewrite the live wrapper and/or re-register the active task.
-
-Use `-GenerateOnly` with a temp project root or non-live task name for preview checks:
-
-```powershell
-New-Item -ItemType Directory -Force "C:\tmp\harmonic-freeze-preview\scripts\red-team-hybrid" | Out-Null
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\red-team-hybrid\install_keepalive_task.ps1 `
-  -ProjectRoot "C:\tmp\harmonic-freeze-preview" `
-  -TaskName "HarmonicFreezeDrillPreview" `
-  -Collectors "job_postings,github" `
-  -WatchdogOperational "rss_feeds,greenhouse_jobs,ashby_jobs" `
-  -WatchdogThresholdHours 12 `
-  -JobPostingDomains "10beauty.com,cofertility.com,openai.com" `
-  -IgnoreWatchdogExitCode `
-  -GenerateOnly
-```
-
-Use `-IgnoreWatchdogExitCode` for the induced-freeze drill because the
-watchdog JSON should record the intentional `rss_feeds` failure, but Task
-Scheduler should not retry and add noisy duplicate drill runs.
-
-For the Monday operator procedure, use
-`docs/runbooks/monday-am-freeze-drill-readout.md`. The pass condition requires
-both watchdog JSON evidence and required peer `MAX(signals.created_at)` values
-after the observed scheduled run start; under-threshold freshness carried from
-baseline is not enough. GitHub remains auth/plumbing corroboration unless it
-inserts rows during the window. Email alerts are deferred until after the
-Monday readout.
+Runner scheduling and liveness governance is deliberately outside this DB durability policy. The runner-liveness ADR and runbook own scheduler registration, monitor delivery, alert recipients, host-mode gates, and re-enable criteria. Phase 5.2 consumes only DB durability evidence: local host storage characteristics, WAL/restore behavior, archive readability, ledger retention, sidecar handling, and restore-drill results.
 
 ## Support Tooling Quarantine
 
