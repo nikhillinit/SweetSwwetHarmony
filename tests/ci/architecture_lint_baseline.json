@@ -2,21 +2,16 @@
   "schema_version": 1,
   "metadata": {
     "description": "Sprint 0 architecture-lint ratchet baseline. New files or count increases fail; decreases are allowed.",
-    "generated_from_commit": "6392557",
-    "generated_for_branch": "test/refactor-sprint0-arch-lint"
+    "generated_from_commit": "15ed99b",
+    "generated_for_branch": "fix/refactor-p0-async-rate-limit-lock"
   },
   "rules": {
     "api-no-threading-lock-in-async-middleware": {
       "metadata": {
-        "total_files": 1,
-        "total_occurrences": 1
+        "total_files": 0,
+        "total_occurrences": 0
       },
-      "files": {
-        "api/middleware.py": {
-          "count": 1,
-          "note": "Known async-blocking rate limiter debt."
-        }
-      }
+      "files": {}
     },
     "api-no-body-actor-authority": {
       "metadata": {
