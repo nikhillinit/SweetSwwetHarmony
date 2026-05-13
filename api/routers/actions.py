@@ -25,6 +25,7 @@ from pydantic import BaseModel
 from jinja2 import Environment, FileSystemLoader
 
 from api.auth.magic_tokens import consume_token, peek_token, TokenError
+from api.auth.rbac import OperatorContext, Permission, require_permission
 from api.services.action_handler import CompanyActionHandler, ActionResult
 from api.db import get_store
 from storage.signal_store import SignalStore
@@ -53,27 +54,23 @@ router = APIRouter(prefix="/actions", tags=["actions"])
 class TrackRequest(BaseModel):
     """Request to track a company."""
     canonical_key: str
-    actor: Optional[str] = None
 
 
 class PassRequest(BaseModel):
     """Request to pass on a company."""
     canonical_key: str
     reason: str
-    actor: Optional[str] = None
 
 
 class PipelineRequest(BaseModel):
     """Request to add company to pipeline."""
     canonical_key: str
-    actor: Optional[str] = None
 
 
 class SnoozeRequest(BaseModel):
     """Request to snooze a company."""
     canonical_key: str
     until: datetime
-    actor: Optional[str] = None
 
 
 class ActionResponse(BaseModel):
@@ -101,6 +98,9 @@ async def get_handler(store: SignalStore = Depends(get_store)) -> CompanyActionH
 @router.post("/track", response_model=ActionResponse)
 async def track_company(
     request: TrackRequest,
+    operator: OperatorContext = Depends(
+        require_permission(Permission.COMPANY_ACTION)
+    ),
     handler: CompanyActionHandler = Depends(get_handler),
 ):
     """
@@ -110,7 +110,7 @@ async def track_company(
     """
     result = await handler.track(
         canonical_key=request.canonical_key,
-        actor=request.actor,
+        actor=operator.actor_label,
     )
     return ActionResponse(
         success=result.success,
@@ -124,6 +124,9 @@ async def track_company(
 @router.post("/pass", response_model=ActionResponse)
 async def pass_company(
     request: PassRequest,
+    operator: OperatorContext = Depends(
+        require_permission(Permission.COMPANY_ACTION)
+    ),
     handler: CompanyActionHandler = Depends(get_handler),
 ):
     """
@@ -141,7 +144,7 @@ async def pass_company(
     result = await handler.pass_company(
         canonical_key=request.canonical_key,
         reason=request.reason,
-        actor=request.actor,
+        actor=operator.actor_label,
     )
     return ActionResponse(
         success=result.success,
@@ -155,6 +158,9 @@ async def pass_company(
 @router.post("/pipeline", response_model=ActionResponse)
 async def add_to_pipeline(
     request: PipelineRequest,
+    operator: OperatorContext = Depends(
+        require_permission(Permission.COMPANY_ACTION)
+    ),
     handler: CompanyActionHandler = Depends(get_handler),
 ):
     """
@@ -164,7 +170,7 @@ async def add_to_pipeline(
     """
     result = await handler.add_to_pipeline(
         canonical_key=request.canonical_key,
-        actor=request.actor,
+        actor=operator.actor_label,
     )
     return ActionResponse(
         success=result.success,
@@ -178,6 +184,9 @@ async def add_to_pipeline(
 @router.post("/snooze", response_model=ActionResponse)
 async def snooze_company(
     request: SnoozeRequest,
+    operator: OperatorContext = Depends(
+        require_permission(Permission.COMPANY_ACTION)
+    ),
     handler: CompanyActionHandler = Depends(get_handler),
 ):
     """
@@ -188,7 +197,7 @@ async def snooze_company(
     result = await handler.snooze(
         canonical_key=request.canonical_key,
         until=request.until,
-        actor=request.actor,
+        actor=operator.actor_label,
     )
     return ActionResponse(
         success=result.success,
