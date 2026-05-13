@@ -5,8 +5,8 @@ RequestIdMiddleware — injects X-Request-ID (UUID4) into every request/response
 RateLimitMiddleware — per-IP rate limiting with path-based tiers.
 """
 
+import asyncio
 import logging
-import threading
 import time
 import uuid
 from collections import defaultdict
@@ -52,18 +52,23 @@ WINDOW_SECONDS = 60
 # ---------------------------------------------------------------------------
 
 class _RateTracker:
-    """Thread-safe sliding window rate counter.
+    """Async-safe sliding window rate counter.
 
     Tracks request timestamps per key (IP + tier) and counts how many
     fall within the current window.
     """
 
     def __init__(self) -> None:
-        self._lock = threading.Lock()
+        self._lock = asyncio.Lock()
         # key -> list of timestamps
         self._requests: dict[str, list[float]] = defaultdict(list)
 
-    def check_and_record(self, key: str, limit: int, now: float | None = None) -> tuple[bool, int]:
+    async def check_and_record(
+        self,
+        key: str,
+        limit: int,
+        now: float | None = None,
+    ) -> tuple[bool, int]:
         """Check if the request is within the rate limit and record it.
 
         Returns (allowed, remaining) where remaining is the number of
@@ -72,7 +77,7 @@ class _RateTracker:
         now = now or time.monotonic()
         window_start = now - WINDOW_SECONDS
 
-        with self._lock:
+        async with self._lock:
             timestamps = self._requests[key]
             # Prune expired entries
             self._requests[key] = [t for t in timestamps if t > window_start]
@@ -87,8 +92,7 @@ class _RateTracker:
 
     def reset(self) -> None:
         """Clear all tracked state (for testing)."""
-        with self._lock:
-            self._requests.clear()
+        self._requests.clear()
 
 
 _tracker = _RateTracker()
@@ -132,7 +136,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         client_ip = request.client.host if request.client else "unknown"
         key = f"{client_ip}:{tier}"
 
-        allowed, remaining = _tracker.check_and_record(key, limit)
+        allowed, remaining = await _tracker.check_and_record(key, limit)
 
         if not allowed:
             request_id = getattr(request.state, "request_id", None)
