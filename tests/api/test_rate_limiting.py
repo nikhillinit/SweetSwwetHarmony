@@ -10,10 +10,12 @@ Tests cover:
 7. _RateTracker unit tests
 """
 
-import pytest
+import asyncio
 from unittest.mock import patch
 
-from fastapi import FastAPI, Request
+import httpx
+import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from api.middleware import (
@@ -81,80 +83,119 @@ def client(app):
     return TestClient(app)
 
 
+def _async_client(app):
+    transport = httpx.ASGITransport(app=app)
+    return httpx.AsyncClient(transport=transport, base_url="http://testserver")
+
+
 # ---------------------------------------------------------------------------
 # _RateTracker unit tests
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.asyncio
 class TestRateTracker:
     """Unit tests for the sliding window rate tracker."""
 
-    def test_allows_within_limit(self):
+    async def test_allows_within_limit(self):
         tracker = _RateTracker()
         for i in range(5):
-            allowed, remaining = tracker.check_and_record("test", 5, now=100.0 + i * 0.01)
+            allowed, remaining = await tracker.check_and_record(
+                "test",
+                5,
+                now=100.0 + i * 0.01,
+            )
             if i < 5:
                 assert allowed is True
 
-    def test_blocks_at_limit(self):
+    async def test_blocks_at_limit(self):
         tracker = _RateTracker()
         now = 100.0
         for i in range(3):
-            tracker.check_and_record("test", 3, now=now + i * 0.01)
-        allowed, remaining = tracker.check_and_record("test", 3, now=now + 0.03)
+            await tracker.check_and_record("test", 3, now=now + i * 0.01)
+        allowed, remaining = await tracker.check_and_record("test", 3, now=now + 0.03)
         assert allowed is False
         assert remaining == 0
 
-    def test_remaining_decrements(self):
+    async def test_remaining_decrements(self):
         tracker = _RateTracker()
-        _, r1 = tracker.check_and_record("test", 5, now=100.0)
-        _, r2 = tracker.check_and_record("test", 5, now=100.01)
-        _, r3 = tracker.check_and_record("test", 5, now=100.02)
+        _, r1 = await tracker.check_and_record("test", 5, now=100.0)
+        _, r2 = await tracker.check_and_record("test", 5, now=100.01)
+        _, r3 = await tracker.check_and_record("test", 5, now=100.02)
         assert r1 == 4
         assert r2 == 3
         assert r3 == 2
 
-    def test_window_expiry_allows_new_requests(self):
+    async def test_window_expiry_allows_new_requests(self):
         tracker = _RateTracker()
         now = 100.0
         for i in range(3):
-            tracker.check_and_record("test", 3, now=now + i * 0.01)
+            await tracker.check_and_record("test", 3, now=now + i * 0.01)
 
         # Should be blocked now
-        allowed, _ = tracker.check_and_record("test", 3, now=now + 0.03)
+        allowed, _ = await tracker.check_and_record("test", 3, now=now + 0.03)
         assert allowed is False
 
         # After window expires, should be allowed again
-        allowed, remaining = tracker.check_and_record("test", 3, now=now + WINDOW_SECONDS + 1)
+        allowed, remaining = await tracker.check_and_record(
+            "test",
+            3,
+            now=now + WINDOW_SECONDS + 1,
+        )
         assert allowed is True
         assert remaining == 2
 
-    def test_different_keys_independent(self):
+    async def test_different_keys_independent(self):
         tracker = _RateTracker()
         now = 100.0
         for i in range(3):
-            tracker.check_and_record("ip_a:default", 3, now=now + i * 0.01)
+            await tracker.check_and_record("ip_a:default", 3, now=now + i * 0.01)
 
         # ip_a is exhausted
-        allowed_a, _ = tracker.check_and_record("ip_a:default", 3, now=now + 0.03)
+        allowed_a, _ = await tracker.check_and_record(
+            "ip_a:default",
+            3,
+            now=now + 0.03,
+        )
         assert allowed_a is False
 
         # ip_b should still be allowed
-        allowed_b, remaining_b = tracker.check_and_record("ip_b:default", 3, now=now + 0.04)
+        allowed_b, remaining_b = await tracker.check_and_record(
+            "ip_b:default",
+            3,
+            now=now + 0.04,
+        )
         assert allowed_b is True
         assert remaining_b == 2
 
-    def test_reset_clears_state(self):
+    async def test_reset_clears_state(self):
         tracker = _RateTracker()
         for i in range(5):
-            tracker.check_and_record("test", 5, now=100.0 + i * 0.01)
-        allowed, _ = tracker.check_and_record("test", 5, now=100.05)
+            await tracker.check_and_record("test", 5, now=100.0 + i * 0.01)
+        allowed, _ = await tracker.check_and_record("test", 5, now=100.05)
         assert allowed is False
 
         tracker.reset()
-        allowed, remaining = tracker.check_and_record("test", 5, now=100.06)
+        allowed, remaining = await tracker.check_and_record("test", 5, now=100.06)
         assert allowed is True
         assert remaining == 4
+
+    async def test_concurrent_calls_share_the_async_lock(self):
+        tracker = _RateTracker()
+        results = await asyncio.gather(
+            *(
+                tracker.check_and_record("test", 5, now=100.0)
+                for _ in range(10)
+            )
+        )
+
+        allowed_results = [remaining for allowed, remaining in results if allowed]
+        blocked_results = [remaining for allowed, remaining in results if not allowed]
+
+        assert len(allowed_results) == 5
+        assert len(blocked_results) == 5
+        assert sorted(allowed_results) == [0, 1, 2, 3, 4]
+        assert blocked_results == [0, 0, 0, 0, 0]
 
 
 # ---------------------------------------------------------------------------
@@ -301,6 +342,43 @@ class TestWriteTier:
 
 
 # ---------------------------------------------------------------------------
+# Async middleware concurrency tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+class TestAsyncRateLimitConcurrency:
+    """Verify ASGI-level concurrent requests are counted atomically."""
+
+    async def test_concurrent_default_tier_requests_do_not_exceed_limit(self, app):
+        with patch("api.middleware.RATE_LIMIT_DEFAULT", 5):
+            async with _async_client(app) as client:
+                responses = await asyncio.gather(
+                    *(client.get("/api/v1/companies") for _ in range(6))
+                )
+
+        statuses = [response.status_code for response in responses]
+        assert statuses.count(200) == 5
+        assert statuses.count(429) == 1
+
+    async def test_concurrent_read_and_write_tiers_are_independent(self, app):
+        with (
+            patch("api.middleware.RATE_LIMIT_DEFAULT", 1),
+            patch("api.middleware.RATE_LIMIT_WRITE", 1),
+        ):
+            async with _async_client(app) as client:
+                read_one, write_one, read_two, write_two = await asyncio.gather(
+                    client.get("/api/v1/companies"),
+                    client.post("/api/v1/triage/approve"),
+                    client.get("/api/v1/companies"),
+                    client.post("/api/v1/triage/approve"),
+                )
+
+        assert sorted([read_one.status_code, read_two.status_code]) == [200, 429]
+        assert sorted([write_one.status_code, write_two.status_code]) == [200, 429]
+
+
+# ---------------------------------------------------------------------------
 # Independent IP tests
 # ---------------------------------------------------------------------------
 
@@ -308,7 +386,8 @@ class TestWriteTier:
 class TestIndependentIPs:
     """Verify different client IPs have independent rate limits."""
 
-    def test_different_ips_independent(self, app):
+    @pytest.mark.asyncio
+    async def test_different_ips_independent(self, app):
         """Two clients with different source IPs have separate limits."""
         # We can't easily simulate different IPs with TestClient,
         # so test via the _RateTracker directly
@@ -317,10 +396,18 @@ class TestIndependentIPs:
 
         # Exhaust ip_a
         for i in range(3):
-            tracker.check_and_record("10.0.0.1:default", 3, now=now + i * 0.01)
-        allowed_a, _ = tracker.check_and_record("10.0.0.1:default", 3, now=now + 0.03)
+            await tracker.check_and_record("10.0.0.1:default", 3, now=now + i * 0.01)
+        allowed_a, _ = await tracker.check_and_record(
+            "10.0.0.1:default",
+            3,
+            now=now + 0.03,
+        )
         assert allowed_a is False
 
         # ip_b should still be allowed
-        allowed_b, _ = tracker.check_and_record("10.0.0.2:default", 3, now=now + 0.04)
+        allowed_b, _ = await tracker.check_and_record(
+            "10.0.0.2:default",
+            3,
+            now=now + 0.04,
+        )
         assert allowed_b is True

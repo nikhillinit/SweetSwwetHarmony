@@ -460,6 +460,16 @@ def test_architecture_lint_baseline_metadata_is_consistent() -> None:
             assert entry["note"].strip()
 
 
+def test_rate_limit_threading_lock_baseline_is_cleared() -> None:
+    rule = _load_baseline()["rules"]["api-no-threading-lock-in-async-middleware"]
+
+    assert rule["metadata"] == {
+        "total_files": 0,
+        "total_occurrences": 0,
+    }
+    assert rule["files"] == {}
+
+
 def test_architecture_lint_has_no_new_files_or_count_increases() -> None:
     baseline = _load_baseline()
     baseline_counts = _baseline_counts(baseline)
