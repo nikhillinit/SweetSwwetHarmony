@@ -239,7 +239,7 @@ class TestArxivAPIIntegration:
 
     @pytest.mark.asyncio
     async def test_fetch_papers_api_error(self):
-        """Should handle API errors gracefully."""
+        """Should surface API errors to BaseCollector.run."""
         from collectors.arxiv import ArxivCollector
         import httpx
 
@@ -251,29 +251,26 @@ class TestArxivAPIIntegration:
                 mock_retry.side_effect = httpx.HTTPStatusError(
                     "Server Error", request=Mock(), response=Mock(status_code=500)
                 )
-                papers = await collector._fetch_papers()
-
-                # Should return empty list on error
-                assert papers == []
+                with pytest.raises(httpx.HTTPStatusError):
+                    await collector._fetch_papers()
 
     @pytest.mark.asyncio
     async def test_fetch_papers_xml_parse_error(self):
-        """Should handle malformed XML responses."""
+        """Should surface malformed XML responses to BaseCollector.run."""
         from collectors.arxiv import ArxivCollector
+        from xml.etree import ElementTree
 
         collector = ArxivCollector(categories=["cs.AI"])
 
         async with collector:
             with patch.object(collector, "_fetch_with_retry", new_callable=AsyncMock) as mock_retry:
                 mock_retry.return_value = b"<invalid xml>"
-                papers = await collector._fetch_papers()
-
-                # Should handle parse error gracefully
-                assert papers == []
+                with pytest.raises(ElementTree.ParseError):
+                    await collector._fetch_papers()
 
     @pytest.mark.asyncio
     async def test_fetch_papers_network_error(self):
-        """Should handle network errors."""
+        """Should surface network errors to BaseCollector.run."""
         from collectors.arxiv import ArxivCollector
         import httpx
 
@@ -282,9 +279,31 @@ class TestArxivAPIIntegration:
         async with collector:
             with patch.object(collector, "_fetch_with_retry", new_callable=AsyncMock) as mock_retry:
                 mock_retry.side_effect = httpx.NetworkError("Connection failed")
-                papers = await collector._fetch_papers()
+                with pytest.raises(httpx.NetworkError):
+                    await collector._fetch_papers()
 
-                assert papers == []
+    @pytest.mark.asyncio
+    async def test_run_reports_error_when_fetch_fails(self):
+        """Failed ArXiv fetches must not be recorded as healthy zero-signal runs."""
+        from collectors.arxiv import ArxivCollector
+        from discovery_engine.mcp_server import CollectorStatus
+        import httpx
+
+        collector = ArxivCollector(categories=["cs.AI"])
+
+        with patch.object(collector, "_fetch_with_retry", new_callable=AsyncMock) as mock_retry:
+            mock_retry.side_effect = httpx.NetworkError("Connection failed")
+            result = await collector.run(dry_run=True)
+
+        assert result.status == CollectorStatus.ERROR
+        assert result.signals_found == 0
+        assert "Connection failed" in result.error_message
+
+    def test_arxiv_api_uses_https(self):
+        """The direct collector path should not depend on HTTP redirect handling."""
+        from collectors.arxiv import ARXIV_API
+
+        assert ARXIV_API.startswith("https://")
 
 
 class TestConfidenceScoring:
