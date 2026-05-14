@@ -53,7 +53,7 @@ from verification.verification_gate_v2 import Signal, VerificationStatus
 logger = logging.getLogger(__name__)
 
 # ArXiv API endpoint
-ARXIV_API = "http://export.arxiv.org/api/query"
+ARXIV_API = "https://export.arxiv.org/api/query"
 
 # Thesis-relevant ArXiv categories
 THESIS_CATEGORIES = {
@@ -277,113 +277,105 @@ class ArxivCollector(BaseCollector):
             "sortOrder": "descending",
         }
 
-        try:
-            # Use _fetch_with_retry for automatic retry and rate limiting
-            async def fetch_arxiv():
-                if self.http:
-                    response = await self.http._client.get(ARXIV_API, params=params, timeout=60.0)
-                    response.raise_for_status()
-                    return response.content
-                async with httpx.AsyncClient(timeout=60.0) as client:
-                    response = await client.get(ARXIV_API, params=params)
-                    response.raise_for_status()
-                    return response.content
+        # Use _fetch_with_retry for automatic retry and rate limiting.
+        async def fetch_arxiv():
+            if self.http:
+                response = await self.http._client.get(ARXIV_API, params=params, timeout=60.0)
+                response.raise_for_status()
+                return response.content
+            async with httpx.AsyncClient(timeout=60.0, follow_redirects=True) as client:
+                response = await client.get(ARXIV_API, params=params)
+                response.raise_for_status()
+                return response.content
 
-            # Acquire rate limit before request
-            await self.rate_limiter.acquire()
-            xml_content = await self._fetch_with_retry(fetch_arxiv)
+        xml_content = await self._fetch_with_retry(fetch_arxiv)
 
-            # Parse XML response
-            root = ElementTree.fromstring(xml_content)
+        # Parse XML response. Network/API/XML failures must propagate to
+        # BaseCollector.run(), otherwise a failed fetch is recorded as a
+        # healthy zero-signal run.
+        root = ElementTree.fromstring(xml_content)
 
-            # Define namespaces
-            ns = {
-                "atom": "http://www.w3.org/2005/Atom",
-                "arxiv": "http://arxiv.org/schemas/atom",
-            }
+        # Define namespaces
+        ns = {
+            "atom": "http://www.w3.org/2005/Atom",
+            "arxiv": "http://arxiv.org/schemas/atom",
+        }
 
-            cutoff_date = datetime.now(timezone.utc) - timedelta(days=self.lookback_days)
+        cutoff_date = datetime.now(timezone.utc) - timedelta(days=self.lookback_days)
 
-            for entry in root.findall("atom:entry", ns):
-                # Parse arxiv ID
-                id_elem = entry.find("atom:id", ns)
-                if id_elem is None or id_elem.text is None:
-                    continue
+        for entry in root.findall("atom:entry", ns):
+            # Parse arxiv ID
+            id_elem = entry.find("atom:id", ns)
+            if id_elem is None or id_elem.text is None:
+                continue
 
-                arxiv_id = id_elem.text.split("/abs/")[-1]
+            arxiv_id = id_elem.text.split("/abs/")[-1]
 
-                # Parse dates
-                published_elem = entry.find("atom:published", ns)
-                updated_elem = entry.find("atom:updated", ns)
+            # Parse dates
+            published_elem = entry.find("atom:published", ns)
+            updated_elem = entry.find("atom:updated", ns)
 
-                try:
-                    published_at = datetime.fromisoformat(
-                        published_elem.text.replace("Z", "+00:00")
-                    ) if published_elem is not None and published_elem.text else datetime.now(timezone.utc)
+            try:
+                published_at = datetime.fromisoformat(
+                    published_elem.text.replace("Z", "+00:00")
+                ) if published_elem is not None and published_elem.text else datetime.now(timezone.utc)
 
-                    updated_at = datetime.fromisoformat(
-                        updated_elem.text.replace("Z", "+00:00")
-                    ) if updated_elem is not None and updated_elem.text else published_at
-                except ValueError:
-                    published_at = datetime.now(timezone.utc)
-                    updated_at = published_at
+                updated_at = datetime.fromisoformat(
+                    updated_elem.text.replace("Z", "+00:00")
+                ) if updated_elem is not None and updated_elem.text else published_at
+            except ValueError:
+                published_at = datetime.now(timezone.utc)
+                updated_at = published_at
 
-                # Skip old papers
-                if published_at < cutoff_date:
-                    continue
+            # Skip old papers
+            if published_at < cutoff_date:
+                continue
 
-                # Parse title and abstract
-                title_elem = entry.find("atom:title", ns)
-                title = (title_elem.text or "").strip().replace("\n", " ") if title_elem is not None else ""
+            # Parse title and abstract
+            title_elem = entry.find("atom:title", ns)
+            title = (title_elem.text or "").strip().replace("\n", " ") if title_elem is not None else ""
 
-                summary_elem = entry.find("atom:summary", ns)
-                abstract = (summary_elem.text or "").strip().replace("\n", " ") if summary_elem is not None else ""
+            summary_elem = entry.find("atom:summary", ns)
+            abstract = (summary_elem.text or "").strip().replace("\n", " ") if summary_elem is not None else ""
 
-                # Parse authors
-                authors = []
-                affiliations = []
-                for author_elem in entry.findall("atom:author", ns):
-                    name_elem = author_elem.find("atom:name", ns)
-                    if name_elem is not None and name_elem.text:
-                        authors.append(name_elem.text)
+            # Parse authors
+            authors = []
+            affiliations = []
+            for author_elem in entry.findall("atom:author", ns):
+                name_elem = author_elem.find("atom:name", ns)
+                if name_elem is not None and name_elem.text:
+                    authors.append(name_elem.text)
 
-                    affil_elem = author_elem.find("arxiv:affiliation", ns)
-                    if affil_elem is not None and affil_elem.text:
-                        affiliations.append(affil_elem.text)
+                affil_elem = author_elem.find("arxiv:affiliation", ns)
+                if affil_elem is not None and affil_elem.text:
+                    affiliations.append(affil_elem.text)
 
-                # Parse categories
-                categories = []
-                for cat_elem in entry.findall("atom:category", ns):
-                    term = cat_elem.get("term")
-                    if term:
-                        categories.append(term)
+            # Parse categories
+            categories = []
+            for cat_elem in entry.findall("atom:category", ns):
+                term = cat_elem.get("term")
+                if term:
+                    categories.append(term)
 
-                # Get PDF link
-                pdf_url = ""
-                for link_elem in entry.findall("atom:link", ns):
-                    if link_elem.get("title") == "pdf":
-                        pdf_url = link_elem.get("href", "")
-                        break
+            # Get PDF link
+            pdf_url = ""
+            for link_elem in entry.findall("atom:link", ns):
+                if link_elem.get("title") == "pdf":
+                    pdf_url = link_elem.get("href", "")
+                    break
 
-                paper = ArxivPaper(
-                    arxiv_id=arxiv_id,
-                    title=title,
-                    abstract=abstract,
-                    authors=authors,
-                    categories=categories,
-                    published_at=published_at,
-                    updated_at=updated_at,
-                    pdf_url=pdf_url,
-                    affiliations=affiliations,
-                )
-                papers.append(paper)
-
-        except httpx.HTTPError as e:
-            logger.error(f"ArXiv HTTP error: {e}")
-        except ElementTree.ParseError as e:
-            logger.error(f"ArXiv XML parse error: {e}")
-        except Exception as e:
-            logger.exception(f"ArXiv fetch error: {e}")
+            paper = ArxivPaper(
+                arxiv_id=arxiv_id,
+                title=title,
+                abstract=abstract,
+                authors=authors,
+                categories=categories,
+                published_at=published_at,
+                updated_at=updated_at,
+                pdf_url=pdf_url,
+                affiliations=affiliations,
+            )
+            papers.append(paper)
 
         logger.info(f"Fetched {len(papers)} ArXiv papers")
         return papers
