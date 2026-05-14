@@ -82,6 +82,12 @@ def test_generate_only_preserves_default_keepalive_runner(tmp_path: Path) -> Non
     assert "--threshold-hours 36" in content
     assert "--min-created-at \"%KEEPALIVE_RUN_START_UTC%\"" in content
     assert "-HarmonicKeepAlive.json" in content
+    assert "-HarmonicKeepAlive.watchdog.json" in content
+    assert 'set "KEEPALIVE_COLLECT_EXIT=%ERRORLEVEL%"' in content
+    assert "scripts/red-team-hybrid/keepalive_verdict.py compose" in content
+    assert "--mode daily_heartbeat" in content
+    assert "scripts/red-team-hybrid/keepalive_verdict.py finalize" in content
+    assert 'exit /b %KEEPALIVE_FINAL_EXIT%' in content
     assert "JOB_POSTING_DOMAINS" not in content
     assert "exit /b 0" not in content
 
@@ -119,6 +125,8 @@ def test_generate_only_writes_non_live_freeze_preview_runner(tmp_path: Path) -> 
     assert "--operational rss_feeds,greenhouse_jobs,ashby_jobs" in content
     assert "--min-created-at \"%KEEPALIVE_RUN_START_UTC%\"" in content
     assert "-HarmonicFreezeDrillPreview.json" in content
+    assert "-HarmonicFreezeDrillPreview.watchdog.json" in content
+    assert "--mode strict_write_proof" in content
     assert "exit /b 0" in content
 
 
@@ -150,11 +158,18 @@ def test_generate_only_writes_positive_peer_keepalive_trial_runner(tmp_path: Pat
     assert "--operational greenhouse_jobs,ashby_jobs" in content
     assert "--min-created-at \"%KEEPALIVE_RUN_START_UTC%\"" in content
     assert "-HarmonicKeepAlive.json" in content
+    assert "-HarmonicKeepAlive.watchdog.json" in content
     assert "rss_feeds" not in content
+    assert "scripts/red-team-hybrid/keepalive_verdict.py compose" in content
+    assert "--mode daily_heartbeat" in content
     assert "scripts/red-team-hybrid/keepalive_monitor_ping.py" in content
+    assert "--artifact-json \"%KEEPALIVE_ARTIFACT%\"" in content
     assert "--ping-url-env \"HARMONIC_KEEPALIVE_PING_URL\"" in content
+    assert 'set "KEEPALIVE_COLLECT_EXIT=%ERRORLEVEL%"' in content
     assert 'set "KEEPALIVE_WATCHDOG_EXIT=%ERRORLEVEL%"' in content
-    assert 'if not "%KEEPALIVE_WATCHDOG_EXIT%"=="0" exit /b %KEEPALIVE_WATCHDOG_EXIT%' in content
+    assert 'if not "%KEEPALIVE_WATCHDOG_EXIT%"=="0" exit /b %KEEPALIVE_WATCHDOG_EXIT%' not in content
+    assert "scripts/red-team-hybrid/keepalive_verdict.py finalize" in content
+    assert 'exit /b %KEEPALIVE_FINAL_EXIT%' in content
     assert "exit /b 0" not in content
 
 
@@ -206,7 +221,17 @@ def test_generated_runner_quotes_python_exe_with_spaces(tmp_path: Path) -> None:
             @echo off
             echo %*>> "%~dp0calls.txt"
             if "%~1"=="scripts/red-team-hybrid/freshness_watchdog.py" echo {"checked_at":"2026-05-13T15:10:00+00:00","threshold_hours":12,"exit_code":0,"status":"PASS","collectors":[],"failures":[]}
+            if "%~1"=="scripts/red-team-hybrid/keepalive_verdict.py" if "%~2"=="compose" call :write_artifact %*
+            if "%~1"=="scripts/red-team-hybrid/keepalive_verdict.py" if "%~2"=="finalize" exit /b 0
             exit /b 0
+            :write_artifact
+            if "%~1"=="" exit /b 0
+            if "%~1"=="--artifact" (
+              echo {"kind":"harmonic_keepalive_composite","heartbeat_status":"PASS","pre_monitor_exit_code":0,"overall_status":"PASS","exit_code":0}> "%~2"
+              exit /b 0
+            )
+            shift
+            goto write_artifact
             """
         ).lstrip(),
         encoding="ascii",
@@ -230,6 +255,8 @@ def test_generated_runner_quotes_python_exe_with_spaces(tmp_path: Path) -> None:
     content = runner.read_text(encoding="ascii")
     assert f'call "{fake_python}" run_pipeline.py collect --collectors job_postings' in content
     assert f'call "{fake_python}" scripts/red-team-hybrid/freshness_watchdog.py' in content
+    assert f'call "{fake_python}" scripts/red-team-hybrid/keepalive_verdict.py compose' in content
+    assert f'call "{fake_python}" scripts/red-team-hybrid/keepalive_verdict.py finalize' in content
 
     executed = subprocess.run(
         ["cmd.exe", "/c", str(runner)],
@@ -243,6 +270,8 @@ def test_generated_runner_quotes_python_exe_with_spaces(tmp_path: Path) -> None:
     calls = (python_dir / "calls.txt").read_text(encoding="ascii")
     assert "run_pipeline.py collect --collectors job_postings" in calls
     assert "scripts/red-team-hybrid/freshness_watchdog.py --json --threshold-hours 12" in calls
+    assert "scripts/red-team-hybrid/keepalive_verdict.py compose --mode daily_heartbeat" in calls
+    assert "scripts/red-team-hybrid/keepalive_verdict.py finalize" in calls
 
     artifact_names = {
         artifact.name for artifact in (project_root / "artifacts" / "keepalive").iterdir()

@@ -56,18 +56,48 @@ def _watchdog_payload(
     }
 
 
+def _composite_payload(
+    watchdog: dict | None = None,
+    *,
+    heartbeat_status: str = "PASS",
+    pre_monitor_exit_code: int = 0,
+    db_progress_status: str = "PASS",
+    db_progress_reason: str | None = None,
+) -> dict:
+    return {
+        "kind": "harmonic_keepalive_composite",
+        "schema_version": 1,
+        "task_name": "HarmonicKeepAlive",
+        "mode": "daily_heartbeat",
+        "artifact": "2026-05-13-HarmonicKeepAlive.json",
+        "watchdog_artifact": "2026-05-13-HarmonicKeepAlive.watchdog.json",
+        "collector_exit_code": 0,
+        "collector_exit_status": "PASS",
+        "watchdog_exit_code": 0 if db_progress_status == "PASS" else 1,
+        "db_progress_status": db_progress_status,
+        "db_progress_reason": db_progress_reason,
+        "heartbeat_status": heartbeat_status,
+        "pre_monitor_exit_code": pre_monitor_exit_code,
+        "watchdog": watchdog or _watchdog_payload(),
+    }
+
+
 def test_build_monitor_payload_carries_post_run_db_proof_fields() -> None:
     module = _load_module()
 
     payload = module.build_monitor_payload(
-        _watchdog_payload(),
+        _composite_payload(),
         task_name="HarmonicKeepAlive",
-        artifact_path=Path("artifacts/keepalive/2026-05-13.json"),
+        artifact_path=Path("artifacts/keepalive/2026-05-13-HarmonicKeepAlive.json"),
     )
 
     assert payload["task_name"] == "HarmonicKeepAlive"
     assert payload["source_of_record"] == "signals.created_at"
-    assert payload["artifact"] == "2026-05-13.json"
+    assert payload["artifact"] == "2026-05-13-HarmonicKeepAlive.json"
+    assert payload["keepalive"]["mode"] == "daily_heartbeat"
+    assert payload["keepalive"]["collector_exit_status"] == "PASS"
+    assert payload["keepalive"]["db_progress_status"] == "PASS"
+    assert payload["keepalive"]["pre_monitor_exit_code"] == 0
     assert payload["watchdog"]["threshold_hours"] == 12
     assert payload["watchdog"]["min_created_at"] == "2026-05-13T15:00:00+00:00"
     assert payload["watchdog"]["status"] == "PASS"
@@ -77,6 +107,8 @@ def test_build_monitor_payload_carries_post_run_db_proof_fields() -> None:
     assert "watchdog.sources.<source_api>.last_created" in payload["post_run_db_proof_fields"]
     assert "watchdog.sources.<source_api>.required_after" in payload["post_run_db_proof_fields"]
     assert "watchdog.min_created_at" in payload["post_run_db_proof_fields"]
+    assert "keepalive.db_progress_status" in payload["composite_verdict_fields"]
+    assert "monitor_delivery_status" not in json.dumps(payload)
 
 
 def test_build_monitor_payload_carries_no_post_run_rows_failure_reason() -> None:
@@ -92,11 +124,19 @@ def test_build_monitor_payload_carries_no_post_run_rows_failure_reason() -> None
     watchdog["failures"] = ["greenhouse_jobs: no_post_run_rows"]
 
     payload = module.build_monitor_payload(
-        watchdog,
+        _composite_payload(
+            watchdog,
+            heartbeat_status="WARN_DUPLICATE_ONLY",
+            pre_monitor_exit_code=0,
+            db_progress_status="WARN_DUPLICATE_ONLY",
+            db_progress_reason="no_post_run_rows",
+        ),
         task_name="HarmonicKeepAlive",
         artifact_path=Path("artifacts/keepalive/2026-05-13-HarmonicKeepAlive.json"),
     )
 
+    assert payload["keepalive"]["heartbeat_status"] == "WARN_DUPLICATE_ONLY"
+    assert payload["keepalive"]["db_progress_reason"] == "no_post_run_rows"
     source = payload["watchdog"]["sources"]["greenhouse_jobs"]
     assert payload["watchdog"]["status"] == "FAIL"
     assert payload["watchdog"]["min_created_at"] == "2026-05-13T15:00:00+00:00"
@@ -155,15 +195,15 @@ def test_post_payload_sends_exit_status_suffix_and_json_body() -> None:
 
 
 def test_cli_dry_run_emits_payload_without_ping_url(tmp_path: Path) -> None:
-    watchdog_path = tmp_path / "watchdog.json"
-    watchdog_path.write_text(json.dumps(_watchdog_payload()), encoding="utf-8")
+    artifact_path = tmp_path / "composite.json"
+    artifact_path.write_text(json.dumps(_composite_payload()), encoding="utf-8")
 
     result = subprocess.run(
         [
             sys.executable,
             str(SCRIPT),
-            "--watchdog-json",
-            str(watchdog_path),
+            "--artifact-json",
+            str(artifact_path),
             "--task-name",
             "HarmonicKeepAlive",
             "--dry-run",
@@ -177,4 +217,5 @@ def test_cli_dry_run_emits_payload_without_ping_url(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     emitted = json.loads(result.stdout)
     assert emitted["ping_exit_status"] == 0
+    assert emitted["payload"]["keepalive"]["heartbeat_status"] == "PASS"
     assert emitted["payload"]["watchdog"]["sources"]["greenhouse_jobs"]["status"] == "FRESH"

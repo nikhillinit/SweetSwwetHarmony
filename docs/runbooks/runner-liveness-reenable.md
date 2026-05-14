@@ -66,12 +66,21 @@ $env:HARMONIC_KEEPALIVE_PING_URL = "<secret ping URL>"
 The ping URL must alert a real human on missed or failed runs. Verify that
 alert delivery before live registration.
 
-The generated runner posts the watchdog artifact through
-`scripts/red-team-hybrid/keepalive_monitor_ping.py`. The helper appends the
-watchdog exit status to the ping URL and includes these post-run DB proof
-fields in the POST body:
+The generated runner posts the composite artifact through
+`scripts/red-team-hybrid/keepalive_monitor_ping.py`. The runner first writes a
+pre-monitor composite artifact, posts that artifact, then finalizes the local
+artifact with monitor delivery status. The helper appends the composite
+pre-monitor exit status to the ping URL and includes these fields in the POST
+body:
 
 - `source_of_record = signals.created_at`
+- `keepalive.mode`
+- `keepalive.collector_exit_code`
+- `keepalive.collector_exit_status`
+- `keepalive.db_progress_status`
+- `keepalive.db_progress_reason`
+- `keepalive.heartbeat_status`
+- `keepalive.pre_monitor_exit_code`
 - `watchdog.threshold_hours`
 - `watchdog.min_created_at`
 - `watchdog.status`
@@ -86,12 +95,24 @@ ping requests and `/<exit-status>` URL suffixes for success or failure signals.
 For live runs, the generated wrapper captures the observed run start and passes
 it to `freshness_watchdog.py` as `--min-created-at`. A source with rows inside
 the rolling threshold but no row after that boundary fails with
-`no_post_run_rows`. This prevents a duplicate-only collector run from being
-reported as fresh liveness.
+`no_post_run_rows`. `freshness_watchdog.py` remains strict and DB-only; the
+runner's composite verdict determines whether that strict DB failure is a
+daily-heartbeat warning or a strict write-proof failure.
 
-Generated watchdog artifacts are task-specific:
-`artifacts/keepalive/YYYY-MM-DD-<TaskName>.json`. Sibling tasks must not share
-the same artifact path.
+Daily `HarmonicKeepAlive` uses `daily_heartbeat` mode. If collection exits `0`,
+all watchdog failures are `no_post_run_rows`, and monitor delivery succeeds,
+the final local artifact records `overall_status=WARN_DUPLICATE_ONLY` and the
+task exits `0`. This means the runner executed and reported successfully, not
+that fresh rows were inserted.
+
+Deliberate proof and drill runs use `strict_write_proof` mode. In that mode,
+`no_post_run_rows` remains a hard failure and exits non-zero.
+
+Generated composite artifacts are task-specific:
+`artifacts/keepalive/YYYY-MM-DD-<TaskName>.json`. The nested DB proof comes from
+the companion watchdog artifact
+`artifacts/keepalive/YYYY-MM-DD-<TaskName>.watchdog.json`. Sibling tasks must
+not share the same artifact path.
 
 `collector_health`, scheduler metadata, wrapper files, and
 `state/collectors.json` are corroboration. They are not the freshness clock.
@@ -117,7 +138,8 @@ does not define final production policy; it avoids rerunning the induced freeze
 when the already recorded drill is sufficient.
 
 Do not use `-IgnoreWatchdogExitCode` for the re-enable trial. A stale positive
-peer should fail the task.
+peer should fail the task unless the only DB failure is duplicate-only
+`no_post_run_rows` in `daily_heartbeat` mode.
 
 ## Live Trial
 
@@ -138,9 +160,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\red-team-hybrid\inst
 
 The task result must remain meaningful:
 
-- watchdog exit `0` means the positive peers are fresh
-- watchdog non-zero means the task fails
-- `no_post_run_rows` means the collector did not prove post-run DB progress
+- `overall_status=PASS` means the positive peers are fresh
+- `overall_status=WARN_DUPLICATE_ONLY` means the collector ran, monitor
+  delivery succeeded, and DB proof was exclusively `no_post_run_rows`
+- `overall_status=FAIL` means collection, DB proof, or monitor delivery failed
+- `strict_write_proof` keeps `no_post_run_rows` as a hard failure
 - monitor delivery failure means the task fails
 
 ## Trial Pass Criteria
@@ -155,11 +179,15 @@ Pass only if all are true:
 - the watchdog used `--min-created-at` from the observed run start
 - `JOB_POSTING_DOMAINS` is explicit
 - `greenhouse_jobs,ashby_jobs` are the operational watchdog sources
-- the monitor received a success ping with the DB proof payload, including
-  `min_created_at`, `required_after`, and any `stale_reason`
+- the monitor received a success ping with the composite verdict and DB proof
+  payload, including `keepalive.db_progress_status`, `min_created_at`,
+  `required_after`, and any `stale_reason`
 - the human alert recipient is known and verified
-- both peer source APIs have `MAX(signals.created_at)` after the observed run
-  start
+- final `overall_status` is either `PASS` or `WARN_DUPLICATE_ONLY`
+- if final `overall_status` is `PASS`, both peer source APIs have
+  `MAX(signals.created_at)` after the observed run start
+- if final `overall_status` is `WARN_DUPLICATE_ONLY`, all operational watchdog
+  failures are `no_post_run_rows`
 
 Peer DB proof:
 
@@ -201,5 +229,6 @@ If the dedicated-host path passes, record the result as host-scoped runner
 liveness. Do not claim Phase 5.2 durability until restore and storage drills
 also pass.
 
-If monitor delivery is absent, human alert delivery is unverified, or the peer
-DB proof is missing, do not re-enable production liveness claims.
+If monitor delivery is absent, human alert delivery is unverified, collection
+failed, or DB proof failed for any reason other than daily duplicate-only
+`no_post_run_rows`, do not re-enable production liveness claims.
