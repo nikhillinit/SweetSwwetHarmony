@@ -57,6 +57,7 @@ class Permission(str, Enum):
     PUBLISH = "publish"
     MANAGE_USERS = "manage_users"
     FEATURE_GOVERNANCE = "feature_governance"
+    SCHEDULER_ADMIN = "scheduler_admin"
 
 
 # Role → granted permissions
