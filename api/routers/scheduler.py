@@ -23,6 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel, field_validator
 
+from api.auth.rbac import OperatorContext, Permission, require_permission
 from ops.scheduler import PipelineScheduler, ScheduleConfig
 from ops.storage import OpsStorage
 
@@ -89,7 +90,12 @@ def get_scheduler() -> PipelineScheduler:
 # =============================================================================
 
 @router.get("", response_model=List[Dict[str, Any]])
-async def list_schedules(scheduler: PipelineScheduler = Depends(get_scheduler)):
+async def list_schedules(
+    scheduler: PipelineScheduler = Depends(get_scheduler),
+    _operator: OperatorContext = Depends(
+        require_permission(Permission.SCHEDULER_ADMIN)
+    ),
+):
     """List all pipeline schedules."""
     schedules = await run_in_threadpool(scheduler.list_schedules)
     return schedules
@@ -99,6 +105,9 @@ async def list_schedules(scheduler: PipelineScheduler = Depends(get_scheduler)):
 async def create_schedule(
     body: ScheduleCreateRequest,
     scheduler: PipelineScheduler = Depends(get_scheduler),
+    _operator: OperatorContext = Depends(
+        require_permission(Permission.SCHEDULER_ADMIN)
+    ),
 ):
     """Create a new pipeline schedule."""
     config = ScheduleConfig(
@@ -122,6 +131,9 @@ async def create_schedule(
 async def get_schedule(
     schedule_id: int,
     scheduler: PipelineScheduler = Depends(get_scheduler),
+    _operator: OperatorContext = Depends(
+        require_permission(Permission.SCHEDULER_ADMIN)
+    ),
 ):
     """Get a single schedule by ID."""
     schedule = await run_in_threadpool(scheduler.get_schedule, schedule_id)
@@ -134,6 +146,9 @@ async def get_schedule(
 async def get_schedule_status(
     schedule_id: int,
     scheduler: PipelineScheduler = Depends(get_scheduler),
+    _operator: OperatorContext = Depends(
+        require_permission(Permission.SCHEDULER_ADMIN)
+    ),
 ):
     """Get detailed schedule status with run statistics."""
     try:
@@ -147,6 +162,9 @@ async def get_schedule_status(
 async def pause_schedule(
     schedule_id: int,
     scheduler: PipelineScheduler = Depends(get_scheduler),
+    _operator: OperatorContext = Depends(
+        require_permission(Permission.SCHEDULER_ADMIN)
+    ),
 ):
     """Pause a schedule."""
     try:
@@ -160,6 +178,9 @@ async def pause_schedule(
 async def resume_schedule(
     schedule_id: int,
     scheduler: PipelineScheduler = Depends(get_scheduler),
+    _operator: OperatorContext = Depends(
+        require_permission(Permission.SCHEDULER_ADMIN)
+    ),
 ):
     """Resume a schedule."""
     try:
@@ -173,6 +194,9 @@ async def resume_schedule(
 async def delete_schedule(
     schedule_id: int,
     scheduler: PipelineScheduler = Depends(get_scheduler),
+    _operator: OperatorContext = Depends(
+        require_permission(Permission.SCHEDULER_ADMIN)
+    ),
 ):
     """Delete a schedule and its run history."""
     try:
@@ -186,6 +210,9 @@ async def delete_schedule(
 async def trigger_run(
     schedule_id: int,
     scheduler: PipelineScheduler = Depends(get_scheduler),
+    _operator: OperatorContext = Depends(
+        require_permission(Permission.SCHEDULER_ADMIN)
+    ),
 ):
     """Trigger an immediate pipeline run for this schedule."""
     schedule = await run_in_threadpool(scheduler.get_schedule, schedule_id)
@@ -204,6 +231,9 @@ async def get_run_history(
     schedule_id: int,
     limit: int = 20,
     scheduler: PipelineScheduler = Depends(get_scheduler),
+    _operator: OperatorContext = Depends(
+        require_permission(Permission.SCHEDULER_ADMIN)
+    ),
 ):
     """Get run history for a schedule."""
     schedule = await run_in_threadpool(scheduler.get_schedule, schedule_id)
