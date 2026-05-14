@@ -22,14 +22,27 @@ def test_runner_liveness_has_sibling_adr_and_runbook() -> None:
     assert "YYYY-MM-DD-<TaskName>.json" in adr
     assert "--min-created-at" in adr
     assert "no_post_run_rows" in adr
+    assert "daily_heartbeat" in adr
+    assert "strict_write_proof" in adr
+    assert "WARN_DUPLICATE_ONLY" in adr
+    assert "freshness_watchdog.py` stays strict" in adr
+    assert "pre-monitor composite artifact" in adr
+    assert "monitor_delivery_status" in adr
 
     assert "artifacts/keepalive/2026-05-12-freeze-drill-readout.md" in runbook
     assert "signals.created_at" in runbook
     assert "YYYY-MM-DD-<TaskName>.json" in runbook
+    assert "YYYY-MM-DD-<TaskName>.watchdog.json" in runbook
     assert "--min-created-at" in runbook
     assert "no_post_run_rows" in runbook
+    assert "daily_heartbeat" in runbook
+    assert "strict_write_proof" in runbook
+    assert "WARN_DUPLICATE_ONLY" in runbook
+    assert "pre-monitor composite artifact" in runbook
+    assert "finalizes the local" in runbook
     assert "required_after" in runbook
     assert "stale_reason" in runbook
+    assert "keepalive.db_progress_status" in runbook
     assert "JOB_POSTING_DOMAINS" in runbook
     assert "greenhouse_jobs,ashby_jobs" in runbook
     assert "HARMONIC_KEEPALIVE_PING_URL" in runbook
