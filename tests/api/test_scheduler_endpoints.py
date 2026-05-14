@@ -1,10 +1,12 @@
-"""Phase 3 — FastAPI scheduler endpoint tests (TDD RED)."""
+"""FastAPI scheduler endpoint tests."""
+
+from unittest.mock import MagicMock
 
 import pytest
-from unittest.mock import patch, MagicMock
-
-from fastapi.testclient import TestClient
 from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from api.auth.jwt_auth import Role, create_access_token
 
 
 def _mock_scheduler():
@@ -16,6 +18,20 @@ def _mock_scheduler():
     s.get_run_history.return_value = []
     s.get_schedule_status.return_value = {}
     return s
+
+
+def _auth_header(role: Role, email: str | None = None) -> dict[str, str]:
+    token, _ = create_access_token(
+        user_id=f"{role.value}-scheduler-test",
+        email=email or f"{role.value}@example.com",
+        role=role,
+        name=f"{role.value} Scheduler Test",
+    )
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _gp_headers() -> dict[str, str]:
+    return _auth_header(Role.GP)
 
 
 SAMPLE_SCHEDULE = {
@@ -49,6 +65,27 @@ SAMPLE_RUN = {
 }
 
 
+VALID_SCHEDULE_REQUEST = {
+    "name": "nightly-full",
+    "cron_expression": "0 2 * * *",
+    "collectors": ["github", "sec_edgar"],
+    "mode": "full",
+}
+
+
+SCHEDULER_AUTH_MATRIX = [
+    ("GET", "/schedules", {}),
+    ("POST", "/schedules", {"json": VALID_SCHEDULE_REQUEST}),
+    ("GET", "/schedules/1", {}),
+    ("GET", "/schedules/1/status", {}),
+    ("PUT", "/schedules/1/pause", {}),
+    ("PUT", "/schedules/1/resume", {}),
+    ("DELETE", "/schedules/1", {}),
+    ("POST", "/schedules/1/trigger", {}),
+    ("GET", "/schedules/1/history", {}),
+]
+
+
 @pytest.fixture
 def mock_sched():
     return _mock_scheduler()
@@ -57,7 +94,7 @@ def mock_sched():
 @pytest.fixture
 def app_with_scheduler(mock_sched):
     """Create a test FastAPI app with scheduler router."""
-    from api.routers.scheduler import router, get_scheduler
+    from api.routers.scheduler import get_scheduler, router
 
     app = FastAPI()
     app.include_router(router)
@@ -67,7 +104,37 @@ def app_with_scheduler(mock_sched):
 
 @pytest.fixture
 def client(app_with_scheduler):
-    return TestClient(app_with_scheduler)
+    return TestClient(app_with_scheduler, raise_server_exceptions=False)
+
+
+# =============================================================================
+# AUTHORIZATION
+# =============================================================================
+
+
+class TestSchedulerAuth:
+    @pytest.mark.parametrize("method,path,request_kwargs", SCHEDULER_AUTH_MATRIX)
+    def test_scheduler_routes_reject_unauthenticated(
+        self, client, method, path, request_kwargs
+    ):
+        """Every scheduler route requires authentication."""
+        resp = client.request(method, path, **request_kwargs)
+        assert resp.status_code == 401
+
+    @pytest.mark.parametrize("role", [Role.ANALYST, Role.READONLY])
+    @pytest.mark.parametrize("method,path,request_kwargs", SCHEDULER_AUTH_MATRIX)
+    def test_scheduler_routes_reject_non_gp_roles(
+        self, client, role, method, path, request_kwargs
+    ):
+        """Every scheduler route requires scheduler-admin permission."""
+        resp = client.request(
+            method,
+            path,
+            headers=_auth_header(role),
+            **request_kwargs,
+        )
+        assert resp.status_code == 403
+        assert resp.json()["detail"]["code"] == "INSUFFICIENT_PERMISSION"
 
 
 # =============================================================================
@@ -79,14 +146,14 @@ class TestListSchedules:
     def test_list_empty(self, client, mock_sched):
         """GET /schedules returns empty list when no schedules."""
         mock_sched.list_schedules.return_value = []
-        resp = client.get("/schedules")
+        resp = client.get("/schedules", headers=_gp_headers())
         assert resp.status_code == 200
         assert resp.json() == []
 
     def test_list_returns_schedules(self, client, mock_sched):
         """GET /schedules returns schedules list."""
         mock_sched.list_schedules.return_value = [SAMPLE_SCHEDULE]
-        resp = client.get("/schedules")
+        resp = client.get("/schedules", headers=_gp_headers())
         assert resp.status_code == 200
         data = resp.json()
         assert len(data) == 1
@@ -104,12 +171,11 @@ class TestCreateSchedule:
         mock_sched.create_schedule.return_value = 1
         mock_sched.get_schedule.return_value = SAMPLE_SCHEDULE
 
-        resp = client.post("/schedules", json={
-            "name": "nightly-full",
-            "cron_expression": "0 2 * * *",
-            "collectors": ["github", "sec_edgar"],
-            "mode": "full",
-        })
+        resp = client.post(
+            "/schedules",
+            json=VALID_SCHEDULE_REQUEST,
+            headers=_gp_headers(),
+        )
         assert resp.status_code == 201
         data = resp.json()
         assert data["id"] == 1
@@ -127,37 +193,54 @@ class TestCreateSchedule:
             "collectors": "[]",
         }
 
-        resp = client.post("/schedules", json={
-            "name": "weekly",
-            "cron_expression": "0 0 * * 0",
-        })
+        resp = client.post(
+            "/schedules",
+            json={
+                "name": "weekly",
+                "cron_expression": "0 0 * * 0",
+            },
+            headers=_gp_headers(),
+        )
         assert resp.status_code == 201
         assert resp.json()["id"] == 2
 
     def test_create_invalid_cron(self, client, mock_sched):
         """POST /schedules rejects invalid cron expression."""
-        resp = client.post("/schedules", json={
-            "name": "bad-cron",
-            "cron_expression": "not a cron",
-        })
+        resp = client.post(
+            "/schedules",
+            json={
+                "name": "bad-cron",
+                "cron_expression": "not a cron",
+            },
+            headers=_gp_headers(),
+        )
         assert resp.status_code == 422
 
     def test_create_missing_name(self, client, mock_sched):
         """POST /schedules rejects missing name."""
-        resp = client.post("/schedules", json={
-            "cron_expression": "0 2 * * *",
-        })
+        resp = client.post(
+            "/schedules",
+            json={
+                "cron_expression": "0 2 * * *",
+            },
+            headers=_gp_headers(),
+        )
         assert resp.status_code == 422
 
     def test_create_duplicate_name(self, client, mock_sched):
         """POST /schedules returns 409 on duplicate name."""
         from sqlite3 import IntegrityError
+
         mock_sched.create_schedule.side_effect = IntegrityError("UNIQUE constraint failed")
 
-        resp = client.post("/schedules", json={
-            "name": "nightly-full",
-            "cron_expression": "0 2 * * *",
-        })
+        resp = client.post(
+            "/schedules",
+            json={
+                "name": "nightly-full",
+                "cron_expression": "0 2 * * *",
+            },
+            headers=_gp_headers(),
+        )
         assert resp.status_code == 409
 
 
@@ -170,14 +253,14 @@ class TestGetSchedule:
     def test_get_existing(self, client, mock_sched):
         """GET /schedules/{id} returns schedule."""
         mock_sched.get_schedule.return_value = SAMPLE_SCHEDULE
-        resp = client.get("/schedules/1")
+        resp = client.get("/schedules/1", headers=_gp_headers())
         assert resp.status_code == 200
         assert resp.json()["name"] == "nightly-full"
 
     def test_get_not_found(self, client, mock_sched):
         """GET /schedules/{id} returns 404 for missing schedule."""
         mock_sched.get_schedule.return_value = None
-        resp = client.get("/schedules/999")
+        resp = client.get("/schedules/999", headers=_gp_headers())
         assert resp.status_code == 404
 
 
@@ -190,7 +273,7 @@ class TestPauseResume:
     def test_pause(self, client, mock_sched):
         """PUT /schedules/{id}/pause pauses the schedule."""
         mock_sched.get_schedule.return_value = SAMPLE_SCHEDULE
-        resp = client.put("/schedules/1/pause")
+        resp = client.put("/schedules/1/pause", headers=_gp_headers())
         assert resp.status_code == 200
         mock_sched.pause_schedule.assert_called_once_with(1)
         assert resp.json()["message"] == "Schedule 1 paused"
@@ -198,13 +281,13 @@ class TestPauseResume:
     def test_pause_not_found(self, client, mock_sched):
         """PUT /schedules/{id}/pause returns 404 for missing."""
         mock_sched.pause_schedule.side_effect = ValueError("Schedule 999 not found")
-        resp = client.put("/schedules/999/pause")
+        resp = client.put("/schedules/999/pause", headers=_gp_headers())
         assert resp.status_code == 404
 
     def test_resume(self, client, mock_sched):
         """PUT /schedules/{id}/resume resumes the schedule."""
         mock_sched.get_schedule.return_value = SAMPLE_SCHEDULE
-        resp = client.put("/schedules/1/resume")
+        resp = client.put("/schedules/1/resume", headers=_gp_headers())
         assert resp.status_code == 200
         mock_sched.resume_schedule.assert_called_once_with(1)
         assert resp.json()["message"] == "Schedule 1 resumed"
@@ -212,7 +295,7 @@ class TestPauseResume:
     def test_resume_not_found(self, client, mock_sched):
         """PUT /schedules/{id}/resume returns 404 for missing."""
         mock_sched.resume_schedule.side_effect = ValueError("Schedule 999 not found")
-        resp = client.put("/schedules/999/resume")
+        resp = client.put("/schedules/999/resume", headers=_gp_headers())
         assert resp.status_code == 404
 
 
@@ -224,14 +307,14 @@ class TestPauseResume:
 class TestDeleteSchedule:
     def test_delete_success(self, client, mock_sched):
         """DELETE /schedules/{id} deletes the schedule."""
-        resp = client.delete("/schedules/1")
+        resp = client.delete("/schedules/1", headers=_gp_headers())
         assert resp.status_code == 200
         mock_sched.delete_schedule.assert_called_once_with(1)
 
     def test_delete_not_found(self, client, mock_sched):
         """DELETE /schedules/{id} returns 404 for missing."""
         mock_sched.delete_schedule.side_effect = ValueError("Schedule 999 not found")
-        resp = client.delete("/schedules/999")
+        resp = client.delete("/schedules/999", headers=_gp_headers())
         assert resp.status_code == 404
 
 
@@ -246,7 +329,7 @@ class TestTriggerRun:
         mock_sched.get_schedule.return_value = SAMPLE_SCHEDULE
         mock_sched.enqueue_run.return_value = 42
 
-        resp = client.post("/schedules/1/trigger")
+        resp = client.post("/schedules/1/trigger", headers=_gp_headers())
         assert resp.status_code == 202
         data = resp.json()
         assert data["run_id"] == 42
@@ -255,14 +338,16 @@ class TestTriggerRun:
     def test_trigger_not_found(self, client, mock_sched):
         """POST /schedules/{id}/trigger returns 404 for missing."""
         mock_sched.get_schedule.return_value = None
-        resp = client.post("/schedules/999/trigger")
+        resp = client.post("/schedules/999/trigger", headers=_gp_headers())
         assert resp.status_code == 404
 
     def test_trigger_disabled(self, client, mock_sched):
         """POST /schedules/{id}/trigger returns 409 for disabled schedule."""
         mock_sched.get_schedule.return_value = {**SAMPLE_SCHEDULE, "enabled": 0}
-        mock_sched.enqueue_run.side_effect = ValueError("Schedule 1 is disabled or not found")
-        resp = client.post("/schedules/1/trigger")
+        mock_sched.enqueue_run.side_effect = ValueError(
+            "Schedule 1 is disabled or not found"
+        )
+        resp = client.post("/schedules/1/trigger", headers=_gp_headers())
         assert resp.status_code == 409
 
 
@@ -276,7 +361,7 @@ class TestRunHistory:
         """GET /schedules/{id}/history returns empty list."""
         mock_sched.get_schedule.return_value = SAMPLE_SCHEDULE
         mock_sched.get_run_history.return_value = []
-        resp = client.get("/schedules/1/history")
+        resp = client.get("/schedules/1/history", headers=_gp_headers())
         assert resp.status_code == 200
         assert resp.json() == []
 
@@ -284,7 +369,7 @@ class TestRunHistory:
         """GET /schedules/{id}/history returns run records."""
         mock_sched.get_schedule.return_value = SAMPLE_SCHEDULE
         mock_sched.get_run_history.return_value = [SAMPLE_RUN]
-        resp = client.get("/schedules/1/history")
+        resp = client.get("/schedules/1/history", headers=_gp_headers())
         assert resp.status_code == 200
         data = resp.json()
         assert len(data) == 1
@@ -295,14 +380,14 @@ class TestRunHistory:
         """GET /schedules/{id}/history?limit=5 passes limit."""
         mock_sched.get_schedule.return_value = SAMPLE_SCHEDULE
         mock_sched.get_run_history.return_value = []
-        resp = client.get("/schedules/1/history?limit=5")
+        resp = client.get("/schedules/1/history?limit=5", headers=_gp_headers())
         assert resp.status_code == 200
         mock_sched.get_run_history.assert_called_once_with(1, limit=5)
 
     def test_history_not_found(self, client, mock_sched):
         """GET /schedules/{id}/history returns 404 for missing schedule."""
         mock_sched.get_schedule.return_value = None
-        resp = client.get("/schedules/999/history")
+        resp = client.get("/schedules/999/history", headers=_gp_headers())
         assert resp.status_code == 404
 
 
@@ -324,7 +409,7 @@ class TestScheduleStatus:
             "total_runs": 5,
             "success_rate": 80.0,
         }
-        resp = client.get("/schedules/1/status")
+        resp = client.get("/schedules/1/status", headers=_gp_headers())
         assert resp.status_code == 200
         data = resp.json()
         assert data["name"] == "nightly-full"
@@ -333,8 +418,10 @@ class TestScheduleStatus:
 
     def test_status_not_found(self, client, mock_sched):
         """GET /schedules/{id}/status returns 404 for missing."""
-        mock_sched.get_schedule_status.side_effect = ValueError("Schedule 999 not found")
-        resp = client.get("/schedules/999/status")
+        mock_sched.get_schedule_status.side_effect = ValueError(
+            "Schedule 999 not found"
+        )
+        resp = client.get("/schedules/999/status", headers=_gp_headers())
         assert resp.status_code == 404
 
 
@@ -347,6 +434,8 @@ class TestThreadpool:
     def test_scheduler_endpoints_use_threadpool(self):
         """Verify scheduler router uses run_in_threadpool."""
         import inspect
+
         from api.routers import scheduler as sched_module
+
         source = inspect.getsource(sched_module)
         assert "run_in_threadpool" in source
