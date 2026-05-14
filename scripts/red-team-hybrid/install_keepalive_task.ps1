@@ -206,7 +206,7 @@ $DailyScript = @"
 @echo off
 cd /d "$ProjectRoot"
 $($EnvLines -join "`r`n")
-for /f %%I in ('powershell -NoProfile -Command "[DateTime]::UtcNow.ToString(""o"")"') do set "KEEPALIVE_RUN_START_UTC=%%I"
+for /f %%I in ('powershell -NoProfile -Command "[DateTime]::UtcNow.ToString([string][char]111)"') do set "KEEPALIVE_RUN_START_UTC=%%I"
 set "KEEPALIVE_ARTIFACT=$ArtifactsDir\%KEEPALIVE_RUN_START_UTC:~0,10%-$SafeTaskName.json"
 $PipelineCmd
 $WatchdogCmd > "%KEEPALIVE_ARTIFACT%"

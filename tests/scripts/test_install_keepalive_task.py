@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 import textwrap
@@ -242,3 +243,12 @@ def test_generated_runner_quotes_python_exe_with_spaces(tmp_path: Path) -> None:
     calls = (python_dir / "calls.txt").read_text(encoding="ascii")
     assert "run_pipeline.py collect --collectors job_postings" in calls
     assert "scripts/red-team-hybrid/freshness_watchdog.py --json --threshold-hours 12" in calls
+
+    artifact_names = {
+        artifact.name for artifact in (project_root / "artifacts" / "keepalive").iterdir()
+    }
+    assert "+-HarmonicKeepAlive.json" not in artifact_names
+    assert any(
+        re.fullmatch(r"\d{4}-\d{2}-\d{2}-HarmonicKeepAlive\.json", name)
+        for name in artifact_names
+    )
