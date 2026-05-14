@@ -46,6 +46,12 @@ class TestPermissionModel:
         assert not has_permission(Role.ANALYST, Permission.ENTITY_MERGE)
         assert not has_permission(Role.ANALYST, Permission.BATCH_COMMIT)
         assert not has_permission(Role.ANALYST, Permission.BULK_TRIAGE)
+        assert not has_permission(Role.ANALYST, Permission.SCHEDULER_ADMIN)
+
+    def test_scheduler_admin_is_gp_only(self):
+        assert has_permission(Role.GP, Permission.SCHEDULER_ADMIN)
+        assert not has_permission(Role.ANALYST, Permission.SCHEDULER_ADMIN)
+        assert not has_permission(Role.READONLY, Permission.SCHEDULER_ADMIN)
 
     def test_gp_has_all(self):
         for perm in Permission:
