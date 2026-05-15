@@ -1,0 +1,108 @@
+{
+  "artifact": "2026-05-15-HarmonicKeepAlive.json",
+  "collector_exit_code": 0,
+  "collector_exit_status": "PASS",
+  "completed_at": "2026-05-15T17:33:29.092843+00:00",
+  "composed_at": "2026-05-15T17:33:28.089803+00:00",
+  "db_progress_reason": "no_post_run_rows",
+  "db_progress_status": "WARN_DUPLICATE_ONLY",
+  "exit_code": 0,
+  "heartbeat_status": "WARN_DUPLICATE_ONLY",
+  "kind": "harmonic_keepalive_composite",
+  "mode": "daily_heartbeat",
+  "monitor_delivery_status": "PASS",
+  "monitor_exit_code": 0,
+  "overall_status": "WARN_DUPLICATE_ONLY",
+  "pre_monitor_exit_code": 0,
+  "schema_version": 1,
+  "task_name": "HarmonicKeepAlive",
+  "watchdog": {
+    "checked_at": "2026-05-15T17:33:27.934216+00:00",
+    "collectors": [
+      {
+        "age_hours": 38.78,
+        "category": "informational",
+        "last_created": "2026-05-14T02:46:43.087676+00:00",
+        "source_api": "arxiv",
+        "status": "UNKNOWN"
+      },
+      {
+        "age_hours": 38.65,
+        "category": "operational",
+        "last_created": "2026-05-14T02:54:10.038890+00:00",
+        "required_after": "2026-05-15T17:33:18.284153+00:00",
+        "source_api": "ashby_jobs",
+        "stale_reason": "no_post_run_rows",
+        "status": "STALE"
+      },
+      {
+        "age_hours": 3005.26,
+        "category": "informational",
+        "last_created": "2026-01-10T12:18:09.019836+00:00",
+        "source_api": "github",
+        "status": "UNKNOWN"
+      },
+      {
+        "age_hours": 0.04,
+        "category": "operational",
+        "last_created": "2026-05-15T17:30:50.059989+00:00",
+        "required_after": "2026-05-15T17:33:18.284153+00:00",
+        "source_api": "greenhouse_jobs",
+        "stale_reason": "no_post_run_rows",
+        "status": "STALE"
+      },
+      {
+        "age_hours": 40.27,
+        "category": "informational",
+        "last_created": "2026-05-14T01:17:21.252970+00:00",
+        "source_api": "hacker_news",
+        "status": "UNKNOWN"
+      },
+      {
+        "age_hours": 1883.0,
+        "category": "informational",
+        "last_created": "2026-02-26T06:33:29.284244+00:00",
+        "source_api": "lever_jobs",
+        "status": "UNKNOWN"
+      },
+      {
+        "age_hours": 1882.03,
+        "category": "informational",
+        "last_created": "2026-02-26T07:31:31.247155+00:00",
+        "source_api": "manual_seed_buzz",
+        "status": "UNKNOWN"
+      },
+      {
+        "age_hours": 40.27,
+        "category": "informational",
+        "last_created": "2026-05-14T01:17:29.039549+00:00",
+        "source_api": "news_api",
+        "status": "UNKNOWN"
+      },
+      {
+        "age_hours": 3005.26,
+        "category": "informational",
+        "last_created": "2026-01-10T12:18:09.035890+00:00",
+        "source_api": "product_hunt",
+        "status": "UNKNOWN"
+      },
+      {
+        "age_hours": 40.27,
+        "category": "informational",
+        "last_created": "2026-05-14T01:17:22.101782+00:00",
+        "source_api": "rss_feeds",
+        "status": "UNKNOWN"
+      }
+    ],
+    "exit_code": 1,
+    "failures": [
+      "ashby_jobs: last row 2026-05-14T02:54:10.038890+00:00 not after required 2026-05-15T17:33:18.284153+00:00",
+      "greenhouse_jobs: last row 2026-05-15T17:30:50.059989+00:00 not after required 2026-05-15T17:33:18.284153+00:00"
+    ],
+    "min_created_at": "2026-05-15T17:33:18.284153+00:00",
+    "status": "FAIL",
+    "threshold_hours": 12
+  },
+  "watchdog_artifact": "2026-05-15-HarmonicKeepAlive.watchdog.json",
+  "watchdog_exit_code": 1
+}
