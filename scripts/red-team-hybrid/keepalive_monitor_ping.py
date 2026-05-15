@@ -13,15 +13,40 @@ from typing import Any
 
 DEFAULT_PING_URL_ENV = "HARMONIC_KEEPALIVE_PING_URL"
 SOURCE_OF_RECORD = "signals.created_at"
+RAW_WATCHDOG_COMPAT_MODE = "raw_watchdog_compat"
 
 
-def _exit_status_from_watchdog(watchdog_payload: dict[str, Any]) -> int:
-    raw_exit_code = watchdog_payload.get("exit_code")
+def _exit_status_from_payload(payload: dict[str, Any]) -> int:
+    raw_exit_code = payload.get("pre_monitor_exit_code")
     if isinstance(raw_exit_code, int) and 0 <= raw_exit_code <= 255:
         return raw_exit_code
 
-    status = str(watchdog_payload.get("status") or "").upper()
-    return 0 if status == "PASS" else 1
+    status = str(payload.get("heartbeat_status") or "").upper()
+    return 0 if status in {"PASS", "WARN_DUPLICATE_ONLY"} else 1
+
+
+def _normalize_artifact_payload(artifact_payload: dict[str, Any]) -> dict[str, Any]:
+    if isinstance(artifact_payload.get("watchdog"), dict):
+        return artifact_payload
+
+    if isinstance(artifact_payload.get("collectors"), list):
+        raw_exit_code = artifact_payload.get("exit_code")
+        pre_monitor_exit_code = raw_exit_code if isinstance(raw_exit_code, int) and 0 <= raw_exit_code <= 255 else 1
+        raw_status = str(artifact_payload.get("status") or "").upper()
+        heartbeat_status = "PASS" if pre_monitor_exit_code == 0 and raw_status in {"", "OK", "PASS"} else "FAIL"
+        return {
+            "kind": "harmonic_keepalive_raw_watchdog_compat",
+            "mode": RAW_WATCHDOG_COMPAT_MODE,
+            "collector_exit_code": None,
+            "collector_exit_status": None,
+            "db_progress_status": heartbeat_status,
+            "db_progress_reason": "raw_watchdog_artifact",
+            "heartbeat_status": heartbeat_status,
+            "pre_monitor_exit_code": pre_monitor_exit_code,
+            "watchdog": artifact_payload,
+        }
+
+    raise ValueError("artifact JSON must be a composite payload or raw watchdog payload")
 
 
 def ping_url_for_exit_status(ping_url: str, exit_status: int) -> str:
@@ -34,14 +59,19 @@ def ping_url_for_exit_status(ping_url: str, exit_status: int) -> str:
 
 
 def build_monitor_payload(
-    watchdog_payload: dict[str, Any],
+    artifact_payload: dict[str, Any],
     *,
     task_name: str,
     artifact_path: Path,
 ) -> dict[str, Any]:
+    normalized_payload = _normalize_artifact_payload(artifact_payload)
+    watchdog_payload = normalized_payload.get("watchdog")
+    if not isinstance(watchdog_payload, dict):
+        raise ValueError("artifact JSON must contain a watchdog object")
+
     collector_records = watchdog_payload.get("collectors")
     if not isinstance(collector_records, list):
-        raise ValueError("watchdog JSON must contain a collectors list")
+        raise ValueError("composite watchdog JSON must contain a collectors list")
 
     sources: dict[str, dict[str, Any]] = {}
     for record in collector_records:
@@ -64,13 +94,22 @@ def build_monitor_payload(
         sources[source_api] = source
 
     if not sources:
-        raise ValueError("watchdog JSON contains no source proof fields")
+        raise ValueError("composite watchdog JSON contains no source proof fields")
 
     return {
         "kind": "harmonic_keepalive_liveness",
         "task_name": task_name,
         "source_of_record": SOURCE_OF_RECORD,
         "artifact": artifact_path.name,
+        "keepalive": {
+            "mode": normalized_payload.get("mode"),
+            "collector_exit_code": normalized_payload.get("collector_exit_code"),
+            "collector_exit_status": normalized_payload.get("collector_exit_status"),
+            "db_progress_status": normalized_payload.get("db_progress_status"),
+            "db_progress_reason": normalized_payload.get("db_progress_reason"),
+            "heartbeat_status": normalized_payload.get("heartbeat_status"),
+            "pre_monitor_exit_code": normalized_payload.get("pre_monitor_exit_code"),
+        },
         "watchdog": {
             "checked_at": watchdog_payload.get("checked_at"),
             "threshold_hours": watchdog_payload.get("threshold_hours"),
@@ -88,14 +127,23 @@ def build_monitor_payload(
             "watchdog.threshold_hours",
             "watchdog.min_created_at",
         ],
+        "composite_verdict_fields": [
+            "keepalive.mode",
+            "keepalive.collector_exit_code",
+            "keepalive.collector_exit_status",
+            "keepalive.db_progress_status",
+            "keepalive.db_progress_reason",
+            "keepalive.heartbeat_status",
+            "keepalive.pre_monitor_exit_code",
+        ],
     }
 
 
-def _read_watchdog_json(path: Path) -> dict[str, Any]:
+def _read_artifact_json(path: Path) -> dict[str, Any]:
     with path.open("r", encoding="utf-8") as handle:
         payload = json.load(handle)
     if not isinstance(payload, dict):
-        raise ValueError("watchdog JSON root must be an object")
+        raise ValueError("artifact JSON root must be an object")
     return payload
 
 
@@ -125,11 +173,18 @@ def _resolve_ping_url(explicit_ping_url: str | None, ping_url_env: str) -> str |
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Post Harmonic keepalive watchdog JSON to a Healthchecks.io-compatible "
-            "endpoint with DB freshness proof fields."
+            "Post Harmonic keepalive composite or raw watchdog JSON to a "
+            "Healthchecks.io-compatible endpoint with runner and DB freshness proof fields."
         )
     )
-    parser.add_argument("--watchdog-json", required=True, help="Path to the freshness watchdog JSON artifact.")
+    parser.add_argument(
+        "--artifact-json",
+        help="Path to the pre-monitor composite keepalive JSON artifact, or a legacy raw watchdog JSON artifact.",
+    )
+    parser.add_argument(
+        "--watchdog-json",
+        help="Deprecated alias for --artifact-json kept for legacy raw watchdog runners.",
+    )
     parser.add_argument("--task-name", required=True, help="Scheduled task name producing the artifact.")
     parser.add_argument(
         "--ping-url-env",
@@ -139,21 +194,28 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--ping-url", help="Explicit ping URL. Prefer --ping-url-env for production runners.")
     parser.add_argument("--timeout-seconds", type=float, default=15.0)
     parser.add_argument("--dry-run", action="store_true", help="Print the payload without sending a ping.")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    if args.artifact_json and args.watchdog_json and args.artifact_json != args.watchdog_json:
+        parser.error("--artifact-json and --watchdog-json must refer to the same file when both are provided")
+    args.artifact_json = args.artifact_json or args.watchdog_json
+    if not args.artifact_json:
+        parser.error("--artifact-json is required")
+    return args
 
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv)
-    artifact_path = Path(args.watchdog_json)
+    artifact_path = Path(args.artifact_json)
 
     try:
-        watchdog_payload = _read_watchdog_json(artifact_path)
+        artifact_payload = _read_artifact_json(artifact_path)
+        normalized_payload = _normalize_artifact_payload(artifact_payload)
         payload = build_monitor_payload(
-            watchdog_payload,
+            normalized_payload,
             task_name=args.task_name,
             artifact_path=artifact_path,
         )
-        exit_status = _exit_status_from_watchdog(watchdog_payload)
+        exit_status = _exit_status_from_payload(normalized_payload)
     except (OSError, json.JSONDecodeError, ValueError) as exc:
         print(f"keepalive monitor payload error: {exc}", file=sys.stderr)
         return 2
