@@ -1,0 +1,14 @@
+{
+  "artifact": "artifacts\\keepalive\\2026-05-15-HarmonicKeepAlive.json",
+  "artifact_dir": "artifacts\\keepalive",
+  "checked_at": "2026-05-15T17:34:28.851649+00:00",
+  "db_progress_reason": "no_post_run_rows",
+  "db_progress_status": "WARN_DUPLICATE_ONLY",
+  "errors": [],
+  "exit_code": 0,
+  "mode": "daily_heartbeat",
+  "monitor_delivery_status": "PASS",
+  "overall_status": "WARN_DUPLICATE_ONLY",
+  "status": "PASS",
+  "task_name": "HarmonicKeepAlive"
+}
