@@ -37,6 +37,8 @@ from enum import Enum
 
 import aiosqlite
 
+from storage.signal_store import ReadOnlyStoreError
+
 logger = logging.getLogger(__name__)
 
 
@@ -432,19 +434,34 @@ class FounderStore:
     def __init__(
         self,
         db_path: str | Path = "signals.db",
+        read_only: bool = False,
     ):
         """
         Initialize founder store.
 
         Args:
             db_path: Path to SQLite database file (shared with SignalStore)
+            read_only: Open with SQLite query-only mode and skip migrations.
         """
         self.db_path = Path(db_path)
+        self.read_only = read_only
         self._db: Optional[aiosqlite.Connection] = None
         self._lock = asyncio.Lock()
 
     async def initialize(self) -> None:
         """Initialize database connection and apply migrations."""
+        if self.read_only:
+            if str(self.db_path) != ":memory:" and not self.db_path.exists():
+                raise FileNotFoundError(
+                    f"Read-only FounderStore requires an existing database: {self.db_path}"
+                )
+
+            self._db = await aiosqlite.connect(str(self.db_path))
+            await self._db.execute("PRAGMA foreign_keys = ON")
+            await self._db.execute("PRAGMA query_only = ON")
+            logger.info(f"FounderStore initialized read-only: {self.db_path}")
+            return
+
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
         self._db = await aiosqlite.connect(str(self.db_path))
@@ -453,6 +470,18 @@ class FounderStore:
         await self._apply_migrations()
 
         logger.info(f"FounderStore initialized: {self.db_path}")
+
+    async def enable_read_only(self) -> None:
+        """Enable SQLite query-only mode on an existing connection."""
+        self.read_only = True
+        if self._db:
+            await self._db.execute("PRAGMA query_only = ON")
+
+    def _ensure_writable(self) -> None:
+        if self.read_only:
+            raise ReadOnlyStoreError(
+                f"FounderStore is read-only; write attempted against {self.db_path}"
+            )
 
     async def close(self) -> None:
         """Close database connection."""
@@ -465,6 +494,7 @@ class FounderStore:
         """Context manager for transactions."""
         if not self._db:
             raise RuntimeError("Database not initialized")
+        self._ensure_writable()
 
         async with self._lock:
             try:
