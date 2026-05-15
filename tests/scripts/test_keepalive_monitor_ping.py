@@ -146,6 +146,31 @@ def test_build_monitor_payload_carries_no_post_run_rows_failure_reason() -> None
     assert "watchdog.sources.<source_api>.stale_reason" in payload["post_run_db_proof_fields"]
 
 
+def test_build_monitor_payload_accepts_raw_watchdog_artifact() -> None:
+    module = _load_module()
+    raw_watchdog = _watchdog_payload(status="FAIL", exit_code=1)
+    raw_watchdog["collectors"][0] = {
+        **raw_watchdog["collectors"][0],
+        "status": "STALE",
+        "stale_reason": "no_post_run_rows",
+    }
+
+    payload = module.build_monitor_payload(
+        raw_watchdog,
+        task_name="HarmonicKeepAlive",
+        artifact_path=Path("artifacts/keepalive/2026-05-14-HarmonicKeepAlive.json"),
+    )
+
+    assert payload["artifact"] == "2026-05-14-HarmonicKeepAlive.json"
+    assert payload["keepalive"]["mode"] == "raw_watchdog_compat"
+    assert payload["keepalive"]["db_progress_status"] == "FAIL"
+    assert payload["keepalive"]["db_progress_reason"] == "raw_watchdog_artifact"
+    assert payload["keepalive"]["heartbeat_status"] == "FAIL"
+    assert payload["keepalive"]["pre_monitor_exit_code"] == 1
+    assert payload["watchdog"]["status"] == "FAIL"
+    assert payload["watchdog"]["sources"]["greenhouse_jobs"]["stale_reason"] == "no_post_run_rows"
+
+
 def test_ping_url_uses_exit_status_suffix() -> None:
     module = _load_module()
 
@@ -219,3 +244,56 @@ def test_cli_dry_run_emits_payload_without_ping_url(tmp_path: Path) -> None:
     assert emitted["ping_exit_status"] == 0
     assert emitted["payload"]["keepalive"]["heartbeat_status"] == "PASS"
     assert emitted["payload"]["watchdog"]["sources"]["greenhouse_jobs"]["status"] == "FRESH"
+
+
+def test_cli_dry_run_accepts_raw_watchdog_artifact(tmp_path: Path) -> None:
+    artifact_path = tmp_path / "watchdog.json"
+    artifact_path.write_text(json.dumps(_watchdog_payload(status="FAIL", exit_code=1)), encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--artifact-json",
+            str(artifact_path),
+            "--task-name",
+            "HarmonicKeepAlive",
+            "--dry-run",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stderr
+    emitted = json.loads(result.stdout)
+    assert emitted["ping_exit_status"] == 1
+    assert emitted["payload"]["keepalive"]["mode"] == "raw_watchdog_compat"
+    assert emitted["payload"]["watchdog"]["sources"]["greenhouse_jobs"]["status"] == "FRESH"
+
+
+def test_cli_dry_run_accepts_legacy_watchdog_json_flag(tmp_path: Path) -> None:
+    artifact_path = tmp_path / "watchdog.json"
+    artifact_path.write_text(json.dumps(_watchdog_payload(status="FAIL", exit_code=1)), encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT),
+            "--watchdog-json",
+            str(artifact_path),
+            "--task-name",
+            "HarmonicKeepAlive",
+            "--dry-run",
+        ],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stderr
+    emitted = json.loads(result.stdout)
+    assert emitted["ping_exit_status"] == 1
+    assert emitted["payload"]["keepalive"]["mode"] == "raw_watchdog_compat"

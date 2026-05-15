@@ -27,6 +27,8 @@ def test_runner_liveness_has_sibling_adr_and_runbook() -> None:
     assert "WARN_DUPLICATE_ONLY" in adr
     assert "freshness_watchdog.py` stays strict" in adr
     assert "pre-monitor composite artifact" in adr
+    assert "raw_watchdog_compat" in adr
+    assert "--watchdog-json" in adr
     assert "monitor_delivery_status" in adr
 
     assert "artifacts/keepalive/2026-05-12-freeze-drill-readout.md" in runbook
@@ -39,6 +41,8 @@ def test_runner_liveness_has_sibling_adr_and_runbook() -> None:
     assert "strict_write_proof" in runbook
     assert "WARN_DUPLICATE_ONLY" in runbook
     assert "pre-monitor composite artifact" in runbook
+    assert "raw_watchdog_compat" in runbook
+    assert "--watchdog-json" in runbook
     assert "finalizes the local" in runbook
     assert "required_after" in runbook
     assert "stale_reason" in runbook

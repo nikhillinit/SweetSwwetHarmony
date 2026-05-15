@@ -89,6 +89,14 @@ body:
 - `watchdog.sources.<source_api>.stale_reason`
 - `watchdog.sources.<source_api>.status`
 
+For backward compatibility with pre-composite artifacts, the monitor helper also
+accepts a raw `freshness_watchdog.py` JSON payload. Raw watchdog compatibility
+is a transport fallback only: generated runners should post the composite
+artifact, and raw payloads are reported with `keepalive.mode =
+raw_watchdog_compat` using the watchdog exit code directly. Raw watchdog mode
+does not apply the `daily_heartbeat` duplicate-only downgrade. Legacy runners
+that still pass `--watchdog-json` are accepted through a deprecated CLI alias.
+
 Reference for compatible endpoints: Healthchecks.io supports POST bodies on
 ping requests and `/<exit-status>` URL suffixes for success or failure signals.
 
