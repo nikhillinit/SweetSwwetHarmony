@@ -8,6 +8,7 @@ from decimal import Decimal
 from fastapi.testclient import TestClient
 from fastapi import FastAPI
 
+from api.auth.jwt_auth import Role, create_access_token
 from ops.monitoring.metrics import OpsMetricsSnapshot
 
 
@@ -46,6 +47,109 @@ def client(app_with_ops):
     return TestClient(app_with_ops)
 
 
+def _auth_header(role: Role, email: str | None = None) -> dict[str, str]:
+    token, _ = create_access_token(
+        user_id=f"{role.value}-rules-test",
+        email=email or f"{role.value}@example.com",
+        role=role,
+        name=f"{role.value} Rules Test",
+    )
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _view_headers() -> dict[str, str]:
+    return _auth_header(Role.READONLY)
+
+
+def _gp_headers() -> dict[str, str]:
+    return _auth_header(Role.GP)
+
+
+VALID_RULE_REQUEST = {
+    "name": "auth_matrix_rule",
+    "condition": {"field": "total_cost_24h", "op": ">", "value": 10},
+    "severity": "warning",
+    "message_template": "Auth matrix rule",
+}
+
+
+RULES_AUTH_MATRIX = [
+    ("GET", "/health/ops/rules", {}),
+    ("POST", "/health/ops/rules", {"json": VALID_RULE_REQUEST}),
+    ("GET", "/health/ops/rules/1", {}),
+    ("PUT", "/health/ops/rules/1", {"json": {"severity": "critical"}}),
+    ("DELETE", "/health/ops/rules/1", {}),
+]
+
+
+RULE_WRITE_AUTH_MATRIX = [
+    ("POST", "/health/ops/rules", {"json": VALID_RULE_REQUEST}),
+    ("PUT", "/health/ops/rules/1", {"json": {"severity": "critical"}}),
+    ("DELETE", "/health/ops/rules/1", {}),
+]
+
+
+def _read_storage() -> MagicMock:
+    storage = MagicMock()
+    storage.list_alert_rules.return_value = []
+    storage.get_alert_rule.return_value = {
+        "id": 1,
+        "name": "auth_matrix_rule",
+        "severity": "warning",
+        "condition_json": '{"field":"total_cost_24h","op":">","value":10}',
+        "component": None,
+        "message_template": "Auth matrix rule",
+        "enabled": 1,
+        "is_builtin": 0,
+        "created_at": "2026-02-06T00:00:00",
+        "updated_at": None,
+    }
+    storage.get_alert_evaluations.return_value = []
+    return storage
+
+
+# =============================================================================
+# AUTHORIZATION
+# =============================================================================
+
+
+class TestRulesAuth:
+    @pytest.mark.parametrize("method,path,request_kwargs", RULES_AUTH_MATRIX)
+    def test_ops_rule_routes_reject_unauthenticated(
+        self, client, method, path, request_kwargs
+    ):
+        """Every ops-rule CRUD route requires authentication."""
+        resp = client.request(method, path, **request_kwargs)
+        assert resp.status_code == 401
+
+    @pytest.mark.parametrize("role", [Role.READONLY, Role.ANALYST])
+    @pytest.mark.parametrize("path", ["/health/ops/rules", "/health/ops/rules/1"])
+    def test_ops_rule_read_routes_allow_authenticated_viewers(
+        self, client, role, path
+    ):
+        """Authenticated viewers can read ops-rule list and detail routes."""
+        with patch("api.routers.health._get_ops_storage") as mock_get:
+            mock_get.return_value = _read_storage()
+            resp = client.get(path, headers=_auth_header(role))
+
+        assert resp.status_code == 200
+
+    @pytest.mark.parametrize("role", [Role.READONLY, Role.ANALYST])
+    @pytest.mark.parametrize("method,path,request_kwargs", RULE_WRITE_AUTH_MATRIX)
+    def test_ops_rule_mutations_reject_non_gp_roles(
+        self, client, role, method, path, request_kwargs
+    ):
+        """Ops-rule mutation routes require ops-admin permission."""
+        resp = client.request(
+            method,
+            path,
+            headers=_auth_header(role),
+            **request_kwargs,
+        )
+        assert resp.status_code == 403
+        assert resp.json()["detail"]["code"] == "INSUFFICIENT_PERMISSION"
+
+
 # =============================================================================
 # GET /health/ops/rules
 # =============================================================================
@@ -58,7 +162,7 @@ class TestListRules:
 
         with patch("api.routers.health._get_ops_storage") as mock_get:
             mock_get.return_value = mock_storage
-            resp = client.get("/health/ops/rules")
+            resp = client.get("/health/ops/rules", headers=_view_headers())
 
         assert resp.status_code == 200
         assert resp.json() == []
@@ -85,7 +189,7 @@ class TestListRules:
 
         with patch("api.routers.health._get_ops_storage") as mock_get:
             mock_get.return_value = mock_storage
-            resp = client.get("/health/ops/rules")
+            resp = client.get("/health/ops/rules", headers=_view_headers())
 
         assert resp.status_code == 200
         data = resp.json()
@@ -97,7 +201,7 @@ class TestListRules:
         """GET /health/ops/rules returns 503 when ops tables missing."""
         with patch("api.routers.health._get_ops_storage") as mock_get:
             mock_get.return_value = None
-            resp = client.get("/health/ops/rules")
+            resp = client.get("/health/ops/rules", headers=_view_headers())
 
         assert resp.status_code == 503
 
@@ -126,7 +230,7 @@ class TestCreateRule:
                 "condition": {"field": "total_cost_24h", "op": ">", "value": 10},
                 "severity": "warning",
                 "message_template": "Cost high",
-            })
+            }, headers=_gp_headers())
 
         assert resp.status_code == 201
         data = resp.json()
@@ -153,7 +257,7 @@ class TestCreateRule:
                 "severity": "critical",
                 "message_template": "Too many incidents",
                 "component": "incidents",
-            })
+            }, headers=_gp_headers())
 
         assert resp.status_code == 201
         assert resp.json()["component"] == "incidents"
@@ -169,7 +273,7 @@ class TestCreateRule:
                 "condition": {"nonsense": True},
                 "severity": "warning",
                 "message_template": "Nope",
-            })
+            }, headers=_gp_headers())
 
         assert resp.status_code == 422
 
@@ -184,7 +288,7 @@ class TestCreateRule:
                 "condition": {"field": "open_incidents", "op": ">", "value": 1},
                 "severity": "deadly",
                 "message_template": "Nope",
-            })
+            }, headers=_gp_headers())
 
         assert resp.status_code == 422
 
@@ -213,7 +317,7 @@ class TestCreateRule:
                 ]},
                 "severity": "warning",
                 "message_template": "Composite fired",
-            })
+            }, headers=_gp_headers())
 
         assert resp.status_code == 201
 
@@ -243,7 +347,7 @@ class TestGetRule:
 
         with patch("api.routers.health._get_ops_storage") as mock_get:
             mock_get.return_value = mock_storage
-            resp = client.get("/health/ops/rules/1")
+            resp = client.get("/health/ops/rules/1", headers=_view_headers())
 
         assert resp.status_code == 200
         data = resp.json()
@@ -257,7 +361,7 @@ class TestGetRule:
 
         with patch("api.routers.health._get_ops_storage") as mock_get:
             mock_get.return_value = mock_storage
-            resp = client.get("/health/ops/rules/999")
+            resp = client.get("/health/ops/rules/999", headers=_view_headers())
 
         assert resp.status_code == 404
 
@@ -281,7 +385,11 @@ class TestUpdateRule:
 
         with patch("api.routers.health._get_ops_storage") as mock_get:
             mock_get.return_value = mock_storage
-            resp = client.put("/health/ops/rules/1", json={"severity": "critical"})
+            resp = client.put(
+                "/health/ops/rules/1",
+                json={"severity": "critical"},
+                headers=_gp_headers(),
+            )
 
         assert resp.status_code == 200
         assert resp.json()["severity"] == "critical"
@@ -301,7 +409,11 @@ class TestUpdateRule:
 
         with patch("api.routers.health._get_ops_storage") as mock_get:
             mock_get.return_value = mock_storage
-            resp = client.put("/health/ops/rules/1", json={"condition": new_cond})
+            resp = client.put(
+                "/health/ops/rules/1",
+                json={"condition": new_cond},
+                headers=_gp_headers(),
+            )
 
         assert resp.status_code == 200
 
@@ -319,7 +431,11 @@ class TestUpdateRule:
 
         with patch("api.routers.health._get_ops_storage") as mock_get:
             mock_get.return_value = mock_storage
-            resp = client.put("/health/ops/rules/1", json={"enabled": False})
+            resp = client.put(
+                "/health/ops/rules/1",
+                json={"enabled": False},
+                headers=_gp_headers(),
+            )
 
         assert resp.status_code == 200
         assert resp.json()["enabled"] is False
@@ -331,7 +447,11 @@ class TestUpdateRule:
 
         with patch("api.routers.health._get_ops_storage") as mock_get:
             mock_get.return_value = mock_storage
-            resp = client.put("/health/ops/rules/999", json={"severity": "info"})
+            resp = client.put(
+                "/health/ops/rules/999",
+                json={"severity": "info"},
+                headers=_gp_headers(),
+            )
 
         assert resp.status_code == 404
 
@@ -341,7 +461,11 @@ class TestUpdateRule:
 
         with patch("api.routers.health._get_ops_storage") as mock_get:
             mock_get.return_value = mock_storage
-            resp = client.put("/health/ops/rules/1", json={"severity": "extreme"})
+            resp = client.put(
+                "/health/ops/rules/1",
+                json={"severity": "extreme"},
+                headers=_gp_headers(),
+            )
 
         assert resp.status_code == 422
 
@@ -358,7 +482,7 @@ class TestDeleteRule:
 
         with patch("api.routers.health._get_ops_storage") as mock_get:
             mock_get.return_value = mock_storage
-            resp = client.delete("/health/ops/rules/1")
+            resp = client.delete("/health/ops/rules/1", headers=_gp_headers())
 
         assert resp.status_code == 200
         assert "deleted" in resp.json()["message"].lower()
@@ -373,7 +497,7 @@ class TestDeleteRule:
 
         with patch("api.routers.health._get_ops_storage") as mock_get:
             mock_get.return_value = mock_storage
-            resp = client.delete("/health/ops/rules/1")
+            resp = client.delete("/health/ops/rules/1", headers=_gp_headers())
 
         assert resp.status_code == 403
 
@@ -385,7 +509,7 @@ class TestDeleteRule:
 
         with patch("api.routers.health._get_ops_storage") as mock_get:
             mock_get.return_value = mock_storage
-            resp = client.delete("/health/ops/rules/999")
+            resp = client.delete("/health/ops/rules/999", headers=_gp_headers())
 
         assert resp.status_code == 404
 

@@ -58,6 +58,7 @@ class Permission(str, Enum):
     MANAGE_USERS = "manage_users"
     FEATURE_GOVERNANCE = "feature_governance"
     SCHEDULER_ADMIN = "scheduler_admin"
+    OPS_ADMIN = "ops_admin"
 
 
 # Role → granted permissions
