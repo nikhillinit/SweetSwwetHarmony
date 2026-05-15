@@ -1,0 +1,12 @@
+{
+  "jobs": [
+    {
+      "id": 101,
+      "title": "Senior Software Engineer",
+      "location": {"name": "New York, NY"},
+      "departments": [{"name": "Engineering"}],
+      "absolute_url": "https://boards.greenhouse.io/dual/jobs/101",
+      "updated_at": "2026-05-14T12:00:00Z"
+    }
+  ]
+}
