@@ -48,6 +48,10 @@ The provisional `HarmonicKeepAlive` re-enable contract is:
   stay strict DB-only proof
 - the runner writes a pre-monitor composite artifact, posts that artifact, and
   finalizes the local artifact after monitor delivery
+- `keepalive_monitor_ping.py` also accepts legacy raw watchdog artifacts for
+  operator compatibility, reporting them as `raw_watchdog_compat` and using the
+  watchdog exit code directly without duplicate-only downgrade; the deprecated
+  `--watchdog-json` CLI flag remains an alias for old generated runners
 - the daily heartbeat mode is named `daily_heartbeat`; deliberate proof and
   drill mode is named `strict_write_proof`
 - `collector_health`, scheduler metadata, `state/collectors.json`, and JSON
