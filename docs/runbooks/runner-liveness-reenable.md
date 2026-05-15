@@ -166,6 +166,36 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\red-team-hybrid\inst
   -TestRun
 ```
 
+## One-Shot Composite Verification Reminder
+
+After registering `HarmonicKeepAlive`, install a one-shot verifier for the next
+scheduled cycle:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\red-team-hybrid\install_keepalive_verification_reminder.ps1 `
+  -KeepAliveTaskName "HarmonicKeepAlive" `
+  -DelayMinutes 30
+```
+
+The verifier runs
+`scripts/red-team-hybrid/verify_keepalive_composite_artifact.py` against the
+expected UTC artifact date and writes
+`artifacts/keepalive/YYYY-MM-DD-HarmonicKeepAlive-composite-verification.json`.
+It fails closed if the artifact is still a raw watchdog payload, is unfinalized,
+has monitor delivery failure, exits non-zero, or records any hard DB proof
+failure. `PASS` and `WARN_DUPLICATE_ONLY` are both acceptable final outcomes
+for daily heartbeat mode, but `WARN_DUPLICATE_ONLY` is accepted only when every
+operational watchdog failure is `no_post_run_rows`.
+
+Manual verification uses the same contract:
+
+```powershell
+python scripts\red-team-hybrid\verify_keepalive_composite_artifact.py `
+  --artifact-dir artifacts\keepalive `
+  --task-name HarmonicKeepAlive `
+  --date YYYY-MM-DD
+```
+
 The task result must remain meaningful:
 
 - `overall_status=PASS` means the positive peers are fresh
