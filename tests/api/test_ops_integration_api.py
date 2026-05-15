@@ -17,6 +17,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 from fastapi import FastAPI
 
+from api.auth.jwt_auth import Role, create_access_token
 from ops.storage import OpsStorage
 
 # ---------------------------------------------------------------------------
@@ -78,6 +79,24 @@ def _seed(db_path):
         return OpsStorage(db_path)
 
 
+def _auth_header(role: Role, email: str | None = None) -> dict[str, str]:
+    token, _ = create_access_token(
+        user_id=f"{role.value}-ops-integration-test",
+        email=email or f"{role.value}@example.com",
+        role=role,
+        name=f"{role.value} Ops Integration Test",
+    )
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _view_headers() -> dict[str, str]:
+    return _auth_header(Role.READONLY)
+
+
+def _gp_headers() -> dict[str, str]:
+    return _auth_header(Role.GP)
+
+
 # =============================================================================
 # Rule CRUD Round-Trip via API
 # =============================================================================
@@ -96,7 +115,7 @@ class TestRuleCRUDRoundTrip:
             "condition": {"field": "total_cost_24h", "op": ">", "value": 10},
             "severity": "warning",
             "message_template": "API CRUD test rule",
-        })
+        }, headers=_gp_headers())
         assert resp.status_code == 201
         rule = resp.json()
         rule_id = rule["id"]
@@ -104,7 +123,7 @@ class TestRuleCRUDRoundTrip:
         assert rule["severity"] == "warning"
 
         # READ
-        resp = client.get(f"/health/ops/rules/{rule_id}")
+        resp = client.get(f"/health/ops/rules/{rule_id}", headers=_view_headers())
         assert resp.status_code == 200
         detail = resp.json()
         assert detail["rule"]["name"] == "api_crud_test"
@@ -113,20 +132,20 @@ class TestRuleCRUDRoundTrip:
         # UPDATE severity
         resp = client.put(f"/health/ops/rules/{rule_id}", json={
             "severity": "critical",
-        })
+        }, headers=_gp_headers())
         assert resp.status_code == 200
         assert resp.json()["severity"] == "critical"
 
         # VERIFY update
-        resp = client.get(f"/health/ops/rules/{rule_id}")
+        resp = client.get(f"/health/ops/rules/{rule_id}", headers=_view_headers())
         assert resp.json()["rule"]["severity"] == "critical"
 
         # DELETE
-        resp = client.delete(f"/health/ops/rules/{rule_id}")
+        resp = client.delete(f"/health/ops/rules/{rule_id}", headers=_gp_headers())
         assert resp.status_code == 200
 
         # VERIFY deleted
-        resp = client.get(f"/health/ops/rules/{rule_id}")
+        resp = client.get(f"/health/ops/rules/{rule_id}", headers=_view_headers())
         assert resp.status_code == 404
 
 
@@ -180,7 +199,7 @@ class TestRuleWithEvaluationsAPI:
             "condition": {"field": "open_incidents", "op": ">", "value": 5},
             "severity": "warning",
             "message_template": "Eval API test",
-        })
+        }, headers=_gp_headers())
         rule_id = resp.json()["id"]
 
         # Record evaluation directly in DB (simulating evaluate_all)
@@ -196,7 +215,7 @@ class TestRuleWithEvaluationsAPI:
         del storage
 
         # GET rule detail
-        resp = client.get(f"/health/ops/rules/{rule_id}")
+        resp = client.get(f"/health/ops/rules/{rule_id}", headers=_view_headers())
         assert resp.status_code == 200
         detail = resp.json()
         assert len(detail["evaluations"]) >= 1
