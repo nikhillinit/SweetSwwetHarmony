@@ -48,6 +48,13 @@
     Freshness threshold passed to freshness_watchdog.py --threshold-hours.
     Default preserves the original 36-hour watchdog behavior.
 
+.PARAMETER VerdictMode
+    Composite keepalive verdict mode. Defaults to daily_heartbeat for
+    HarmonicKeepAlive and strict_write_proof for sibling drill tasks.
+    daily_heartbeat treats duplicate-only no_post_run_rows DB proof as a
+    non-fatal WARN_DUPLICATE_ONLY when collection and monitor delivery pass.
+    strict_write_proof keeps no_post_run_rows as a hard failure.
+
 .PARAMETER JobPostingDomains
     Optional comma-separated domain fixture list exported as JOB_POSTING_DOMAINS
     inside the generated runner. Use this for omission drills where
@@ -61,11 +68,12 @@
 
 .PARAMETER MonitorPingUrlEnvVar
     Optional environment variable name containing a Healthchecks.io-compatible
-    ping URL. When set, the generated runner posts the watchdog JSON through
-    keepalive_monitor_ping.py after every run. The helper appends the watchdog
-    exit status to the ping URL and includes DB freshness proof fields in the
-    POST body. Use an environment variable rather than embedding the URL in
-    the generated runner because ping URLs are secrets.
+    ping URL. When set, the generated runner posts the pre-monitor composite
+    artifact through keepalive_monitor_ping.py after every run. The helper
+    appends the composite pre-monitor exit status to the ping URL and includes
+    runner plus DB freshness proof fields in the POST body. Use an environment
+    variable rather than embedding the URL in the generated runner because ping
+    URLs are secrets.
 
 .PARAMETER MonitorAlertVerified
     Required for live HarmonicKeepAlive registration. Confirms that the ping
@@ -122,6 +130,8 @@ param(
     [string]$Collectors = "hacker_news,arxiv,rss_feeds,news_api",
     [string]$WatchdogOperational = "hacker_news,arxiv,rss_feeds,news_api",
     [double]$WatchdogThresholdHours = 36,
+    [ValidateSet("", "daily_heartbeat", "strict_write_proof")]
+    [string]$VerdictMode = "",
     [string]$JobPostingDomains = "",
     [switch]$IgnoreWatchdogExitCode,
     [string]$MonitorPingUrlEnvVar = "",
@@ -138,6 +148,9 @@ if ($PythonExe.Contains('"')) {
     throw "PythonExe must not contain double quotes."
 }
 $PythonCmd = "call ""$PythonExe"""
+if (-not $VerdictMode.Trim()) {
+    $VerdictMode = if ($TaskName -eq "HarmonicKeepAlive") { "daily_heartbeat" } else { "strict_write_proof" }
+}
 
 $LiveKeepAliveMutation = $TaskName -eq "HarmonicKeepAlive" -and -not $GenerateOnly
 if ($LiveKeepAliveMutation) {
@@ -177,6 +190,8 @@ if ($WatchdogOperational.Trim()) {
     $WatchdogCmd = "$WatchdogCmd --operational $WatchdogOperational"
 }
 $WatchdogCmd = "$WatchdogCmd --min-created-at ""%KEEPALIVE_RUN_START_UTC%"""
+$VerdictComposeCmd = "$PythonCmd scripts/red-team-hybrid/keepalive_verdict.py compose --mode $VerdictMode --collector-exit ""%KEEPALIVE_COLLECT_EXIT%"" --watchdog-json ""%KEEPALIVE_WATCHDOG_ARTIFACT%"" --artifact ""%KEEPALIVE_ARTIFACT%"" --task-name ""$TaskName"""
+$VerdictFinalizeCmd = "$PythonCmd scripts/red-team-hybrid/keepalive_verdict.py finalize --artifact ""%KEEPALIVE_ARTIFACT%"" --monitor-exit ""%KEEPALIVE_MONITOR_EXIT%"""
 
 $EnvLines = @()
 if ($JobPostingDomains.Trim()) {
@@ -184,20 +199,20 @@ if ($JobPostingDomains.Trim()) {
 }
 
 $MonitorLines = @()
+$MonitorLines += 'set "KEEPALIVE_MONITOR_EXIT=0"'
 if ($MonitorPingUrlEnvVar.Trim()) {
-    $MonitorLines += "$PythonCmd scripts/red-team-hybrid/keepalive_monitor_ping.py --watchdog-json ""%KEEPALIVE_ARTIFACT%"" --task-name ""$TaskName"" --ping-url-env ""$MonitorPingUrlEnvVar"""
+    $MonitorLines += "$PythonCmd scripts/red-team-hybrid/keepalive_monitor_ping.py --artifact-json ""%KEEPALIVE_ARTIFACT%"" --task-name ""$TaskName"" --ping-url-env ""$MonitorPingUrlEnvVar"""
     $MonitorLines += "set ""KEEPALIVE_MONITOR_EXIT=%ERRORLEVEL%"""
 }
 
 $ExitLines = @()
-if (-not $IgnoreWatchdogExitCode) {
-    $ExitLines += 'if not "%KEEPALIVE_WATCHDOG_EXIT%"=="0" exit /b %KEEPALIVE_WATCHDOG_EXIT%'
-}
-if ($MonitorPingUrlEnvVar.Trim()) {
-    $ExitLines += 'if not "%KEEPALIVE_MONITOR_EXIT%"=="0" exit /b %KEEPALIVE_MONITOR_EXIT%'
-}
 if ($IgnoreWatchdogExitCode) {
-    $ExitLines += "exit /b 0"
+    if ($MonitorPingUrlEnvVar.Trim()) {
+        $ExitLines += 'if not "%KEEPALIVE_MONITOR_EXIT%"=="0" exit /b %KEEPALIVE_MONITOR_EXIT%'
+    }
+    $ExitLines += 'exit /b 0'
+} else {
+    $ExitLines += 'exit /b %KEEPALIVE_FINAL_EXIT%'
 }
 
 $SafeTaskName = ($TaskName -replace '[^A-Za-z0-9_-]', '_')
@@ -208,10 +223,16 @@ cd /d "$ProjectRoot"
 $($EnvLines -join "`r`n")
 for /f %%I in ('powershell -NoProfile -Command "[DateTime]::UtcNow.ToString([string][char]111)"') do set "KEEPALIVE_RUN_START_UTC=%%I"
 set "KEEPALIVE_ARTIFACT=$ArtifactsDir\%KEEPALIVE_RUN_START_UTC:~0,10%-$SafeTaskName.json"
+set "KEEPALIVE_WATCHDOG_ARTIFACT=$ArtifactsDir\%KEEPALIVE_RUN_START_UTC:~0,10%-$SafeTaskName.watchdog.json"
 $PipelineCmd
-$WatchdogCmd > "%KEEPALIVE_ARTIFACT%"
+set "KEEPALIVE_COLLECT_EXIT=%ERRORLEVEL%"
+$WatchdogCmd > "%KEEPALIVE_WATCHDOG_ARTIFACT%"
 set "KEEPALIVE_WATCHDOG_EXIT=%ERRORLEVEL%"
+$VerdictComposeCmd
+set "KEEPALIVE_COMPOSE_EXIT=%ERRORLEVEL%"
 $($MonitorLines -join "`r`n")
+$VerdictFinalizeCmd
+set "KEEPALIVE_FINAL_EXIT=%ERRORLEVEL%"
 $($ExitLines -join "`r`n")
 "@
 
