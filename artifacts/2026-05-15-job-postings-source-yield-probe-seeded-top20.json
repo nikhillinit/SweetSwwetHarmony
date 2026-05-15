@@ -1,0 +1,2080 @@
+{
+  "domains": [
+    {
+      "domain": "1stdibs.com",
+      "sources": {
+        "ashby_jobs": {
+          "attempts": [
+            {
+              "board_id": "1stdibs",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "1stdibshq",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "1stdibs-careers",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "1stdibscareers",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "1stdibs-jobs",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "1stdibsjobs",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            }
+          ],
+          "candidate": null
+        },
+        "greenhouse_jobs": {
+          "attempts": [
+            {
+              "board_id": "1stdibs",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "1stdibshq",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "1stdibs-careers",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "1stdibscareers",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "1stdibs-jobs",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "1stdibsjobs",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            }
+          ],
+          "candidate": null
+        }
+      }
+    },
+    {
+      "domain": "aesop.com",
+      "sources": {
+        "ashby_jobs": {
+          "attempts": [
+            {
+              "board_id": "aesop",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "aesophq",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "aesop-careers",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "aesopcareers",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "aesop-jobs",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "aesopjobs",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            }
+          ],
+          "candidate": null
+        },
+        "greenhouse_jobs": {
+          "attempts": [
+            {
+              "board_id": "aesop",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "aesophq",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "aesop-careers",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "aesopcareers",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "aesop-jobs",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "aesopjobs",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            }
+          ],
+          "candidate": null
+        }
+      }
+    },
+    {
+      "domain": "athleticbrewing.com",
+      "sources": {
+        "ashby_jobs": {
+          "attempts": [
+            {
+              "board_id": "athleticbrewing",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "athleticbrewinghq",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "athleticbrewing-careers",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "athleticbrewingcareers",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "athleticbrewing-jobs",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "athleticbrewingjobs",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            }
+          ],
+          "candidate": null
+        },
+        "greenhouse_jobs": {
+          "attempts": [
+            {
+              "board_id": "athleticbrewing",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "athleticbrewinghq",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "athleticbrewing-careers",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "athleticbrewingcareers",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "athleticbrewing-jobs",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "athleticbrewingjobs",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            }
+          ],
+          "candidate": null
+        }
+      }
+    },
+    {
+      "domain": "betterhelp.com",
+      "sources": {
+        "ashby_jobs": {
+          "attempts": [
+            {
+              "board_id": "betterhelp",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "betterhelphq",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "betterhelp-careers",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "betterhelpcareers",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "betterhelp-jobs",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "betterhelpjobs",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            }
+          ],
+          "candidate": null
+        },
+        "greenhouse_jobs": {
+          "attempts": [
+            {
+              "board_id": "betterhelp",
+              "error": null,
+              "job_count": 235,
+              "source": "greenhouse",
+              "status": "fetched"
+            }
+          ],
+          "candidate": {
+            "attribution_detail": "no_duplicate_or_suppression",
+            "board_id": "betterhelp",
+            "canonical_key": "domain:betterhelp.com",
+            "company_name": "Betterhelp",
+            "confidence": 0.85,
+            "detected_at": "2026-05-14T17:51:11-04:00",
+            "domain": "betterhelp.com",
+            "engineering_positions": 0,
+            "evidence_key": "0c83444fe8f5b2d398e93789615f7b7a",
+            "runtime_first_match": "greenhouse_jobs",
+            "runtime_order_scope": "greenhouse_ashby_only",
+            "sample_titles": [
+              "Clinical Psychologist- Remote",
+              "Clinical Psychologist- Remote",
+              "GZ-psycholoog",
+              "Integratief Counselor",
+              "Licensed  Certified Social Worker  - Remote"
+            ],
+            "signal_type": "hiring_signal",
+            "source_api": "greenhouse_jobs",
+            "source_url": "https://job-boards.greenhouse.io/betterhelp/jobs/4234786009",
+            "stage": "would_insert",
+            "total_positions": 235,
+            "would_short_circuit": false
+          }
+        }
+      }
+    },
+    {
+      "domain": "calm.com",
+      "sources": {
+        "ashby_jobs": {
+          "attempts": [
+            {
+              "board_id": "calm",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "calmhq",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "calm-careers",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "calmcareers",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "calm-jobs",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "calmjobs",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            }
+          ],
+          "candidate": null
+        },
+        "greenhouse_jobs": {
+          "attempts": [
+            {
+              "board_id": "calm",
+              "error": null,
+              "job_count": 1,
+              "source": "greenhouse",
+              "status": "fetched"
+            }
+          ],
+          "candidate": {
+            "attribution_detail": "no_duplicate_or_suppression",
+            "board_id": "calm",
+            "canonical_key": "domain:calm.com",
+            "company_name": "Calm",
+            "confidence": 0.7,
+            "detected_at": "2026-05-08T13:43:04-04:00",
+            "domain": "calm.com",
+            "engineering_positions": 0,
+            "evidence_key": "dfd2d9e4a2b03bba780bb696125e0c10",
+            "runtime_first_match": "greenhouse_jobs",
+            "runtime_order_scope": "greenhouse_ashby_only",
+            "sample_titles": [
+              "B2B Marketing Manager - Consumer Partnerships"
+            ],
+            "signal_type": "hiring_signal",
+            "source_api": "greenhouse_jobs",
+            "source_url": "https://job-boards.greenhouse.io/calm/jobs/8540115002",
+            "stage": "would_insert",
+            "total_positions": 1,
+            "would_short_circuit": false
+          }
+        }
+      }
+    },
+    {
+      "domain": "cerebral.com",
+      "sources": {
+        "ashby_jobs": {
+          "attempts": [
+            {
+              "board_id": "cerebral",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "cerebralhq",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "cerebral-careers",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "cerebralcareers",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "cerebral-jobs",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "cerebraljobs",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            }
+          ],
+          "candidate": null
+        },
+        "greenhouse_jobs": {
+          "attempts": [
+            {
+              "board_id": "cerebral",
+              "error": null,
+              "job_count": 6,
+              "source": "greenhouse",
+              "status": "fetched"
+            }
+          ],
+          "candidate": {
+            "attribution_detail": "evidence_key",
+            "board_id": "cerebral",
+            "canonical_key": "domain:cerebral.com",
+            "company_name": "Cerebral",
+            "confidence": 0.39999999999999997,
+            "detected_at": "2026-04-22T23:45:03-04:00",
+            "domain": "cerebral.com",
+            "engineering_positions": 0,
+            "evidence_key": "f575ea8b0c1d4e3a65c2d99bbdea84c4",
+            "runtime_first_match": "greenhouse_jobs",
+            "runtime_order_scope": "greenhouse_ashby_only",
+            "sample_titles": [
+              "Care Coordinator (1099 Contract)",
+              "Collaborating Psychiatrist (1099 Contract) - Georgia",
+              "Direct Care Physician (1099 Contract) - Tennessee",
+              "Join Our Provider Network (Licensed Therapists)",
+              "Senior Therapist"
+            ],
+            "signal_type": "hiring_signal",
+            "source_api": "greenhouse_jobs",
+            "source_url": "https://job-boards.greenhouse.io/cerebral/jobs/7624429003",
+            "stage": "db_duplicate",
+            "total_positions": 6,
+            "would_short_circuit": false
+          }
+        }
+      }
+    },
+    {
+      "domain": "ceremonia.com",
+      "sources": {
+        "ashby_jobs": {
+          "attempts": [
+            {
+              "board_id": "ceremonia",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "ceremoniahq",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "ceremonia-careers",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "ceremoniacareers",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "ceremonia-jobs",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "ceremoniajobs",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            }
+          ],
+          "candidate": null
+        },
+        "greenhouse_jobs": {
+          "attempts": [
+            {
+              "board_id": "ceremonia",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "ceremoniahq",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "ceremonia-careers",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "ceremoniacareers",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "ceremonia-jobs",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "ceremoniajobs",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            }
+          ],
+          "candidate": null
+        }
+      }
+    },
+    {
+      "domain": "chairish.com",
+      "sources": {
+        "ashby_jobs": {
+          "attempts": [
+            {
+              "board_id": "chairish",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "chairishhq",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "chairish-careers",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "chairishcareers",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "chairish-jobs",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "chairishjobs",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            }
+          ],
+          "candidate": null
+        },
+        "greenhouse_jobs": {
+          "attempts": [
+            {
+              "board_id": "chairish",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "chairishhq",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "chairish-careers",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "chairishcareers",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "chairish-jobs",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "chairishjobs",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            }
+          ],
+          "candidate": null
+        }
+      }
+    },
+    {
+      "domain": "dailyharvest.com",
+      "sources": {
+        "ashby_jobs": {
+          "attempts": [
+            {
+              "board_id": "dailyharvest",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "dailyharvesthq",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "dailyharvest-careers",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "dailyharvestcareers",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "dailyharvest-jobs",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "dailyharvestjobs",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            }
+          ],
+          "candidate": null
+        },
+        "greenhouse_jobs": {
+          "attempts": [
+            {
+              "board_id": "dailyharvest",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "dailyharvesthq",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "dailyharvest-careers",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "dailyharvestcareers",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "dailyharvest-jobs",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "dailyharvestjobs",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            }
+          ],
+          "candidate": null
+        }
+      }
+    },
+    {
+      "domain": "depop.com",
+      "sources": {
+        "ashby_jobs": {
+          "attempts": [
+            {
+              "board_id": "depop",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "depophq",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "depop-careers",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "depopcareers",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "depop-jobs",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "depopjobs",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            }
+          ],
+          "candidate": null
+        },
+        "greenhouse_jobs": {
+          "attempts": [
+            {
+              "board_id": "depop",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "depophq",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "depop-careers",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "depopcareers",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "depop-jobs",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "depopjobs",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            }
+          ],
+          "candidate": null
+        }
+      }
+    },
+    {
+      "domain": "drinkagh.com",
+      "sources": {
+        "ashby_jobs": {
+          "attempts": [
+            {
+              "board_id": "drinkagh",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "drinkaghhq",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "drinkagh-careers",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "drinkaghcareers",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "drinkagh-jobs",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "drinkaghjobs",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            }
+          ],
+          "candidate": null
+        },
+        "greenhouse_jobs": {
+          "attempts": [
+            {
+              "board_id": "drinkagh",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "drinkaghhq",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "drinkagh-careers",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "drinkaghcareers",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "drinkagh-jobs",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "drinkaghjobs",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            }
+          ],
+          "candidate": null
+        }
+      }
+    },
+    {
+      "domain": "drinkculturepop.com",
+      "sources": {
+        "ashby_jobs": {
+          "attempts": [
+            {
+              "board_id": "drinkculturepop",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "drinkculturepophq",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "drinkculturepop-careers",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "drinkculturepopcareers",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "drinkculturepop-jobs",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "drinkculturepopjobs",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            }
+          ],
+          "candidate": null
+        },
+        "greenhouse_jobs": {
+          "attempts": [
+            {
+              "board_id": "drinkculturepop",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "drinkculturepophq",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "drinkculturepop-careers",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "drinkculturepopcareers",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "drinkculturepop-jobs",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "drinkculturepopjobs",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            }
+          ],
+          "candidate": null
+        }
+      }
+    },
+    {
+      "domain": "drinkmati.com",
+      "sources": {
+        "ashby_jobs": {
+          "attempts": [
+            {
+              "board_id": "drinkmati",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "drinkmatihq",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "drinkmati-careers",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "drinkmaticareers",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "drinkmati-jobs",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "drinkmatijobs",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            }
+          ],
+          "candidate": null
+        },
+        "greenhouse_jobs": {
+          "attempts": [
+            {
+              "board_id": "drinkmati",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "drinkmatihq",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "drinkmati-careers",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "drinkmaticareers",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "drinkmati-jobs",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "drinkmatijobs",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            }
+          ],
+          "candidate": null
+        }
+      }
+    },
+    {
+      "domain": "drinkpoppi.com",
+      "sources": {
+        "ashby_jobs": {
+          "attempts": [
+            {
+              "board_id": "drinkpoppi",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "drinkpoppihq",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "drinkpoppi-careers",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "drinkpoppicareers",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "drinkpoppi-jobs",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "drinkpoppijobs",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            }
+          ],
+          "candidate": null
+        },
+        "greenhouse_jobs": {
+          "attempts": [
+            {
+              "board_id": "drinkpoppi",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "drinkpoppihq",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "drinkpoppi-careers",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "drinkpoppicareers",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "drinkpoppi-jobs",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "drinkpoppijobs",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            }
+          ],
+          "candidate": null
+        }
+      }
+    },
+    {
+      "domain": "factor75.com",
+      "sources": {
+        "ashby_jobs": {
+          "attempts": [
+            {
+              "board_id": "factor75",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "factor75hq",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "factor75-careers",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "factor75careers",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "factor75-jobs",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "factor75jobs",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            }
+          ],
+          "candidate": null
+        },
+        "greenhouse_jobs": {
+          "attempts": [
+            {
+              "board_id": "factor75",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "factor75hq",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "factor75-careers",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "factor75careers",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "factor75-jobs",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "factor75jobs",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            }
+          ],
+          "candidate": null
+        }
+      }
+    },
+    {
+      "domain": "faire.com",
+      "sources": {
+        "ashby_jobs": {
+          "attempts": [
+            {
+              "board_id": "faire",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "fairehq",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "faire-careers",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "fairecareers",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "faire-jobs",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "fairejobs",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            }
+          ],
+          "candidate": null
+        },
+        "greenhouse_jobs": {
+          "attempts": [
+            {
+              "board_id": "faire",
+              "error": null,
+              "job_count": 71,
+              "source": "greenhouse",
+              "status": "fetched"
+            }
+          ],
+          "candidate": {
+            "attribution_detail": "no_duplicate_or_suppression",
+            "board_id": "faire",
+            "canonical_key": "domain:faire.com",
+            "company_name": "Faire",
+            "confidence": 0.765,
+            "detected_at": "2026-05-15T10:06:56-04:00",
+            "domain": "faire.com",
+            "engineering_positions": 22,
+            "evidence_key": "4fa7dd16846a80c8e076020f0446b271",
+            "runtime_first_match": "greenhouse_jobs",
+            "runtime_order_scope": "greenhouse_ashby_only",
+            "sample_titles": [
+              "Account Manager, Fulfillment",
+              "Applied AI / ML Scientist - Ads Bidding",
+              "Applied AI / ML Scientist - Search Ads",
+              "Backend Engineer",
+              "Customer Experience Associate - 3 Months Contract (London, UK)"
+            ],
+            "signal_type": "hiring_signal",
+            "source_api": "greenhouse_jobs",
+            "source_url": "https://boards.greenhouse.io/faire/jobs/8541220002?gh_jid=8541220002",
+            "stage": "would_insert",
+            "total_positions": 71,
+            "would_short_circuit": false
+          }
+        }
+      }
+    },
+    {
+      "domain": "flyr.com",
+      "sources": {
+        "ashby_jobs": {
+          "attempts": [
+            {
+              "board_id": "flyr",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "flyrhq",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "flyr-careers",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "flyrcareers",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "flyr-jobs",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "flyrjobs",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            }
+          ],
+          "candidate": null
+        },
+        "greenhouse_jobs": {
+          "attempts": [
+            {
+              "board_id": "flyr",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "no_jobs"
+            },
+            {
+              "board_id": "flyrhq",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "flyr-careers",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "flyrcareers",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "flyr-jobs",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "flyrjobs",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            }
+          ],
+          "candidate": null
+        }
+      }
+    },
+    {
+      "domain": "freshly.com",
+      "sources": {
+        "ashby_jobs": {
+          "attempts": [
+            {
+              "board_id": "freshly",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "freshlyhq",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "freshly-careers",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "freshlycareers",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "freshly-jobs",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "freshlyjobs",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            }
+          ],
+          "candidate": null
+        },
+        "greenhouse_jobs": {
+          "attempts": [
+            {
+              "board_id": "freshly",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "freshlyhq",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "freshly-careers",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "freshlycareers",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "freshly-jobs",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "freshlyjobs",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            }
+          ],
+          "candidate": null
+        }
+      }
+    },
+    {
+      "domain": "functionofbeauty.com",
+      "sources": {
+        "ashby_jobs": {
+          "attempts": [
+            {
+              "board_id": "functionofbeauty",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "functionofbeautyhq",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "functionofbeauty-careers",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "functionofbeautycareers",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "functionofbeauty-jobs",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "functionofbeautyjobs",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            }
+          ],
+          "candidate": null
+        },
+        "greenhouse_jobs": {
+          "attempts": [
+            {
+              "board_id": "functionofbeauty",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "functionofbeautyhq",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "functionofbeauty-careers",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "functionofbeautycareers",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "functionofbeauty-jobs",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "functionofbeautyjobs",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            }
+          ],
+          "candidate": null
+        }
+      }
+    },
+    {
+      "domain": "getaround.com",
+      "sources": {
+        "ashby_jobs": {
+          "attempts": [
+            {
+              "board_id": "getaround",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "getaroundhq",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "getaround-careers",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "getaroundcareers",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "getaround-jobs",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "getaroundjobs",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            }
+          ],
+          "candidate": null
+        },
+        "greenhouse_jobs": {
+          "attempts": [
+            {
+              "board_id": "getaround",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "getaroundhq",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "getaround-careers",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "getaroundcareers",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "getaround-jobs",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "getaroundjobs",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            }
+          ],
+          "candidate": null
+        }
+      }
+    }
+  ],
+  "execution_id": "job-postings-source-yield-probe-53cba740008e",
+  "generated_at": "2026-05-15T17:28:37.099717+00:00",
+  "inputs": {
+    "db": "signals.db",
+    "domain_source": "domains",
+    "domains": [
+      "1stdibs.com",
+      "aesop.com",
+      "athleticbrewing.com",
+      "betterhelp.com",
+      "calm.com",
+      "cerebral.com",
+      "ceremonia.com",
+      "chairish.com",
+      "dailyharvest.com",
+      "depop.com",
+      "drinkagh.com",
+      "drinkculturepop.com",
+      "drinkmati.com",
+      "drinkpoppi.com",
+      "factor75.com",
+      "faire.com",
+      "flyr.com",
+      "freshly.com",
+      "functionofbeauty.com",
+      "getaround.com"
+    ],
+    "fixture_dir": null,
+    "keepalive_artifact": "artifacts\\keepalive\\2026-05-15-HarmonicKeepAlive.json",
+    "sources": [
+      "greenhouse_jobs",
+      "ashby_jobs"
+    ],
+    "state": "state\\collectors.json"
+  },
+  "mode": "source-isolated",
+  "runtime_order_scope": "greenhouse_ashby_only",
+  "summary": {
+    "ashby_jobs": {
+      "attempts": 120,
+      "db_duplicates": 0,
+      "examples": [],
+      "fetch_errors": 0,
+      "fetched": 0,
+      "no_candidates": 20,
+      "normalized_candidates": 0,
+      "notion_suppressed": 0,
+      "parse_errors": 0,
+      "same_run_duplicates": 0,
+      "would_insert": 0
+    },
+    "greenhouse_jobs": {
+      "attempts": 100,
+      "db_duplicates": 1,
+      "examples": [
+        {
+          "attribution_detail": "no_duplicate_or_suppression",
+          "board_id": "betterhelp",
+          "canonical_key": "domain:betterhelp.com",
+          "company_name": "Betterhelp",
+          "confidence": 0.85,
+          "detected_at": "2026-05-14T17:51:11-04:00",
+          "domain": "betterhelp.com",
+          "engineering_positions": 0,
+          "evidence_key": "0c83444fe8f5b2d398e93789615f7b7a",
+          "runtime_first_match": "greenhouse_jobs",
+          "runtime_order_scope": "greenhouse_ashby_only",
+          "sample_titles": [
+            "Clinical Psychologist- Remote",
+            "Clinical Psychologist- Remote",
+            "GZ-psycholoog",
+            "Integratief Counselor",
+            "Licensed  Certified Social Worker  - Remote"
+          ],
+          "signal_type": "hiring_signal",
+          "source_api": "greenhouse_jobs",
+          "source_url": "https://job-boards.greenhouse.io/betterhelp/jobs/4234786009",
+          "stage": "would_insert",
+          "total_positions": 235,
+          "would_short_circuit": false
+        },
+        {
+          "attribution_detail": "no_duplicate_or_suppression",
+          "board_id": "calm",
+          "canonical_key": "domain:calm.com",
+          "company_name": "Calm",
+          "confidence": 0.7,
+          "detected_at": "2026-05-08T13:43:04-04:00",
+          "domain": "calm.com",
+          "engineering_positions": 0,
+          "evidence_key": "dfd2d9e4a2b03bba780bb696125e0c10",
+          "runtime_first_match": "greenhouse_jobs",
+          "runtime_order_scope": "greenhouse_ashby_only",
+          "sample_titles": [
+            "B2B Marketing Manager - Consumer Partnerships"
+          ],
+          "signal_type": "hiring_signal",
+          "source_api": "greenhouse_jobs",
+          "source_url": "https://job-boards.greenhouse.io/calm/jobs/8540115002",
+          "stage": "would_insert",
+          "total_positions": 1,
+          "would_short_circuit": false
+        },
+        {
+          "attribution_detail": "evidence_key",
+          "board_id": "cerebral",
+          "canonical_key": "domain:cerebral.com",
+          "company_name": "Cerebral",
+          "confidence": 0.39999999999999997,
+          "detected_at": "2026-04-22T23:45:03-04:00",
+          "domain": "cerebral.com",
+          "engineering_positions": 0,
+          "evidence_key": "f575ea8b0c1d4e3a65c2d99bbdea84c4",
+          "runtime_first_match": "greenhouse_jobs",
+          "runtime_order_scope": "greenhouse_ashby_only",
+          "sample_titles": [
+            "Care Coordinator (1099 Contract)",
+            "Collaborating Psychiatrist (1099 Contract) - Georgia",
+            "Direct Care Physician (1099 Contract) - Tennessee",
+            "Join Our Provider Network (Licensed Therapists)",
+            "Senior Therapist"
+          ],
+          "signal_type": "hiring_signal",
+          "source_api": "greenhouse_jobs",
+          "source_url": "https://job-boards.greenhouse.io/cerebral/jobs/7624429003",
+          "stage": "db_duplicate",
+          "total_positions": 6,
+          "would_short_circuit": false
+        }
+      ],
+      "fetch_errors": 0,
+      "fetched": 4,
+      "no_candidates": 16,
+      "normalized_candidates": 4,
+      "notion_suppressed": 0,
+      "parse_errors": 0,
+      "same_run_duplicates": 0,
+      "would_insert": 3
+    }
+  }
+}
