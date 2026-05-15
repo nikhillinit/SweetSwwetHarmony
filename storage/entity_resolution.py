@@ -20,7 +20,10 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
 from typing import Optional, Dict, Any, List
+
+from storage.signal_store import ReadOnlyStoreError
 
 logger = logging.getLogger(__name__)
 
@@ -80,18 +83,34 @@ class EntityResolutionStore:
         lead_key = await store.get_lead_for_asset("github_repo", "startup/app")
     """
 
-    def __init__(self, db_path: str):
+    def __init__(self, db_path: str, read_only: bool = False):
         """
         Initialize EntityResolutionStore.
 
         Args:
             db_path: Path to SQLite database. Use ":memory:" for in-memory.
+            read_only: Open with SQLite query-only mode and skip DDL writes.
         """
         self.db_path = db_path
+        self.read_only = read_only
         self._db: Optional[aiosqlite.Connection] = None
+        self._schema_available = False
 
     async def initialize(self) -> None:
         """Initialize database connection and create tables."""
+        if self.read_only:
+            if self.db_path != ":memory:" and not Path(self.db_path).exists():
+                raise FileNotFoundError(
+                    f"Read-only EntityResolutionStore requires an existing database: {self.db_path}"
+                )
+
+            self._db = await aiosqlite.connect(self.db_path)
+            self._db.row_factory = aiosqlite.Row
+            await self._db.execute("PRAGMA query_only = ON")
+            self._schema_available = await self._has_schema()
+            logger.info(f"EntityResolutionStore initialized read-only at {self.db_path}")
+            return
+
         self._db = await aiosqlite.connect(self.db_path)
         self._db.row_factory = aiosqlite.Row
 
@@ -140,7 +159,32 @@ class EntityResolutionStore:
         """)
 
         await self._db.commit()
+        self._schema_available = True
         logger.info(f"EntityResolutionStore initialized at {self.db_path}")
+
+    async def enable_read_only(self) -> None:
+        """Enable SQLite query-only mode on an existing connection."""
+        self.read_only = True
+        if self._db:
+            await self._db.execute("PRAGMA query_only = ON")
+
+    def _ensure_writable(self) -> None:
+        if self.read_only:
+            raise ReadOnlyStoreError(
+                f"EntityResolutionStore is read-only; write attempted against {self.db_path}"
+            )
+
+    async def _has_schema(self) -> bool:
+        if not self._db:
+            return False
+        cursor = await self._db.execute(
+            """
+            SELECT name FROM sqlite_master
+            WHERE type = 'table' AND name IN ('asset_to_lead', 'asset_registry')
+            """
+        )
+        found = {row[0] for row in await cursor.fetchall()}
+        return "asset_to_lead" in found
 
     async def create_link(self, link: AssetToLead) -> int:
         """
@@ -156,6 +200,7 @@ class EntityResolutionStore:
             Database ID of the link.
         """
         import json
+        self._ensure_writable()
 
         # Check if a link already exists
         existing = await self._get_existing_link(
@@ -231,6 +276,8 @@ class EntityResolutionStore:
         Returns:
             AssetToLead if found, None otherwise.
         """
+        if not self._schema_available:
+            return None
         cursor = await self._db.execute(
             "SELECT * FROM asset_to_lead WHERE id = ?",
             (link_id,),
@@ -259,6 +306,8 @@ class EntityResolutionStore:
         Returns:
             Lead canonical key if resolved, None otherwise.
         """
+        if not self._schema_available:
+            return None
         cursor = await self._db.execute(
             """SELECT lead_canonical_key FROM asset_to_lead
                WHERE asset_source_type = ?
@@ -288,6 +337,8 @@ class EntityResolutionStore:
         Returns:
             List of AssetToLead links.
         """
+        if not self._schema_available:
+            return []
         cursor = await self._db.execute(
             """SELECT * FROM asset_to_lead
                WHERE lead_canonical_key = ?
@@ -313,6 +364,7 @@ class EntityResolutionStore:
             source_type: Type of source.
             external_id: Source-specific identifier.
         """
+        self._ensure_writable()
         await self._db.execute(
             """INSERT OR REPLACE INTO asset_registry
                (asset_id, source_type, external_id)
@@ -336,6 +388,8 @@ class EntityResolutionStore:
         Returns:
             List of unresolved asset info dicts.
         """
+        if not self._schema_available:
+            return []
         if source_type:
             cursor = await self._db.execute(
                 """SELECT ar.asset_id, ar.source_type, ar.external_id, ar.registered_at
@@ -379,6 +433,8 @@ class EntityResolutionStore:
         Returns:
             Dict mapping ResolutionMethod to count.
         """
+        if not self._schema_available:
+            return {}
         cursor = await self._db.execute(
             """SELECT resolved_by, COUNT(*) as count
                FROM asset_to_lead
@@ -394,6 +450,7 @@ class EntityResolutionStore:
         Args:
             link_id: Database ID of the link to delete.
         """
+        self._ensure_writable()
         await self._db.execute(
             "DELETE FROM asset_to_lead WHERE id = ?",
             (link_id,),
