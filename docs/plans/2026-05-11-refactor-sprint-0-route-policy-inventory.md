@@ -1,8 +1,14 @@
 # Refactor Sprint 0 Route Policy Inventory
 
-Status: pre-drill inventory
+Status: historical pre-drill inventory; current auth-marker ratchet lives in
+`tests/fixtures/api_route_policy_inventory.csv`
 Generated from: `api/main.py` and `api/routers/*.py`
 Runtime changes: none
+
+Current route-auth assertions are enforced by
+`tests/api/test_route_policy_inventory.py` against the CSV fixture. This
+markdown table preserves the Sprint 0 explanatory snapshot and is secondary to
+the CSV when remediation branches have changed `current_auth_marker` values.
 
 ## Policy Classes
 
