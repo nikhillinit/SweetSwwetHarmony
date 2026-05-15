@@ -33,6 +33,7 @@ class TestPermissionModel:
         assert not has_permission(Role.READONLY, Permission.COMPANY_ACTION)
         assert not has_permission(Role.READONLY, Permission.ENTITY_MERGE)
         assert not has_permission(Role.READONLY, Permission.BATCH_COMMIT)
+        assert not has_permission(Role.READONLY, Permission.OPS_ADMIN)
 
     def test_analyst_can_triage(self):
         assert has_permission(Role.ANALYST, Permission.TRIAGE_APPROVE)
@@ -47,11 +48,17 @@ class TestPermissionModel:
         assert not has_permission(Role.ANALYST, Permission.BATCH_COMMIT)
         assert not has_permission(Role.ANALYST, Permission.BULK_TRIAGE)
         assert not has_permission(Role.ANALYST, Permission.SCHEDULER_ADMIN)
+        assert not has_permission(Role.ANALYST, Permission.OPS_ADMIN)
 
     def test_scheduler_admin_is_gp_only(self):
         assert has_permission(Role.GP, Permission.SCHEDULER_ADMIN)
         assert not has_permission(Role.ANALYST, Permission.SCHEDULER_ADMIN)
         assert not has_permission(Role.READONLY, Permission.SCHEDULER_ADMIN)
+
+    def test_ops_admin_is_gp_only(self):
+        assert has_permission(Role.GP, Permission.OPS_ADMIN)
+        assert not has_permission(Role.ANALYST, Permission.OPS_ADMIN)
+        assert not has_permission(Role.READONLY, Permission.OPS_ADMIN)
 
     def test_gp_has_all(self):
         for perm in Permission:

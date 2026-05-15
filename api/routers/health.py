@@ -21,6 +21,7 @@ from pydantic import BaseModel, field_validator
 
 from fastapi.responses import Response
 from api.db import get_store
+from api.auth.rbac import OperatorContext, Permission, require_permission
 from storage.signal_store import SignalStore, CURRENT_SCHEMA_VERSION
 from api.health_bounds import BoundedParams
 
@@ -811,7 +812,9 @@ async def get_ops_metrics(
 # =============================================================================
 
 @router.get("/ops/rules", response_model=List[Dict[str, Any]])
-async def list_rules():
+async def list_rules(
+    _operator: OperatorContext = Depends(require_permission(Permission.VIEW)),
+):
     """List all alert rules (builtin + custom)."""
     storage = _get_ops_storage()
     if storage is None:
@@ -826,7 +829,12 @@ async def list_rules():
 
 
 @router.post("/ops/rules", status_code=201, response_model=Dict[str, Any])
-async def create_rule(body: RuleCreateRequest):
+async def create_rule(
+    body: RuleCreateRequest,
+    _operator: OperatorContext = Depends(
+        require_permission(Permission.OPS_ADMIN)
+    ),
+):
     """Create a custom alert rule with JSON DSL condition."""
     storage = _get_ops_storage()
     if storage is None:
@@ -849,7 +857,10 @@ async def create_rule(body: RuleCreateRequest):
 
 
 @router.get("/ops/rules/{rule_id}", response_model=RuleDetailResponse)
-async def get_rule(rule_id: int):
+async def get_rule(
+    rule_id: int,
+    _operator: OperatorContext = Depends(require_permission(Permission.VIEW)),
+):
     """Get a single rule with its evaluation history."""
     storage = _get_ops_storage()
     if storage is None:
@@ -868,7 +879,13 @@ async def get_rule(rule_id: int):
 
 
 @router.put("/ops/rules/{rule_id}", response_model=Dict[str, Any])
-async def update_rule(rule_id: int, body: RuleUpdateRequest):
+async def update_rule(
+    rule_id: int,
+    body: RuleUpdateRequest,
+    _operator: OperatorContext = Depends(
+        require_permission(Permission.OPS_ADMIN)
+    ),
+):
     """Update a rule's condition, severity, enabled, etc."""
     storage = _get_ops_storage()
     if storage is None:
@@ -898,7 +915,12 @@ async def update_rule(rule_id: int, body: RuleUpdateRequest):
 
 
 @router.delete("/ops/rules/{rule_id}", response_model=Dict[str, str])
-async def delete_rule(rule_id: int):
+async def delete_rule(
+    rule_id: int,
+    _operator: OperatorContext = Depends(
+        require_permission(Permission.OPS_ADMIN)
+    ),
+):
     """Delete a custom alert rule. Builtin rules cannot be deleted."""
     storage = _get_ops_storage()
     if storage is None:
