@@ -1,0 +1,395 @@
+{
+  "domains": [
+    {
+      "domain": "10beauty.com",
+      "sources": {
+        "ashby_jobs": {
+          "attempts": [
+            {
+              "board_id": "10beauty",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "10beautyhq",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "10beauty-careers",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "10beautycareers",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "10beauty-jobs",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "10beautyjobs",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            }
+          ],
+          "candidate": null
+        },
+        "greenhouse_jobs": {
+          "attempts": [
+            {
+              "board_id": "10beauty",
+              "error": null,
+              "job_count": 11,
+              "source": "greenhouse",
+              "status": "fetched"
+            }
+          ],
+          "candidate": {
+            "attribution_detail": "evidence_key",
+            "board_id": "10beauty",
+            "canonical_key": "domain:10beauty.com",
+            "company_name": "10Beauty",
+            "confidence": 0.95,
+            "detected_at": "2026-05-14T20:41:35-04:00",
+            "domain": "10beauty.com",
+            "engineering_positions": 6,
+            "evidence_key": "76b50b714b7f1f6af46051ff3135f9db",
+            "runtime_first_match": "greenhouse_jobs",
+            "runtime_order_scope": "greenhouse_ashby_only",
+            "sample_titles": [
+              "Director of Growth",
+              "Embedded Software Engineer",
+              "Field Service Engineer",
+              "Field Service Engineer",
+              "Licensed Cosmetologist/Nail Tech (Everett, MA)"
+            ],
+            "signal_type": "hiring_signal",
+            "source_api": "greenhouse_jobs",
+            "source_url": "https://job-boards.greenhouse.io/10beauty/jobs/5125375007",
+            "stage": "db_duplicate",
+            "total_positions": 11,
+            "would_short_circuit": false
+          }
+        }
+      }
+    },
+    {
+      "domain": "cofertility.com",
+      "sources": {
+        "ashby_jobs": {
+          "attempts": [
+            {
+              "board_id": "cofertility",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "cofertilityhq",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "cofertility-careers",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "cofertilitycareers",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "cofertility-jobs",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            },
+            {
+              "board_id": "cofertilityjobs",
+              "error": null,
+              "job_count": 0,
+              "source": "ashby",
+              "status": "not_found"
+            }
+          ],
+          "candidate": null
+        },
+        "greenhouse_jobs": {
+          "attempts": [
+            {
+              "board_id": "cofertility",
+              "error": null,
+              "job_count": 3,
+              "source": "greenhouse",
+              "status": "fetched"
+            }
+          ],
+          "candidate": {
+            "attribution_detail": "Funded:2e071fcd-d2d8-8009-ba82-d6a4988fd340",
+            "board_id": "cofertility",
+            "canonical_key": "domain:cofertility.com",
+            "company_name": "Cofertility",
+            "confidence": 0.6375,
+            "detected_at": "2026-05-12T20:19:52-04:00",
+            "domain": "cofertility.com",
+            "engineering_positions": 0,
+            "evidence_key": "6cabd43da35c67dc2853095f1de1704b",
+            "runtime_first_match": "greenhouse_jobs",
+            "runtime_order_scope": "greenhouse_ashby_only",
+            "sample_titles": [
+              "Director, Program Growth & Operations",
+              "Member Advocate (Manager Level)",
+              "Part-Time Product Designer"
+            ],
+            "signal_type": "hiring_signal",
+            "source_api": "greenhouse_jobs",
+            "source_url": "https://job-boards.greenhouse.io/cofertility/jobs/4205943009",
+            "stage": "notion_suppressed",
+            "total_positions": 3,
+            "would_short_circuit": false
+          }
+        }
+      }
+    },
+    {
+      "domain": "openai.com",
+      "sources": {
+        "ashby_jobs": {
+          "attempts": [
+            {
+              "board_id": "openai",
+              "error": null,
+              "job_count": 674,
+              "source": "ashby",
+              "status": "fetched"
+            }
+          ],
+          "candidate": {
+            "attribution_detail": "evidence_key",
+            "board_id": "openai",
+            "canonical_key": "domain:openai.com",
+            "company_name": "Openai",
+            "confidence": 0.475,
+            "detected_at": "2026-05-15T08:17:20.053000+00:00",
+            "domain": "openai.com",
+            "engineering_positions": 404,
+            "evidence_key": "e570c8f58bfd33ae4319646b159b1b54",
+            "runtime_first_match": "ashby_jobs",
+            "runtime_order_scope": "greenhouse_ashby_only",
+            "sample_titles": [
+              "Account Director - Tokyo",
+              "Data Engineer",
+              "Research Engineer",
+              "Research Engineer, Retrieval & Search, Applied Engineering",
+              "Researcher, Robustness & Safety Training"
+            ],
+            "signal_type": "hiring_signal",
+            "source_api": "ashby_jobs",
+            "source_url": "https://jobs.ashbyhq.com/openai/8fb1615c-34bf-47c4-a1d1-b7b2f836bbd3",
+            "stage": "db_duplicate",
+            "total_positions": 674,
+            "would_short_circuit": false
+          }
+        },
+        "greenhouse_jobs": {
+          "attempts": [
+            {
+              "board_id": "openai",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "openaihq",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "openai-careers",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "openaicareers",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "openai-jobs",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            },
+            {
+              "board_id": "openaijobs",
+              "error": null,
+              "job_count": 0,
+              "source": "greenhouse",
+              "status": "not_found"
+            }
+          ],
+          "candidate": null
+        }
+      }
+    }
+  ],
+  "execution_id": "job-postings-source-yield-probe-77a1dad86547",
+  "generated_at": "2026-05-15T17:18:46.747644+00:00",
+  "inputs": {
+    "db": "signals.db",
+    "domain_source": "domains",
+    "domains": [
+      "10beauty.com",
+      "cofertility.com",
+      "openai.com"
+    ],
+    "fixture_dir": null,
+    "keepalive_artifact": "artifacts\\keepalive\\2026-05-15-HarmonicKeepAlive.json",
+    "sources": [
+      "greenhouse_jobs",
+      "ashby_jobs"
+    ],
+    "state": "state\\collectors.json"
+  },
+  "mode": "source-isolated",
+  "runtime_order_scope": "greenhouse_ashby_only",
+  "summary": {
+    "ashby_jobs": {
+      "attempts": 13,
+      "db_duplicates": 1,
+      "examples": [
+        {
+          "attribution_detail": "evidence_key",
+          "board_id": "openai",
+          "canonical_key": "domain:openai.com",
+          "company_name": "Openai",
+          "confidence": 0.475,
+          "detected_at": "2026-05-15T08:17:20.053000+00:00",
+          "domain": "openai.com",
+          "engineering_positions": 404,
+          "evidence_key": "e570c8f58bfd33ae4319646b159b1b54",
+          "runtime_first_match": "ashby_jobs",
+          "runtime_order_scope": "greenhouse_ashby_only",
+          "sample_titles": [
+            "Account Director - Tokyo",
+            "Data Engineer",
+            "Research Engineer",
+            "Research Engineer, Retrieval & Search, Applied Engineering",
+            "Researcher, Robustness & Safety Training"
+          ],
+          "signal_type": "hiring_signal",
+          "source_api": "ashby_jobs",
+          "source_url": "https://jobs.ashbyhq.com/openai/8fb1615c-34bf-47c4-a1d1-b7b2f836bbd3",
+          "stage": "db_duplicate",
+          "total_positions": 674,
+          "would_short_circuit": false
+        }
+      ],
+      "fetch_errors": 0,
+      "fetched": 1,
+      "no_candidates": 2,
+      "normalized_candidates": 1,
+      "notion_suppressed": 0,
+      "parse_errors": 0,
+      "same_run_duplicates": 0,
+      "would_insert": 0
+    },
+    "greenhouse_jobs": {
+      "attempts": 8,
+      "db_duplicates": 1,
+      "examples": [
+        {
+          "attribution_detail": "evidence_key",
+          "board_id": "10beauty",
+          "canonical_key": "domain:10beauty.com",
+          "company_name": "10Beauty",
+          "confidence": 0.95,
+          "detected_at": "2026-05-14T20:41:35-04:00",
+          "domain": "10beauty.com",
+          "engineering_positions": 6,
+          "evidence_key": "76b50b714b7f1f6af46051ff3135f9db",
+          "runtime_first_match": "greenhouse_jobs",
+          "runtime_order_scope": "greenhouse_ashby_only",
+          "sample_titles": [
+            "Director of Growth",
+            "Embedded Software Engineer",
+            "Field Service Engineer",
+            "Field Service Engineer",
+            "Licensed Cosmetologist/Nail Tech (Everett, MA)"
+          ],
+          "signal_type": "hiring_signal",
+          "source_api": "greenhouse_jobs",
+          "source_url": "https://job-boards.greenhouse.io/10beauty/jobs/5125375007",
+          "stage": "db_duplicate",
+          "total_positions": 11,
+          "would_short_circuit": false
+        },
+        {
+          "attribution_detail": "Funded:2e071fcd-d2d8-8009-ba82-d6a4988fd340",
+          "board_id": "cofertility",
+          "canonical_key": "domain:cofertility.com",
+          "company_name": "Cofertility",
+          "confidence": 0.6375,
+          "detected_at": "2026-05-12T20:19:52-04:00",
+          "domain": "cofertility.com",
+          "engineering_positions": 0,
+          "evidence_key": "6cabd43da35c67dc2853095f1de1704b",
+          "runtime_first_match": "greenhouse_jobs",
+          "runtime_order_scope": "greenhouse_ashby_only",
+          "sample_titles": [
+            "Director, Program Growth & Operations",
+            "Member Advocate (Manager Level)",
+            "Part-Time Product Designer"
+          ],
+          "signal_type": "hiring_signal",
+          "source_api": "greenhouse_jobs",
+          "source_url": "https://job-boards.greenhouse.io/cofertility/jobs/4205943009",
+          "stage": "notion_suppressed",
+          "total_positions": 3,
+          "would_short_circuit": false
+        }
+      ],
+      "fetch_errors": 0,
+      "fetched": 2,
+      "no_candidates": 1,
+      "normalized_candidates": 2,
+      "notion_suppressed": 1,
+      "parse_errors": 0,
+      "same_run_duplicates": 0,
+      "would_insert": 0
+    }
+  }
+}
