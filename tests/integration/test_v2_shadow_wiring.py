@@ -136,9 +136,8 @@ class TestPipelineToShadowLogWiring:
             from workflows.pipeline import DiscoveryPipeline, PipelineConfig
 
             config = PipelineConfig(
-                notion_api_key="test",
-                notion_database_id="test-db",
                 db_path=db_path,
+                warmup_suppression_cache=False,
                 use_thesis_filter=True,
             )
             pipeline = DiscoveryPipeline(config)
@@ -155,7 +154,7 @@ class TestPipelineToShadowLogWiring:
             )
 
             # Process the signal
-            await pipeline.process_pending(dry_run=True)
+            await pipeline.process_pending(dry_run=False)
 
             # Check shadow logs
             logs = await pipeline._store.get_shadow_logs(feature_name="thesis_match")
@@ -184,9 +183,8 @@ class TestPipelineToShadowLogWiring:
                 from workflows.pipeline import DiscoveryPipeline, PipelineConfig
 
                 config = PipelineConfig(
-                    notion_api_key="test",
-                    notion_database_id="test-db",
                     db_path=db_path,
+                    warmup_suppression_cache=False,
                     use_thesis_filter=True,
                 )
                 pipeline = DiscoveryPipeline(config)
@@ -203,7 +201,7 @@ class TestPipelineToShadowLogWiring:
                 )
 
                 # Process the signal
-                await pipeline.process_pending(dry_run=True)
+                await pipeline.process_pending(dry_run=False)
 
                 # Check shadow logs
                 logs = await pipeline._store.get_shadow_logs(feature_name="thesis_match")
@@ -242,9 +240,8 @@ class TestShadowReportIntegration:
                 from scripts.shadow_report import ShadowRecord, compute_report
 
                 config = PipelineConfig(
-                    notion_api_key="test",
-                    notion_database_id="test-db",
                     db_path=db_path,
+                    warmup_suppression_cache=False,
                     use_thesis_filter=True,
                 )
                 pipeline = DiscoveryPipeline(config)
@@ -262,7 +259,7 @@ class TestShadowReportIntegration:
                     )
 
                 # Process all signals
-                await pipeline.process_pending(dry_run=True)
+                await pipeline.process_pending(dry_run=False)
 
                 # Get shadow logs
                 logs = await pipeline._store.get_shadow_logs(feature_name="thesis_match")

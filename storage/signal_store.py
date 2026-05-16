@@ -2093,15 +2093,18 @@ class SignalStore:
         """
         if not self._db:
             raise RuntimeError("Database not initialized. Call initialize() first.")
-        self._ensure_writable()
 
         async with self._lock:
             try:
                 await self._db.execute("BEGIN")
                 yield self._db
                 await self._db.commit()
-            except Exception:
+            except Exception as e:
                 await self._db.rollback()
+                if self.read_only and "readonly" in str(e).lower():
+                    raise ReadOnlyStoreError(
+                        f"SignalStore is read-only; write attempted against {self.db_path}"
+                    ) from e
                 raise
 
     @asynccontextmanager
