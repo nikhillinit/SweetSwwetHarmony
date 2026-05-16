@@ -87,6 +87,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class ReadOnlyStoreError(RuntimeError):
+    """Raised when code attempts to write through a read-only store."""
+
+
 # =============================================================================
 # SCHEMA VERSION
 # =============================================================================
@@ -1992,6 +1996,7 @@ class SignalStore:
         suppression_ttl_days: int = 7,
         identity_store: Optional[EntityIdentityStore] = None,
         use_thin_files: bool = False,
+        read_only: bool = False,
     ):
         """
         Initialize signal store.
@@ -2002,12 +2007,14 @@ class SignalStore:
             suppression_ttl_days: How long to cache Notion entries before re-checking
             identity_store: Phase G EntityIdentityStore for company_id resolution
             use_thin_files: Enable thin file upsert on save_signal()
+            read_only: Open with SQLite query-only mode and skip bootstrap writes.
         """
         from utils.db_path_helper import resolve_db_path_env
         self.db_path = Path(resolve_db_path_env(db_path))
         self.suppression_ttl_days = suppression_ttl_days
         self._identity_store = identity_store
         self._use_thin_files = use_thin_files
+        self.read_only = read_only
         self._db: Optional[aiosqlite.Connection] = None
         self._lock = asyncio.Lock()
 
@@ -2016,6 +2023,19 @@ class SignalStore:
         Initialize database connection and apply migrations.
         Should be called once at startup.
         """
+        if self.read_only:
+            if str(self.db_path) != ":memory:" and not self.db_path.exists():
+                raise FileNotFoundError(
+                    f"Read-only SignalStore requires an existing database: {self.db_path}"
+                )
+
+            self._db = await aiosqlite.connect(str(self.db_path))
+            await self._db.execute("PRAGMA busy_timeout = 5000")
+            await self._db.execute("PRAGMA foreign_keys = ON")
+            await self._db.execute("PRAGMA query_only = ON")
+            logger.info(f"SignalStore initialized read-only: {self.db_path}")
+            return
+
         # Create parent directories if needed
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -2042,6 +2062,18 @@ class SignalStore:
 
         logger.info(f"SignalStore initialized: {self.db_path}")
 
+    async def enable_read_only(self) -> None:
+        """Enable SQLite query-only mode on an existing connection."""
+        self.read_only = True
+        if self._db:
+            await self._db.execute("PRAGMA query_only = ON")
+
+    def _ensure_writable(self) -> None:
+        if self.read_only:
+            raise ReadOnlyStoreError(
+                f"SignalStore is read-only; write attempted against {self.db_path}"
+            )
+
     async def close(self) -> None:
         """Close database connection."""
         if self._db:
@@ -2067,8 +2099,12 @@ class SignalStore:
                 await self._db.execute("BEGIN")
                 yield self._db
                 await self._db.commit()
-            except Exception:
+            except Exception as e:
                 await self._db.rollback()
+                if self.read_only and "readonly" in str(e).lower():
+                    raise ReadOnlyStoreError(
+                        f"SignalStore is read-only; write attempted against {self.db_path}"
+                    ) from e
                 raise
 
     @asynccontextmanager
@@ -2086,6 +2122,7 @@ class SignalStore:
         """
         if not self._db:
             raise RuntimeError("Database not initialized. Call initialize() first.")
+        self._ensure_writable()
 
         async with self._lock:
             try:
@@ -2650,6 +2687,7 @@ class SignalStore:
         """
         if not self._db:
             raise RuntimeError("Database not initialized")
+        self._ensure_writable()
 
         if self._use_thin_files and not self._identity_store:
             raise RuntimeError(
@@ -3016,6 +3054,7 @@ class SignalStore:
         """Mark a signal as successfully pushed to Notion."""
         if not self._db:
             raise RuntimeError("Database not initialized")
+        self._ensure_writable()
 
         now = datetime.now(timezone.utc).isoformat()
 
@@ -3050,6 +3089,7 @@ class SignalStore:
         """Mark a signal as rejected (won't be pushed)."""
         if not self._db:
             raise RuntimeError("Database not initialized")
+        self._ensure_writable()
 
         now = datetime.now(timezone.utc).isoformat()
 
@@ -3084,6 +3124,7 @@ class SignalStore:
         """Mark a signal as held (blocked by configuration, not a content rejection)."""
         if not self._db:
             raise RuntimeError("Database not initialized")
+        self._ensure_writable()
 
         now = datetime.now(timezone.utc).isoformat()
 
@@ -3117,6 +3158,7 @@ class SignalStore:
         """Mark a signal as queued for Notion write."""
         if not self._db:
             raise RuntimeError("Database not initialized")
+        self._ensure_writable()
 
         now = datetime.now(timezone.utc).isoformat()
 
@@ -3177,6 +3219,7 @@ class SignalStore:
         """
         if not self._db:
             raise RuntimeError("Database not initialized")
+        self._ensure_writable()
 
         now = datetime.now(timezone.utc).isoformat()
 
@@ -3343,6 +3386,7 @@ class SignalStore:
         """
         if not self._db:
             raise RuntimeError("Database not initialized")
+        self._ensure_writable()
 
         now = datetime.now(timezone.utc).isoformat()
 
@@ -3602,6 +3646,7 @@ class SignalStore:
         """
         if not self._db:
             raise RuntimeError("Database not initialized")
+        self._ensure_writable()
 
         now = datetime.now(timezone.utc).isoformat()
 
@@ -3656,6 +3701,7 @@ class SignalStore:
         """
         if not self._db:
             raise RuntimeError("Database not initialized")
+        self._ensure_writable()
 
         now = datetime.now(timezone.utc).isoformat()
 
@@ -3701,6 +3747,7 @@ class SignalStore:
         """
         if not self._db:
             raise RuntimeError("Database not initialized")
+        self._ensure_writable()
 
         now = datetime.now(timezone.utc).isoformat()
 
@@ -3997,6 +4044,7 @@ class SignalStore:
         """
         if not self._db:
             raise RuntimeError("Database not initialized")
+        self._ensure_writable()
 
         count = 0
 
@@ -4175,6 +4223,7 @@ class SignalStore:
         """
         if not self._db:
             raise RuntimeError("Database not initialized")
+        self._ensure_writable()
 
         run_id = str(uuid.uuid4())
         now = datetime.now(timezone.utc).isoformat()
@@ -4342,6 +4391,7 @@ class SignalStore:
         """
         if not self._db:
             raise RuntimeError("Database not initialized")
+        self._ensure_writable()
 
         now = datetime.now(timezone.utc).isoformat()
         error_messages_json = json.dumps(metrics.error_messages) if metrics.error_messages else None
@@ -4503,6 +4553,7 @@ class SignalStore:
         """
         if not self._db:
             raise RuntimeError("Database not initialized")
+        self._ensure_writable()
 
         now = datetime.now(timezone.utc).isoformat()
 
@@ -4679,6 +4730,7 @@ class SignalStore:
         """
         if not self._db:
             raise RuntimeError("Database not initialized")
+        self._ensure_writable()
 
         company_id = schema["company_id"]
 
@@ -4851,6 +4903,7 @@ class SignalStore:
         """
         if not self._db:
             raise RuntimeError("Database not initialized")
+        self._ensure_writable()
 
         # Serialize evidence and exit_type_probabilities to JSON
         evidence_json = json.dumps(
@@ -6688,6 +6741,7 @@ class SignalStore:
         """
         if not self._db:
             raise RuntimeError("Database not initialized")
+        self._ensure_writable()
 
         if evaluation_origin == "pipeline" and routing_config is None:
             raise ValueError("routing_config is required for pipeline evaluations")
