@@ -38,6 +38,7 @@ from verification.verification_gate_v2 import (
     VerificationResult,
     VerificationStatus,
 )
+from utils.thesis_filter import RoutingDecision, ThesisFilterResult
 from workflows.pipeline import DiscoveryPipeline, PipelineConfig, PipelineStats
 from utils.signal_consolidator import ConsolidatedSignal
 
@@ -100,6 +101,7 @@ def _make_test_signal(
     canonical_key: str = "domain:test-dry-run.com",
     company_name: str = "DryRunTestCo",
     confidence: float = 0.8,
+    company_id: str | None = None,
 ) -> StoredSignal:
     """Build a minimal StoredSignal suitable for _process_company tests."""
     return StoredSignal(
@@ -112,7 +114,7 @@ def _make_test_signal(
         raw_data={"url": "https://github.com/test/repo", "stars": 500},
         detected_at=datetime(2026, 1, 15, tzinfo=timezone.utc),
         created_at=datetime(2026, 1, 15, tzinfo=timezone.utc),
-        company_id=None,
+        company_id=company_id,
         processing_status="pending",
         notion_page_id=None,
         processed_at=None,
@@ -141,6 +143,54 @@ def _make_auto_push_verification() -> VerificationResult:
         signals_used=["github_trending"],
         sources_checked=["github"],
         verification_details=[],
+    )
+
+
+def _make_reject_verification(reason: str = "Rejected by verification") -> VerificationResult:
+    """Build a VerificationResult with REJECT decision."""
+    return VerificationResult(
+        decision=PushDecision.REJECT,
+        verification_status=VerificationStatus.SINGLE_SOURCE,
+        confidence_score=0.2,
+        confidence_breakdown={"overall": 0.2},
+        reason=reason,
+        suggested_status="Rejected",
+        signals_used=["github_trending"],
+        sources_checked=["github"],
+        verification_details=[],
+    )
+
+
+def _make_consolidated_signal() -> ConsolidatedSignal:
+    """Build a minimal ConsolidatedSignal for thesis-filter tests."""
+    return ConsolidatedSignal(
+        canonical_key="domain:test-dry-run.com",
+        company_name="DryRunTestCo",
+        contributing_signal_ids=[1],
+        signal_types=["github_trending"],
+        source_apis=["github"],
+        aggregated_confidence=0.8,
+        earliest_detected_at=datetime(2026, 1, 15, tzinfo=timezone.utc),
+        latest_detected_at=datetime(2026, 1, 15, tzinfo=timezone.utc),
+        merged_raw_data={},
+        descriptions=["Consumer wellness product with recurring usage"],
+    )
+
+
+def _make_thesis_result(routing: RoutingDecision) -> ThesisFilterResult:
+    """Build a deterministic thesis-filter result for dry-run tests."""
+    return ThesisFilterResult(
+        routing=routing,
+        keyword_score=0.85 if routing == RoutingDecision.QUALIFIED else 0.15,
+        keyword_category="Consumer Health Tech",
+        keyword_matches=["wellness"],
+        negative_keywords=["enterprise"] if routing == RoutingDecision.REJECTED else [],
+        llm_score=0.9 if routing == RoutingDecision.QUALIFIED else 0.1,
+        llm_category="Consumer Health Tech",
+        llm_rationale="Deterministic test fixture",
+        llm_classification_status="success",
+        confidence_adjustment=0.05 if routing == RoutingDecision.QUALIFIED else -0.05,
+        thesis_fit=0.8 if routing == RoutingDecision.QUALIFIED else 0.1,
     )
 
 
@@ -192,11 +242,21 @@ def _build_pipeline(
     mock_store.mark_queued = AsyncMock()
     mock_store.log_shadow_computation = AsyncMock()
     mock_store.update_signal_status = AsyncMock()
+    mock_store.save_thesis_classification = AsyncMock()
+    mock_store.save_confidence_ledger = AsyncMock(return_value=101)
+    mock_store.store_exit_prediction = AsyncMock()
+    mock_store.has_active_schema = AsyncMock(return_value=False)
+    mock_store.save_functional_schema = AsyncMock()
     pipeline._store = mock_store
 
     # -- Mock the verification gate to return AUTO_PUSH --
     mock_gate = MagicMock(spec=VerificationGate)
     mock_gate.evaluate = MagicMock(return_value=_make_auto_push_verification())
+    mock_gate.POLICY_VERSION = "test-policy"
+    mock_gate.HIGH_CONFIDENCE_THRESHOLD = 0.7
+    mock_gate.MEDIUM_CONFIDENCE_THRESHOLD = 0.4
+    mock_gate.score_recalibration_factor = 1.0
+    mock_gate.strict_mode = False
     pipeline._gate = mock_gate
 
     # -- Set up Notion connector mock (or None) --
@@ -217,6 +277,10 @@ def _build_pipeline(
 
     # -- Provide a PipelineStats so shadow log writes don't crash --
     pipeline._run_stats = PipelineStats()
+
+    # -- Disable feature-state persistence so tests can target specific writes --
+    pipeline._feature_registry = MagicMock()
+    pipeline._feature_registry.is_enabled.return_value = False
 
     # -- Disable notifier (Slack) --
     pipeline._notifier = None
@@ -577,11 +641,7 @@ class TestDryRunEdgeCases:
 
     @pytest.mark.asyncio
     async def test_suppressed_signal_not_affected_by_dry_run_fix(self, pipeline_db):
-        """Suppressed signals should be rejected regardless of dry_run flag.
-
-        The suppression check happens before the dry-run branch, so suppressed
-        signals are always mark_rejected (not affected by this fix).
-        """
+        """Suppressed signals should stay simulated during dry run."""
         pipeline = _build_pipeline(pipeline_db=pipeline_db, with_notion=True)
 
         # Mock suppression to return a match
@@ -594,10 +654,178 @@ class TestDryRunEdgeCases:
 
         result = await pipeline._process_company(signals, dry_run=True)
 
-        # Suppressed signals get rejected regardless of dry_run
         assert result["decision"] == PushDecision.REJECT
         assert result["reason"] == "Suppressed"
-        pipeline._store.mark_rejected.assert_called_once()
+        pipeline._store.mark_rejected.assert_not_called()
+
+
+class TestDryRunRegressionCoverage:
+    """Failing-first coverage for read-only process dry runs."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("routing", "expected_decision"),
+        [
+            (RoutingDecision.REJECTED, PushDecision.REJECT),
+            (RoutingDecision.HELD, PushDecision.HOLD),
+        ],
+        ids=["thesis-rejected", "thesis-held"],
+    )
+    async def test_thesis_nonqualified_dry_run_does_not_persist(
+        self,
+        pipeline_db,
+        routing: RoutingDecision,
+        expected_decision: PushDecision,
+    ):
+        pipeline = _build_pipeline(pipeline_db=pipeline_db, with_notion=False)
+        pipeline._thesis_filter = MagicMock()
+        pipeline._thesis_filter.classify = AsyncMock(return_value=_make_thesis_result(routing))
+
+        result = await pipeline._process_company(
+            [_make_test_signal()],
+            dry_run=True,
+            consolidated=_make_consolidated_signal(),
+        )
+
+        assert result["decision"] == expected_decision
+        pipeline._store.save_thesis_classification.assert_not_called()
+        pipeline._store.mark_rejected.assert_not_called()
+        pipeline._store.update_signal_status.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_thesis_qualified_dry_run_does_not_persist_classification(self, pipeline_db):
+        pipeline = _build_pipeline(pipeline_db=pipeline_db, with_notion=False)
+        pipeline._thesis_filter = MagicMock()
+        pipeline._thesis_filter.classify = AsyncMock(
+            return_value=_make_thesis_result(RoutingDecision.QUALIFIED)
+        )
+
+        result = await pipeline._process_company(
+            [_make_test_signal()],
+            dry_run=True,
+            consolidated=_make_consolidated_signal(),
+        )
+
+        assert result["decision"] == PushDecision.AUTO_PUSH
+        pipeline._store.save_thesis_classification.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_verification_reject_dry_run_does_not_mark_rejected(self, pipeline_db):
+        pipeline = _build_pipeline(pipeline_db=pipeline_db, with_notion=False)
+        pipeline._gate.evaluate = MagicMock(
+            return_value=_make_reject_verification("verification reject")
+        )
+
+        result = await pipeline._process_company([_make_test_signal()], dry_run=True)
+
+        assert result["decision"] == PushDecision.REJECT
+        pipeline._store.mark_rejected.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_confidence_ledger_not_persisted_in_dry_run(self, pipeline_db):
+        pipeline = _build_pipeline(pipeline_db=pipeline_db, with_notion=False)
+
+        result = await pipeline._process_company([_make_test_signal()], dry_run=True)
+
+        assert result["decision"] == PushDecision.AUTO_PUSH
+        pipeline._store.save_confidence_ledger.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_functional_schema_not_persisted_in_dry_run(self, pipeline_db):
+        pipeline = _build_pipeline(pipeline_db=pipeline_db, with_notion=False)
+        schema = MagicMock()
+        schema.customer_archetype = "consumer wellness buyer"
+        schema.to_storage_dict.return_value = {
+            "company_id": "company-test",
+            "customer_archetype": "consumer wellness buyer",
+        }
+        pipeline._schema_extractor = MagicMock()
+        pipeline._schema_extractor.extract = AsyncMock(return_value=schema)
+
+        result = await pipeline._process_company(
+            [_make_test_signal(company_id="company-test")],
+            dry_run=True,
+            consolidated=_make_consolidated_signal(),
+        )
+
+        assert result["schema_extracted"] is True
+        pipeline._store.save_functional_schema.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_exit_prediction_not_persisted_in_dry_run(self, pipeline_db):
+        pipeline = _build_pipeline(pipeline_db=pipeline_db, with_notion=False)
+        exit_prediction = MagicMock()
+        exit_prediction.deal_quality_score = 0.71
+        exit_prediction.recommendation = "track"
+        pipeline._exit_predictor = MagicMock()
+        pipeline._exit_predictor.predict = AsyncMock(return_value=exit_prediction)
+
+        result = await pipeline._process_company(
+            [_make_test_signal()],
+            dry_run=True,
+            consolidated=_make_consolidated_signal(),
+        )
+
+        assert result["decision"] == PushDecision.AUTO_PUSH
+        pipeline._exit_predictor.predict.assert_awaited_once()
+        pipeline._store.store_exit_prediction.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_investor_matching_dry_run_forces_no_persistence(self, pipeline_db):
+        pipeline = _build_pipeline(pipeline_db=pipeline_db, with_notion=False)
+        investor_match_result = MagicMock()
+        investor_match_result.matches = []
+        pipeline._investor_matcher = MagicMock()
+        pipeline._investor_matcher.match = AsyncMock(return_value=investor_match_result)
+        consolidated = _make_consolidated_signal()
+        consolidated.description = "Consumer wellness product with recurring usage"
+
+        result = await pipeline._process_company(
+            [_make_test_signal()],
+            dry_run=True,
+            consolidated=consolidated,
+        )
+
+        assert result["decision"] == PushDecision.AUTO_PUSH
+        pipeline._investor_matcher.match.assert_awaited_once()
+        assert pipeline._investor_matcher.match.await_args.kwargs["save_results"] is False
+
+    @pytest.mark.asyncio
+    async def test_process_stage_exception_dry_run_does_not_mark_rejected(self, pipeline_db):
+        pipeline = _build_pipeline(pipeline_db=pipeline_db, with_notion=False)
+        pipeline._store.get_pending_signals = AsyncMock(return_value=[_make_test_signal()])
+        pipeline._process_company = AsyncMock(side_effect=RuntimeError("boom"))
+
+        stats = await pipeline._process_signals_stage(dry_run=True)
+
+        assert stats["processed"] == 0
+        pipeline._store.mark_rejected.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_process_pending_dry_run_skips_run_history_tracking(self, pipeline_db):
+        pipeline = _build_pipeline(pipeline_db=pipeline_db, with_notion=False)
+        expected_stats = {
+            "processed": 0,
+            "auto_push": 0,
+            "needs_review": 0,
+            "held": 0,
+            "rejected": 0,
+            "prospects_created": 0,
+            "prospects_updated": 0,
+            "prospects_skipped": 0,
+        }
+        pipeline.initialize = AsyncMock()
+        pipeline._process_signals_stage = AsyncMock(return_value=expected_stats)
+        pipeline._begin_run_tracking = AsyncMock()
+        pipeline._end_run_tracking = AsyncMock()
+        pipeline._drain_notion_outbox = AsyncMock()
+
+        result = await pipeline.process_pending(dry_run=True)
+
+        assert result == expected_stats
+        pipeline._begin_run_tracking.assert_not_called()
+        pipeline._end_run_tracking.assert_not_called()
+        pipeline._drain_notion_outbox.assert_not_called()
 
 
 # =============================================================================

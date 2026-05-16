@@ -538,6 +538,7 @@ async def cmd_process(args):
         config.db_path = args.db_path
     if args.batch_size:
         config.batch_size = args.batch_size
+    config.read_only = args.dry_run
 
     # Feature flags
     if hasattr(args, "disable_gating") and args.disable_gating:
@@ -552,8 +553,6 @@ async def cmd_process(args):
     pipeline = DiscoveryPipeline(config)
 
     try:
-        await pipeline.initialize()
-
         source_api_filter = getattr(args, 'source_api', None)
 
         print(f"\nDatabase: {config.db_path}")

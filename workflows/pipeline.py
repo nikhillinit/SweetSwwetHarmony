@@ -154,6 +154,7 @@ class PipelineConfig:
     # Execution
     parallel_collectors: bool = True  # Run collectors in parallel
     batch_size: int = 50             # Process signals in batches
+    read_only: bool = False          # Defensive no-write mode for process dry-runs
 
     # Verification
     strict_mode: bool = False        # Require 2+ sources for auto-push
@@ -258,6 +259,7 @@ class PipelineConfig:
             companies_house_api_key=os.getenv("COMPANIES_HOUSE_API_KEY"),
             parallel_collectors=os.getenv("PARALLEL_COLLECTORS", "true").lower() == "true",
             batch_size=int(os.getenv("BATCH_SIZE", "50")),
+            read_only=os.getenv("PIPELINE_READ_ONLY", "false").lower() == "true",
             strict_mode=os.getenv("STRICT_MODE", "false").lower() == "true",
             warmup_suppression_cache=os.getenv("WARMUP_SUPPRESSION_CACHE", "true").lower() == "true",
             use_gating=os.getenv("USE_GATING", "true").lower() == "true",
@@ -539,22 +541,38 @@ class DiscoveryPipeline:
         # Collector metrics for current run
         self._collector_metrics: List[CollectorMetrics] = []
 
-    async def initialize(self) -> None:
+    async def initialize(self, read_only: Optional[bool] = None) -> None:
         """Initialize pipeline components"""
+        if read_only is not None:
+            self.config.read_only = read_only
+
         if self._initialized:
+            if self.config.read_only:
+                await self._enable_read_only_mode()
+            elif self._store and getattr(self._store, "read_only", False):
+                raise RuntimeError(
+                    "DiscoveryPipeline cannot switch from read-only to write mode; "
+                    "create a new pipeline instance for live processing"
+                )
             return
 
-        logger.info("Initializing discovery pipeline...")
+        logger.info(
+            "Initializing discovery pipeline%s...",
+            " (read-only)" if self.config.read_only else "",
+        )
 
         # Initialize signal store
         self._store = SignalStore(
             db_path=self.config.db_path,
             use_thin_files=self.config.use_thin_files,
+            read_only=self.config.read_only,
         )
         await self._store.initialize()
 
         # Initialize Notion connector (if credentials provided)
-        if self.config.notion_api_key and self.config.notion_database_id:
+        if self.config.read_only:
+            logger.info("Read-only mode enabled - Notion writes and warmup are disabled")
+        elif self.config.notion_api_key and self.config.notion_database_id:
             self._notion_transport = NotionTransport(api_key=self.config.notion_api_key)
             await self._notion_transport.start()
 
@@ -580,7 +598,9 @@ class DiscoveryPipeline:
         self._gate = VerificationGate(strict_mode=self.config.strict_mode)
 
         # Initialize SourceAssetStore (if enabled)
-        if self.config.use_asset_store:
+        if self.config.use_asset_store and self.config.read_only:
+            logger.info("Read-only mode enabled - SourceAssetStore initialization skipped")
+        elif self.config.use_asset_store:
             self._asset_store = SourceAssetStore(db_path=self.config.asset_store_path)
             await self._asset_store.initialize()
             logger.info("SourceAssetStore initialized")
@@ -597,14 +617,20 @@ class DiscoveryPipeline:
             self._entity_resolver = EntityResolver(resolver_config)
 
             # Initialize EntityResolutionStore
-            self._entity_resolution_store = EntityResolutionStore(db_path=self.config.db_path)
+            self._entity_resolution_store = EntityResolutionStore(
+                db_path=self.config.db_path,
+                read_only=self.config.read_only,
+            )
             await self._entity_resolution_store.initialize()
 
             logger.info("EntityResolver + EntityResolutionStore initialized")
 
         # Initialize FounderStore (if founder scoring enabled)
         if self.config.use_founder_scoring:
-            self._founder_store = FounderStore(db_path=self.config.db_path)
+            self._founder_store = FounderStore(
+                db_path=self.config.db_path,
+                read_only=self.config.read_only,
+            )
             await self._founder_store.initialize()
             logger.info("FounderStore initialized (founder intelligence enabled)")
 
@@ -704,7 +730,9 @@ class DiscoveryPipeline:
         logger.info("Shared HTTP client initialized (Phase C)")
 
         # Warmup suppression cache (non-fatal if it fails)
-        if self.config.warmup_suppression_cache:
+        if self.config.read_only and self.config.warmup_suppression_cache:
+            logger.info("Read-only mode enabled - suppression cache warmup skipped")
+        elif self.config.warmup_suppression_cache:
             try:
                 await self._warmup_suppression_cache()
             except Exception as e:
@@ -712,6 +740,16 @@ class DiscoveryPipeline:
 
         self._initialized = True
         logger.info("Pipeline initialization complete")
+
+    async def _enable_read_only_mode(self) -> None:
+        """Turn existing store connections into defensive no-write connections."""
+        self.config.read_only = True
+        if self._store:
+            await self._store.enable_read_only()
+        if self._entity_resolution_store:
+            await self._entity_resolution_store.enable_read_only()
+        if self._founder_store:
+            await self._founder_store.enable_read_only()
 
     async def close(self) -> None:
         """Clean up resources"""
@@ -901,6 +939,10 @@ class DiscoveryPipeline:
 
         Non-fatal: Called with try/except in initialize().
         """
+        if self.config.read_only:
+            logger.info("Read-only mode enabled, skipping suppression cache warmup")
+            return
+
         if not self._notion:
             logger.info("Notion connector not available, skipping warmup")
             return
@@ -1214,18 +1256,21 @@ class DiscoveryPipeline:
         Returns:
             Dictionary with processing statistics
         """
-        await self.initialize()
+        await self.initialize(read_only=dry_run)
 
         from monitoring.feature_gate import compute_config_snapshot
-        await self._begin_run_tracking(
-            "pipeline",
-            {
-                "mode": "process_only",
-                "dry_run": dry_run,
-                "source_api_filter": source_api,
-                "config_snapshot": compute_config_snapshot(),
-            },
-        )
+        if dry_run:
+            logger.info("Dry-run process is read-only; persistent run tracking skipped")
+        else:
+            await self._begin_run_tracking(
+                "pipeline",
+                {
+                    "mode": "process_only",
+                    "dry_run": dry_run,
+                    "source_api_filter": source_api,
+                    "config_snapshot": compute_config_snapshot(),
+                },
+            )
 
         logger.info(f"Processing pending signals (dry_run={dry_run}, source_api={source_api})")
 
@@ -1243,9 +1288,10 @@ class DiscoveryPipeline:
             run_error = str(e)
             raise
         finally:
-            await self._end_run_tracking(
-                success=run_error is None, error=run_error,
-            )
+            if not dry_run:
+                await self._end_run_tracking(
+                    success=run_error is None, error=run_error,
+                )
 
         return process_stats
 
@@ -1825,7 +1871,7 @@ class DiscoveryPipeline:
         entity_id_map: Dict[str, str] = {}  # canonical_key -> entity_id
         if self.config.use_phase_g_identity_resolution and self._phase_g_resolver:
             by_key, entity_id_map, phase_g_stats = await self._apply_phase_g_identity_resolution(
-                pending, by_key
+                pending, by_key, dry_run=dry_run
             )
             stats["phase_g_entities_resolved"] = phase_g_stats.get("entities_resolved", 0)
             stats["phase_g_merges"] = phase_g_stats.get("merges", 0)
@@ -1836,12 +1882,16 @@ class DiscoveryPipeline:
 
         # Wave 2: Shadow entity resolution (read-only comparison)
         if self.config.use_shadow_entity_resolution:
-            try:
-                shadow_stats = await self._run_shadow_entity_comparison(pending)
-                stats["shadow_entity"] = shadow_stats
-            except Exception as e:
-                logger.warning("Shadow entity comparison failed (non-fatal): %s", e)
-                stats["shadow_entity"] = {"error": str(e)}
+            if dry_run:
+                logger.info("Dry-run: skipping persistent shadow entity comparison")
+                stats["shadow_entity"] = {"status": "skipped", "reason": "dry_run"}
+            else:
+                try:
+                    shadow_stats = await self._run_shadow_entity_comparison(pending)
+                    stats["shadow_entity"] = shadow_stats
+                except Exception as e:
+                    logger.warning("Shadow entity comparison failed (non-fatal): %s", e)
+                    stats["shadow_entity"] = {"error": str(e)}
 
         # Consolidate signals if enabled
         consolidated_map: Dict[str, ConsolidatedSignal] = {}
@@ -1910,9 +1960,17 @@ class DiscoveryPipeline:
             except Exception as e:
                 logger.exception(f"Error processing company {canonical_key}")
 
-                # Mark signals as rejected
-                for sig in company_signals:
-                    await self._store.mark_rejected(sig.id, str(e))
+                if dry_run:
+                    logger.info(
+                        "[DRY RUN] Would mark %s signals for %s rejected after error: %s",
+                        len(company_signals),
+                        canonical_key,
+                        e,
+                    )
+                else:
+                    # Mark signals as rejected
+                    for sig in company_signals:
+                        await self._store.mark_rejected(sig.id, str(e))
 
         # Calculate average enrichment boost
         if stats["enrichment_boosts_applied"] > 0:
@@ -2010,13 +2068,20 @@ class DiscoveryPipeline:
                 f"(Notion: {suppressed.notion_page_id}, status: {suppressed.status})"
             )
 
-            # Mark as rejected (already in CRM)
-            for sig in signals:
-                await self._store.mark_rejected(
-                    sig.id,
-                    f"Suppressed: already in Notion with status {suppressed.status}",
-                    metadata={"notion_page_id": suppressed.notion_page_id},
+            if dry_run:
+                logger.info(
+                    "[DRY RUN] Would reject %s as suppressed by Notion status %s",
+                    canonical_key,
+                    suppressed.status,
                 )
+            else:
+                # Mark as rejected (already in CRM)
+                for sig in signals:
+                    await self._store.mark_rejected(
+                        sig.id,
+                        f"Suppressed: already in Notion with status {suppressed.status}",
+                        metadata={"notion_page_id": suppressed.notion_page_id},
+                    )
 
             return {
                 "decision": PushDecision.REJECT,
@@ -2049,7 +2114,7 @@ class DiscoveryPipeline:
                     )
 
                     # Create asset-to-lead link in EntityResolutionStore
-                    if self._entity_resolution_store:
+                    if self._entity_resolution_store and not dry_run:
                         try:
                             link = AssetToLead(
                                 asset_id=primary_asset.id or 0,
@@ -2064,6 +2129,12 @@ class DiscoveryPipeline:
                             logger.debug(f"Created asset-to-lead link: {primary_asset.external_id} → {best_candidate.lead_canonical_key}")
                         except Exception as e:
                             logger.warning(f"Failed to create asset-to-lead link (non-fatal): {e}")
+                    elif self._entity_resolution_store and dry_run:
+                        logger.info(
+                            "[DRY RUN] Would create asset-to-lead link: %s -> %s",
+                            primary_asset.external_id,
+                            best_candidate.lead_canonical_key,
+                        )
 
                     # If resolved key differs and has higher confidence, log it
                     if best_candidate.lead_canonical_key != canonical_key:
@@ -2138,7 +2209,7 @@ class DiscoveryPipeline:
                 boilerplate_match = self._boilerplate_detector.detect_from_raw_data(combined_raw)
 
                 # SHADOW log the result (don't affect routing)
-                if self._store:
+                if self._store and not dry_run:
                     shadow_data = self._boilerplate_detector.get_shadow_log_data(
                         self._boilerplate_detector.extract_tokens(combined_raw),
                         boilerplate_match,
@@ -2157,6 +2228,11 @@ class DiscoveryPipeline:
                             f"matches {boilerplate_match.signature_name} "
                             f"({boilerplate_match.similarity:.0%})"
                         )
+                elif self._store and dry_run:
+                    logger.info(
+                        "[DRY RUN] Would log boilerplate shadow computation for %s",
+                        canonical_key,
+                    )
 
             except Exception as e:
                 logger.debug(f"Boilerplate detection failed (non-fatal): {e}")
@@ -2185,7 +2261,7 @@ class DiscoveryPipeline:
                 # Written when thesis_match feature is enabled. Routing is also
                 # reconstructable from classification row data when shadow log
                 # is unavailable.
-                if self._feature_registry.is_enabled("thesis_match"):
+                if self._feature_registry.is_enabled("thesis_match") and not dry_run:
                     try:
                         shadow_data = {
                             "keyword_score": thesis_result.keyword_score,
@@ -2208,12 +2284,17 @@ class DiscoveryPipeline:
                         self._run_stats.shadow_logs_written += 1
                     except Exception as e:
                         logger.debug(f"Failed to log thesis_match shadow (non-fatal): {e}")
+                elif self._feature_registry.is_enabled("thesis_match") and dry_run:
+                    logger.info(
+                        "[DRY RUN] Would log thesis_match shadow computation for %s",
+                        canonical_key,
+                    )
 
                 # Route based on thesis result (with per-path classification persistence)
                 _classification_persisted = False
                 if thesis_result.routing == RoutingDecision.REJECTED:
                     # Persist classification for rejected signal (no competitor data)
-                    if self._store and signals:
+                    if self._store and signals and not dry_run:
                         try:
                             await self._store.save_thesis_classification(
                                 signal_id=signals[0].id,
@@ -2248,16 +2329,22 @@ class DiscoveryPipeline:
                             logger.warning(f"Failed to save thesis classification (non-fatal): {e}")
                     if not is_shadow:
                         logger.info(f"Thesis REJECTED: {canonical_key}")
-                        for sig in signals:
-                            await self._store.mark_rejected(
-                                sig.id,
-                                f"Thesis rejected: negative keywords {thesis_result.negative_keywords}",
+                        if dry_run:
+                            logger.info(
+                                "[DRY RUN] Would mark %s rejected by thesis filter",
+                                canonical_key,
                             )
-                        await self._store.update_signal_status(
-                            canonical_key,
-                            "rejected",
-                            error_message=f"Thesis rejected: {thesis_result.negative_keywords}",
-                        )
+                        else:
+                            for sig in signals:
+                                await self._store.mark_rejected(
+                                    sig.id,
+                                    f"Thesis rejected: negative keywords {thesis_result.negative_keywords}",
+                                )
+                            await self._store.update_signal_status(
+                                canonical_key,
+                                "rejected",
+                                error_message=f"Thesis rejected: {thesis_result.negative_keywords}",
+                            )
                         return {
                             "decision": PushDecision.REJECT,
                             "reason": f"Thesis rejected: {thesis_result.negative_keywords}",
@@ -2270,7 +2357,7 @@ class DiscoveryPipeline:
 
                 elif thesis_result.routing == RoutingDecision.HELD:
                     # Persist classification for held signal (no competitor data)
-                    if self._store and signals:
+                    if self._store and signals and not dry_run:
                         try:
                             await self._store.save_thesis_classification(
                                 signal_id=signals[0].id,
@@ -2305,11 +2392,17 @@ class DiscoveryPipeline:
                             logger.warning(f"Failed to save thesis classification (non-fatal): {e}")
                     if not is_shadow:
                         logger.info(f"Thesis HELD: {canonical_key}")
-                        await self._store.update_signal_status(
-                            canonical_key,
-                            "held",
-                            error_message=f"Thesis held: score {thesis_result.keyword_score:.2f} below threshold",
-                        )
+                        if dry_run:
+                            logger.info(
+                                "[DRY RUN] Would mark %s held by thesis filter",
+                                canonical_key,
+                            )
+                        else:
+                            await self._store.update_signal_status(
+                                canonical_key,
+                                "held",
+                                error_message=f"Thesis held: score {thesis_result.keyword_score:.2f} below threshold",
+                            )
                         return {
                             "decision": PushDecision.HOLD,
                             "reason": f"Thesis held: score {thesis_result.keyword_score:.2f} below threshold",
@@ -2336,7 +2429,7 @@ class DiscoveryPipeline:
 
                 # Persist classification with competitor data (qualified path only —
                 # skip if already persisted for shadow-rejected/held signals)
-                if self._store and signals and not _classification_persisted:
+                if self._store and signals and not _classification_persisted and not dry_run:
                     try:
                         await self._store.save_thesis_classification(
                             signal_id=signals[0].id,
@@ -2402,7 +2495,13 @@ class DiscoveryPipeline:
                         evidence_signal_ids=[s.id for s in signals],
                     )
                     if schema:
-                        await self._store.save_functional_schema(schema.to_storage_dict())
+                        if dry_run:
+                            logger.info(
+                                "[DRY RUN] Would persist functional schema for %s",
+                                canonical_key,
+                            )
+                        else:
+                            await self._store.save_functional_schema(schema.to_storage_dict())
                         schema_extracted = True
                         logger.info(
                             f"Schema extracted for {canonical_key}: {schema.customer_archetype}"
@@ -2488,34 +2587,41 @@ class DiscoveryPipeline:
         )
 
         # Persist confidence ledger (non-fatal, like exit_prediction below)
-        try:
-            ledger_id = await self._store.save_confidence_ledger(
-                canonical_key=canonical_key,
-                verification_result=verification,
-                signal_ids=[s.id for s in signals],
-                execution_id=self._execution_id or None,
-                company_id=signals[0].company_id if signals else None,
-                is_dry_run=dry_run,
-                evaluation_origin="pipeline",
-                policy_version=self._gate.POLICY_VERSION,
-                routing_config={
-                    "high_threshold": self._gate.HIGH_CONFIDENCE_THRESHOLD,
-                    "medium_threshold": self._gate.MEDIUM_CONFIDENCE_THRESHOLD,
-                    "score_scale": self._gate.score_recalibration_factor,
-                    "strict_mode": self._gate.strict_mode,
-                },
-            )
+        if dry_run:
             logger.info(
-                "confidence_ledger_saved canonical_key=%s decision=%s gate_score=%.3f signals=%d ledger_id=%d",
-                canonical_key, verification.decision.value,
-                verification.confidence_breakdown.get("overall", 0.0),
-                len(signals), ledger_id,
+                "[DRY RUN] Would persist confidence ledger for %s decision=%s",
+                canonical_key,
+                verification.decision.value,
             )
-        except Exception as e:
-            logger.warning(
-                "confidence_ledger_save_failed canonical_key=%s error=%s",
-                canonical_key, e,
-            )
+        else:
+            try:
+                ledger_id = await self._store.save_confidence_ledger(
+                    canonical_key=canonical_key,
+                    verification_result=verification,
+                    signal_ids=[s.id for s in signals],
+                    execution_id=self._execution_id or None,
+                    company_id=signals[0].company_id if signals else None,
+                    is_dry_run=dry_run,
+                    evaluation_origin="pipeline",
+                    policy_version=self._gate.POLICY_VERSION,
+                    routing_config={
+                        "high_threshold": self._gate.HIGH_CONFIDENCE_THRESHOLD,
+                        "medium_threshold": self._gate.MEDIUM_CONFIDENCE_THRESHOLD,
+                        "score_scale": self._gate.score_recalibration_factor,
+                        "strict_mode": self._gate.strict_mode,
+                    },
+                )
+                logger.info(
+                    "confidence_ledger_saved canonical_key=%s decision=%s gate_score=%.3f signals=%d ledger_id=%d",
+                    canonical_key, verification.decision.value,
+                    verification.confidence_breakdown.get("overall", 0.0),
+                    len(signals), ledger_id,
+                )
+            except Exception as e:
+                logger.warning(
+                    "confidence_ledger_save_failed canonical_key=%s error=%s",
+                    canonical_key, e,
+                )
 
         # Compute exit prediction (if enabled and passes gate)
         exit_prediction = None
@@ -2529,8 +2635,13 @@ class DiscoveryPipeline:
                     consolidated=consolidated,
                     thesis_classification=thesis_result,
                 )
-                # Store prediction
-                await self._store.store_exit_prediction(exit_prediction)
+                if dry_run:
+                    logger.info(
+                        "[DRY RUN] Would persist exit prediction for %s",
+                        canonical_key,
+                    )
+                else:
+                    await self._store.store_exit_prediction(exit_prediction)
                 logger.info(
                     f"Exit prediction for {canonical_key}: "
                     f"quality={exit_prediction.deal_quality_score:.2f}, "
@@ -2560,7 +2671,7 @@ class DiscoveryPipeline:
                 investor_match_result = await self._investor_matcher.match(
                     company_key=canonical_key,
                     company_claims=company_claims if company_claims else None,
-                    save_results=True,
+                    save_results=not dry_run,
                 )
                 if investor_match_result.matches:
                     top_match = investor_match_result.matches[0]
@@ -2578,6 +2689,7 @@ class DiscoveryPipeline:
         warm_intro_indicators: List[WarmIntroIndicator] = []
         if (
             self.config.use_warm_intro_enrichment
+            and not dry_run
             and investor_match_result
             and investor_match_result.matches
         ):
@@ -2702,9 +2814,15 @@ class DiscoveryPipeline:
             logger.info(f"Holding {canonical_key} for more signals")
 
         elif verification.decision == PushDecision.REJECT:
-            # Mark as rejected
-            for sig in signals:
-                await self._store.mark_rejected(sig.id, verification.reason)
+            if dry_run:
+                logger.info(
+                    "[DRY RUN] Would mark %s rejected by verification gate",
+                    canonical_key,
+                )
+            else:
+                # Mark as rejected
+                for sig in signals:
+                    await self._store.mark_rejected(sig.id, verification.reason)
 
         return {
             "decision": verification.decision,
@@ -3055,7 +3173,9 @@ class DiscoveryPipeline:
     async def _apply_phase_g_identity_resolution(
         self,
         pending_signals: List[StoredSignal],
-        by_key: Dict[str, List[StoredSignal]]
+        by_key: Dict[str, List[StoredSignal]],
+        *,
+        dry_run: bool = False,
     ) -> Tuple[Dict[str, List[StoredSignal]], Dict[str, str], Dict[str, int]]:
         """
         Apply Phase G Sprint 2 identity resolution with blocking-first fuzzy matching.
@@ -3082,54 +3202,61 @@ class DiscoveryPipeline:
             # Resolve signals into entity groups
             groups = await self._phase_g_resolver.resolve(pending_signals)
 
-            # Persist identity state in batched transactions
-            batch_size = 50
             total_merges = 0
 
-            for i in range(0, len(groups), batch_size):
-                batch = groups[i:i + batch_size]
+            if dry_run:
+                logger.info(
+                    "[DRY RUN] Would persist Phase G identity bindings for %s groups",
+                    len(groups),
+                )
+            else:
+                # Persist identity state in batched transactions
+                batch_size = 50
 
-                async with self._store.transaction_immediate() as tx:
-                    for group in batch:
-                        # Upsert strong key bindings
-                        bindings = [
-                            StrongKeyBinding(
-                                strong_key=b[0],
-                                entity_id=b[1],
-                                source_signal_id=b[2],
-                                source_key=b[3]
-                            )
-                            for b in group.strong_keys_to_bind
-                        ]
-                        merges = await self._identity_store.upsert_strong_key_bindings(bindings, tx)
-                        total_merges += len(merges)
+                for i in range(0, len(groups), batch_size):
+                    batch = groups[i:i + batch_size]
 
-                        # Upsert alias bindings
-                        aliases = [
-                            AliasKeyBinding(
-                                alias_key=a[0],
-                                entity_id=a[1],
-                                alias_type=a[2],
-                                confidence=a[3],
-                                source=a[4],
-                                expires_at=a[5]
-                            )
-                            for a in group.alias_keys_to_bind
-                        ]
-                        alias_merges = await self._identity_store.upsert_alias_bindings(aliases, tx)
-                        total_merges += len(alias_merges)
+                    async with self._store.transaction_immediate() as tx:
+                        for group in batch:
+                            # Upsert strong key bindings
+                            bindings = [
+                                StrongKeyBinding(
+                                    strong_key=b[0],
+                                    entity_id=b[1],
+                                    source_signal_id=b[2],
+                                    source_key=b[3]
+                                )
+                                for b in group.strong_keys_to_bind
+                            ]
+                            merges = await self._identity_store.upsert_strong_key_bindings(bindings, tx)
+                            total_merges += len(merges)
 
-                        # Upsert blocking tokens
-                        tokens = [
-                            BlockingToken(
-                                blocking_token=t[0],
-                                token_type=t[1],
-                                entity_id=t[2],
-                                alias_key=t[3]
-                            )
-                            for t in group.blocking_tokens_to_bind
-                        ]
-                        await self._identity_store.upsert_blocking_tokens(tokens, tx)
+                            # Upsert alias bindings
+                            aliases = [
+                                AliasKeyBinding(
+                                    alias_key=a[0],
+                                    entity_id=a[1],
+                                    alias_type=a[2],
+                                    confidence=a[3],
+                                    source=a[4],
+                                    expires_at=a[5]
+                                )
+                                for a in group.alias_keys_to_bind
+                            ]
+                            alias_merges = await self._identity_store.upsert_alias_bindings(aliases, tx)
+                            total_merges += len(alias_merges)
+
+                            # Upsert blocking tokens
+                            tokens = [
+                                BlockingToken(
+                                    blocking_token=t[0],
+                                    token_type=t[1],
+                                    entity_id=t[2],
+                                    alias_key=t[3]
+                                )
+                                for t in group.blocking_tokens_to_bind
+                            ]
+                            await self._identity_store.upsert_blocking_tokens(tokens, tx)
 
             # Rebuild by_key mapping from resolved groups
             regrouped: Dict[str, List[StoredSignal]] = {}
