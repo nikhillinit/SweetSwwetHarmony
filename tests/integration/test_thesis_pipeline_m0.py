@@ -207,7 +207,7 @@ class TestThesisPipelineM0:
     @pytest.mark.asyncio
     async def test_shadow_rejected_skips_status_mutation_but_persists_observability(self, tmp_path):
         """LLM_THESIS_MODE=shadow + REJECTED must NOT call mark_rejected() or
-        update_signal_status(), but MUST persist classification + shadow log.
+        update_signal_status(), but MUST persist classification + shadow log in live mode.
         Critical behavioral guard for Bug 0.10."""
         config = PipelineConfig(
             db_path=str(tmp_path / "m0_shadow_behavior.db"),
@@ -282,7 +282,7 @@ class TestThesisPipelineM0:
 
             with patch.dict(os.environ, {"LLM_THESIS_MODE": "shadow"}):
                 result = await pipeline._process_company(
-                    [signal], dry_run=True, consolidated=consolidated,
+                    [signal], dry_run=False, consolidated=consolidated,
                 )
 
             assert result["thesis_routing"] == RoutingDecision.REJECTED
@@ -375,7 +375,7 @@ class TestThesisPipelineM0:
 
             with patch.dict(os.environ, {"LLM_THESIS_MODE": "active"}):
                 result = await pipeline._process_company(
-                    [signal], dry_run=True, consolidated=consolidated,
+                    [signal], dry_run=False, consolidated=consolidated,
                 )
 
             assert result["decision"] == PushDecision.REJECT
@@ -476,7 +476,7 @@ class TestThesisPipelineM0:
 
             with patch.dict(os.environ, {"LLM_THESIS_MODE": "active"}):
                 result = await pipeline._process_company(
-                    [signal], dry_run=True, consolidated=consolidated,
+                    [signal], dry_run=False, consolidated=consolidated,
                 )
 
             assert result["decision"] == PushDecision.HOLD
@@ -565,7 +565,7 @@ class TestThesisPipelineM0:
 
             with patch.dict(os.environ, {"LLM_THESIS_MODE": "active"}):
                 await pipeline._process_company(
-                    [signal], dry_run=True, consolidated=consolidated,
+                    [signal], dry_run=False, consolidated=consolidated,
                 )
 
             gate_kwargs = pipeline._gate.evaluate.call_args.kwargs
