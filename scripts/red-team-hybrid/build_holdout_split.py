@@ -75,7 +75,6 @@ DEFAULT_OPERATIONAL_COLLECTORS: tuple[str, ...] = (
     "hacker_news",
     "arxiv",
     "rss_feeds",
-    "news_api",
 )
 
 

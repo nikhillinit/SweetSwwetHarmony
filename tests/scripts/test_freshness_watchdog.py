@@ -18,6 +18,17 @@ def _load_module():
     return module
 
 
+def test_default_operational_collectors_exclude_optional_news_api() -> None:
+    module = _load_module()
+
+    assert module.DEFAULT_OPERATIONAL_COLLECTORS == (
+        "hacker_news",
+        "arxiv",
+        "rss_feeds",
+    )
+    assert "news_api" not in module.DEFAULT_OPERATIONAL_COLLECTORS
+
+
 def test_min_created_at_blocks_duplicate_only_success() -> None:
     module = _load_module()
     now = datetime(2026, 5, 13, 15, 0, 24, tzinfo=timezone.utc)
