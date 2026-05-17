@@ -10,19 +10,23 @@
 ## 1. The contract
 
 Every governance gate (Step 4B regret check, canary runs, drift alerts,
-future state-promotion gates) requires `max(detected_at) < 5 days` for
-**at least 3 of the 4 operational collectors** over the prior 7 days,
+future state-promotion gates) requires `max(created_at) < 5 days` for
+**all 3 default operational collectors** over the prior 7 days,
 BEFORE the gate evaluates its primary condition.
 
-The 4 operational collectors (locked in `scripts/red-team-hybrid/freshness_watchdog.py`
+The 3 operational collectors (locked in `scripts/red-team-hybrid/freshness_watchdog.py`
 `DEFAULT_OPERATIONAL_COLLECTORS`) are:
 
 - `hacker_news`
 - `arxiv`
 - `rss_feeds`
-- `news_api`
 
-If fewer than three of these four collectors are fresh within the 5-day window,
+`news_api` is optional enrichment for mainstream press, funding announcements,
+and PR activity. The current GNews-backed implementation is quota-constrained,
+so it remains outside the default watchdog gate unless a manual or provider-swap
+trial explicitly passes it through `--operational`.
+
+If any of these three collectors is stale within the 5-day window,
 the governance gate MUST NOT evaluate its primary condition. See §4 for
 blocking vs advisory behavior per gate.
 
@@ -47,8 +51,8 @@ latency than the day-to-day freshness alert.
 
 | Exit code | Meaning | Gate action |
 |-----------|---------|-------------|
-| `0` | All 4 operational collectors fresh within the 120h window (≥3 minimum satisfied by 4/4) | **Proceed** — gate evaluates its primary condition |
-| `1` | At least one operational collector stale (check `failures[]` array for which ones) — if fewer than 3 remain fresh, precondition fails | **Postpone** per LIV-03 escalation; see §5 |
+| `0` | All 3 operational collectors fresh within the 120h window | **Proceed** — gate evaluates its primary condition |
+| `1` | At least one operational collector stale (check `failures[]` array for which ones) | **Postpone** per LIV-03 escalation; see §5 |
 | `2` | Operational error (DB unreadable, schema mismatch, freshness_watchdog.py internal failure) | **Escalate** — do NOT silently pass; this is not a fail-open case |
 
 Gate evaluators MUST treat exit code `2` as a hard escalation, not a
