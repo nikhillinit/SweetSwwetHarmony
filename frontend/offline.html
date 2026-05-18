@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Offline — Restless Sales Toolkit</title>
+  <style>
+    :root {
+      --bg: #16191D;
+      --surface: #1E2228;
+      --primary: #2DB299;
+      --text: #F1F3F5;
+      --muted: #868E96;
+      --border: rgba(73,80,87,0.5);
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'DM Sans', 'Helvetica Neue', sans-serif;
+      background: var(--bg); color: var(--text);
+      min-height: 100vh; display: flex; align-items: center; justify-content: center;
+      padding: 24px;
+    }
+    .card {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 12px; padding: 48px 40px; max-width: 440px;
+      text-align: center;
+    }
+    .icon {
+      width: 64px; height: 64px; margin: 0 auto 24px;
+      background: rgba(45,178,153,0.12); border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+    }
+    h1 { font-size: 1.5rem; margin-bottom: 12px; }
+    p { color: var(--muted); line-height: 1.6; margin-bottom: 24px; }
+    button {
+      background: var(--primary); color: #fff; border: none;
+      border-radius: 8px; padding: 10px 24px; font-size: 0.9375rem;
+      cursor: pointer; transition: opacity 0.15s;
+    }
+    button:hover { opacity: 0.85; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">
+      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#2DB299" stroke-width="2">
+        <path d="M1 1l22 22M16.72 11.06A10.94 10.94 0 0119 12.55M5 12.55a10.94 10.94 0 015.17-2.39M10.71 5.05A16 16 0 0122.56 9M1.42 9a15.91 15.91 0 014.7-2.88M8.53 16.11a6 6 0 016.95 0M12 20h.01"/>
+      </svg>
+    </div>
+    <h1>You're offline</h1>
+    <p>The Restless Sales Toolkit needs a connection to load. Check your network and try again — the Field Manual will be available once you've visited it online.</p>
+    <button onclick="window.location.reload()">Try again</button>
+  </div>
+</body>
+</html>

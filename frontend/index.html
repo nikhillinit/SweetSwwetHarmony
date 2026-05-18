@@ -3,10 +3,17 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Discovery Engine</title>
+  <title>Restless Sales Toolkit</title>
   <link rel="preload" href="assets/fonts/InstrumentSerif-Regular.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="assets/fonts/DMSans-Regular.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="assets/css/starwatcher.css?v=20260220">
+  <!-- PWA -->
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#2DB299">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="SalesKit">
+  <link rel="apple-touch-icon" href="/assets/icons/icon-192.png">
 </head>
 <body>
   <a href="#app" class="skip-link">Skip to main content</a>
@@ -23,7 +30,7 @@
 
     <aside class="sidebar" id="sidebar" role="navigation" aria-label="Main navigation">
       <div class="sidebar-header">
-        <div class="sidebar-logo">Discovery Engine</div>
+        <div class="sidebar-logo">Sales Toolkit</div>
       </div>
       <nav class="sidebar-nav" id="sidebar-nav">
         <div class="nav-indicator" id="nav-indicator"></div>
@@ -48,6 +55,10 @@
           <svg viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M3.172 5.172a4 4 0 015.656 0L10 6.343l1.172-1.171a4 4 0 115.656 5.656L10 17.657l-6.828-6.829a4 4 0 010-5.656z" clip-rule="evenodd"/></svg>
           Health
         </a>
+        <a href="#/manual" class="nav-link" data-view="manual">
+          <svg viewBox="0 0 20 20" fill="currentColor"><path d="M9 4.804A7.968 7.968 0 005.5 4c-1.255 0-2.443.29-3.5.804v10A7.969 7.969 0 015.5 14c1.669 0 3.218.51 4.5 1.385A7.962 7.962 0 0114.5 14c1.255 0 2.443.29 3.5.804v-10A7.968 7.968 0 0014.5 4c-1.255 0-2.443.29-3.5.804V12a1 1 0 11-2 0V4.804z"/></svg>
+          Field Manual
+        </a>
       </nav>
       <div class="sidebar-footer" id="sidebar-footer">
         <div class="sidebar-user">
@@ -66,5 +77,13 @@
   <div role="status" aria-live="polite" id="toast-region" class="toast-region"></div>
 
   <script type="module" src="assets/js/app.js?v=20260220"></script>
+  <!-- Service Worker registration -->
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('/sw.js').catch(() => {});
+      });
+    }
+  </script>
 </body>
 </html>

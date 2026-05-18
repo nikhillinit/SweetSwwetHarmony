@@ -1,0 +1,25 @@
+{
+  "name": "Restless Sales Toolkit",
+  "short_name": "SalesKit",
+  "description": "Restless field manual and sales toolkit — 15 tools, 30 pages, built for the back half.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#16191D",
+  "theme_color": "#2DB299",
+  "icons": [
+    {
+      "src": "/assets/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/assets/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
