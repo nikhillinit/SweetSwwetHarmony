@@ -12,6 +12,7 @@ import * as dashboardView from './views/dashboard.js';
 import * as companiesView from './views/companies.js';
 import * as inboxView from './views/inbox.js';
 import * as healthView from './views/health.js';
+import * as manualView from './views/manual.js';
 
 // --- Register routes ---
 registerRoute('#/login', loginView);
@@ -19,6 +20,7 @@ registerRoute('#/', dashboardView);
 registerRoute('#/companies', companiesView);
 registerRoute('#/inbox', inboxView);
 registerRoute('#/health', healthView);
+registerRoute('#/manual', manualView);
 
 // Constellation is part of the same module — register a thin wrapper
 registerRoute('#/constellation', {
