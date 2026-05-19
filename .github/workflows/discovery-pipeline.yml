@@ -66,6 +66,11 @@ jobs:
               echo "restored=true" >> $GITHUB_OUTPUT
               echo "Restored signals.db from artifact"
             fi
+            if [ -f artifact-tmp/.omx/state/db_watermark.json ]; then
+              mkdir -p .omx/state
+              cp artifact-tmp/.omx/state/db_watermark.json .omx/state/db_watermark.json
+              echo "Restored DB guard watermark from artifact"
+            fi
             rm -rf artifact-tmp
           else
             echo "restored=false" >> $GITHUB_OUTPUT
@@ -97,6 +102,17 @@ jobs:
               print('Database initialized')
           asyncio.run(init())
           "
+          fi
+
+      - name: Bootstrap DB guard watermark
+        env:
+          DISCOVERY_DB_PATH: signals.db
+        run: |
+          if [ -f .omx/state/db_watermark.json ]; then
+            echo "DB guard watermark already restored"
+          else
+            echo "Initializing DB guard watermark for this runner..."
+            python run_pipeline.py init-watermark
           fi
 
       - name: Sync portfolio companies
@@ -190,16 +206,21 @@ jobs:
             signals.db
             signals.db-wal
             signals.db-shm
+            .omx/state/db_watermark.json
           retention-days: 30
           if-no-files-found: warn
+          include-hidden-files: true
 
       - name: Upload timestamped database artifact
         if: success()
         uses: actions/upload-artifact@v4
         with:
           name: signals-db-${{ github.run_number }}
-          path: signals.db
+          path: |
+            signals.db
+            .omx/state/db_watermark.json
           retention-days: 7
+          include-hidden-files: true
 
   notify-on-failure:
     name: Notify on Failure
