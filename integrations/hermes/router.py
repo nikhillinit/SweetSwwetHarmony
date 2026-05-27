@@ -7,6 +7,18 @@ from .config import RoutingConfig, RiskLevel
 
 
 @dataclass(frozen=True)
+class ExecutorMetadata:
+    enabled: bool
+    supports_execute: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+            "supportsExecute": self.supports_execute,
+        }
+
+
+@dataclass(frozen=True)
 class LaneRecommendation:
     specialist: str | None
     risk: RiskLevel
@@ -38,6 +50,7 @@ class RoutingPlan:
     alternatives: tuple[str, ...]
     manual_model: str | None
     lane: LaneRecommendation
+    executor_metadata: tuple[tuple[str, ExecutorMetadata], ...]
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -51,6 +64,10 @@ class RoutingPlan:
             "alternatives": list(self.alternatives),
             "manualModel": self.manual_model,
             "lane": self.lane.to_dict(),
+            "executorMetadata": {
+                name: metadata.to_dict()
+                for name, metadata in self.executor_metadata
+            },
         }
 
 
@@ -59,6 +76,7 @@ def score_task_for_lane(
     phase: str,
     config: RoutingConfig,
     manual_model: str | None = None,
+    require_execute: bool = False,
 ) -> RoutingPlan:
     normalized_task = task_text.strip()
     if not normalized_task:
@@ -67,14 +85,23 @@ def score_task_for_lane(
     if phase not in config.phases:
         raise ValueError(f"unknown phase {phase!r}")
 
-    if manual_model is not None and manual_model not in config.executors:
-        raise ValueError(f"unknown manual model {manual_model!r}")
-    if manual_model is not None and not config.executors[manual_model].enabled:
-        raise ValueError(f"disabled manual model {manual_model!r}")
+    if manual_model is not None:
+        if not config.routing.manual_override_allowed:
+            raise ValueError("manual model overrides are disabled")
+        if manual_model not in config.executors:
+            raise ValueError(f"unknown manual model {manual_model!r}")
+        if not config.executors[manual_model].enabled:
+            raise ValueError(f"disabled manual model {manual_model!r}")
+        if require_execute and not config.executors[manual_model].supports_execute:
+            raise ValueError(
+                f"manual model {manual_model!r} does not support execute mode"
+            )
 
     phase_config = config.phases[phase]
     enabled_executors = {
-        name for name, executor in config.executors.items() if executor.enabled
+        name
+        for name, executor in config.executors.items()
+        if executor.enabled and (not require_execute or executor.supports_execute)
     }
     lane = _select_lane(normalized_task, phase, config)
     recommended = manual_model or _first_executor(
@@ -101,6 +128,7 @@ def score_task_for_lane(
         alternatives=alternatives,
         manual_model=manual_model,
         lane=lane,
+        executor_metadata=_executor_metadata(config),
     )
 
 
@@ -193,3 +221,16 @@ def _alternatives(
             ):
                 alternatives.append(executor)
     return tuple(alternatives)
+
+
+def _executor_metadata(config: RoutingConfig) -> tuple[tuple[str, ExecutorMetadata], ...]:
+    return tuple(
+        (
+            name,
+            ExecutorMetadata(
+                enabled=executor.enabled,
+                supports_execute=executor.supports_execute,
+            ),
+        )
+        for name, executor in sorted(config.executors.items())
+    )

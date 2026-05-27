@@ -63,6 +63,7 @@ async def run_hermes(
         phase=phase,
         config=config,
         manual_model=manual_model,
+        require_execute=mode == "execute",
     )
 
     if mode == "plan-only":

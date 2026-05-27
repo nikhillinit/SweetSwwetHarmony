@@ -8,7 +8,7 @@ from pathlib import Path
 
 from integrations.hermes.config import load_config
 from integrations.hermes.locks import HermesLock
-from integrations.hermes.run import run_hermes
+from integrations.hermes.run import EXIT_INVALID, run_hermes
 from integrations.hermes.router import score_task_for_lane
 
 
@@ -68,13 +68,17 @@ def _add_common_route_args(parser: argparse.ArgumentParser) -> None:
 
 
 def _cmd_route(args: argparse.Namespace) -> None:
-    config = load_config(args.config)
-    plan = score_task_for_lane(
-        task_text=args.task,
-        phase=args.phase,
-        config=config,
-        manual_model=_manual_model(args),
-    )
+    try:
+        config = load_config(args.config)
+        plan = score_task_for_lane(
+            task_text=args.task,
+            phase=args.phase,
+            config=config,
+            manual_model=_manual_model(args),
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(EXIT_INVALID)
     if args.json_output:
         print(json.dumps(plan.to_dict(), indent=2))
         return
@@ -86,16 +90,20 @@ def _cmd_route(args: argparse.Namespace) -> None:
 
 def _cmd_run(args: argparse.Namespace) -> None:
     mode = _mode(args)
-    result = asyncio.run(
-        run_hermes(
-            task=args.task,
-            phase=args.phase,
-            mode=mode,
-            config_path=args.config,
-            manual_model=_manual_model(args),
-            ack_risk=args.ack_risk,
+    try:
+        result = asyncio.run(
+            run_hermes(
+                task=args.task,
+                phase=args.phase,
+                mode=mode,
+                config_path=args.config,
+                manual_model=_manual_model(args),
+                ack_risk=args.ack_risk,
+            )
         )
-    )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(EXIT_INVALID)
 
     if args.json_output:
         print(json.dumps(result.to_dict(), indent=2))
@@ -167,6 +175,9 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
     try:
         args.func(args)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(EXIT_INVALID)
     except KeyboardInterrupt:
         print("\nOperation cancelled", file=sys.stderr)
         raise SystemExit(1)
