@@ -18,21 +18,30 @@ from .conftest import minimal_config_dict
 
 
 class FakeExecutor:
-    def __init__(self) -> None:
+    def __init__(self, *, success: bool = True, exit_code: int = 0, error: str | None = None) -> None:
         self.calls = []
+        self.success = success
+        self.exit_code = exit_code
+        self.error = error
 
     async def execute(self, prompt: str, context_files=None) -> ExecutorResult:
         self.calls.append((prompt, context_files))
         return ExecutorResult(
             executor="codex",
-            success=True,
-            exit_code=0,
+            success=self.success,
+            exit_code=self.exit_code,
             content="executed",
             duration_ms=9,
+            error=self.error,
         )
 
 
-def _write_execute_config(tmp_path: Path, *, gate_exit: int = 0) -> Path:
+def _write_execute_config(
+    tmp_path: Path,
+    *,
+    gate_exit: int = 0,
+    postflight_exit: int = 0,
+) -> Path:
     data = minimal_config_dict()
     data["ledger"]["root"] = str(tmp_path / "ai-logs" / "hermes")
     data["ledger"]["lockPath"] = str(tmp_path / "ai-logs" / "hermes" / "hermes.lock")
@@ -50,7 +59,11 @@ def _write_execute_config(tmp_path: Path, *, gate_exit: int = 0) -> Path:
     data["gates"]["postflight"] = [
         {
             "name": "postflight",
-            "command": [sys.executable, "-c", "print('postflight')"],
+            "command": [
+                sys.executable,
+                "-c",
+                f"import sys; print('postflight'); sys.exit({postflight_exit})",
+            ],
             "timeoutSeconds": 5,
         }
     ]
@@ -125,6 +138,51 @@ async def test_execute_preflight_failure_blocks_adapter(tmp_path: Path) -> None:
 
     assert result.exit_code == EXIT_GATE_FAILURE
     assert executor.calls == []
+    run_dir = Path(result.run_dir or "")
+    assert (run_dir / "repair_prompt.md").exists()
+    assert "preflight" in (run_dir / "repair_prompt.md").read_text(encoding="utf-8")
+
+
+async def test_execute_executor_failure_writes_repair_prompt(tmp_path: Path) -> None:
+    config_path = _write_execute_config(tmp_path)
+    executor = FakeExecutor(success=False, exit_code=42, error="token=secret-value")
+
+    result = await run_hermes(
+        task="schema migration",
+        phase="production",
+        mode="execute",
+        config_path=config_path,
+        manual_model="codex",
+        ack_risk="I-ACK-RISK",
+        executor_factory=lambda name, config: executor,
+    )
+
+    assert result.exit_code == 42
+    run_dir = Path(result.run_dir or "")
+    text = (run_dir / "repair_prompt.md").read_text(encoding="utf-8")
+    assert "executor" in text
+    assert "S3_execution.json" in text
+    assert "secret-value" not in text
+
+
+async def test_execute_postflight_failure_writes_repair_prompt(tmp_path: Path) -> None:
+    config_path = _write_execute_config(tmp_path, postflight_exit=5)
+
+    result = await run_hermes(
+        task="schema migration",
+        phase="production",
+        mode="execute",
+        config_path=config_path,
+        manual_model="codex",
+        ack_risk="I-ACK-RISK",
+        executor_factory=lambda name, config: FakeExecutor(),
+    )
+
+    assert result.exit_code == EXIT_GATE_FAILURE
+    run_dir = Path(result.run_dir or "")
+    text = (run_dir / "repair_prompt.md").read_text(encoding="utf-8")
+    assert "postflight" in text
+    assert "S4_postflight.json" in text
 
 
 async def test_execute_returns_lock_exit_when_lock_is_held(tmp_path: Path) -> None:
