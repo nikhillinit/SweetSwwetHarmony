@@ -122,17 +122,30 @@ def test_run_dry_run_cli_writes_artifacts(tmp_path: Path) -> None:
     assert list((tmp_path / "ai-logs" / "hermes" / "runs").iterdir())
 
 
-def test_providers_doctor_placeholder_exits_until_provider_module_exists() -> None:
+def test_providers_doctor_json_works_with_read_only_checks(tmp_path: Path) -> None:
+    config_path = _write_cli_config(tmp_path)
+
     result = subprocess.run(
-        [sys.executable, "-m", "ops.cli", "hermes", "providers", "doctor"],
+        [
+            sys.executable,
+            "-m",
+            "ops.cli",
+            "hermes",
+            "providers",
+            "doctor",
+            "--json",
+            "--config",
+            str(config_path),
+        ],
         cwd=Path.cwd(),
         text=True,
         capture_output=True,
         check=False,
     )
 
-    assert result.returncode == 2
-    assert "not available yet" in result.stderr
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["providers"]["codex"]["provider"] == "codex"
 
 
 def test_lock_force_unlock_requires_reason(tmp_path: Path) -> None:
