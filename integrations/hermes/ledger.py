@@ -87,6 +87,52 @@ class HermesLedger:
     def write_state(self, run: HermesRun, state_name: str, payload: dict[str, Any]) -> Path:
         return self.write_json_artifact(run, f"state/{state_name}.json", payload)
 
+    def write_repair_prompt(
+        self,
+        run: HermesRun,
+        *,
+        failure_type: str,
+        exit_code: int,
+        routing_plan: dict[str, Any],
+        state_paths: list[Path],
+        next_action: str,
+        command: list[str] | tuple[str, ...] | None = None,
+        executor: str | None = None,
+        arguments: dict[str, Any] | None = None,
+        stdout_path: Path | None = None,
+        stderr_path: Path | None = None,
+    ) -> Path:
+        lines = [
+            "# Hermes Repair Prompt",
+            "",
+            f"Failure type: {failure_type}",
+            f"Run ID: {run.run_id}",
+            f"Exit code: {exit_code}",
+        ]
+        if executor:
+            lines.append(f"Executor: {executor}")
+        if command:
+            lines.append(f"Command: {' '.join(command)}")
+        if arguments:
+            lines.extend(["", "Arguments:", "```json"])
+            lines.append(json.dumps(redact_payload(arguments, self.config.redaction_patterns), indent=2))
+            lines.append("```")
+
+        lines.extend(["", "Artifacts:"])
+        if stdout_path:
+            lines.append(f"- stdout: {_relative_to_run(run, stdout_path)}")
+        if stderr_path:
+            lines.append(f"- stderr: {_relative_to_run(run, stderr_path)}")
+
+        lines.extend(["", "State snapshots:"])
+        for state_path in state_paths:
+            lines.append(f"- {_relative_to_run(run, state_path)}")
+
+        lines.extend(["", "Routing plan:", "```json"])
+        lines.append(json.dumps(redact_payload(routing_plan, self.config.redaction_patterns), indent=2))
+        lines.extend(["```", "", "Next safe operator action:", next_action, ""])
+        return self.write_text_artifact(run, "repair_prompt.md", "\n".join(lines))
+
     def append_index(self, entry: dict[str, Any]) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
         line = json.dumps(
@@ -122,3 +168,10 @@ def redact_payload(value: Any, patterns: list[str]) -> Any:
             for key, item in value.items()
         }
     return value
+
+
+def _relative_to_run(run: HermesRun, path: Path) -> str:
+    try:
+        return str(path.relative_to(run.run_dir))
+    except ValueError:
+        return str(path)

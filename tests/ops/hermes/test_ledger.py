@@ -81,3 +81,30 @@ def test_index_is_valid_jsonl_for_multiple_runs(tmp_path: Path) -> None:
     lines = ledger.index_path.read_text(encoding="utf-8").splitlines()
     assert len(lines) == 2
     assert [json.loads(line)["task"] for line in lines] == ["one", "two"]
+
+
+def test_write_repair_prompt_redacts_and_records_artifact_paths(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    run = ledger.create_run(plan={"task": "schema"}, prompt="prompt", metadata={})
+    state_path = ledger.write_state(run, "S2_preflight", {"status": "failed"})
+
+    repair_path = ledger.write_repair_prompt(
+        run,
+        failure_type="preflight",
+        command=["python", "-m", "pytest"],
+        arguments={"env": "api_key=secret-value"},
+        exit_code=4,
+        routing_plan={"task": "schema", "secret": "token=hidden"},
+        state_paths=[state_path],
+        stdout_path=run.run_dir / "gates" / "preflight.json",
+        stderr_path=None,
+        next_action="Fix the failing gate and rerun Hermes.",
+    )
+
+    text = repair_path.read_text(encoding="utf-8")
+    assert "Hermes Repair Prompt" in text
+    assert "python -m pytest" in text
+    assert "S2_preflight.json" in text
+    assert "gates/preflight.json" in text.replace("\\", "/")
+    assert "secret-value" not in text
+    assert "token=hidden" not in text

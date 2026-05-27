@@ -99,6 +99,15 @@ async def run_hermes(
     preflight = await run_gates(config.gates.preflight, phase="preflight", run_dir=run.run_dir)
     ledger.write_state(run, "S2_preflight", preflight.to_dict())
     if not preflight.success:
+        _write_gate_repair_prompt(
+            ledger,
+            run,
+            plan,
+            preflight,
+            failure_type="preflight",
+            state_paths=_state_paths(run),
+            next_action="Fix the failing preflight gate and rerun Hermes.",
+        )
         write_summary(ledger, run, plan, mode, preflight, None, EXIT_GATE_FAILURE)
         return HermesRunResult(
             mode=mode,
@@ -123,6 +132,16 @@ async def run_hermes(
     postflight = await run_gates(config.gates.postflight, phase="postflight", run_dir=run.run_dir)
     ledger.write_state(run, "S3_postflight", postflight.to_dict())
     exit_code = EXIT_OK if postflight.success else EXIT_GATE_FAILURE
+    if not postflight.success:
+        _write_gate_repair_prompt(
+            ledger,
+            run,
+            plan,
+            postflight,
+            failure_type="postflight",
+            state_paths=_state_paths(run),
+            next_action="Fix the failing postflight gate and rerun Hermes.",
+        )
     write_summary(ledger, run, plan, mode, preflight, postflight, exit_code)
 
     return HermesRunResult(
@@ -169,6 +188,15 @@ async def _execute_with_gates(
         )
         ledger.write_state(run, "S2_preflight", preflight.to_dict())
         if not preflight.success:
+            _write_gate_repair_prompt(
+                ledger,
+                run,
+                plan,
+                preflight,
+                failure_type="preflight",
+                state_paths=_state_paths(run),
+                next_action="Fix the failing preflight gate before executing a provider.",
+            )
             write_summary(ledger, run, plan, mode, preflight, None, EXIT_GATE_FAILURE)
             return HermesRunResult(
                 mode=mode,
@@ -213,6 +241,16 @@ async def _execute_with_gates(
         ledger.write_state(run, "S3_execution", execution.to_dict())
         if not execution.success:
             exit_code = execution.exit_code or 1
+            ledger.write_repair_prompt(
+                run,
+                failure_type="executor",
+                executor=execution.executor,
+                arguments={"error": execution.error},
+                exit_code=exit_code,
+                routing_plan=plan.to_dict(),
+                state_paths=_state_paths(run),
+                next_action="Inspect the executor failure state, fix the cause, and rerun with the same routing plan.",
+            )
             write_summary(ledger, run, plan, mode, preflight, None, exit_code)
             return HermesRunResult(
                 mode=mode,
@@ -231,6 +269,16 @@ async def _execute_with_gates(
         )
         ledger.write_state(run, "S4_postflight", postflight.to_dict())
         exit_code = EXIT_OK if postflight.success else EXIT_GATE_FAILURE
+        if not postflight.success:
+            _write_gate_repair_prompt(
+                ledger,
+                run,
+                plan,
+                postflight,
+                failure_type="postflight",
+                state_paths=_state_paths(run),
+                next_action="Fix the failing postflight gate and review executor output before retrying.",
+            )
         write_summary(ledger, run, plan, mode, preflight, postflight, exit_code)
         return HermesRunResult(
             mode=mode,
@@ -311,3 +359,34 @@ def _resolve_repo_path(path_value: str) -> Path:
     if path.is_absolute():
         return path
     return PROJECT_ROOT / path
+
+
+def _write_gate_repair_prompt(
+    ledger: HermesLedger,
+    run: HermesRun,
+    plan: RoutingPlan,
+    batch: GateBatch,
+    *,
+    failure_type: str,
+    state_paths: list[Path],
+    next_action: str,
+) -> Path:
+    failed = next((result for result in batch.results if not result.success), None)
+    return ledger.write_repair_prompt(
+        run,
+        failure_type=failure_type,
+        command=list(failed.command) if failed else None,
+        exit_code=failed.return_code if failed else EXIT_GATE_FAILURE,
+        routing_plan=plan.to_dict(),
+        state_paths=state_paths,
+        stdout_path=run.run_dir / "gates" / f"{batch.phase}.json",
+        stderr_path=None,
+        next_action=next_action,
+    )
+
+
+def _state_paths(run: HermesRun) -> list[Path]:
+    state_dir = run.run_dir / "state"
+    if not state_dir.exists():
+        return []
+    return sorted(state_dir.glob("*.json"))
