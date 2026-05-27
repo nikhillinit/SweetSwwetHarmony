@@ -10,6 +10,7 @@ from integrations.hermes.config import load_config
 from integrations.hermes.locks import HermesLock
 from integrations.hermes.run import EXIT_INVALID, run_hermes
 from integrations.hermes.router import score_task_for_lane
+from integrations.hermes.tasks.registry import add_task_arguments, run_registered_task
 
 
 def register_hermes_commands(subparsers: argparse._SubParsersAction) -> None:
@@ -38,6 +39,14 @@ def _register_hermes_subcommands(parser: argparse.ArgumentParser) -> None:
     mode_group.add_argument("--execute", action="store_true", help="Execute selected provider")
     run.add_argument("--ack-risk", default=None, help="Required exact acknowledgement for high-risk execute")
     run.set_defaults(func=_cmd_run)
+
+    task = subparsers.add_parser(
+        "task",
+        help="Run a registered Hermes Track A operation wrapper",
+        description="Run a registered Hermes Track A operation wrapper",
+    )
+    add_task_arguments(task)
+    task.set_defaults(func=_cmd_task)
 
     providers = subparsers.add_parser("providers", help="Provider diagnostics")
     provider_sub = providers.add_subparsers(dest="providers_cmd")
@@ -118,6 +127,26 @@ def _cmd_run(args: argparse.Namespace) -> None:
     else:
         print(f"Execute ledger: {result.run_dir}")
 
+    if result.exit_code != 0:
+        raise SystemExit(result.exit_code)
+
+
+def _cmd_task(args: argparse.Namespace) -> None:
+    try:
+        result = run_registered_task(args)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(EXIT_INVALID)
+    except Exception as exc:
+        print(str(exc), file=sys.stderr)
+        raise SystemExit(1)
+
+    if args.json_output:
+        print(json.dumps(result.to_dict(), indent=2))
+    else:
+        print(f"Hermes task {result.task}: {result.status}")
+        if result.run_dir:
+            print(f"Ledger: {result.run_dir}")
     if result.exit_code != 0:
         raise SystemExit(result.exit_code)
 
