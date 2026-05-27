@@ -1,0 +1,388 @@
+{
+  "$defs": {
+    "DeferredExecutorConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "provider": {
+          "title": "Provider",
+          "type": "string"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        },
+        "sunsetDate": {
+          "anyOf": [
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sunsetdate"
+        }
+      },
+      "required": [
+        "provider",
+        "reason"
+      ],
+      "title": "DeferredExecutorConfig",
+      "type": "object"
+    },
+    "ExecutorConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "provider": {
+          "title": "Provider",
+          "type": "string"
+        },
+        "displayName": {
+          "title": "Displayname",
+          "type": "string"
+        },
+        "enabled": {
+          "default": true,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "required": {
+          "default": false,
+          "title": "Required",
+          "type": "boolean"
+        },
+        "binary": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Binary"
+        },
+        "env": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Env",
+          "type": "array"
+        },
+        "sunsetDate": {
+          "anyOf": [
+            {
+              "format": "date",
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Sunsetdate"
+        },
+        "supportsExecute": {
+          "default": true,
+          "title": "Supportsexecute",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "provider",
+        "displayName"
+      ],
+      "title": "ExecutorConfig",
+      "type": "object"
+    },
+    "GateSpec": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "title": "Name",
+          "type": "string"
+        },
+        "command": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Command",
+          "type": "array"
+        },
+        "timeoutSeconds": {
+          "default": 120,
+          "minimum": 1,
+          "title": "Timeoutseconds",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "name",
+        "command"
+      ],
+      "title": "GateSpec",
+      "type": "object"
+    },
+    "GatesConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "preflight": {
+          "items": {
+            "$ref": "#/$defs/GateSpec"
+          },
+          "title": "Preflight",
+          "type": "array"
+        },
+        "postflight": {
+          "items": {
+            "$ref": "#/$defs/GateSpec"
+          },
+          "title": "Postflight",
+          "type": "array"
+        }
+      },
+      "title": "GatesConfig",
+      "type": "object"
+    },
+    "LedgerConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "root": {
+          "default": "ai-logs/hermes",
+          "title": "Root",
+          "type": "string"
+        },
+        "redactionPatterns": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Redactionpatterns",
+          "type": "array"
+        },
+        "lockPath": {
+          "default": "ai-logs/hermes/hermes.lock",
+          "title": "Lockpath",
+          "type": "string"
+        }
+      },
+      "title": "LedgerConfig",
+      "type": "object"
+    },
+    "PhaseConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "riskOrder": {
+          "items": {
+            "enum": [
+              "low",
+              "medium",
+              "high"
+            ],
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Riskorder",
+          "type": "array"
+        },
+        "preferredExecutors": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Preferredexecutors",
+          "type": "array"
+        },
+        "fallbackExecutors": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Fallbackexecutors",
+          "type": "array"
+        }
+      },
+      "required": [
+        "riskOrder",
+        "preferredExecutors"
+      ],
+      "title": "PhaseConfig",
+      "type": "object"
+    },
+    "RiskDefaultsConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "noSpecialist": {
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "title": "Nospecialist",
+          "type": "string"
+        },
+        "highRiskKeywords": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Highriskkeywords",
+          "type": "array"
+        }
+      },
+      "required": [
+        "noSpecialist"
+      ],
+      "title": "RiskDefaultsConfig",
+      "type": "object"
+    },
+    "RoutingRulesConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "manualOverrideAllowed": {
+          "default": true,
+          "title": "Manualoverrideallowed",
+          "type": "boolean"
+        },
+        "fallbackOrder": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Fallbackorder",
+          "type": "array"
+        },
+        "unknownTaskExecutor": {
+          "title": "Unknowntaskexecutor",
+          "type": "string"
+        }
+      },
+      "required": [
+        "fallbackOrder",
+        "unknownTaskExecutor"
+      ],
+      "title": "RoutingRulesConfig",
+      "type": "object"
+    },
+    "SpecialistConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "keywords": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Keywords",
+          "type": "array"
+        },
+        "risk": {
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "title": "Risk",
+          "type": "string"
+        },
+        "preferredExecutors": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Preferredexecutors",
+          "type": "array"
+        },
+        "fallbackExecutors": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Fallbackexecutors",
+          "type": "array"
+        }
+      },
+      "required": [
+        "keywords",
+        "risk",
+        "preferredExecutors"
+      ],
+      "title": "SpecialistConfig",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "const": 1,
+      "title": "Schemaversion",
+      "type": "integer"
+    },
+    "executors": {
+      "additionalProperties": {
+        "$ref": "#/$defs/ExecutorConfig"
+      },
+      "title": "Executors",
+      "type": "object"
+    },
+    "deferredExecutors": {
+      "additionalProperties": {
+        "$ref": "#/$defs/DeferredExecutorConfig"
+      },
+      "title": "Deferredexecutors",
+      "type": "object"
+    },
+    "phases": {
+      "additionalProperties": {
+        "$ref": "#/$defs/PhaseConfig"
+      },
+      "title": "Phases",
+      "type": "object"
+    },
+    "specialists": {
+      "additionalProperties": {
+        "$ref": "#/$defs/SpecialistConfig"
+      },
+      "title": "Specialists",
+      "type": "object"
+    },
+    "riskDefaults": {
+      "$ref": "#/$defs/RiskDefaultsConfig"
+    },
+    "routing": {
+      "$ref": "#/$defs/RoutingRulesConfig"
+    },
+    "gates": {
+      "$ref": "#/$defs/GatesConfig"
+    },
+    "ledger": {
+      "$ref": "#/$defs/LedgerConfig"
+    },
+    "modes": {
+      "items": {
+        "enum": [
+          "plan-only",
+          "dry-run",
+          "preflight-only",
+          "execute"
+        ],
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Modes",
+      "type": "array"
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "executors",
+    "phases",
+    "specialists",
+    "riskDefaults",
+    "routing",
+    "gates",
+    "ledger",
+    "modes"
+  ],
+  "title": "RoutingConfig",
+  "type": "object"
+}
