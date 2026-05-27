@@ -35,6 +35,8 @@ def _register_hermes_subcommands(parser: argparse.ArgumentParser) -> None:
     mode_group.add_argument("--plan-only", action="store_true", help="Print plan only")
     mode_group.add_argument("--dry-run", action="store_true", help="Write dry-run ledger")
     mode_group.add_argument("--preflight-only", action="store_true", help="Run preflight gates only")
+    mode_group.add_argument("--execute", action="store_true", help="Execute selected provider")
+    run.add_argument("--ack-risk", default=None, help="Required exact acknowledgement for high-risk execute")
     run.set_defaults(func=_cmd_run)
 
     providers = subparsers.add_parser("providers", help="Provider diagnostics")
@@ -91,6 +93,7 @@ def _cmd_run(args: argparse.Namespace) -> None:
             mode=mode,
             config_path=args.config,
             manual_model=_manual_model(args),
+            ack_risk=args.ack_risk,
         )
     )
 
@@ -101,8 +104,10 @@ def _cmd_run(args: argparse.Namespace) -> None:
         print(f"Risk: {result.plan.risk}")
     elif mode == "dry-run":
         print(f"Dry-run ledger: {result.run_dir}")
-    else:
+    elif mode == "preflight-only":
         print(f"Preflight ledger: {result.run_dir}")
+    else:
+        print(f"Execute ledger: {result.run_dir}")
 
     if result.exit_code != 0:
         raise SystemExit(result.exit_code)
@@ -151,6 +156,8 @@ def _mode(args: argparse.Namespace) -> str:
         return "dry-run"
     if getattr(args, "preflight_only", False):
         return "preflight-only"
+    if getattr(args, "execute", False):
+        return "execute"
     return "plan-only"
 
 
