@@ -67,10 +67,13 @@ def score_task_for_lane(
     if phase not in config.phases:
         raise ValueError(f"unknown phase {phase!r}")
 
-    if manual_model is not None and manual_model not in config.executors:
-        raise ValueError(f"unknown manual model {manual_model!r}")
-    if manual_model is not None and not config.executors[manual_model].enabled:
-        raise ValueError(f"disabled manual model {manual_model!r}")
+    if manual_model is not None:
+        if not config.routing.manual_override_allowed:
+            raise ValueError("manual model overrides are disabled")
+        if manual_model not in config.executors:
+            raise ValueError(f"unknown manual model {manual_model!r}")
+        if not config.executors[manual_model].enabled:
+            raise ValueError(f"disabled manual model {manual_model!r}")
 
     phase_config = config.phases[phase]
     enabled_executors = {

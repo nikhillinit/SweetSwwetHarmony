@@ -103,6 +103,20 @@ def test_manual_override_selects_known_executor() -> None:
     assert plan.specialist == "schema"
 
 
+def test_manual_override_rejects_when_disabled_by_config() -> None:
+    data = minimal_config_dict()
+    data["routing"]["manualOverrideAllowed"] = False
+    config = RoutingConfig.model_validate(data)
+
+    with pytest.raises(ValueError, match="manual model overrides are disabled"):
+        score_task_for_lane(
+            "schema migration",
+            phase="production",
+            config=config,
+            manual_model="kimi",
+        )
+
+
 def test_disabled_preferred_executor_is_skipped() -> None:
     data = minimal_config_dict()
     data["executors"]["kimi"]["enabled"] = False
