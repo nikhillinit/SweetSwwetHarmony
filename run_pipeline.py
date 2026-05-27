@@ -188,6 +188,8 @@ def _db_guard_mode(args: argparse.Namespace) -> Optional[str]:
         return "read"
     if command == "pipeline" and getattr(args, "pipeline_cmd", None) == "status":
         return "read"
+    if command == "sqlite-durability-check":
+        return "read"
     if command == "export-queue":
         return "read"
     if command == "triage" and getattr(args, "triage_cmd", None) == "list":
@@ -4488,6 +4490,38 @@ Examples:
         help="Path to SQLite database",
     )
 
+    sqlite_durability_parser = subparsers.add_parser(
+        "sqlite-durability-check",
+        help="Run read-only SQLite integrity, schema, signal-count, and watermark checks",
+    )
+    sqlite_durability_parser.add_argument(
+        "--db-path",
+        type=str,
+        help="Path to SQLite database",
+    )
+    sqlite_durability_parser.add_argument(
+        "--min-signals",
+        type=int,
+        default=1,
+        help="Minimum acceptable signal count (default: 1)",
+    )
+    sqlite_durability_parser.add_argument(
+        "--expected-schema-version",
+        type=int,
+        default=CURRENT_SCHEMA_VERSION,
+        help=f"Expected schema_migrations max(version) (default: {CURRENT_SCHEMA_VERSION})",
+    )
+    sqlite_durability_parser.add_argument(
+        "--require-watermark",
+        action="store_true",
+        help="Fail if the external DB watermark is missing or unhealthy",
+    )
+    sqlite_durability_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print machine-readable JSON evidence",
+    )
+
     return parser
 
 
@@ -8342,6 +8376,30 @@ async def main():
                 print(f"Watermark initialized: signal_count={count}, schema_version={CURRENT_SCHEMA_VERSION}")
             except Exception as exc:
                 print(f"ERROR: Could not initialize watermark: {exc}", file=sys.stderr)
+                sys.exit(1)
+        elif args.command == "sqlite-durability-check":
+            db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+            ok, evidence = db_guard.sqlite_durability_check(
+                db_path,
+                min_signals=getattr(args, "min_signals", 1),
+                expected_schema_version=getattr(args, "expected_schema_version", None),
+                require_watermark=getattr(args, "require_watermark", False),
+            )
+            if getattr(args, "json", False):
+                print(json.dumps(evidence, indent=2, sort_keys=True))
+            elif ok:
+                print(
+                    "SQLite durability check passed: "
+                    f"signals={evidence['signal_count']}, "
+                    f"schema_version={evidence['schema_version']}"
+                )
+            else:
+                print(
+                    "ERROR: SQLite durability check failed: "
+                    + ", ".join(evidence.get("errors", [])),
+                    file=sys.stderr,
+                )
+            if not ok:
                 sys.exit(1)
         else:
             print(f"Unknown command: {args.command}")
