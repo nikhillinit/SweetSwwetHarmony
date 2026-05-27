@@ -1673,6 +1673,15 @@ Tip:
     except Exception as e:
         print(f"Warning: Graph CLI registration failed: {e}", file=sys.stderr)
 
+    # Hermes routing commands
+    try:
+        from ops.hermes_cli import register_hermes_commands
+        register_hermes_commands(subparsers)
+    except ImportError:
+        pass  # Hermes module not installed
+    except Exception as e:
+        print(f"Warning: Hermes CLI registration failed: {e}", file=sys.stderr)
+
     args = parser.parse_args()
 
     try:

@@ -56,6 +56,7 @@ signals.db
 # Logs
 *.log
 logs/
+ai-logs/
 
 # OS
 .DS_Store
