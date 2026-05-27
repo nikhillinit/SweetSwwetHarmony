@@ -7,7 +7,8 @@
       "enabled": true,
       "required": true,
       "binary": "codex",
-      "env": []
+      "env": [],
+      "supportsExecute": true
     },
     "kimi": {
       "provider": "kimi",
@@ -16,7 +17,8 @@
       "required": false,
       "env": [
         "KIMI_API_KEY"
-      ]
+      ],
+      "supportsExecute": true
     },
     "claude": {
       "provider": "claude",
@@ -26,159 +28,88 @@
       "binary": "claude",
       "env": [],
       "supportsExecute": false
-    }
-  },
-  "deferredExecutors": {
+    },
     "gemini": {
       "provider": "gemini",
-      "reason": "Gemini CLI execution is deferred until adapter coverage and non-network doctor checks are approved."
+      "displayName": "Gemini CLI",
+      "enabled": true,
+      "required": false,
+      "binary": "gemini",
+      "env": [
+        "GEMINI_API_KEY"
+      ],
+      "supportsExecute": false
     },
     "antigravity": {
       "provider": "antigravity",
-      "reason": "Antigravity execution is deferred until a repo-owned adapter contract exists."
+      "displayName": "Google Antigravity",
+      "enabled": false,
+      "required": false,
+      "binary": "antigravity",
+      "env": [],
+      "supportsExecute": false
     }
   },
+  "deferredExecutors": {},
   "phases": {
     "planning": {
-      "riskOrder": [
-        "low",
-        "medium",
-        "high"
-      ],
-      "preferredExecutors": [
-        "codex"
-      ],
-      "fallbackExecutors": [
-        "kimi",
-        "claude"
-      ]
+      "riskOrder": ["low", "medium", "high"],
+      "preferredExecutors": ["codex"],
+      "fallbackExecutors": ["kimi", "claude"]
     },
     "development": {
-      "riskOrder": [
-        "medium",
-        "high",
-        "low"
-      ],
-      "preferredExecutors": [
-        "codex"
-      ],
-      "fallbackExecutors": [
-        "kimi",
-        "claude"
-      ]
+      "riskOrder": ["medium", "high", "low"],
+      "preferredExecutors": ["codex"],
+      "fallbackExecutors": ["kimi", "claude"]
     },
     "production": {
-      "riskOrder": [
-        "high",
-        "medium",
-        "low"
-      ],
-      "preferredExecutors": [
-        "codex"
-      ],
-      "fallbackExecutors": [
-        "kimi",
-        "claude"
-      ]
+      "riskOrder": ["high", "medium", "low"],
+      "preferredExecutors": ["codex"],
+      "fallbackExecutors": ["kimi", "claude"]
     }
   },
   "specialists": {
     "schema": {
-      "keywords": [
-        "schema",
-        "migration",
-        "database",
-        "signal store",
-        "sqlite"
-      ],
+      "keywords": ["schema", "migration", "database", "signal store", "sqlite"],
       "risk": "high",
-      "preferredExecutors": [
-        "codex"
-      ],
-      "fallbackExecutors": [
-        "kimi"
-      ]
+      "preferredExecutors": ["codex"],
+      "fallbackExecutors": ["kimi"]
     },
     "thesis": {
-      "keywords": [
-        "thesis",
-        "filter",
-        "classifier",
-        "false positive",
-        "regression"
-      ],
+      "keywords": ["thesis", "filter", "classifier", "false positive", "regression"],
       "risk": "medium",
-      "preferredExecutors": [
-        "kimi"
-      ],
-      "fallbackExecutors": [
-        "codex"
-      ]
+      "preferredExecutors": ["kimi"],
+      "fallbackExecutors": ["codex"]
     },
     "security": {
-      "keywords": [
-        "secret",
-        "token",
-        "auth",
-        "permission",
-        "risk"
-      ],
+      "keywords": ["secret", "token", "auth", "permission", "risk"],
       "risk": "high",
-      "preferredExecutors": [
-        "codex"
-      ],
-      "fallbackExecutors": [
-        "claude"
-      ]
+      "preferredExecutors": ["codex"],
+      "fallbackExecutors": ["claude"]
     },
     "docs": {
-      "keywords": [
-        "docs",
-        "runbook",
-        "handoff",
-        "readme"
-      ],
+      "keywords": ["docs", "runbook", "handoff", "readme"],
       "risk": "low",
-      "preferredExecutors": [
-        "claude"
-      ],
-      "fallbackExecutors": [
-        "codex"
-      ]
+      "preferredExecutors": ["claude"],
+      "fallbackExecutors": ["codex"]
     }
   },
   "riskDefaults": {
     "noSpecialist": "medium",
     "highRiskKeywords": [
-      "migration",
-      "schema",
-      "production",
-      "delete",
-      "credential",
-      "secret",
-      "notion"
+      "migration", "schema", "production", "delete", "credential", "secret", "notion"
     ]
   },
   "routing": {
     "manualOverrideAllowed": true,
-    "fallbackOrder": [
-      "codex",
-      "kimi",
-      "claude"
-    ],
+    "fallbackOrder": ["codex", "kimi", "claude"],
     "unknownTaskExecutor": "codex"
   },
   "gates": {
     "preflight": [
       {
         "name": "hermes-tests",
-        "command": [
-          "python",
-          "-m",
-          "pytest",
-          "tests/ops/hermes/",
-          "-q"
-        ],
+        "command": ["python", "-m", "pytest", "tests/ops/hermes/", "-q"],
         "timeoutSeconds": 120
       }
     ],
@@ -198,10 +129,5 @@
     ],
     "lockPath": "ai-logs/hermes/hermes.lock"
   },
-  "modes": [
-    "plan-only",
-    "dry-run",
-    "preflight-only",
-    "execute"
-  ]
+  "modes": ["plan-only", "dry-run", "preflight-only", "execute"]
 }
