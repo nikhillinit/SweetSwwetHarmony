@@ -68,6 +68,13 @@ LLM_THESIS_MODE=shadow python run_pipeline.py process
 python -m ops.cli schedule create quality-sync --cron "0 */6 * * *"
 python -m ops.cli schedule create quality-classify --cron "0 2 * * *"
 python -m ops.cli schedule create quality-patterns --cron "0 3 * * 0"
+
+# Hermes routing harness
+python -m ops.cli hermes --help
+python -m ops.cli hermes providers doctor
+python -m ops.cli hermes route --json --phase production --task "fix thesis filter"
+python -m ops.cli hermes run --dry-run --phase production --task "schema migration"
+python -m ops.cli hermes run --execute --phase production --task "schema migration" --codex --ack-risk I-ACK-RISK
 ```
 
 ## Reference Docs
