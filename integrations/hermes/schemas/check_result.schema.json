@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sweetswwetharmony.local/hermes/check_result.schema.json",
+  "title": "Hermes Track A Check Result",
+  "type": "object",
+  "required": ["name", "passed"],
+  "properties": {
+    "name": {"type": "string", "minLength": 1},
+    "passed": {"type": "boolean"},
+    "detail": {"type": "string"},
+    "evidence": {"type": "object"}
+  },
+  "additionalProperties": false
+}
