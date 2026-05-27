@@ -100,6 +100,8 @@ def build_executor(
         raise ValueError(f"unknown executor {name!r}")
 
     executor = config.executors[name]
+    if not executor.enabled:
+        raise ValueError(f"disabled executor {name!r}")
     if not executor.supports_execute:
         raise ValueError(f"executor {name!r} does not support execute")
 

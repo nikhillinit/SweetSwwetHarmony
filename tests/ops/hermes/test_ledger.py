@@ -25,13 +25,23 @@ def test_redact_text_applies_all_configured_patterns() -> None:
     config = RoutingConfig.model_validate(minimal_config_dict())
 
     redacted = redact_text(
-        "token=abc123 and sk-test-secret should disappear",
+        (
+            "token=abc123 sk-test-secret secret_NotionKey "
+            "ghp_1234567890 xoxb-123-456 AKIA1234567890ABCDEF "
+            "Bearer abc.def.ghi ya29.oauth-token"
+        ),
         config.ledger.redaction_patterns,
     )
 
     assert "abc123" not in redacted
     assert "sk-test-secret" not in redacted
-    assert redacted.count("[REDACTED]") == 2
+    assert "secret_NotionKey" not in redacted
+    assert "ghp_1234567890" not in redacted
+    assert "xoxb-123-456" not in redacted
+    assert "AKIA1234567890ABCDEF" not in redacted
+    assert "abc.def.ghi" not in redacted
+    assert "ya29.oauth-token" not in redacted
+    assert redacted.count("[REDACTED]") == 8
 
 
 def test_create_run_writes_redacted_plan_prompt_and_index(tmp_path: Path) -> None:

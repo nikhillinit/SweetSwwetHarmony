@@ -69,12 +69,22 @@ def score_task_for_lane(
 
     if manual_model is not None and manual_model not in config.executors:
         raise ValueError(f"unknown manual model {manual_model!r}")
+    if manual_model is not None and not config.executors[manual_model].enabled:
+        raise ValueError(f"disabled manual model {manual_model!r}")
 
     phase_config = config.phases[phase]
+    enabled_executors = {
+        name for name, executor in config.executors.items() if executor.enabled
+    }
     lane = _select_lane(normalized_task, phase, config)
-    recommended = manual_model or _first_executor(lane, phase_config.preferred_executors)
+    recommended = manual_model or _first_executor(
+        lane,
+        phase_config.preferred_executors,
+        enabled_executors,
+    )
     alternatives = _alternatives(
         recommended,
+        enabled_executors,
         lane.preferred_executors,
         lane.fallback_executors,
         config.routing.fallback_order,
@@ -160,20 +170,26 @@ def _escalated_risk(
 def _first_executor(
     lane: LaneRecommendation,
     phase_preferred: list[str],
+    enabled_executors: set[str],
 ) -> str:
     for executor in (*lane.preferred_executors, *phase_preferred):
-        if executor:
+        if executor in enabled_executors:
             return executor
     raise ValueError("routing config has no available executor for selected lane")
 
 
 def _alternatives(
     recommended: str,
+    enabled_executors: set[str],
     *executor_lists: tuple[str, ...] | list[str],
 ) -> tuple[str, ...]:
     alternatives: list[str] = []
     for executors in executor_lists:
         for executor in executors:
-            if executor != recommended and executor not in alternatives:
+            if (
+                executor in enabled_executors
+                and executor != recommended
+                and executor not in alternatives
+            ):
                 alternatives.append(executor)
     return tuple(alternatives)

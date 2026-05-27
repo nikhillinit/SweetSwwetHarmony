@@ -188,6 +188,12 @@
     "root": "ai-logs/hermes",
     "redactionPatterns": [
       "sk-[A-Za-z0-9_-]+",
+      "secret_[A-Za-z0-9]+",
+      "gh[pousr]_[A-Za-z0-9_]+",
+      "xox[abp]-[A-Za-z0-9-]+",
+      "AKIA[0-9A-Z]{16}",
+      "Bearer\\s+[A-Za-z0-9._~+/=-]+",
+      "ya29\\.[A-Za-z0-9._-]+",
       "(?i)(api[_-]?key|token|secret)=([^\\s]+)"
     ],
     "lockPath": "ai-logs/hermes/hermes.lock"

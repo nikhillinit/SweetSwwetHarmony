@@ -59,6 +59,8 @@ class HermesLock:
             raise ValueError("force unlock requires a reason")
         if not self.lock_path.exists():
             return False
+        holder = self.get_holder_info()
+        self._append_force_unlock_audit(reason, holder)
         self._remove_lock()
         return True
 
@@ -102,6 +104,22 @@ class HermesLock:
 
     def _remove_lock(self) -> None:
         self.lock_path.unlink(missing_ok=True)
+
+    def _append_force_unlock_audit(
+        self,
+        reason: str,
+        holder: dict[str, Any] | None,
+    ) -> None:
+        audit_path = self.lock_path.parent / "forced_unlocks.jsonl"
+        audit_path.parent.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "reason": reason,
+            "pid": self._pid,
+            "lockHolderInfoSnapshot": holder,
+        }
+        with audit_path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry, separators=(",", ":")) + "\n")
 
     def _is_stale(self) -> bool:
         lock_info = self._read_lock()
