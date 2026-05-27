@@ -1,0 +1,24 @@
+# Litestream expands ${VAR} values before loading this file.
+# Required runtime env:
+#   SQLITE_DB_PATH, SQLITE_BACKUP_BUCKET, AWS_ACCESS_KEY_ID,
+#   AWS_SECRET_ACCESS_KEY, AWS_REGION
+#
+# Object prefixes are intentionally separated:
+#   s3://${SQLITE_BACKUP_BUCKET}/sweetswwetharmony/litestream/signals.db/
+#   s3://${SQLITE_BACKUP_BUCKET}/sweetswwetharmony/snapshots/daily/
+#   s3://${SQLITE_BACKUP_BUCKET}/sweetswwetharmony/snapshots/monthly/
+
+access-key-id: ${AWS_ACCESS_KEY_ID}
+secret-access-key: ${AWS_SECRET_ACCESS_KEY}
+region: ${AWS_REGION}
+
+retention:
+  enabled: false
+
+dbs:
+  - path: ${SQLITE_DB_PATH}
+    checkpoint-interval: 1m
+    busy-timeout: 5s
+    replica:
+      url: s3://${SQLITE_BACKUP_BUCKET}/sweetswwetharmony/litestream/signals.db/
+      sync-interval: 1s
