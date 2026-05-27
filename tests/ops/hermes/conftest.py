@@ -53,7 +53,7 @@ def minimal_config_dict() -> dict[str, Any]:
                 "fallbackExecutors": ["kimi"],
             },
             "thesis": {
-                "keywords": ["thesis", "filter", "classifier"],
+                "keywords": ["thesis", "filter", "classifier", "false positive", "regression"],
                 "risk": "medium",
                 "preferredExecutors": ["kimi"],
                 "fallbackExecutors": ["codex"],
@@ -95,4 +95,3 @@ def minimal_config_path(tmp_path: Path) -> Path:
     path = tmp_path / "model-routing.json"
     path.write_text(json.dumps(minimal_config_dict(), indent=2), encoding="utf-8")
     return path
-
