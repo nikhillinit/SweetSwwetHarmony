@@ -14,7 +14,7 @@ from integrations.hermes.adapters import (
     build_prompt_packet,
     build_reviewer_executor,
 )
-from integrations.hermes.config import RoutingConfig
+from integrations.hermes.config import PROJECT_ROOT, RoutingConfig, load_config
 from integrations.hermes.providers import doctor
 
 from .conftest import minimal_config_dict
@@ -26,6 +26,20 @@ class FakeGeminiClient:
             content='{"verdict":"approve","confidence":1}',
             execution_time_ms=5,
         )
+
+
+class FakeProcess:
+    returncode = 0
+
+    def __init__(self, captured):
+        self._captured = captured
+
+    async def communicate(self, input=None):
+        self._captured["input"] = input
+        return b"gemini done", b""
+
+    def kill(self):
+        self._captured["killed"] = True
 
 
 def _config_with_active_gemini_reviewer() -> RoutingConfig:
@@ -110,3 +124,51 @@ def test_gemini_client_missing_binary_returns_structured_failure() -> None:
     assert response.success is False
     assert response.exit_code == 127
     assert "not found" in (response.error or "")
+
+
+async def test_gemini_cli_uses_headless_plan_mode_on_windows_cmd_shim(
+    monkeypatch,
+) -> None:
+    captured = {}
+    monkeypatch.setattr(
+        "shutil.which",
+        lambda binary: r"C:\Users\nikhi\AppData\Roaming\npm\gemini.CMD",
+    )
+
+    async def fake_exec(*args, **kwargs):  # pragma: no cover - assertion guard
+        raise AssertionError("Windows .CMD shims must be launched through shell")
+
+    async def fake_shell(command, **kwargs):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return FakeProcess(captured)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_exec)
+    monkeypatch.setattr(asyncio, "create_subprocess_shell", fake_shell)
+    client = GeminiAntigravityClient(binary="gemini")
+
+    response = await client.exec("review this")
+
+    assert response.success is True
+    assert response.content == "gemini done"
+    assert "--prompt" in captured["command"]
+    assert "--approval-mode plan" in captured["command"]
+    assert "--skip-trust" in captured["command"]
+    assert "--output-format text" in captured["command"]
+    assert captured["input"] == b"review this"
+    assert captured["kwargs"]["cwd"] != str(PROJECT_ROOT)
+
+
+def test_project_config_enables_gemini_cli_without_api_key(monkeypatch) -> None:
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setattr("shutil.which", lambda name: f"/usr/bin/{name}")
+    config = load_config(PROJECT_ROOT / ".claude" / "hermes" / "model-routing.json")
+
+    gemini = config.executors["gemini"]
+    assert gemini.supports_execute is True
+    assert gemini.env == []
+    assert "gemini" in config.routing.fallback_order
+
+    report = doctor(config)
+    assert "env:GEMINI_API_KEY" not in report.providers["gemini"].checks_by_name
+    assert report.providers["gemini"].success is True
