@@ -23,7 +23,7 @@ jobs:
       - name: Install validation dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install pytest pyyaml
+          python -m pip install pytest pyyaml pytest-asyncio
 
       - name: Validate local docs artifacts
         run: python scripts/ci/check_doc_artifacts.py docs
