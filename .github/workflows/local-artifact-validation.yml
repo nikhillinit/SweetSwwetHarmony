@@ -1,0 +1,32 @@
+name: Local Artifact Validation
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  local-artifact-validation:
+    name: Local Artifact Validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install validation dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install pytest pyyaml
+
+      - name: Validate local docs artifacts
+        run: python scripts/ci/check_doc_artifacts.py docs
+
+      - name: Run local artifact tests
+        run: python -m pytest tests/scripts/test_create_doc_artifact.py tests/ci/test_check_doc_artifacts.py -q
