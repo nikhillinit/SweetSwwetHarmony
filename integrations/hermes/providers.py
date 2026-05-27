@@ -11,6 +11,8 @@ from .config import DeferredExecutorConfig, ExecutorConfig, RoutingConfig
 
 WRAPPER_IMPORTS = {
     "codex": "integrations.codex_wrapper",
+    "gemini": "integrations.gemini_antigravity_client",
+    "antigravity": "integrations.gemini_antigravity_client",
     "kimi": "integrations.kimi_client",
 }
 
