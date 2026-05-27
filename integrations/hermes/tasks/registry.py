@@ -4,15 +4,13 @@ import argparse
 from typing import Any
 
 from .base import (
-    EXIT_GATE_FAILURE,
-    EXIT_INVALID,
-    EXIT_OK,
     CheckResult,
     HermesTask,
     TaskContext,
     TaskMode,
     TaskResult,
 )
+from .restore_db import RestoreDbTask
 
 
 class ContractCheckTask(HermesTask):
@@ -57,6 +55,7 @@ class ContractCheckTask(HermesTask):
 
 _TASKS: dict[str, type[HermesTask]] = {
     ContractCheckTask.name: ContractCheckTask,
+    RestoreDbTask.name: RestoreDbTask,
 }
 
 TASK_REGISTRY = _TASKS
@@ -78,14 +77,35 @@ def get_task(name: str) -> HermesTask:
 
 def add_task_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("task_name", choices=registered_task_names())
+    parser.add_argument("--config", default=None, help="Path to Hermes routing config")
     mode_group = parser.add_mutually_exclusive_group()
     mode_group.add_argument("--plan-only", action="store_true")
     mode_group.add_argument("--preflight-only", action="store_true")
     mode_group.add_argument("--dry-run", action="store_true")
+    mode_group.add_argument("--execute", action="store_true")
+    parser.add_argument(
+        "--ack-risk",
+        default=None,
+        help="Task-specific risk acknowledgement token",
+    )
+    parser.add_argument("--lock-ttl-seconds", type=int, default=900)
+    parser.add_argument("--actor-type", default="operator")
+    parser.add_argument("--actor-id", default=None)
     parser.add_argument("--json", action="store_true", dest="json_output")
+
+    parser.add_argument("--backup")
+    parser.add_argument("--target", default="signals.db")
+    parser.add_argument("--allow-target-create", action="store_true")
+    parser.add_argument("--handle-sidecars", action="store_true")
+    parser.add_argument("--force", action="store_true")
+    parser.add_argument("--api-url")
+    parser.add_argument("--expected-schema-version", type=int)
+    parser.add_argument("--min-row-count", type=int, default=0)
 
 
 def mode_from_args(args: argparse.Namespace) -> TaskMode:
+    if getattr(args, "execute", False):
+        return "execute"
     if getattr(args, "dry_run", False):
         return "dry-run"
     if getattr(args, "preflight_only", False):
@@ -95,41 +115,9 @@ def mode_from_args(args: argparse.Namespace) -> TaskMode:
 
 def run_registered_task(args: argparse.Namespace) -> TaskResult:
     task = get_task(args.task_name)
-    mode = mode_from_args(args)
-    if not task.supports_mode(mode):
-        return TaskResult(
-            task=task.name,
-            mode=mode,
-            exit_code=EXIT_INVALID,
-            status="unsupported_mode",
-            plan={},
-        )
-
-    context = task.build_context(args, mode=mode)
-    plan = task.plan(context)
-    checks = tuple(task.preflight(context, plan)) if mode != "plan-only" else ()
-    if checks and not all(check.passed for check in checks):
-        return TaskResult(
-            task=task.name,
-            mode=mode,
-            exit_code=EXIT_GATE_FAILURE,
-            status="preflight_failed",
-            plan=plan,
-            checks=checks,
-        )
-
-    outputs = task.dry_run(context, plan) if mode == "dry-run" else {}
-    status_by_mode = {
-        "plan-only": "planned",
-        "preflight-only": "preflight_passed",
-        "dry-run": "dry_run_passed",
-    }
-    return TaskResult(
-        task=task.name,
-        mode=mode,
-        exit_code=EXIT_OK,
-        status=status_by_mode[mode],
-        plan=plan,
-        checks=checks,
-        outputs=outputs,
+    return task.run(
+        args,
+        mode=mode_from_args(args),
+        config_path=getattr(args, "config", None),
+        ack_risk=getattr(args, "ack_risk", None),
     )
