@@ -32,6 +32,22 @@ def _create_signals_db(db_path: Path, count: int) -> None:
         conn.close()
 
 
+def _create_durable_db(db_path: Path, *, count: int, schema_version: int = 53) -> None:
+    """Create a minimal DB with the tables needed by durability checks."""
+    _create_signals_db(db_path, count)
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute("CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER)")
+        conn.execute("DELETE FROM schema_migrations")
+        conn.execute(
+            "INSERT INTO schema_migrations (version) VALUES (?)",
+            (schema_version,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 class TestLoadWatermark:
     def test_returns_empty_dict_when_missing(self, tmp_path):
         with patch.object(db_guard, "WATERMARK_PATH", tmp_path / "nonexistent.json"):
@@ -244,3 +260,56 @@ class TestGuardCommand:
             assert db_guard.guard_command(
                 str(db_path), "write", allow_override=True
             ) is False
+
+
+class TestSqliteDurabilityCheck:
+    def test_reports_integrity_schema_signal_count_and_watermark(self, tmp_path):
+        db_path = tmp_path / "signals.db"
+        watermark = tmp_path / "watermark.json"
+        _create_durable_db(db_path, count=12, schema_version=53)
+        watermark.write_text(json.dumps({"signal_count": 10, "schema_version": 53}))
+
+        with patch.object(db_guard, "WATERMARK_PATH", watermark):
+            ok, evidence = db_guard.sqlite_durability_check(
+                str(db_path),
+                min_signals=10,
+                expected_schema_version=53,
+                require_watermark=True,
+            )
+
+        assert ok is True
+        assert evidence["integrity_check"] == "ok"
+        assert evidence["schema_version"] == 53
+        assert evidence["signal_count"] == 12
+        assert evidence["watermark"]["message"] == "healthy"
+
+    def test_enforces_signal_lower_bound(self, tmp_path):
+        db_path = tmp_path / "signals.db"
+        _create_durable_db(db_path, count=2, schema_version=53)
+
+        ok, evidence = db_guard.sqlite_durability_check(
+            str(db_path),
+            min_signals=3,
+            expected_schema_version=53,
+        )
+
+        assert ok is False
+        assert "signal lower bound" in evidence["errors"]
+
+    def test_missing_watermark_remains_fail_closed_when_required(self, tmp_path):
+        db_path = tmp_path / "signals.db"
+        watermark = tmp_path / "watermark.json"
+        _create_durable_db(db_path, count=12, schema_version=53)
+
+        with patch.object(db_guard, "WATERMARK_PATH", watermark):
+            ok, evidence = db_guard.sqlite_durability_check(
+                str(db_path),
+                min_signals=1,
+                expected_schema_version=53,
+                require_watermark=True,
+            )
+
+        assert ok is False
+        assert evidence["watermark"]["message"] == "watermark_missing"
+        assert "watermark_missing" in evidence["errors"]
+        assert not watermark.exists()

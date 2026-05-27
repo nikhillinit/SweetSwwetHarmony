@@ -1,0 +1,90 @@
+name: Litestream Restore Verify Nightly
+
+on:
+  schedule:
+    - cron: "37 10 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  restore-verify:
+    name: Litestream Restore Verify Nightly
+    runs-on: ubuntu-latest
+    environment: sqlite-production-backups
+    env:
+      LITESTREAM_VERSION: "0.5.2"
+      SQLITE_BACKUP_BUCKET: ${{ secrets.SQLITE_BACKUP_BUCKET }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: ${{ secrets.AWS_REGION || vars.AWS_REGION || 'us-east-1' }}
+      SQLITE_RESTORE_MIN_SIGNALS: ${{ vars.SQLITE_RESTORE_MIN_SIGNALS || '1' }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Install Litestream
+        shell: bash
+        run: |
+          curl -sSfL \
+            "https://github.com/benbjohnson/litestream/releases/download/v${LITESTREAM_VERSION}/litestream-${LITESTREAM_VERSION}-linux-x86_64.tar.gz" \
+            -o /tmp/litestream.tar.gz
+          tar -xzf /tmp/litestream.tar.gz -C /tmp
+          sudo install /tmp/litestream /usr/local/bin/litestream
+          litestream version
+
+      - name: Resolve current schema version
+        shell: bash
+        run: |
+          python - <<'PY' >> "$GITHUB_ENV"
+          import ast
+          from pathlib import Path
+
+          source = Path("storage/signal_store.py").read_text(encoding="utf-8")
+          module = ast.parse(source)
+          for node in module.body:
+              if isinstance(node, ast.Assign):
+                  for target in node.targets:
+                      if isinstance(target, ast.Name) and target.id == "CURRENT_SCHEMA_VERSION":
+                          print(f"CURRENT_SCHEMA_VERSION={ast.literal_eval(node.value)}")
+                          raise SystemExit(0)
+          raise SystemExit("CURRENT_SCHEMA_VERSION not found")
+          PY
+
+      - name: Verify required backup settings
+        shell: bash
+        run: |
+          test -n "$SQLITE_BACKUP_BUCKET"
+          test -n "$AWS_ACCESS_KEY_ID"
+          test -n "$AWS_SECRET_ACCESS_KEY"
+
+      - name: Restore replica into temp DB and verify
+        shell: bash
+        run: |
+          mkdir -p artifacts/litestream-restore-verify
+          python -m scripts.litestream_restore_verify \
+            --replica-url "s3://${SQLITE_BACKUP_BUCKET}/sweetswwetharmony/litestream/signals.db/" \
+            --restore-path "$RUNNER_TEMP/restored-signals.db" \
+            --min-signals "$SQLITE_RESTORE_MIN_SIGNALS" \
+            --expected-schema-version "$CURRENT_SCHEMA_VERSION" \
+            --summary-out artifacts/litestream-restore-verify/summary.json
+
+      - name: Upload restore summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: litestream-restore-verify-summary
+          path: artifacts/litestream-restore-verify/
+          if-no-files-found: warn
