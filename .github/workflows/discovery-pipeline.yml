@@ -53,51 +53,67 @@ jobs:
           pip install httpx aiosqlite pydantic numpy aiohttp
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-      - name: Restore signals database
-        id: restore-db
-        continue-on-error: true
+      - name: Restore persistent database state
+        id: restore-state
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "Attempting to restore database from previous run..."
+          echo "downloaded=false" >> "$GITHUB_OUTPUT"
+          echo "restored_db=false" >> "$GITHUB_OUTPUT"
+          echo "restored_watermark=false" >> "$GITHUB_OUTPUT"
+
+          echo "Attempting to restore database state from previous run..."
+          rm -rf artifact-tmp
           if gh run download --name signals-db-latest -D ./artifact-tmp 2>/dev/null; then
+            echo "downloaded=true" >> "$GITHUB_OUTPUT"
             if [ -f artifact-tmp/signals.db ]; then
               mv artifact-tmp/signals.db signals.db
-              echo "restored=true" >> $GITHUB_OUTPUT
+              echo "restored_db=true" >> "$GITHUB_OUTPUT"
               echo "Restored signals.db from artifact"
+            fi
+            if [ -f artifact-tmp/.omx/state/db_watermark.json ]; then
+              mkdir -p .omx/state
+              cp artifact-tmp/.omx/state/db_watermark.json .omx/state/db_watermark.json
+              echo "restored_watermark=true" >> "$GITHUB_OUTPUT"
+              echo "Restored DB guard watermark from artifact"
             fi
             rm -rf artifact-tmp
           else
-            echo "restored=false" >> $GITHUB_OUTPUT
-            echo "No artifact found, will initialize fresh database"
+            echo "No complete database artifact found"
           fi
 
-      - name: Validate or initialize database
+      - name: Validate restored database state
+        id: validate-restore
         env:
           DISCOVERY_DB_PATH: signals.db
+          RESTORED_DB: ${{ steps.restore-state.outputs.restored_db }}
+          RESTORED_WATERMARK: ${{ steps.restore-state.outputs.restored_watermark }}
         run: |
-          if [ -f signals.db ]; then
-            echo "Validating database integrity..."
-            if sqlite3 signals.db "PRAGMA integrity_check;" | grep -q "^ok$"; then
-              echo "Database integrity check passed"
-            else
-              echo "Database corrupted, reinitializing..."
-              rm -f signals.db signals.db-wal signals.db-shm
-            fi
+          echo "restore_accepted=false" >> "$GITHUB_OUTPUT"
+
+          if [ "$RESTORED_DB" != "true" ] || [ "$RESTORED_WATERMARK" != "true" ]; then
+            echo "::error::Daily Pipeline requires paired restore of signals.db and .omx/state/db_watermark.json"
+            echo "Restored signals.db: $RESTORED_DB"
+            echo "Restored watermark: $RESTORED_WATERMARK"
+            exit 1
           fi
-          if [ ! -f signals.db ]; then
-            echo "Initializing fresh database..."
-            python -c "
-          import asyncio
-          from storage.signal_store import SignalStore
-          async def init():
-              store = SignalStore('signals.db')
-              await store.initialize()
-              await store.close()
-              print('Database initialized')
-          asyncio.run(init())
-          "
+
+          if [ ! -f signals.db ] || [ ! -f .omx/state/db_watermark.json ]; then
+            echo "::error::Restored database state is incomplete after artifact unpack"
+            exit 1
           fi
+
+          echo "Validating database integrity..."
+          if ! sqlite3 signals.db "PRAGMA integrity_check;" | grep -q "^ok$"; then
+            echo "::error::Restored signals.db failed integrity check"
+            exit 1
+          fi
+
+          echo "Validating DB guard watermark JSON..."
+          python -m json.tool .omx/state/db_watermark.json >/dev/null
+
+          echo "restore_accepted=true" >> "$GITHUB_OUTPUT"
+          echo "Database state restore accepted"
 
       - name: Sync portfolio companies
         if: ${{ github.event.inputs.skip_monitoring != 'true' }}
@@ -166,23 +182,36 @@ jobs:
           python run_pipeline.py monitor status || true
 
       - name: Finalize database
+        id: finalize-db
         if: always()
         run: |
+          echo "publish_artifacts=false" >> "$GITHUB_OUTPUT"
           echo "Finalizing database..."
+          if [ "${{ steps.validate-restore.outputs.restore_accepted }}" != "true" ]; then
+            echo "Restore gate was not accepted; skipping artifact publication"
+            exit 0
+          fi
           if [ -f signals.db ]; then
             if [ -f signals.db-wal ]; then
               echo "Checkpointing WAL..."
               sqlite3 signals.db "PRAGMA wal_checkpoint(TRUNCATE);" || true
             fi
             echo "Final integrity check..."
-            sqlite3 signals.db "PRAGMA integrity_check;" || echo "Integrity check skipped"
+            sqlite3 signals.db "PRAGMA integrity_check;" | grep -q "^ok$"
+            if [ ! -f .omx/state/db_watermark.json ]; then
+              echo "::error::DB guard watermark missing at finalization"
+              exit 1
+            fi
+            python -m json.tool .omx/state/db_watermark.json >/dev/null
             ls -lh signals.db*
+            echo "publish_artifacts=true" >> "$GITHUB_OUTPUT"
           else
-            echo "No database file to finalize"
+            echo "::error::No database file to finalize"
+            exit 1
           fi
 
       - name: Upload signals database artifact
-        if: always()
+        if: ${{ always() && steps.finalize-db.outputs.publish_artifacts == 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: signals-db-latest
@@ -190,16 +219,21 @@ jobs:
             signals.db
             signals.db-wal
             signals.db-shm
+            .omx/state/db_watermark.json
           retention-days: 30
           if-no-files-found: warn
+          include-hidden-files: true
 
       - name: Upload timestamped database artifact
-        if: success()
+        if: ${{ success() && steps.finalize-db.outputs.publish_artifacts == 'true' }}
         uses: actions/upload-artifact@v4
         with:
           name: signals-db-${{ github.run_number }}
-          path: signals.db
+          path: |
+            signals.db
+            .omx/state/db_watermark.json
           retention-days: 7
+          include-hidden-files: true
 
   notify-on-failure:
     name: Notify on Failure
