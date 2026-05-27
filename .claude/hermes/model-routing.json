@@ -24,7 +24,8 @@
       "enabled": true,
       "required": false,
       "binary": "claude",
-      "env": []
+      "env": [],
+      "supportsExecute": false
     }
   },
   "deferredExecutors": {
