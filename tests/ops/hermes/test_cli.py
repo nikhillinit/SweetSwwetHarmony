@@ -6,8 +6,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 from ops.hermes_cli import register_hermes_commands
 
 from .conftest import minimal_config_dict
@@ -52,6 +50,30 @@ def test_register_hermes_commands_adds_route_parser() -> None:
 
     assert args.command == "hermes"
     assert args.hermes_cmd == "route"
+    assert callable(args.func)
+
+
+def test_register_hermes_commands_adds_restore_db_task_parser() -> None:
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+
+    register_hermes_commands(subparsers)
+    args = parser.parse_args(
+        [
+            "hermes",
+            "task",
+            "restore-db",
+            "--plan-only",
+            "--backup",
+            "backup.db",
+            "--target",
+            "signals.db",
+        ]
+    )
+
+    assert args.command == "hermes"
+    assert args.hermes_cmd == "task"
+    assert args.task_name == "restore-db"
     assert callable(args.func)
 
 

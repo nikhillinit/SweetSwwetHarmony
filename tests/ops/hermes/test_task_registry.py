@@ -18,8 +18,8 @@ def _args(**overrides: object) -> argparse.Namespace:
     return argparse.Namespace(**payload)
 
 
-def test_contract_task_is_the_only_pr1_registered_task() -> None:
-    assert registered_task_names() == ["contract-check"]
+def test_pr2_registered_tasks_are_contract_and_restore_db_only() -> None:
+    assert registered_task_names() == ["contract-check", "restore-db"]
 
 
 def test_plan_only_registered_task_is_non_mutating() -> None:
@@ -51,7 +51,7 @@ def test_dry_run_registered_task_stays_non_mutating() -> None:
     assert result.outputs == {"dryRun": True, "mutationCommitted": False}
 
 
-def test_pr1_schema_template_surface_is_contract_only() -> None:
+def test_pr2_does_not_add_broader_schema_template_surface() -> None:
     root = Path(__file__).resolve().parents[3] / "integrations" / "hermes"
 
     assert {path.name for path in (root / "schemas").glob("*.json")} == {
