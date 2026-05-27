@@ -84,6 +84,12 @@ def test_force_unlock_requires_reason(tmp_path: Path) -> None:
     assert HermesLock(lock_path).force_unlock("operator confirmed stale") is True
     assert not lock_path.exists()
 
+    audit_path = tmp_path / "forced_unlocks.jsonl"
+    audit = json.loads(audit_path.read_text(encoding="utf-8"))
+    assert audit["reason"] == "operator confirmed stale"
+    assert audit["pid"] == os.getpid()
+    assert audit["lockHolderInfoSnapshot"]["runId"] == "run-1"
+
 
 def test_context_manager_raises_when_lock_is_held(tmp_path: Path) -> None:
     lock_path = tmp_path / "hermes.lock"

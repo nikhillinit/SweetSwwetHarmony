@@ -124,3 +124,12 @@ def test_build_executor_refuses_executor_marked_non_executable() -> None:
 
     with pytest.raises(ValueError, match="does not support execute"):
         build_executor("codex", config)
+
+
+def test_build_executor_refuses_disabled_executor() -> None:
+    data = minimal_config_dict()
+    data["executors"]["codex"]["enabled"] = False
+    config = RoutingConfig.model_validate(data)
+
+    with pytest.raises(ValueError, match="disabled executor"):
+        build_executor("codex", config)

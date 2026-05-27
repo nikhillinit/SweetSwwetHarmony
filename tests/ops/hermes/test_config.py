@@ -8,9 +8,11 @@ from pydantic import ValidationError
 
 from integrations.hermes.config import (
     DEFAULT_CONFIG_PATH,
+    PROJECT_ROOT,
     RoutingConfig,
     load_config,
 )
+from integrations.hermes.ledger import redact_text
 
 from .conftest import minimal_config_dict
 
@@ -108,7 +110,26 @@ def test_rejects_unsupported_modes() -> None:
 
 
 def test_checked_in_schema_matches_model_schema() -> None:
-    schema_path = Path(".claude/hermes/model-routing.schema.json")
+    schema_path = PROJECT_ROOT / ".claude/hermes/model-routing.schema.json"
     checked_in = json.loads(schema_path.read_text(encoding="utf-8"))
 
     assert checked_in == RoutingConfig.model_json_schema()
+
+
+def test_default_redaction_patterns_cover_repo_secret_formats() -> None:
+    config = load_config(PROJECT_ROOT / DEFAULT_CONFIG_PATH)
+
+    redacted = redact_text(
+        (
+            "secret_NotionKey ghp_1234567890 xoxb-123-456 "
+            "AKIA1234567890ABCDEF Bearer abc.def.ghi ya29.oauth-token"
+        ),
+        config.ledger.redaction_patterns,
+    )
+
+    assert "secret_NotionKey" not in redacted
+    assert "ghp_1234567890" not in redacted
+    assert "xoxb-123-456" not in redacted
+    assert "AKIA1234567890ABCDEF" not in redacted
+    assert "abc.def.ghi" not in redacted
+    assert "ya29.oauth-token" not in redacted

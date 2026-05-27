@@ -103,6 +103,31 @@ def test_manual_override_selects_known_executor() -> None:
     assert plan.specialist == "schema"
 
 
+def test_disabled_preferred_executor_is_skipped() -> None:
+    data = minimal_config_dict()
+    data["executors"]["kimi"]["enabled"] = False
+    config = RoutingConfig.model_validate(data)
+
+    plan = score_task_for_lane("fix thesis filter", phase="production", config=config)
+
+    assert plan.recommended_executor == "codex"
+    assert "kimi" not in plan.alternatives
+
+
+def test_manual_override_rejects_disabled_executor() -> None:
+    data = minimal_config_dict()
+    data["executors"]["kimi"]["enabled"] = False
+    config = RoutingConfig.model_validate(data)
+
+    with pytest.raises(ValueError, match="disabled manual model"):
+        score_task_for_lane(
+            "fix thesis filter",
+            phase="production",
+            config=config,
+            manual_model="kimi",
+        )
+
+
 @pytest.mark.parametrize("manual_model", ["gemini", "missing"])
 def test_manual_override_rejects_deferred_or_unknown_executor(manual_model: str) -> None:
     config = RoutingConfig.model_validate(minimal_config_dict())
