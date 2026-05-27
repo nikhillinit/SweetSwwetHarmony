@@ -9,6 +9,8 @@ This module provides integrations with:
 
 from .openai_mcp import OpenAIMCPServer
 from .codex_wrapper import CodexCLI, CodexResponse
+from .hermes import RoutingConfig as HermesRoutingConfig
+from .hermes import HermesRunResult, run_hermes
 from .strategy_iterator import StrategyIterator
 from .maestro import Maestro, ConsensusResult, ConsensusState
 
@@ -16,6 +18,9 @@ __all__ = [
     "OpenAIMCPServer",
     "CodexCLI",
     "CodexResponse",
+    "HermesRoutingConfig",
+    "HermesRunResult",
+    "run_hermes",
     "StrategyIterator",
     "Maestro",
     "ConsensusResult",
