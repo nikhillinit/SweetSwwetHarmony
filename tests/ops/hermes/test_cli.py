@@ -13,11 +13,29 @@ from ops.hermes_cli import register_hermes_commands
 from .conftest import minimal_config_dict
 
 
-def _write_cli_config(tmp_path: Path) -> Path:
+def _write_cli_config(tmp_path: Path, *, non_executable_docs: bool = False) -> Path:
     data = minimal_config_dict()
     data["ledger"]["root"] = str(tmp_path / "ai-logs" / "hermes")
     data["ledger"]["lockPath"] = str(tmp_path / "ai-logs" / "hermes" / "hermes.lock")
     data["gates"]["preflight"] = []
+    if non_executable_docs:
+        data["executors"]["claude"] = {
+            "provider": "claude",
+            "displayName": "Claude CLI",
+            "enabled": True,
+            "required": False,
+            "binary": "claude",
+            "env": [],
+            "supportsExecute": False,
+        }
+        data["specialists"]["docs"] = {
+            "keywords": ["docs", "readme"],
+            "risk": "low",
+            "preferredExecutors": ["claude"],
+            "fallbackExecutors": ["codex"],
+        }
+        data["phases"]["production"]["fallbackExecutors"].append("claude")
+        data["routing"]["fallbackOrder"].append("claude")
     path = tmp_path / "model-routing.json"
     path.write_text(json.dumps(data), encoding="utf-8")
     return path
@@ -64,6 +82,66 @@ def test_route_json_cli_creates_no_files(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
     assert payload["recommendedExecutor"] == "kimi"
+    assert not (tmp_path / "ai-logs").exists()
+
+
+def test_route_json_surfaces_non_executable_executor_metadata(tmp_path: Path) -> None:
+    config_path = _write_cli_config(tmp_path, non_executable_docs=True)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "ops.cli",
+            "hermes",
+            "route",
+            "--json",
+            "--config",
+            str(config_path),
+            "--phase",
+            "production",
+            "--task",
+            "update readme",
+        ],
+        cwd=Path.cwd(),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["recommendedExecutor"] == "claude"
+    assert payload["executorMetadata"]["claude"]["supportsExecute"] is False
+
+
+def test_run_execute_rejects_non_executable_manual_override(tmp_path: Path) -> None:
+    config_path = _write_cli_config(tmp_path, non_executable_docs=True)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "ops.cli",
+            "hermes",
+            "run",
+            "--execute",
+            "--claude",
+            "--config",
+            str(config_path),
+            "--phase",
+            "production",
+            "--task",
+            "update readme",
+        ],
+        cwd=Path.cwd(),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 2
+    assert "does not support execute mode" in result.stderr
     assert not (tmp_path / "ai-logs").exists()
 
 
