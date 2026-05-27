@@ -10,6 +10,28 @@ from integrations.hermes.router import RoutingPlan, score_task_for_lane
 from .conftest import minimal_config_dict
 
 
+def _config_with_non_executable_docs() -> RoutingConfig:
+    data = minimal_config_dict()
+    data["executors"]["claude"] = {
+        "provider": "claude",
+        "displayName": "Claude CLI",
+        "enabled": True,
+        "required": False,
+        "binary": "claude",
+        "env": [],
+        "supportsExecute": False,
+    }
+    data["specialists"]["docs"] = {
+        "keywords": ["docs", "readme"],
+        "risk": "low",
+        "preferredExecutors": ["claude"],
+        "fallbackExecutors": ["codex"],
+    }
+    data["phases"]["production"]["fallbackExecutors"].append("claude")
+    data["routing"]["fallbackOrder"].append("claude")
+    return RoutingConfig.model_validate(data)
+
+
 def test_routes_to_specialist_preferred_executor_by_keyword_score() -> None:
     config = RoutingConfig.model_validate(minimal_config_dict())
 
@@ -139,6 +161,47 @@ def test_manual_override_rejects_disabled_executor() -> None:
             phase="production",
             config=config,
             manual_model="kimi",
+        )
+
+
+def test_advisory_route_can_surface_non_executable_executor_with_metadata() -> None:
+    config = _config_with_non_executable_docs()
+
+    plan = score_task_for_lane("update readme", phase="production", config=config)
+
+    assert plan.recommended_executor == "claude"
+    payload = plan.to_dict()
+    assert payload["executorMetadata"]["claude"] == {
+        "enabled": True,
+        "supportsExecute": False,
+    }
+    assert payload["executorMetadata"]["codex"]["supportsExecute"] is True
+
+
+def test_execute_route_skips_non_executable_preferred_executor() -> None:
+    config = _config_with_non_executable_docs()
+
+    plan = score_task_for_lane(
+        "update readme",
+        phase="production",
+        config=config,
+        require_execute=True,
+    )
+
+    assert plan.recommended_executor == "codex"
+    assert "claude" not in plan.alternatives
+
+
+def test_execute_route_rejects_non_executable_manual_override() -> None:
+    config = _config_with_non_executable_docs()
+
+    with pytest.raises(ValueError, match="does not support execute mode"):
+        score_task_for_lane(
+            "update readme",
+            phase="production",
+            config=config,
+            manual_model="claude",
+            require_execute=True,
         )
 
 
