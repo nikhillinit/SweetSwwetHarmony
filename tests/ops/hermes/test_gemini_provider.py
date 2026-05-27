@@ -11,6 +11,7 @@ from integrations.gemini_antigravity_client import (
 from integrations.hermes.adapters import (
     GeminiHermesExecutor,
     build_executor,
+    build_prompt_packet,
     build_reviewer_executor,
 )
 from integrations.hermes.config import RoutingConfig
@@ -86,6 +87,19 @@ def test_provider_doctor_knows_optional_gemini_wrapper() -> None:
 
     assert report.providers["gemini"].checks_by_name["wrapper_import"].ok is True
     assert report.providers["gemini"].success is True
+
+
+def test_prompt_packet_keeps_reviewer_non_mutating_contract() -> None:
+    packet = build_prompt_packet(
+        title="Review plan",
+        body='{"task":"contract-check"}',
+        required_json_keys=["verdict", "concerns"],
+    )
+
+    assert "Do not mutate files, databases, config, Notion, or external systems." in packet
+    assert "Return strict JSON only." in packet
+    assert '"verdict": "..."' in packet
+    assert '{"task":"contract-check"}' in packet
 
 
 def test_gemini_client_missing_binary_returns_structured_failure() -> None:
