@@ -5,9 +5,13 @@ from __future__ import annotations
 import asyncio
 import os
 import shutil
+import subprocess
+import sys
+import tempfile
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 
@@ -50,11 +54,19 @@ class GeminiAntigravityClient:
         model: str = "gemini-cli",
         timeout_seconds: int = 300,
         env: dict[str, str] | None = None,
+        approval_mode: str = "plan",
+        output_format: str = "text",
+        skip_trust: bool = True,
+        cwd: str | Path | None = None,
     ) -> None:
         self.binary = binary
         self.model = model
         self.timeout_seconds = timeout_seconds
         self.env = env
+        self.approval_mode = approval_mode
+        self.output_format = output_format
+        self.skip_trust = skip_trust
+        self.cwd = Path(cwd) if cwd is not None else _default_cli_cwd()
 
     async def exec(
         self,
@@ -82,12 +94,15 @@ class GeminiAntigravityClient:
         if self.env:
             env.update(self.env)
 
-        process = await asyncio.create_subprocess_exec(
-            resolved,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        process = await _create_cli_process(
+            _gemini_cli_args(
+                resolved,
+                approval_mode=self.approval_mode,
+                output_format=self.output_format,
+                skip_trust=self.skip_trust,
+            ),
             env=env,
+            cwd=self.cwd,
         )
         try:
             stdout, stderr = await asyncio.wait_for(
@@ -122,6 +137,57 @@ class GeminiAntigravityClient:
 
 
 GeminiClient = GeminiAntigravityClient
+
+
+def _gemini_cli_args(
+    resolved_binary: str,
+    *,
+    approval_mode: str,
+    output_format: str,
+    skip_trust: bool,
+) -> list[str]:
+    args = [
+        resolved_binary,
+        "--prompt",
+        "",
+        "--approval-mode",
+        approval_mode,
+        "--output-format",
+        output_format,
+    ]
+    if skip_trust:
+        args.append("--skip-trust")
+    return args
+
+
+async def _create_cli_process(
+    args: list[str],
+    *,
+    env: dict[str, str],
+    cwd: Path,
+) -> asyncio.subprocess.Process:
+    cwd.mkdir(parents=True, exist_ok=True)
+    if sys.platform == "win32" and Path(args[0]).suffix.lower() in {".cmd", ".bat"}:
+        return await asyncio.create_subprocess_shell(
+            subprocess.list2cmdline(args),
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            env=env,
+            cwd=str(cwd),
+        )
+    return await asyncio.create_subprocess_exec(
+        *args,
+        stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        env=env,
+        cwd=str(cwd),
+    )
+
+
+def _default_cli_cwd() -> Path:
+    return Path(tempfile.gettempdir()) / "hermes-gemini-cli"
 
 
 def _read_context_files(context_files: list[str] | None) -> str:

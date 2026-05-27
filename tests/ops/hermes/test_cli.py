@@ -39,6 +39,27 @@ def _write_cli_config(tmp_path: Path, *, non_executable_docs: bool = False) -> P
     return path
 
 
+def _write_gemini_cli_config(tmp_path: Path) -> Path:
+    data = minimal_config_dict()
+    data["deferredExecutors"].pop("gemini")
+    data["executors"]["gemini"] = {
+        "provider": "gemini",
+        "displayName": "Gemini CLI",
+        "enabled": True,
+        "required": False,
+        "binary": "gemini",
+        "env": [],
+        "supportsExecute": True,
+    }
+    data["routing"]["fallbackOrder"].append("gemini")
+    data["ledger"]["root"] = str(tmp_path / "ai-logs" / "hermes")
+    data["ledger"]["lockPath"] = str(tmp_path / "ai-logs" / "hermes" / "hermes.lock")
+    data["gates"]["preflight"] = []
+    path = tmp_path / "model-routing.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    return path
+
+
 def test_register_hermes_commands_adds_route_parser() -> None:
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command")
@@ -135,6 +156,39 @@ def test_route_json_surfaces_non_executable_executor_metadata(tmp_path: Path) ->
     payload = json.loads(result.stdout)
     assert payload["recommendedExecutor"] == "claude"
     assert payload["executorMetadata"]["claude"]["supportsExecute"] is False
+
+
+def test_route_json_cli_supports_gemini_manual_override(tmp_path: Path) -> None:
+    config_path = _write_gemini_cli_config(tmp_path)
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "ops.cli",
+            "hermes",
+            "route",
+            "--json",
+            "--gemini",
+            "--config",
+            str(config_path),
+            "--phase",
+            "production",
+            "--task",
+            "review runbook",
+        ],
+        cwd=Path.cwd(),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["recommendedExecutor"] == "gemini"
+    assert payload["manualModel"] == "gemini"
+    assert payload["executorMetadata"]["gemini"]["supportsExecute"] is True
+    assert not (tmp_path / "ai-logs").exists()
 
 
 def test_run_execute_rejects_non_executable_manual_override(tmp_path: Path) -> None:

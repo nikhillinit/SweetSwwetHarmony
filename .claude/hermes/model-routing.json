@@ -35,10 +35,8 @@
       "enabled": true,
       "required": false,
       "binary": "gemini",
-      "env": [
-        "GEMINI_API_KEY"
-      ],
-      "supportsExecute": false
+      "env": [],
+      "supportsExecute": true
     },
     "antigravity": {
       "provider": "antigravity",
@@ -55,17 +53,17 @@
     "planning": {
       "riskOrder": ["low", "medium", "high"],
       "preferredExecutors": ["codex"],
-      "fallbackExecutors": ["kimi", "claude"]
+      "fallbackExecutors": ["kimi", "gemini", "claude"]
     },
     "development": {
       "riskOrder": ["medium", "high", "low"],
       "preferredExecutors": ["codex"],
-      "fallbackExecutors": ["kimi", "claude"]
+      "fallbackExecutors": ["kimi", "gemini", "claude"]
     },
     "production": {
       "riskOrder": ["high", "medium", "low"],
       "preferredExecutors": ["codex"],
-      "fallbackExecutors": ["kimi", "claude"]
+      "fallbackExecutors": ["kimi", "gemini", "claude"]
     }
   },
   "specialists": {
@@ -73,25 +71,25 @@
       "keywords": ["schema", "migration", "database", "signal store", "sqlite"],
       "risk": "high",
       "preferredExecutors": ["codex"],
-      "fallbackExecutors": ["kimi"]
+      "fallbackExecutors": ["kimi", "gemini"]
     },
     "thesis": {
       "keywords": ["thesis", "filter", "classifier", "false positive", "regression"],
       "risk": "medium",
       "preferredExecutors": ["kimi"],
-      "fallbackExecutors": ["codex"]
+      "fallbackExecutors": ["codex", "gemini"]
     },
     "security": {
       "keywords": ["secret", "token", "auth", "permission", "risk"],
       "risk": "high",
       "preferredExecutors": ["codex"],
-      "fallbackExecutors": ["claude"]
+      "fallbackExecutors": ["gemini", "claude"]
     },
     "docs": {
       "keywords": ["docs", "runbook", "handoff", "readme"],
       "risk": "low",
-      "preferredExecutors": ["claude"],
-      "fallbackExecutors": ["codex"]
+      "preferredExecutors": ["gemini"],
+      "fallbackExecutors": ["claude", "codex"]
     }
   },
   "riskDefaults": {
@@ -102,7 +100,7 @@
   },
   "routing": {
     "manualOverrideAllowed": true,
-    "fallbackOrder": ["codex", "kimi", "claude"],
+    "fallbackOrder": ["codex", "kimi", "gemini", "claude"],
     "unknownTaskExecutor": "codex"
   },
   "gates": {
