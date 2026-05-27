@@ -4,6 +4,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 from integrations.hermes.adapters import ExecutorResult
 from integrations.hermes.locks import HermesLock
 from integrations.hermes.run import (
@@ -67,6 +69,33 @@ def _write_execute_config(
             "timeoutSeconds": 5,
         }
     ]
+    path = tmp_path / "model-routing.json"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    return path
+
+
+def _write_docs_execute_config(tmp_path: Path) -> Path:
+    data = minimal_config_dict()
+    data["ledger"]["root"] = str(tmp_path / "ai-logs" / "hermes")
+    data["ledger"]["lockPath"] = str(tmp_path / "ai-logs" / "hermes" / "hermes.lock")
+    data["gates"]["preflight"] = []
+    data["executors"]["claude"] = {
+        "provider": "claude",
+        "displayName": "Claude CLI",
+        "enabled": True,
+        "required": False,
+        "binary": "claude",
+        "env": [],
+        "supportsExecute": False,
+    }
+    data["specialists"]["docs"] = {
+        "keywords": ["docs", "readme"],
+        "risk": "low",
+        "preferredExecutors": ["claude"],
+        "fallbackExecutors": ["codex"],
+    }
+    data["phases"]["production"]["fallbackExecutors"].append("claude")
+    data["routing"]["fallbackOrder"].append("claude")
     path = tmp_path / "model-routing.json"
     path.write_text(json.dumps(data), encoding="utf-8")
     return path
@@ -262,3 +291,40 @@ def test_execute_cli_without_ack_exits_75(tmp_path: Path) -> None:
     )
 
     assert result.returncode == EXIT_HIGH_RISK_ACK_REQUIRED
+
+
+async def test_execute_mode_skips_non_executable_recommendation(
+    tmp_path: Path,
+) -> None:
+    config_path = _write_docs_execute_config(tmp_path)
+    selected: list[str] = []
+
+    result = await run_hermes(
+        task="update readme",
+        phase="production",
+        mode="execute",
+        config_path=config_path,
+        executor_factory=lambda name, config: selected.append(name) or FakeExecutor(),
+    )
+
+    assert result.exit_code == 0
+    assert result.plan.recommended_executor == "codex"
+    assert selected == ["codex"]
+
+
+async def test_execute_mode_rejects_non_executable_manual_override_up_front(
+    tmp_path: Path,
+) -> None:
+    config_path = _write_docs_execute_config(tmp_path)
+
+    with pytest.raises(ValueError, match="does not support execute mode"):
+        await run_hermes(
+            task="update readme",
+            phase="production",
+            mode="execute",
+            config_path=config_path,
+            manual_model="claude",
+            executor_factory=lambda name, config: FakeExecutor(),
+        )
+
+    assert not (tmp_path / "ai-logs").exists()
