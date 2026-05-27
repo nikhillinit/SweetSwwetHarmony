@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -90,7 +91,7 @@ class KimiHermesExecutor:
 
 @dataclass(frozen=True)
 class GeminiHermesExecutor:
-    """Reviewer-only Hermes executor for Gemini and Antigravity CLI adapters."""
+    """Read-only Gemini/Antigravity reviewer adapter for Hermes artifacts."""
 
     client: Any
 
@@ -122,6 +123,13 @@ def build_executor(
     kimi_client: Any | None = None,
     gemini_client: Any | None = None,
 ) -> HermesExecutor:
+    """Build a production-capable executor.
+
+    This preserves the existing generic ``hermes run --execute`` contract: an
+    executor whose config has ``supportsExecute: false`` is rejected here.
+    Reviewer-only workflows should use ``build_reviewer_executor`` instead.
+    """
+
     return _build_executor(
         name,
         config,
@@ -140,6 +148,13 @@ def build_reviewer_executor(
     kimi_client: Any | None = None,
     gemini_client: Any | None = None,
 ) -> HermesExecutor:
+    """Build an executor for non-mutating review artifacts.
+
+    Gemini and Antigravity stay reviewer-only in Track A v1, so this path does
+    not require ``supportsExecute``. It still refuses deferred, disabled, or
+    unknown providers.
+    """
+
     return _build_executor(
         name,
         config,
@@ -192,3 +207,35 @@ def _build_executor(
         )
 
     raise ValueError(f"executor {name!r} has no Hermes adapter")
+
+
+def build_prompt_packet(
+    *,
+    title: str,
+    body: str,
+    required_json_keys: list[str] | None = None,
+) -> str:
+    """Create a deterministic reviewer prompt packet.
+
+    The packet is intentionally plain text and asks for strict JSON so reviewer
+    outputs can be archived, parsed, and audited as first-class Hermes artifacts.
+    """
+
+    keys = required_json_keys or []
+    schema = {key: "..." for key in keys}
+    return "\n".join(
+        [
+            f"# {title}",
+            "",
+            "Review the following Hermes plan or task contract artifact.",
+            "Do not mutate files, databases, config, Notion, or external systems.",
+            "Return strict JSON only.",
+            "",
+            "Required JSON shape:",
+            json.dumps(schema, indent=2),
+            "",
+            "Packet:",
+            body,
+            "",
+        ]
+    )
