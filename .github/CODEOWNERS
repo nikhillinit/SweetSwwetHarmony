@@ -1,0 +1,16 @@
+.github/workflows/** @nikhillinit
+scripts/** @nikhillinit
+ops/** @nikhillinit
+storage/** @nikhillinit
+api/routers/merge_review.py @nikhillinit
+api/models/merge.py @nikhillinit
+workflows/notion_pusher.py @nikhillinit
+workflows/suppression_sync.py @nikhillinit
+connectors/notion_connector_v2.py @nikhillinit
+enrichment/** @nikhillinit
+docs/runbooks/** @nikhillinit
+docs/decisions/** @nikhillinit
+docs/specs/** @nikhillinit
+docs/incidents/** @nikhillinit
+docs/evals/** @nikhillinit
+docs/approvals/** @nikhillinit
