@@ -47,7 +47,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from storage.signal_store import SignalStore, SuppressionEntry
 from connectors.notion_connector_v2 import NotionConnector
 from utils.canonical_keys import (
-    build_canonical_key,
     normalize_domain,
     is_strong_key,
 )
@@ -203,12 +202,17 @@ class SuppressionSync:
         self.ttl_days = ttl_days
         self.stats = SyncStats()
 
-    async def sync(self, dry_run: bool = False) -> SyncStats:
+    async def sync(
+        self,
+        dry_run: bool = False,
+        clean_expired: bool = True,
+    ) -> SyncStats:
         """
         Run the suppression cache sync.
 
         Args:
             dry_run: If True, fetch and process but don't update cache
+            clean_expired: If True, remove expired cache rows after syncing
 
         Returns:
             SyncStats with detailed results
@@ -237,9 +241,12 @@ class SuppressionSync:
                 count = await self.store.update_suppression_cache(entries)
                 self.stats.entries_synced = count
 
-                # Step 4: Clean expired entries
-                expired = await self.store.clean_expired_cache()
-                self.stats.entries_expired_cleaned = expired
+                if clean_expired:
+                    # Step 4: Clean expired entries
+                    expired = await self.store.clean_expired_cache()
+                    self.stats.entries_expired_cleaned = expired
+                else:
+                    logger.info("Skipping expired suppression cache cleanup")
 
             self.stats.completed_at = datetime.now(timezone.utc)
 
@@ -432,7 +439,7 @@ async def run_scheduled_sync(
     while True:
         try:
             sync = SuppressionSync(notion_connector, signal_store, ttl_days)
-            await sync.sync(dry_run=False)
+            await sync.sync(dry_run=False, clean_expired=True)
 
         except Exception as e:
             logger.exception(f"Error in scheduled sync: {e}")
@@ -473,6 +480,20 @@ async def main():
         action="store_true",
         help="Fetch and process but don't update cache",
     )
+    cleanup_group = parser.add_mutually_exclusive_group()
+    cleanup_group.add_argument(
+        "--delete-stale",
+        dest="delete_stale",
+        action="store_true",
+        default=True,
+        help="Delete expired suppression cache entries after sync (default)",
+    )
+    cleanup_group.add_argument(
+        "--skip-clean-expired",
+        dest="delete_stale",
+        action="store_false",
+        help="Do not delete expired suppression cache entries",
+    )
     parser.add_argument(
         "--verbose",
         action="store_true",
@@ -512,8 +533,10 @@ async def main():
     store = SignalStore(
         db_path=args.db_path,
         suppression_ttl_days=args.ttl_days,
+        read_only=args.dry_run,
     )
-    await store.initialize()
+    if not args.dry_run or Path(args.db_path).exists():
+        await store.initialize()
 
     try:
         if args.interval:
@@ -527,7 +550,10 @@ async def main():
         else:
             # Run once
             sync = SuppressionSync(notion, store, args.ttl_days)
-            stats = await sync.sync(dry_run=args.dry_run)
+            stats = await sync.sync(
+                dry_run=args.dry_run,
+                clean_expired=args.delete_stale,
+            )
 
             # Exit with error code if sync had errors
             if stats.errors:
