@@ -16,8 +16,12 @@ selection, gate execution, dry-run ledgers, and guarded provider execution.
    route and dry-run output look correct.
 5. High-risk execute: the high-risk execute path requires
    `--ack-risk I-ACK-RISK`; without that exact acknowledgement Hermes exits 75.
-6. Deferred providers: Gemini CLI, Antigravity, and any future Vertex surface
-   stay non-executable until adapters and doctor checks are landed with tests.
+6. Gemini CLI execute: Gemini is available as a CLI-backed executor for
+   non-mutating review/routing work. The adapter runs Gemini headlessly with
+   plan approval mode and the trusted-workspace bypass required for automated
+   CLI runs.
+7. Deferred providers: Antigravity and any future Vertex surface stay
+   non-executable until adapters and doctor checks are landed with tests.
 
 ## Commands
 
@@ -29,6 +33,8 @@ python -m ops.cli hermes providers doctor --json
 python -m ops.cli hermes route --json --phase production --task "fix thesis filter"
 python -m ops.cli hermes run --plan-only --phase production --task "schema migration"
 python -m ops.cli hermes run --dry-run --phase production --task "schema migration for signal store"
+python -m ops.cli hermes route --json --phase production --task "update runbook docs"
+python -m ops.cli hermes run --execute --phase planning --task "update runbook docs" --gemini
 python -m ops.cli hermes run --execute --phase production --task "schema migration" --codex
 python -m ops.cli hermes run --execute --phase production --task "schema migration" --codex --ack-risk I-ACK-RISK
 ```
@@ -57,6 +63,17 @@ and the next safe operator action.
 
 - Provider doctor is read-only and does not make network probes.
 - Codex and Kimi execution delegates to existing wrappers.
+- Gemini execution delegates to the installed Gemini CLI, not the Gemini API.
+  `C:\Users\nikhi\.gemini` is the CLI data/config area; Hermes discovers the
+  executable via PATH, typically `C:\Users\nikhi\AppData\Roaming\npm\gemini.CMD`
+  on Windows.
+- Gemini doctor checks wrapper import and CLI binary availability. It does not
+  require `GEMINI_API_KEY`.
+- Gemini runs with `--prompt`, `--approval-mode plan`, `--output-format text`,
+  and `--skip-trust` so Hermes can use it in headless CLI mode without granting
+  file-edit or external-system mutation approval.
+- Hermes launches Gemini from an isolated temp working directory and passes
+  context through stdin so a Gemini CLI run cannot dirty the project checkout.
 - Deferred executors are refused by the adapter registry.
 - High-risk execution fails closed without `--ack-risk I-ACK-RISK`.
 - Hermes code uses `datetime.now(timezone.utc)`, not `datetime.utcnow()`.

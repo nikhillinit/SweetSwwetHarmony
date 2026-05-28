@@ -28,6 +28,13 @@ already present or suppressed. The strict `--min-created-at` watchdog correctly
 reported `no_post_run_rows`, but treating that as a failed daily heartbeat
 confused runner execution with write-path proof.
 
+On 2026-05-17, the operational set was rebaselined after reviewing the May 14
+collector rows and the May 15/16 keepalive artifacts. `arxiv`, `hacker_news`,
+and `rss_feeds` were healthy enough for the default 36-hour gate. `news_api`
+was not: the GNews-backed collector showed rate-limit pressure and stale,
+duplicate-only output. Because `news_api` is public-buzz corroboration, not an
+independent evidence family, it should not be a default liveness dependency.
+
 ## Decision
 
 Runner liveness is governed by this ADR and
@@ -35,12 +42,11 @@ Runner liveness is governed by this ADR and
 runbook. This decision is a sibling to ADR-043 and keeps the liveness contract
 outside DB durability.
 
-The provisional `HarmonicKeepAlive` re-enable contract is:
+The current `HarmonicKeepAlive` re-enable contract is:
 
-- `Collectors=job_postings`
-- `JOB_POSTING_DOMAINS` must be explicit and runner-scoped
-- `WatchdogOperational=greenhouse_jobs,ashby_jobs`
-- `WatchdogThresholdHours=12`
+- `Collectors=hacker_news,arxiv,rss_feeds`
+- `WatchdogOperational=hacker_news,arxiv,rss_feeds`
+- `WatchdogThresholdHours=36`
 - `signals.created_at` is the freshness source of record
 - generated keepalive artifacts use task-specific names:
   `YYYY-MM-DD-<TaskName>.json`
@@ -56,9 +62,13 @@ The provisional `HarmonicKeepAlive` re-enable contract is:
   drill mode is named `strict_write_proof`
 - `collector_health`, scheduler metadata, `state/collectors.json`, and JSON
   artifacts are corroboration only
-- `rss_feeds` is excluded only from this provisional positive-peer contract; it
-  remains the known omitted target from `HarmonicFreezeDrill`, not a permanent
-  production policy
+- `news_api` is optional enrichment. Its intended gap is mainstream press,
+  funding announcements, and PR activity, but the current GNews-backed
+  implementation is quota-constrained. Revisit that evidence lane with a
+  provider swap or manual weekly run before promoting it back into the watchdog
+  gate.
+- `JOB_POSTING_DOMAINS` and the `greenhouse_jobs,ashby_jobs` positive-peer
+  setup remain drill/diagnostic tools, not the default production heartbeat.
 
 Monitor delivery is required before a live trial. The monitor may be
 Healthchecks.io or a self-hosted compatible service, but it must reach a real
@@ -96,13 +106,17 @@ The host-mode gate remains separate:
 
 - The 2026-05-12 freeze drill can be cited as omitted-target evidence without
   rerunning an induced freeze.
-- The first re-enable trial is a positive-peer run, not another RSS freeze.
+- The first steady-state re-enable trial returns to the healthy public
+  research/buzz set: `hacker_news`, `arxiv`, and `rss_feeds`.
 - A successful trial can prove scheduled collection, composite verdicting, and
   monitor delivery for the selected host mode.
 - Duplicate-only or pre-run rows fail strict write-proof, even when they are
   within the freshness threshold.
 - Duplicate-only daily heartbeat runs are visible as
   `WARN_DUPLICATE_ONLY`; they do not prove fresh inserts.
+- `news_api` no longer causes the 36-hour watchdog gate to fail by default; it
+  remains visible as informational DB state unless explicitly passed through
+  `--operational`.
 - Restore drills, WAL streaming, external ledgers, sidecar handling, and
   host-storage benchmarks remain Phase 5.2 work.
 
@@ -110,7 +124,7 @@ The host-mode gate remains separate:
 
 - The live task status is reverified immediately before any scheduler mutation.
 - Live `HarmonicKeepAlive` registration requires an explicit host mode.
-- Generated runner content uses explicit positive peers and no synthetic
+- Generated runner content uses the current operational set and no synthetic
   canary in place of real DB rows.
 - Generated artifacts are task-specific and cannot be overwritten by sibling
   drill tasks.

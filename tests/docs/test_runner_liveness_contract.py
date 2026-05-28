@@ -47,8 +47,9 @@ def test_runner_liveness_has_sibling_adr_and_runbook() -> None:
     assert "required_after" in runbook
     assert "stale_reason" in runbook
     assert "keepalive.db_progress_status" in runbook
+    assert "hacker_news,arxiv,rss_feeds" in runbook
+    assert "`news_api` is optional enrichment" in runbook
     assert "JOB_POSTING_DOMAINS" in runbook
-    assert "greenhouse_jobs,ashby_jobs" in runbook
     assert "HARMONIC_KEEPALIVE_PING_URL" in runbook
     assert "HostMode" in runbook
     assert "MonitorAlertVerified" in runbook

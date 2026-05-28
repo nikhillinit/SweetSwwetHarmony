@@ -4,7 +4,7 @@
 
 .DESCRIPTION
     Closes the R19 root cause by scheduling a daily local run of:
-      1. python run_pipeline.py collect --collectors hacker_news,arxiv,rss_feeds,news_api
+      1. python run_pipeline.py collect --collectors hacker_news,arxiv,rss_feeds
       2. python scripts/red-team-hybrid/freshness_watchdog.py --json
          (output appended to artifacts/keepalive/YYYY-MM-DD-<TaskName>.json)
 
@@ -38,11 +38,11 @@
 
 .PARAMETER Collectors
     Comma-separated collector list for the run_pipeline.py collect step.
-    Default preserves the original daily keepalive set.
+    Default is the operational daily keepalive set.
 
 .PARAMETER WatchdogOperational
     Comma-separated source_api list passed to freshness_watchdog.py
-    --operational. Default preserves the original watchdog operational set.
+    --operational. Default is the operational daily keepalive set.
 
 .PARAMETER WatchdogThresholdHours
     Freshness threshold passed to freshness_watchdog.py --threshold-hours.
@@ -119,6 +119,12 @@
     Active drill safety: before the Monday, 2026-05-11 readout, do not invoke
     this installer against the live repo/task with -TaskName HarmonicFreezeDrill.
     Doing so can rewrite the live wrapper and/or re-register the active task.
+
+    news_api is optional enrichment, not a default freshness dependency. Its
+    intended gap is mainstream press, funding announcements, and PR activity,
+    but the current GNews-backed collector is quota-constrained. Revisit with
+    a provider swap or a manual weekly run before promoting it back into the
+    watchdog gate.
 #>
 
 [CmdletBinding()]
@@ -127,8 +133,8 @@ param(
     [string]$RunAt = "08:00",
     [string]$ProjectRoot = (Get-Location).Path,
     [string]$PythonExe = "python",
-    [string]$Collectors = "hacker_news,arxiv,rss_feeds,news_api",
-    [string]$WatchdogOperational = "hacker_news,arxiv,rss_feeds,news_api",
+    [string]$Collectors = "hacker_news,arxiv,rss_feeds",
+    [string]$WatchdogOperational = "hacker_news,arxiv,rss_feeds",
     [double]$WatchdogThresholdHours = 36,
     [ValidateSet("", "daily_heartbeat", "strict_write_proof")]
     [string]$VerdictMode = "",
