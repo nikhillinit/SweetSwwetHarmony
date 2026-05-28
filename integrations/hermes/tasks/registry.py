@@ -11,6 +11,7 @@ from .base import (
     TaskResult,
 )
 from .restore_db import RestoreDbTask
+from .suppression_sync import SuppressionSyncTask
 
 
 class ContractCheckTask(HermesTask):
@@ -56,6 +57,7 @@ class ContractCheckTask(HermesTask):
 _TASKS: dict[str, type[HermesTask]] = {
     ContractCheckTask.name: ContractCheckTask,
     RestoreDbTask.name: RestoreDbTask,
+    SuppressionSyncTask.name: SuppressionSyncTask,
 }
 
 TASK_REGISTRY = _TASKS
@@ -101,6 +103,10 @@ def add_task_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--api-url")
     parser.add_argument("--expected-schema-version", type=int)
     parser.add_argument("--min-row-count", type=int, default=0)
+    parser.add_argument("--db-path", default="signals.db")
+    parser.add_argument("--ttl-days", type=int, default=7)
+    parser.add_argument("--delete-stale", action="store_true")
+    parser.add_argument("--max-removals", type=int, default=25)
 
 
 def mode_from_args(args: argparse.Namespace) -> TaskMode:
