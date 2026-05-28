@@ -98,6 +98,32 @@ def test_register_hermes_commands_adds_restore_db_task_parser() -> None:
     assert callable(args.func)
 
 
+def test_register_hermes_commands_adds_suppression_sync_task_parser() -> None:
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+
+    register_hermes_commands(subparsers)
+    args = parser.parse_args(
+        [
+            "hermes",
+            "task",
+            "suppression-sync",
+            "--dry-run",
+            "--db-path",
+            "signals.db",
+            "--ttl-days",
+            "14",
+        ]
+    )
+
+    assert args.command == "hermes"
+    assert args.hermes_cmd == "task"
+    assert args.task_name == "suppression-sync"
+    assert args.db_path == "signals.db"
+    assert args.ttl_days == 14
+    assert callable(args.func)
+
+
 def test_route_json_cli_creates_no_files(tmp_path: Path) -> None:
     config_path = _write_cli_config(tmp_path)
 
@@ -126,6 +152,39 @@ def test_route_json_cli_creates_no_files(tmp_path: Path) -> None:
     payload = json.loads(result.stdout)
     assert payload["recommendedExecutor"] == "kimi"
     assert not (tmp_path / "ai-logs").exists()
+
+
+def test_suppression_sync_plan_only_cli_writes_ledger_json(tmp_path: Path) -> None:
+    config_path = _write_cli_config(tmp_path)
+    db_path = tmp_path / "signals.db"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "ops.cli",
+            "hermes",
+            "task",
+            "suppression-sync",
+            "--plan-only",
+            "--json",
+            "--config",
+            str(config_path),
+            "--db-path",
+            str(db_path),
+        ],
+        cwd=Path.cwd(),
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["task"] == "suppression-sync"
+    assert payload["status"] == "planned"
+    assert payload["plan"]["mutation"]["allowed"] is False
+    assert list((tmp_path / "ai-logs" / "hermes" / "runs").iterdir())
 
 
 def test_route_json_surfaces_non_executable_executor_metadata(tmp_path: Path) -> None:
