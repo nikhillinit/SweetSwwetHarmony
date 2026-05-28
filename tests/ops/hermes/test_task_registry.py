@@ -63,7 +63,7 @@ def test_dry_run_registered_task_stays_non_mutating() -> None:
     assert result.outputs == {"dryRun": True, "mutationCommitted": False}
 
 
-def test_schema_template_surface_stays_narrow_after_incident_packet_schema() -> None:
+def test_schema_template_surface_stays_narrow_after_shadow_validation_schema() -> None:
     root = Path(__file__).resolve().parents[3] / "integrations" / "hermes"
 
     assert {path.name for path in (root / "schemas").glob("*.json")} == {
@@ -73,6 +73,7 @@ def test_schema_template_surface_stays_narrow_after_incident_packet_schema() -> 
         "hermes_response_packet.schema.json",
         "ledger_audit_report.schema.json",
         "run_record.schema.json",
+        "shadow_validation.schema.json",
         "task_result.schema.json",
     }
     assert {path.name for path in (root / "templates").glob("*.j2")} == {
