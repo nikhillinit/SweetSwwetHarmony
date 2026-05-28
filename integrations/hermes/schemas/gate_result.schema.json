@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sweetswwetharmony.local/hermes/gate_result.schema.json",
+  "title": "Hermes Track A Gate Result",
+  "type": "object",
+  "required": [
+    "name",
+    "command",
+    "returnCode",
+    "stdout",
+    "stderr",
+    "durationMs",
+    "timedOut",
+    "success"
+  ],
+  "properties": {
+    "name": {"type": "string", "minLength": 1},
+    "command": {
+      "type": "array",
+      "items": {"type": "string"},
+      "minItems": 1
+    },
+    "returnCode": {"type": "integer"},
+    "stdout": {"type": "string"},
+    "stderr": {"type": "string"},
+    "durationMs": {"type": "integer", "minimum": 0},
+    "timedOut": {"type": "boolean"},
+    "success": {"type": "boolean"}
+  },
+  "additionalProperties": false
+}
