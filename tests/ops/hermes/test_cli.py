@@ -185,6 +185,40 @@ def test_register_hermes_commands_adds_incident_task_parser() -> None:
     assert callable(args.func)
 
 
+def test_register_hermes_commands_adds_deliberate_task_parser() -> None:
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+
+    register_hermes_commands(subparsers)
+    args = parser.parse_args(
+        [
+            "hermes",
+            "task",
+            "deliberate",
+            "--dry-run",
+            "--task-text",
+            "review the Track A plan",
+            "--panel",
+            "codex,kimi",
+            "--rounds",
+            "2",
+            "--synthesizer",
+            "codex",
+            "--coding-pair",
+        ]
+    )
+
+    assert args.command == "hermes"
+    assert args.hermes_cmd == "task"
+    assert args.task_name == "deliberate"
+    assert args.task_text == "review the Track A plan"
+    assert args.panel == "codex,kimi"
+    assert args.rounds == 2
+    assert args.synthesizer == "codex"
+    assert args.coding_pair is True
+    assert callable(args.func)
+
+
 def test_route_json_cli_creates_no_files(tmp_path: Path) -> None:
     config_path = _write_cli_config(tmp_path)
 
