@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sweetswwetharmony.local/hermes/config_promote_report.schema.json",
+  "title": "Hermes Config Promote Report",
+  "type": "object",
+  "required": [
+    "generatedAt",
+    "task",
+    "runId",
+    "dryRun",
+    "mutationCommitted",
+    "currentConfig",
+    "proposedConfig",
+    "previousSnapshotRef",
+    "diffArtifact",
+    "policyReview"
+  ],
+  "properties": {
+    "generatedAt": {"type": "string", "format": "date-time"},
+    "task": {"const": "config-promote"},
+    "runId": {"type": ["string", "null"], "minLength": 1},
+    "dryRun": {"type": "boolean"},
+    "mutationCommitted": {"type": "boolean"},
+    "currentConfig": {
+      "type": "object",
+      "required": ["path", "sha256Before", "sha256After"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256Before": {"type": ["string", "null"], "minLength": 1},
+        "sha256After": {"type": ["string", "null"], "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "proposedConfig": {
+      "type": "object",
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": ["string", "null"], "minLength": 1},
+        "sha256": {"type": ["string", "null"], "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "previousSnapshotRef": {"type": ["string", "null"], "minLength": 1},
+    "diffArtifact": {"const": "config_promote_diff.json"},
+    "policyReview": {
+      "type": "object",
+      "required": ["risky_changes", "requires_evidence", "evidence"],
+      "properties": {
+        "risky_changes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["type"],
+            "properties": {
+              "type": {"type": "string", "minLength": 1},
+              "executor": {"type": "string", "minLength": 1},
+              "from": {"type": ["boolean", "null"]},
+              "to": {"type": ["boolean", "null"]},
+              "section": {"type": "string", "minLength": 1}
+            },
+            "additionalProperties": false
+          }
+        },
+        "requires_evidence": {"type": "boolean"},
+        "evidence": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
