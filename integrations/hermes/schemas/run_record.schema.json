@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sweetswwetharmony.local/hermes/run_record.schema.json",
+  "title": "Hermes Track A Run Record",
+  "type": "object",
+  "required": [
+    "run_id",
+    "task",
+    "mode",
+    "risk_level",
+    "actor",
+    "started_at",
+    "updated_at",
+    "status",
+    "inputs",
+    "locks",
+    "ack_risk_token",
+    "preflight",
+    "outputs",
+    "ledger",
+    "plan_ref"
+  ],
+  "properties": {
+    "run_id": {"type": "string", "minLength": 1},
+    "task": {"type": "string", "minLength": 1},
+    "mode": {"enum": ["plan-only", "preflight-only", "dry-run", "execute"]},
+    "risk_level": {"enum": ["low", "medium", "high", "critical"]},
+    "actor": {
+      "type": "object",
+      "required": ["type", "id"],
+      "properties": {
+        "type": {"type": "string", "minLength": 1},
+        "id": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "started_at": {"type": "string", "format": "date-time"},
+    "updated_at": {"type": "string", "format": "date-time"},
+    "status": {"type": "string", "minLength": 1},
+    "inputs": {"type": "object"},
+    "locks": {
+      "type": "object",
+      "required": ["required", "acquired", "ttl_seconds"],
+      "properties": {
+        "required": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "acquired": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "ttl_seconds": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "ack_risk_token": {"type": ["string", "null"]},
+    "preflight": {
+      "type": "object",
+      "required": ["checks", "passed"],
+      "properties": {
+        "checks": {
+          "type": "array",
+          "items": {"$ref": "check_result.schema.json"}
+        },
+        "passed": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "outputs": {"type": "object"},
+    "ledger": {
+      "type": "object",
+      "required": ["index_ref", "run_dir"],
+      "properties": {
+        "index_ref": {"type": "string", "minLength": 1},
+        "run_dir": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "plan_ref": {"type": "string", "minLength": 1}
+  },
+  "additionalProperties": false
+}
