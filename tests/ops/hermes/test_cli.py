@@ -6,6 +6,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from ops.hermes_cli import register_hermes_commands
 
 from .conftest import minimal_config_dict
@@ -318,6 +320,49 @@ def test_register_hermes_commands_adds_outbox_purge_task_parser() -> None:
     assert args.age_days == 30
     assert args.max_removals == 10
     assert callable(args.func)
+
+
+def test_register_hermes_commands_adds_ledger_audit_task_parser() -> None:
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+
+    register_hermes_commands(subparsers)
+    args = parser.parse_args(
+        [
+            "hermes",
+            "task",
+            "ledger-audit",
+            "--dry-run",
+            "--check",
+            "index,artifacts",
+        ]
+    )
+
+    assert args.command == "hermes"
+    assert args.hermes_cmd == "task"
+    assert args.task_name == "ledger-audit"
+    assert args.check == "index,artifacts"
+    assert callable(args.func)
+
+
+def test_ledger_audit_parser_rejects_unknown_check_scope() -> None:
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+
+    register_hermes_commands(subparsers)
+    with pytest.raises(SystemExit) as excinfo:
+        parser.parse_args(
+            [
+                "hermes",
+                "task",
+                "ledger-audit",
+                "--dry-run",
+                "--check",
+                "artifactz",
+            ]
+        )
+
+    assert excinfo.value.code == 2
 
 
 def test_route_json_cli_creates_no_files(tmp_path: Path) -> None:
