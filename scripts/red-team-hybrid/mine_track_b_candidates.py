@@ -62,7 +62,6 @@ DEFAULT_OPERATIONAL_COLLECTORS: tuple[str, ...] = (
     "hacker_news",
     "arxiv",
     "rss_feeds",
-    "news_api",
 )
 BUCKET_SIZE: int = 10  # 10 per bucket x 3 buckets = 30 candidates per D-04
 
@@ -106,7 +105,7 @@ def query_bucket_1_tp_likely(conn: sqlite3.Connection) -> list[dict[str, Any]]:
            lc.category, lc.thesis_fit_score
     FROM signals s
     JOIN latest_class lc ON s.id = lc.signal_id AND lc.rn = 1
-    WHERE s.source_api IN ('hacker_news','arxiv','news_api','rss_feeds')
+    WHERE s.source_api IN ('hacker_news','arxiv','rss_feeds')
       AND lc.category NOT IN ('excluded','other')
       AND lc.thesis_fit_score >= 0.7
     ORDER BY {DETERMINISTIC_ORDER_EXPR}
@@ -136,7 +135,7 @@ def query_bucket_2_fp_likely(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     FROM signals s
     JOIN latest_class lc ON s.id = lc.signal_id AND lc.rn = 1
     WHERE lc.category = 'excluded' AND lc.thesis_fit_score < 0.3
-      AND s.source_api IN ('hacker_news','arxiv','news_api','rss_feeds')
+      AND s.source_api IN ('hacker_news','arxiv','rss_feeds')
     ORDER BY {DETERMINISTIC_ORDER_EXPR}
     LIMIT {BUCKET_SIZE}
     """
@@ -164,7 +163,7 @@ def query_bucket_3_ambiguous(conn: sqlite3.Connection) -> list[dict[str, Any]]:
            lc.thesis_fit_score
     FROM signals s
     LEFT JOIN latest_class lc ON s.id = lc.signal_id AND lc.rn = 1
-    WHERE s.source_api IN ('hacker_news','arxiv','news_api','rss_feeds')
+    WHERE s.source_api IN ('hacker_news','arxiv','rss_feeds')
       AND (lc.thesis_fit_score IS NULL
            OR (lc.thesis_fit_score >= 0.3 AND lc.thesis_fit_score < 0.7))
     ORDER BY {DETERMINISTIC_ORDER_EXPR}
