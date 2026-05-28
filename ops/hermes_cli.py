@@ -74,6 +74,7 @@ def _add_common_route_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--codex", action="store_true", help="Manually route to Codex")
     parser.add_argument("--kimi", action="store_true", help="Manually route to Kimi")
     parser.add_argument("--claude", action="store_true", help="Manually route to Claude")
+    parser.add_argument("--gemini", action="store_true", help="Manually route to Gemini CLI")
 
 
 def _cmd_route(args: argparse.Namespace) -> None:
@@ -180,7 +181,7 @@ def _cmd_force_unlock(args: argparse.Namespace) -> None:
 def _manual_model(args: argparse.Namespace) -> str | None:
     selected = [
         name
-        for name in ("codex", "kimi", "claude")
+        for name in ("codex", "kimi", "claude", "gemini")
         if getattr(args, name, False)
     ]
     if len(selected) > 1:

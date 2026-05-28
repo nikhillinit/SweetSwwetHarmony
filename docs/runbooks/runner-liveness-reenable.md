@@ -25,6 +25,17 @@ The readout records `HarmonicFreezeDrill` as `PASS`: the scheduled task ran on
 That proves omitted-target detection. It does not by itself re-enable
 `HarmonicKeepAlive`.
 
+Current disposition:
+
+- `hacker_news`, `arxiv`, and `rss_feeds` are the default operational
+  freshness set.
+- `news_api` is optional enrichment. Its intended gap is mainstream press,
+  funding announcements, and PR activity, but the current GNews-backed
+  collector is quota-constrained and should be revisited with a provider swap
+  or a manual weekly run before returning to the watchdog gate.
+- `job_postings` with `greenhouse_jobs,ashby_jobs` remains a positive-peer
+  diagnostic pattern for drills, not the default production heartbeat.
+
 ## Drift Disposition
 
 Keep these out of the re-enable PR unless a separate operator decision pulls
@@ -127,8 +138,32 @@ not share the same artifact path.
 
 ## Generate-Only Preview
 
-Preview the provisional positive-peer `HarmonicKeepAlive` runner before
+Preview the operational `HarmonicKeepAlive` runner before
 registration:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\red-team-hybrid\install_keepalive_task.ps1 `
+  -TaskName "HarmonicKeepAlive" `
+  -Collectors "hacker_news,arxiv,rss_feeds" `
+  -WatchdogOperational "hacker_news,arxiv,rss_feeds" `
+  -WatchdogThresholdHours 36 `
+  -MonitorPingUrlEnvVar "HARMONIC_KEEPALIVE_PING_URL" `
+  -GenerateOnly
+```
+
+This contract intentionally excludes `news_api` from the freshness gate.
+`news_api` still exists as optional public-buzz enrichment, but it is not a
+daily liveness dependency while GNews quota and stale-result behavior are the
+dominant failure mode.
+
+Do not use `-IgnoreWatchdogExitCode` for the re-enable trial. A stale
+operational source should fail the task unless the only DB failure is duplicate-only
+`no_post_run_rows` in `daily_heartbeat` mode.
+
+For a deliberate positive-peer diagnostic, pass explicit job-posting fixture
+domains and operational peers. The installer exports those fixtures as
+`JOB_POSTING_DOMAINS` inside the generated wrapper. This is not the default
+production runner:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\red-team-hybrid\install_keepalive_task.ps1 `
@@ -141,14 +176,6 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\red-team-hybrid\inst
   -GenerateOnly
 ```
 
-This provisional contract intentionally excludes `rss_feeds`. That exclusion
-does not define final production policy; it avoids rerunning the induced freeze
-when the already recorded drill is sufficient.
-
-Do not use `-IgnoreWatchdogExitCode` for the re-enable trial. A stale positive
-peer should fail the task unless the only DB failure is duplicate-only
-`no_post_run_rows` in `daily_heartbeat` mode.
-
 ## Live Trial
 
 After the host-mode and monitor gates pass, register and trigger one trial:
@@ -157,10 +184,9 @@ After the host-mode and monitor gates pass, register and trigger one trial:
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\red-team-hybrid\install_keepalive_task.ps1 `
   -TaskName "HarmonicKeepAlive" `
   -HostMode "<LocalHost|DedicatedHost>" `
-  -Collectors "job_postings" `
-  -WatchdogOperational "greenhouse_jobs,ashby_jobs" `
-  -WatchdogThresholdHours 12 `
-  -JobPostingDomains "10beauty.com,cofertility.com,openai.com" `
+  -Collectors "hacker_news,arxiv,rss_feeds" `
+  -WatchdogOperational "hacker_news,arxiv,rss_feeds" `
+  -WatchdogThresholdHours 36 `
   -MonitorPingUrlEnvVar "HARMONIC_KEEPALIVE_PING_URL" `
   -MonitorAlertVerified `
   -TestRun
@@ -213,16 +239,17 @@ Pass only if all are true:
 - `HarmonicKeepAlive` ran and `HarmonicFreezeDrill` did not overlap
 - the watchdog artifact name is task-specific:
   `YYYY-MM-DD-<TaskName>.json`
-- the watchdog threshold is 12 hours
+- the watchdog threshold is 36 hours
 - the watchdog used `--min-created-at` from the observed run start
-- `JOB_POSTING_DOMAINS` is explicit
-- `greenhouse_jobs,ashby_jobs` are the operational watchdog sources
+- `hacker_news,arxiv,rss_feeds` are the operational watchdog sources
+- `news_api` is absent from the operational watchdog sources unless a manual
+  provider-swap or weekly-enrichment trial intentionally opts it in
 - the monitor received a success ping with the composite verdict and DB proof
   payload, including `keepalive.db_progress_status`, `min_created_at`,
   `required_after`, and any `stale_reason`
 - the human alert recipient is known and verified
 - final `overall_status` is either `PASS` or `WARN_DUPLICATE_ONLY`
-- if final `overall_status` is `PASS`, both peer source APIs have
+- if final `overall_status` is `PASS`, all operational source APIs have
   `MAX(signals.created_at)` after the observed run start
 - if final `overall_status` is `WARN_DUPLICATE_ONLY`, all operational watchdog
   failures are `no_post_run_rows`
@@ -240,13 +267,13 @@ from datetime import datetime
 def parse_ts(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
-peers = ("greenhouse_jobs", "ashby_jobs")
+peers = ("hacker_news", "arxiv", "rss_feeds")
 run_start = parse_ts(os.environ["RUN_START_UTC"])
 conn = sqlite3.connect("signals.db")
 rows = dict(conn.execute(
     "SELECT source_api, MAX(created_at) "
     "FROM signals "
-    "WHERE source_api IN ('greenhouse_jobs','ashby_jobs') "
+    "WHERE source_api IN ('hacker_news','arxiv','rss_feeds') "
     "GROUP BY source_api"
 ))
 missing = [
