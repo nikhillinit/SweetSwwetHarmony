@@ -14,6 +14,7 @@ from .deliberation import DeliberationTask
 from .governance import GovernanceTask
 from .incident_response import INCIDENT_PHASES, IncidentResponseTask
 from .restore_db import RestoreDbTask
+from .shadow_validate import ShadowValidateTask
 from .suppression_sync import SuppressionSyncTask
 
 
@@ -63,6 +64,7 @@ _TASKS: dict[str, type[HermesTask]] = {
     GovernanceTask.name: GovernanceTask,
     IncidentResponseTask.name: IncidentResponseTask,
     RestoreDbTask.name: RestoreDbTask,
+    ShadowValidateTask.name: ShadowValidateTask,
     SuppressionSyncTask.name: SuppressionSyncTask,
 }
 
@@ -132,6 +134,7 @@ def add_task_arguments(parser: argparse.ArgumentParser) -> None:
         default="freeze",
     )
     parser.add_argument("--artifact-root", default="ops/artifacts/maintenance")
+    ShadowValidateTask.add_arguments(parser)
 
 
 def mode_from_args(args: argparse.Namespace) -> TaskMode:
