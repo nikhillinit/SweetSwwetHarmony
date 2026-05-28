@@ -11,6 +11,7 @@ from .base import (
     TaskResult,
 )
 from .collector_promote import CollectorPromoteTask
+from .config_promote import ConfigPromoteTask
 from .deliberation import DeliberationTask
 from .governance import GovernanceTask
 from .incident_response import INCIDENT_PHASES, IncidentResponseTask
@@ -63,6 +64,7 @@ class ContractCheckTask(HermesTask):
 
 _TASKS: dict[str, type[HermesTask]] = {
     CollectorPromoteTask.name: CollectorPromoteTask,
+    ConfigPromoteTask.name: ConfigPromoteTask,
     ContractCheckTask.name: ContractCheckTask,
     DeliberationTask.name: DeliberationTask,
     GovernanceTask.name: GovernanceTask,
@@ -142,6 +144,7 @@ def add_task_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--artifact-root", default="ops/artifacts/maintenance")
     ShadowValidateTask.add_arguments(parser)
     CollectorPromoteTask.add_arguments(parser)
+    ConfigPromoteTask.add_arguments(parser)
     OutboxPurgeTask.add_arguments(parser)
     LedgerAuditTask.add_arguments(parser)
 
