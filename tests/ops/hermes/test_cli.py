@@ -285,6 +285,41 @@ def test_register_hermes_commands_adds_collector_promote_task_parser() -> None:
     assert callable(args.func)
 
 
+def test_register_hermes_commands_adds_outbox_purge_task_parser() -> None:
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+
+    register_hermes_commands(subparsers)
+    args = parser.parse_args(
+        [
+            "hermes",
+            "task",
+            "outbox-purge",
+            "--dry-run",
+            "--db-path",
+            "signals.db",
+            "--status",
+            "failed",
+            "--event-type",
+            "notion_push",
+            "--age-days",
+            "30",
+            "--max-removals",
+            "10",
+        ]
+    )
+
+    assert args.command == "hermes"
+    assert args.hermes_cmd == "task"
+    assert args.task_name == "outbox-purge"
+    assert args.db_path == "signals.db"
+    assert args.status == "failed"
+    assert args.event_type == "notion_push"
+    assert args.age_days == 30
+    assert args.max_removals == 10
+    assert callable(args.func)
+
+
 def test_route_json_cli_creates_no_files(tmp_path: Path) -> None:
     config_path = _write_cli_config(tmp_path)
 
