@@ -14,6 +14,7 @@ from .collector_promote import CollectorPromoteTask
 from .deliberation import DeliberationTask
 from .governance import GovernanceTask
 from .incident_response import INCIDENT_PHASES, IncidentResponseTask
+from .ledger_audit import LedgerAuditTask
 from .outbox_purge import OutboxPurgeTask
 from .restore_db import RestoreDbTask
 from .shadow_validate import ShadowValidateTask
@@ -66,6 +67,7 @@ _TASKS: dict[str, type[HermesTask]] = {
     DeliberationTask.name: DeliberationTask,
     GovernanceTask.name: GovernanceTask,
     IncidentResponseTask.name: IncidentResponseTask,
+    LedgerAuditTask.name: LedgerAuditTask,
     OutboxPurgeTask.name: OutboxPurgeTask,
     RestoreDbTask.name: RestoreDbTask,
     ShadowValidateTask.name: ShadowValidateTask,
@@ -141,6 +143,7 @@ def add_task_arguments(parser: argparse.ArgumentParser) -> None:
     ShadowValidateTask.add_arguments(parser)
     CollectorPromoteTask.add_arguments(parser)
     OutboxPurgeTask.add_arguments(parser)
+    LedgerAuditTask.add_arguments(parser)
 
 
 def mode_from_args(args: argparse.Namespace) -> TaskMode:
