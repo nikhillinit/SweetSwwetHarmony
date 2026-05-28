@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sweetswwetharmony.local/hermes/collector_promotion.schema.json",
+  "title": "Hermes Collector Promotion Artifact",
+  "type": "object",
+  "required": [
+    "task",
+    "mode",
+    "dryRun",
+    "mutationCommitted",
+    "collector",
+    "resultId",
+    "targetState",
+    "resultTargetState",
+    "transition",
+    "promotionResult",
+    "artifactCommit",
+    "persistence"
+  ],
+  "properties": {
+    "task": {"const": "collector-promote"},
+    "mode": {"enum": ["dry-run", "execute"]},
+    "dryRun": {"type": "boolean"},
+    "mutationCommitted": {"type": "boolean"},
+    "collector": {"type": "string", "minLength": 1},
+    "resultId": {"type": "integer", "minimum": 1},
+    "targetState": {"type": "string", "minLength": 1},
+    "resultTargetState": {"enum": ["promoted", "not_relevant"]},
+    "transition": {
+      "type": "object",
+      "required": [
+        "valid",
+        "requested",
+        "detail",
+        "action_type",
+        "ack_risk_token",
+        "result_target_state"
+      ],
+      "properties": {
+        "valid": {"type": "boolean"},
+        "requested": {"type": "string", "minLength": 1},
+        "detail": {"type": "string", "minLength": 1},
+        "action_type": {"enum": ["hunter_promote", "hunter_demote"]},
+        "ack_risk_token": {"enum": ["COLLECTOR_PROMOTE", "COLLECTOR_DEMOTE"]},
+        "result_target_state": {"enum": ["promoted", "not_relevant"]}
+      },
+      "additionalProperties": false
+    },
+    "promotionResult": {
+      "type": ["object", "null"]
+    },
+    "artifactCommit": {
+      "type": "object",
+      "required": ["ledgerOnly", "runtimeState", "externalSystems"],
+      "properties": {
+        "ledgerOnly": {"type": "boolean"},
+        "runtimeState": {"type": "boolean"},
+        "externalSystems": {"const": false}
+      },
+      "additionalProperties": false
+    },
+    "persistence": {
+      "type": "object",
+      "required": [
+        "persisted",
+        "affectedDb",
+        "affectedTables",
+        "externalSystems"
+      ],
+      "properties": {
+        "persisted": {"type": "boolean"},
+        "affectedDb": {"type": ["string", "null"]},
+        "affectedTables": {
+          "type": "array",
+          "items": {"type": "string"},
+          "uniqueItems": true
+        },
+        "externalSystems": {
+          "type": "array",
+          "maxItems": 0
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
