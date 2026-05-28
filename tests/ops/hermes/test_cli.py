@@ -345,6 +345,32 @@ def test_register_hermes_commands_adds_ledger_audit_task_parser() -> None:
     assert callable(args.func)
 
 
+def test_register_hermes_commands_adds_config_promote_task_parser() -> None:
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+
+    register_hermes_commands(subparsers)
+    args = parser.parse_args(
+        [
+            "hermes",
+            "task",
+            "config-promote",
+            "--dry-run",
+            "--proposed",
+            "proposed-model-routing.json",
+            "--policy-evidence",
+            "ticket-123",
+        ]
+    )
+
+    assert args.command == "hermes"
+    assert args.hermes_cmd == "task"
+    assert args.task_name == "config-promote"
+    assert args.proposed == "proposed-model-routing.json"
+    assert args.policy_evidence == ["ticket-123"]
+    assert callable(args.func)
+
+
 def test_ledger_audit_parser_rejects_unknown_check_scope() -> None:
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command")
