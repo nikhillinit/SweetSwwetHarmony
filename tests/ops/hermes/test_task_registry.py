@@ -63,12 +63,13 @@ def test_dry_run_registered_task_stays_non_mutating() -> None:
     assert result.outputs == {"dryRun": True, "mutationCommitted": False}
 
 
-def test_schema_template_surface_stays_narrow_after_gate_result_schema() -> None:
+def test_schema_template_surface_stays_narrow_after_run_record_schema() -> None:
     root = Path(__file__).resolve().parents[3] / "integrations" / "hermes"
 
     assert {path.name for path in (root / "schemas").glob("*.json")} == {
         "check_result.schema.json",
         "gate_result.schema.json",
+        "run_record.schema.json",
         "task_result.schema.json",
     }
     assert {path.name for path in (root / "templates").glob("*.j2")} == {
