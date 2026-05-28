@@ -18,9 +18,10 @@ def _args(**overrides: object) -> argparse.Namespace:
     return argparse.Namespace(**payload)
 
 
-def test_pr10_registered_tasks_add_ledger_audit_after_incident() -> None:
+def test_pr11_registered_tasks_add_config_promote_after_collector_promote() -> None:
     assert registered_task_names() == [
         "collector-promote",
+        "config-promote",
         "contract-check",
         "deliberate",
         "governance",
