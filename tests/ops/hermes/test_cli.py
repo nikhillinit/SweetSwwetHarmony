@@ -254,6 +254,37 @@ def test_register_hermes_commands_adds_shadow_validate_task_parser() -> None:
     assert callable(args.func)
 
 
+def test_register_hermes_commands_adds_collector_promote_task_parser() -> None:
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+
+    register_hermes_commands(subparsers)
+    args = parser.parse_args(
+        [
+            "hermes",
+            "task",
+            "collector-promote",
+            "--dry-run",
+            "--collector",
+            "github",
+            "--result-id",
+            "123",
+            "--target-state",
+            "active",
+            "--db-path",
+            "signals.db",
+        ]
+    )
+
+    assert args.command == "hermes"
+    assert args.hermes_cmd == "task"
+    assert args.task_name == "collector-promote"
+    assert args.collector == "github"
+    assert args.result_id == 123
+    assert args.target_state == "active"
+    assert callable(args.func)
+
+
 def test_route_json_cli_creates_no_files(tmp_path: Path) -> None:
     config_path = _write_cli_config(tmp_path)
 

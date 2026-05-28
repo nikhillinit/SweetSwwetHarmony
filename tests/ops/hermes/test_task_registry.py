@@ -18,8 +18,9 @@ def _args(**overrides: object) -> argparse.Namespace:
     return argparse.Namespace(**payload)
 
 
-def test_pr7_registered_tasks_add_shadow_validate_before_suppression_sync() -> None:
+def test_pr8_registered_tasks_add_collector_promote_before_contract_check() -> None:
     assert registered_task_names() == [
+        "collector-promote",
         "contract-check",
         "deliberate",
         "governance",
