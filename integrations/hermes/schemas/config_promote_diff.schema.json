@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sweetswwetharmony.local/hermes/config_promote_diff.schema.json",
+  "title": "Hermes Config Promote Diff Artifact",
+  "type": "object",
+  "required": [
+    "generatedAt",
+    "currentConfig",
+    "proposedConfig",
+    "diff",
+    "policyReview"
+  ],
+  "properties": {
+    "generatedAt": {"type": "string", "format": "date-time"},
+    "currentConfig": {
+      "type": "object",
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1},
+        "sha256": {"type": ["string", "null"], "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "proposedConfig": {
+      "type": "object",
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {"type": ["string", "null"], "minLength": 1},
+        "sha256": {"type": ["string", "null"], "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "diff": {
+      "type": "object",
+      "required": [
+        "sections_changed",
+        "executors_added",
+        "executors_removed",
+        "executor_changes",
+        "execute_support_changes",
+        "routing_policy_changes",
+        "unified_diff"
+      ],
+      "properties": {
+        "sections_changed": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "uniqueItems": true
+        },
+        "executors_added": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "uniqueItems": true
+        },
+        "executors_removed": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "uniqueItems": true
+        },
+        "executor_changes": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "uniqueItems": true
+        },
+        "execute_support_changes": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["from", "to"],
+            "properties": {
+              "from": {"type": ["boolean", "null"]},
+              "to": {"type": ["boolean", "null"]}
+            },
+            "additionalProperties": false
+          }
+        },
+        "routing_policy_changes": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "uniqueItems": true
+        },
+        "unified_diff": {
+          "type": "array",
+          "items": {"type": "string"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "policyReview": {
+      "type": "object",
+      "required": ["risky_changes", "requires_evidence", "evidence"],
+      "properties": {
+        "risky_changes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["type"],
+            "properties": {
+              "type": {"type": "string", "minLength": 1},
+              "executor": {"type": "string", "minLength": 1},
+              "from": {"type": ["boolean", "null"]},
+              "to": {"type": ["boolean", "null"]},
+              "section": {"type": "string", "minLength": 1}
+            },
+            "additionalProperties": false
+          }
+        },
+        "requires_evidence": {"type": "boolean"},
+        "evidence": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}
