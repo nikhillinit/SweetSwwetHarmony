@@ -13,6 +13,7 @@ import json
 import os
 import shutil
 import sqlite3
+import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -186,6 +187,13 @@ class HermesTask:
 
     def execute(self, context: TaskContext, plan: dict[str, Any]) -> dict[str, Any]:
         raise TaskFailure(f"{self.name} has no execute implementation")
+
+    def required_ack_token(
+        self,
+        context: TaskContext,
+        plan: dict[str, Any],
+    ) -> str | None:
+        return self.ack_risk_token
 
     def postflight(
         self,
@@ -437,8 +445,9 @@ class HermesTask:
                     outputs=outputs,
                 )
 
-            if self.ack_risk_token and ack_risk != self.ack_risk_token:
-                outputs = {"requiredAck": self.ack_risk_token, "providedAck": ack_risk}
+            required_ack = self.required_ack_token(context, plan)
+            if required_ack and ack_risk != required_ack:
+                outputs = {"requiredAck": required_ack, "providedAck": ack_risk}
                 context.write_json("approval_required.json", outputs)
                 self._write_record(
                     context,
@@ -584,7 +593,7 @@ class HermesTask:
                 "acquired": [str(lock.lock_path) for lock in context.acquired_locks],
                 "ttl_seconds": int(getattr(context.args, "lock_ttl_seconds", 900)),
             },
-            "ack_risk_token": self.ack_risk_token,
+            "ack_risk_token": plan.get("ack_risk_token", self.ack_risk_token),
             "preflight": {
                 "checks": [check.to_dict() for check in checks_tuple],
                 "passed": all(check.passed for check in checks_tuple),
@@ -621,7 +630,7 @@ class HermesTask:
             f"- Mode: {context.mode}",
             f"- Risk: {self.risk_level}",
             f"- Required locks: {', '.join(self.required_locks) if self.required_locks else 'none'}",
-            f"- Ack risk token: {self.ack_risk_token or 'not required'}",
+            f"- Ack risk token: {plan.get('ack_risk_token') or 'not required'}",
             "",
             "```json",
             json.dumps(plan, indent=2, sort_keys=True),
@@ -721,6 +730,38 @@ def copy_snapshot(source: Path, destination: Path) -> Path:
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(source, destination)
     return destination
+
+
+def run_command(
+    command: list[str],
+    *,
+    cwd: Path = PROJECT_ROOT,
+    timeout_seconds: int = 300,
+) -> dict[str, Any]:
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=cwd,
+            text=True,
+            capture_output=True,
+            timeout=timeout_seconds,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return {
+            "command": command,
+            "returnCode": -1,
+            "stdout": exc.stdout or "",
+            "stderr": exc.stderr or f"timed out after {timeout_seconds}s",
+            "timedOut": True,
+        }
+    return {
+        "command": command,
+        "returnCode": completed.returncode,
+        "stdout": completed.stdout,
+        "stderr": completed.stderr,
+        "timedOut": False,
+    }
 
 
 def _resolve_repo_path(path_value: str) -> Path:
