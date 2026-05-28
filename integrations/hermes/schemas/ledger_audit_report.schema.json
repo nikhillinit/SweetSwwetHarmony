@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sweetswwetharmony.local/hermes/ledger_audit_report.schema.json",
+  "title": "Hermes Ledger Audit Report",
+  "type": "object",
+  "required": [
+    "auditId",
+    "generatedAt",
+    "dryRun",
+    "mutationCommitted",
+    "task",
+    "ledgerRoot",
+    "ledgerIndex",
+    "checksRun",
+    "summary",
+    "findings",
+    "reportArtifacts"
+  ],
+  "properties": {
+    "auditId": {"type": "string", "minLength": 1},
+    "generatedAt": {"type": "string", "format": "date-time"},
+    "dryRun": {"const": true},
+    "mutationCommitted": {"const": false},
+    "task": {"const": "ledger-audit"},
+    "ledgerRoot": {"type": "string", "minLength": 1},
+    "ledgerIndex": {"type": "string", "minLength": 1},
+    "checksRun": {
+      "type": "array",
+      "items": {"enum": ["index", "runs", "artifacts"]},
+      "minItems": 1
+    },
+    "summary": {
+      "type": "object",
+      "required": [
+        "indexLines",
+        "validIndexEntries",
+        "malformedIndexEntries",
+        "checkedRunDirs",
+        "missingRunDirs",
+        "missingArtifacts"
+      ],
+      "properties": {
+        "indexLines": {"type": "integer", "minimum": 0},
+        "validIndexEntries": {"type": "integer", "minimum": 0},
+        "malformedIndexEntries": {"type": "integer", "minimum": 0},
+        "checkedRunDirs": {"type": "integer", "minimum": 0},
+        "missingRunDirs": {"type": "integer", "minimum": 0},
+        "missingArtifacts": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["code", "severity"],
+        "properties": {
+          "code": {"type": "string", "minLength": 1},
+          "severity": {"enum": ["low", "medium", "high", "critical"]},
+          "line": {"type": "integer", "minimum": 1},
+          "runId": {"type": "string", "minLength": 1},
+          "path": {"type": "string", "minLength": 1},
+          "detail": {"type": "string", "minLength": 1},
+          "raw": {"type": "string"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "reportArtifacts": {
+      "type": "object",
+      "required": ["json", "markdown"],
+      "properties": {
+        "json": {"const": "ledger_audit_report.json"},
+        "markdown": {"const": "ledger_audit_report.md"}
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

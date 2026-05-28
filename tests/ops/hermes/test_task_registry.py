@@ -70,6 +70,7 @@ def test_schema_template_surface_stays_narrow_after_deliberation_record_schema()
         "check_result.schema.json",
         "deliberation_record.schema.json",
         "gate_result.schema.json",
+        "ledger_audit_report.schema.json",
         "run_record.schema.json",
         "task_result.schema.json",
     }
