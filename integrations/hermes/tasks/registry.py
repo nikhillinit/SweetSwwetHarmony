@@ -10,6 +10,7 @@ from .base import (
     TaskMode,
     TaskResult,
 )
+from .deliberation import DeliberationTask
 from .governance import GovernanceTask
 from .incident_response import INCIDENT_PHASES, IncidentResponseTask
 from .restore_db import RestoreDbTask
@@ -58,6 +59,7 @@ class ContractCheckTask(HermesTask):
 
 _TASKS: dict[str, type[HermesTask]] = {
     ContractCheckTask.name: ContractCheckTask,
+    DeliberationTask.name: DeliberationTask,
     GovernanceTask.name: GovernanceTask,
     IncidentResponseTask.name: IncidentResponseTask,
     RestoreDbTask.name: RestoreDbTask,
@@ -122,6 +124,7 @@ def add_task_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--incident-id")
     parser.add_argument("--direct-db")
     parser.add_argument("--state-source")
+    DeliberationTask.add_arguments(parser)
     parser.add_argument(
         "--phase-name",
         dest="incident_phase",
