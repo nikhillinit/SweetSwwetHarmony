@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sweetswwetharmony.local/hermes/hermes_response_packet.schema.json",
+  "title": "Hermes Incident Response Packet",
+  "type": "object",
+  "required": [
+    "incidentId",
+    "phase",
+    "generatedAt",
+    "runId",
+    "statusBefore",
+    "statusAfter",
+    "capsule",
+    "packetFiles"
+  ],
+  "properties": {
+    "incidentId": {"type": "string", "minLength": 1},
+    "phase": {"enum": ["freeze", "analyze", "repair-plan", "verify"]},
+    "generatedAt": {"type": "string", "format": "date-time"},
+    "runId": {"type": ["string", "null"], "minLength": 1},
+    "statusBefore": {"type": ["string", "null"]},
+    "statusAfter": {"type": ["string", "null"]},
+    "capsule": {
+      "type": ["object", "null"],
+      "required": [
+        "incident_id",
+        "component",
+        "error_type",
+        "error_message",
+        "status",
+        "created_at",
+        "updated_at",
+        "artifact_dir",
+        "traceback_text",
+        "context",
+        "repair_attempts"
+      ],
+      "properties": {
+        "incident_id": {"type": "string", "minLength": 1},
+        "component": {"type": "string", "minLength": 1},
+        "error_type": {"type": "string", "minLength": 1},
+        "error_message": {"type": "string"},
+        "status": {"type": "string", "minLength": 1},
+        "created_at": {"type": "string", "format": "date-time"},
+        "updated_at": {"type": "string", "format": "date-time"},
+        "artifact_dir": {"type": "string", "minLength": 1},
+        "traceback_text": {"type": "string"},
+        "context": {"type": "object"},
+        "repair_attempts": {
+          "type": "array",
+          "items": {"type": "object"}
+        }
+      },
+      "additionalProperties": false
+    },
+    "packetFiles": {
+      "type": "array",
+      "items": {"type": "string"},
+      "minItems": 2
+    }
+  },
+  "additionalProperties": false
+}
