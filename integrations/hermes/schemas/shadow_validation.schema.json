@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sweetswwetharmony.local/hermes/shadow_validation.schema.json",
+  "title": "Hermes Shadow Validation Artifact",
+  "type": "object",
+  "required": [
+    "task",
+    "mode",
+    "dryRun",
+    "mutationCommitted",
+    "artifactCommit",
+    "persistence",
+    "database",
+    "shadowConfig",
+    "shadowRun",
+    "rawResult"
+  ],
+  "properties": {
+    "task": {"const": "shadow-validate"},
+    "mode": {"enum": ["dry-run", "execute"]},
+    "dryRun": {"type": "boolean"},
+    "mutationCommitted": {"type": "boolean"},
+    "artifactCommit": {
+      "type": "object",
+      "required": ["ledgerOnly", "runtimeState", "externalSystems"],
+      "properties": {
+        "ledgerOnly": {"type": "boolean"},
+        "runtimeState": {"type": "boolean"},
+        "externalSystems": {"const": false}
+      },
+      "additionalProperties": false
+    },
+    "persistence": {
+      "type": "object",
+      "required": [
+        "persisted",
+        "shadowRunId",
+        "affectedTables",
+        "externalSystems"
+      ],
+      "properties": {
+        "persisted": {"type": "boolean"},
+        "shadowRunId": {"type": ["integer", "null"], "minimum": 1},
+        "affectedTables": {
+          "type": "array",
+          "items": {"enum": ["shadow_entity_runs", "shadow_disagreements"]},
+          "uniqueItems": true
+        },
+        "externalSystems": {
+          "type": "array",
+          "maxItems": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "database": {
+      "type": "object",
+      "required": ["path"],
+      "properties": {
+        "path": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "shadowConfig": {
+      "type": "object",
+      "required": [
+        "max_signals_per_run",
+        "sample_rate",
+        "timeout_seconds",
+        "max_disagreements_stored",
+        "min_similarity_threshold",
+        "max_suggestions_per_run",
+        "min_agreement_rate"
+      ],
+      "properties": {
+        "max_signals_per_run": {"type": "integer", "minimum": 1},
+        "sample_rate": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+        "timeout_seconds": {"type": "number", "exclusiveMinimum": 0.0},
+        "max_disagreements_stored": {"type": "integer", "minimum": 0},
+        "min_similarity_threshold": {
+          "type": "number",
+          "minimum": 0.0,
+          "maximum": 1.0
+        },
+        "max_suggestions_per_run": {"type": "integer", "minimum": 0},
+        "min_agreement_rate": {"type": "number", "minimum": 0.0, "maximum": 1.0}
+      },
+      "additionalProperties": false
+    },
+    "shadowRun": {
+      "type": "object",
+      "required": [
+        "id",
+        "runId",
+        "status",
+        "totalSignals",
+        "phase1aGroups",
+        "phaseGGroups",
+        "agreements",
+        "disagreements",
+        "agreementRate",
+        "durationMs",
+        "inputsHash",
+        "truncated",
+        "errorSummary"
+      ],
+      "properties": {
+        "id": {"type": ["integer", "null"], "minimum": 1},
+        "runId": {"type": ["string", "null"]},
+        "status": {"type": ["string", "null"]},
+        "totalSignals": {"type": "integer", "minimum": 0},
+        "phase1aGroups": {"type": "integer", "minimum": 0},
+        "phaseGGroups": {"type": "integer", "minimum": 0},
+        "agreements": {"type": "integer", "minimum": 0},
+        "disagreements": {"type": "integer", "minimum": 0},
+        "agreementRate": {"type": ["number", "null"], "minimum": 0.0, "maximum": 1.0},
+        "durationMs": {"type": "number", "minimum": 0.0},
+        "inputsHash": {"type": ["string", "null"]},
+        "truncated": {"type": "boolean"},
+        "errorSummary": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "rawResult": {"type": "object"}
+  },
+  "additionalProperties": false
+}
