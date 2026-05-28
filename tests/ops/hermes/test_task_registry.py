@@ -18,13 +18,14 @@ def _args(**overrides: object) -> argparse.Namespace:
     return argparse.Namespace(**payload)
 
 
-def test_pr8_registered_tasks_add_collector_promote_before_contract_check() -> None:
+def test_pr9_registered_tasks_add_outbox_purge_after_incident() -> None:
     assert registered_task_names() == [
         "collector-promote",
         "contract-check",
         "deliberate",
         "governance",
         "incident",
+        "outbox-purge",
         "restore-db",
         "shadow-validate",
         "suppression-sync",
