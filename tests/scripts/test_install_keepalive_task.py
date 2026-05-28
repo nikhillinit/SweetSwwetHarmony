@@ -78,7 +78,9 @@ def test_generate_only_preserves_default_keepalive_runner(tmp_path: Path) -> Non
     runner = project_root / "scripts" / "red-team-hybrid" / "_keepalive_daily.cmd"
     content = runner.read_text(encoding="ascii")
 
-    assert 'call "python" run_pipeline.py collect --collectors hacker_news,arxiv,rss_feeds,news_api' in content
+    assert 'call "python" run_pipeline.py collect --collectors hacker_news,arxiv,rss_feeds' in content
+    assert "--operational hacker_news,arxiv,rss_feeds" in content
+    assert "news_api" not in content
     assert "--threshold-hours 36" in content
     assert "--min-created-at \"%KEEPALIVE_RUN_START_UTC%\"" in content
     assert "-HarmonicKeepAlive.json" in content

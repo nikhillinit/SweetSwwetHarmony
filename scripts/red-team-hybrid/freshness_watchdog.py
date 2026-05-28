@@ -29,7 +29,7 @@ as INFORMATIONAL and can be promoted to strict by the --operational flag.
 
 Freshness is measured against signals.created_at (row insert time), NOT
 signals.detected_at. detected_at is the collector's semantic timestamp
-(e.g. publication date for news_api, paper date for arxiv), which may lag
+(e.g. publication date for optional news_api enrichment, paper date for arxiv), which may lag
 actual ingest time. Row insert time is what actually tells us whether the
 collector ran and wrote data.
 
@@ -71,14 +71,16 @@ from pathlib import Path
 from typing import Any
 
 # Default operational collectors. These are the collectors that produce new
-# signals at daily+ cadence under normal pipeline operation. Changes here
-# require updating .planning/REQUIREMENTS.md LIV-02 and the Phase 1 success
-# criterion rationale.
+# signals at daily+ cadence under normal pipeline operation. news_api is
+# optional enrichment for funding/PR/mainstream press coverage; the current
+# GNews-backed implementation is quota-constrained and should be promoted
+# with --operational only for an intentional manual or provider-swap trial.
+# Changes here require updating .planning/REQUIREMENTS.md LIV-02 and the
+# Phase 1 success criterion rationale.
 DEFAULT_OPERATIONAL_COLLECTORS: tuple[str, ...] = (
     "hacker_news",
     "arxiv",
     "rss_feeds",
-    "news_api",
 )
 
 DEFAULT_THRESHOLD_HOURS: int = 36
