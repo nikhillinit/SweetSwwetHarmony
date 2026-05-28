@@ -10,6 +10,7 @@ from .base import (
     TaskMode,
     TaskResult,
 )
+from .governance import GovernanceTask
 from .restore_db import RestoreDbTask
 from .suppression_sync import SuppressionSyncTask
 
@@ -56,6 +57,7 @@ class ContractCheckTask(HermesTask):
 
 _TASKS: dict[str, type[HermesTask]] = {
     ContractCheckTask.name: ContractCheckTask,
+    GovernanceTask.name: GovernanceTask,
     RestoreDbTask.name: RestoreDbTask,
     SuppressionSyncTask.name: SuppressionSyncTask,
 }
@@ -107,6 +109,17 @@ def add_task_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--ttl-days", type=int, default=7)
     parser.add_argument("--delete-stale", action="store_true")
     parser.add_argument("--max-removals", type=int, default=25)
+    parser.add_argument("--feature")
+    parser.add_argument("--from-state")
+    parser.add_argument("--target-state")
+    parser.add_argument("--reason")
+    parser.add_argument("--regret-check-date")
+    parser.add_argument("--effective-at")
+    parser.add_argument("--repair-source")
+    parser.add_argument("--rollback-ticket")
+    parser.add_argument("--incident-id")
+    parser.add_argument("--direct-db")
+    parser.add_argument("--state-source")
 
 
 def mode_from_args(args: argparse.Namespace) -> TaskMode:
