@@ -219,6 +219,41 @@ def test_register_hermes_commands_adds_deliberate_task_parser() -> None:
     assert callable(args.func)
 
 
+def test_register_hermes_commands_adds_shadow_validate_task_parser() -> None:
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+
+    register_hermes_commands(subparsers)
+    args = parser.parse_args(
+        [
+            "hermes",
+            "task",
+            "shadow-validate",
+            "--dry-run",
+            "--db-path",
+            "signals.db",
+            "--max-signals",
+            "25",
+            "--sample-rate",
+            "0.5",
+            "--timeout-seconds",
+            "5",
+            "--min-agreement-rate",
+            "0.9",
+        ]
+    )
+
+    assert args.command == "hermes"
+    assert args.hermes_cmd == "task"
+    assert args.task_name == "shadow-validate"
+    assert args.db_path == "signals.db"
+    assert args.max_signals == 25
+    assert args.sample_rate == 0.5
+    assert args.timeout_seconds == 5
+    assert args.min_agreement_rate == 0.9
+    assert callable(args.func)
+
+
 def test_route_json_cli_creates_no_files(tmp_path: Path) -> None:
     config_path = _write_cli_config(tmp_path)
 
