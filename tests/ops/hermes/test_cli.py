@@ -124,6 +124,38 @@ def test_register_hermes_commands_adds_suppression_sync_task_parser() -> None:
     assert callable(args.func)
 
 
+def test_register_hermes_commands_adds_governance_task_parser() -> None:
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+
+    register_hermes_commands(subparsers)
+    args = parser.parse_args(
+        [
+            "hermes",
+            "task",
+            "governance",
+            "--dry-run",
+            "--feature",
+            "boilerplate_defense",
+            "--from-state",
+            "shadow",
+            "--target-state",
+            "active",
+            "--reason",
+            "canary stable",
+        ]
+    )
+
+    assert args.command == "hermes"
+    assert args.hermes_cmd == "task"
+    assert args.task_name == "governance"
+    assert args.feature == "boilerplate_defense"
+    assert args.from_state == "shadow"
+    assert args.target_state == "active"
+    assert args.reason == "canary stable"
+    assert callable(args.func)
+
+
 def test_route_json_cli_creates_no_files(tmp_path: Path) -> None:
     config_path = _write_cli_config(tmp_path)
 
