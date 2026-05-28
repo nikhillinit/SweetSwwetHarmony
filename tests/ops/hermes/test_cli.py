@@ -156,6 +156,35 @@ def test_register_hermes_commands_adds_governance_task_parser() -> None:
     assert callable(args.func)
 
 
+def test_register_hermes_commands_adds_incident_task_parser() -> None:
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+
+    register_hermes_commands(subparsers)
+    args = parser.parse_args(
+        [
+            "hermes",
+            "task",
+            "incident",
+            "--dry-run",
+            "--incident-id",
+            "github_20260528_010203",
+            "--phase-name",
+            "freeze",
+            "--artifact-root",
+            "ops/artifacts/maintenance",
+        ]
+    )
+
+    assert args.command == "hermes"
+    assert args.hermes_cmd == "task"
+    assert args.task_name == "incident"
+    assert args.incident_id == "github_20260528_010203"
+    assert args.incident_phase == "freeze"
+    assert args.artifact_root == "ops/artifacts/maintenance"
+    assert callable(args.func)
+
+
 def test_route_json_cli_creates_no_files(tmp_path: Path) -> None:
     config_path = _write_cli_config(tmp_path)
 
