@@ -1,0 +1,124 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sweetswwetharmony.local/hermes/deliberation_record.schema.json",
+  "title": "Hermes Deliberation Record",
+  "type": "object",
+  "required": [
+    "deliberationId",
+    "task",
+    "mode",
+    "dryRun",
+    "mutationCommitted",
+    "artifactCommit",
+    "input",
+    "panel",
+    "synthesizer",
+    "consensus",
+    "freshnessTtlSeconds"
+  ],
+  "properties": {
+    "deliberationId": {"type": "string", "minLength": 1},
+    "task": {"const": "deliberate"},
+    "mode": {"enum": ["plan-only", "preflight-only", "dry-run", "execute"]},
+    "dryRun": {"type": "boolean"},
+    "mutationCommitted": {"type": "boolean"},
+    "artifactCommit": {
+      "type": "object",
+      "required": ["ledgerOnly", "runtimeState", "externalSystems"],
+      "properties": {
+        "ledgerOnly": {"type": "boolean"},
+        "runtimeState": {"type": "boolean"},
+        "externalSystems": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "input": {
+      "type": "object",
+      "required": ["planPath", "planHash", "taskTextChars"],
+      "properties": {
+        "planPath": {"type": ["string", "null"]},
+        "planHash": {"type": ["string", "null"]},
+        "taskTextChars": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "panel": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "executor",
+          "verdict",
+          "success",
+          "confidence",
+          "concerns",
+          "requiredChanges",
+          "contentExcerpt"
+        ],
+        "properties": {
+          "executor": {"type": "string", "minLength": 1},
+          "verdict": {"enum": ["approve", "block", "needs_changes", "skip"]},
+          "success": {"type": "boolean"},
+          "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+          "concerns": {
+            "type": "array",
+            "items": {"type": "string"}
+          },
+          "requiredChanges": {
+            "type": "array",
+            "items": {"type": "string"}
+          },
+          "contentExcerpt": {"type": "string"},
+          "exitCode": {"type": "integer"},
+          "durationMs": {"type": "integer", "minimum": 0},
+          "tokenUsage": {
+            "type": "object",
+            "additionalProperties": {"type": "integer", "minimum": 0}
+          },
+          "error": {"type": ["string", "null"]}
+        },
+        "additionalProperties": false
+      }
+    },
+    "synthesizer": {
+      "type": "object",
+      "required": ["executor", "strategy"],
+      "properties": {
+        "executor": {"type": "string", "minLength": 1},
+        "strategy": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    },
+    "consensus": {
+      "type": "object",
+      "required": [
+        "status",
+        "blockers",
+        "dissent",
+        "overrideAllowed",
+        "overrideAckToken"
+      ],
+      "properties": {
+        "status": {"enum": ["approved", "blocked", "conflicted", "no_quorum"]},
+        "blockers": {
+          "type": "array",
+          "items": {"type": "string"}
+        },
+        "dissent": {
+          "type": "object",
+          "required": ["present", "summary"],
+          "properties": {
+            "present": {"type": "boolean"},
+            "summary": {"type": "string"}
+          },
+          "additionalProperties": false
+        },
+        "overrideAllowed": {"type": "boolean"},
+        "overrideAckToken": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "freshnessTtlSeconds": {"type": "integer", "minimum": 1}
+  },
+  "additionalProperties": false
+}
