@@ -11,6 +11,7 @@ from .base import (
     TaskResult,
 )
 from .governance import GovernanceTask
+from .incident_response import INCIDENT_PHASES, IncidentResponseTask
 from .restore_db import RestoreDbTask
 from .suppression_sync import SuppressionSyncTask
 
@@ -58,6 +59,7 @@ class ContractCheckTask(HermesTask):
 _TASKS: dict[str, type[HermesTask]] = {
     ContractCheckTask.name: ContractCheckTask,
     GovernanceTask.name: GovernanceTask,
+    IncidentResponseTask.name: IncidentResponseTask,
     RestoreDbTask.name: RestoreDbTask,
     SuppressionSyncTask.name: SuppressionSyncTask,
 }
@@ -120,6 +122,13 @@ def add_task_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--incident-id")
     parser.add_argument("--direct-db")
     parser.add_argument("--state-source")
+    parser.add_argument(
+        "--phase-name",
+        dest="incident_phase",
+        choices=INCIDENT_PHASES,
+        default="freeze",
+    )
+    parser.add_argument("--artifact-root", default="ops/artifacts/maintenance")
 
 
 def mode_from_args(args: argparse.Namespace) -> TaskMode:
