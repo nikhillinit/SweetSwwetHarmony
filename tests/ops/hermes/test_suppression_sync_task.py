@@ -19,7 +19,7 @@ from integrations.hermes.tasks.base import (
     EXIT_GATE_FAILURE,
     EXIT_LOCK_HELD,
 )
-from integrations.hermes.tasks.registry import run_registered_task
+from integrations.hermes.tasks.registry import add_task_arguments, run_registered_task
 
 from .conftest import minimal_config_dict
 
@@ -117,7 +117,7 @@ def _args(
     db_path: Path,
     mode: str = "preflight-only",
     ack_risk: str | None = None,
-    delete_stale: bool = False,
+    delete_stale: bool | None = None,
     max_removals: int = 25,
     ttl_days: int = 7,
 ) -> argparse.Namespace:
@@ -252,6 +252,40 @@ def test_missing_db_is_allowed_for_workflow_initialization(tmp_path: Path) -> No
     assert db_path.exists() is False
 
 
+def test_task_parser_uses_tri_state_cleanup_flags() -> None:
+    parser = argparse.ArgumentParser()
+    add_task_arguments(parser)
+
+    default_args = parser.parse_args(["suppression-sync", "--preflight-only"])
+    delete_args = parser.parse_args(
+        ["suppression-sync", "--preflight-only", "--delete-stale"]
+    )
+    skip_args = parser.parse_args(
+        ["suppression-sync", "--preflight-only", "--skip-clean-expired"]
+    )
+
+    assert default_args.delete_stale is None
+    assert delete_args.delete_stale is True
+    assert skip_args.delete_stale is False
+
+
+def test_plan_default_delete_stale_matches_workflow_default(tmp_path: Path) -> None:
+    db_path = tmp_path / "signals.db"
+    _write_suppression_db(db_path)
+
+    result = run_registered_task(
+        _args(tmp_path, db_path=db_path, mode="plan-only"),
+    )
+
+    assert result.exit_code == 0
+    assert result.plan["delete_stale_requested"] is True
+    assert result.plan["ack_risk_required"] is True
+    assert result.plan["ack_risk_token"] == "SUPPRESSION_DELETE"
+    command = result.plan["workflow"]["command"]
+    assert "--delete-stale" in command
+    assert "--skip-clean-expired" not in command
+
+
 def test_invalid_db_fails_preflight_safely_and_emits_repair_prompt(
     tmp_path: Path,
 ) -> None:
@@ -292,7 +326,7 @@ def test_lock_conflict_on_suppression_cache_refuses_mutation(
     assert (Path(result.run_dir or "") / "lock_conflict.json").exists()
 
 
-def test_dry_run_calls_suppression_workflow_and_leaves_db_unchanged(
+def test_dry_run_uses_default_delete_stale_workflow_flag_and_leaves_db_unchanged(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -325,12 +359,12 @@ def test_dry_run_calls_suppression_workflow_and_leaves_db_unchanged(
     assert calls[0][calls[0].index("--db-path") + 1] == str(db_path)
     assert calls[0][calls[0].index("--ttl-days") + 1] == "7"
     assert "--dry-run" in calls[0]
-    assert "--skip-clean-expired" in calls[0]
-    assert "--delete-stale" not in calls[0]
+    assert "--delete-stale" in calls[0]
+    assert "--skip-clean-expired" not in calls[0]
     assert (Path(result.run_dir or "") / "suppression_sync_command.json").exists()
 
 
-def test_execute_non_destructive_snapshots_db_and_records_command(
+def test_execute_explicit_skip_snapshots_db_without_destructive_ack(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -353,7 +387,9 @@ def test_execute_non_destructive_snapshots_db_and_records_command(
         fake_run_command,
     )
 
-    result = run_registered_task(_args(tmp_path, db_path=db_path, mode="execute"))
+    result = run_registered_task(
+        _args(tmp_path, db_path=db_path, mode="execute", delete_stale=False),
+    )
 
     assert result.exit_code == 0
     assert result.status == "executed"
@@ -367,7 +403,7 @@ def test_execute_non_destructive_snapshots_db_and_records_command(
     assert result.outputs["preSyncSnapshotSha256"]
 
 
-def test_destructive_delete_stale_requires_ack_before_command(
+def test_default_delete_stale_requires_ack_before_command(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
@@ -391,11 +427,15 @@ def test_destructive_delete_stale_requires_ack_before_command(
     )
 
     result = run_registered_task(
-        _args(tmp_path, db_path=db_path, mode="execute", delete_stale=True),
+        _args(tmp_path, db_path=db_path, mode="execute"),
     )
 
     assert result.exit_code == EXIT_ACK_REQUIRED
     assert result.status == "approval_required"
+    assert result.outputs == {
+        "requiredAck": "SUPPRESSION_DELETE",
+        "providedAck": None,
+    }
     assert calls == []
     assert _suppression_count(db_path) == 2
     assert (Path(result.run_dir or "") / "approval_required.json").exists()
@@ -513,7 +553,9 @@ def test_postflight_catches_duplicate_suppression_entries(
         fake_run_command,
     )
 
-    result = run_registered_task(_args(tmp_path, db_path=db_path, mode="execute"))
+    result = run_registered_task(
+        _args(tmp_path, db_path=db_path, mode="execute", delete_stale=False),
+    )
 
     assert result.exit_code == EXIT_GATE_FAILURE
     assert result.status == "postflight_failed"

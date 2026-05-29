@@ -5,6 +5,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from jsonschema import Draft202012Validator
+
 from integrations.hermes.config import PROJECT_ROOT
 from integrations.hermes.tasks import config_promote
 from integrations.hermes.tasks.registry import run_registered_task
@@ -55,15 +57,16 @@ def _args(
     *,
     current_path: Path,
     proposed_path: Path,
+    mode: str = "dry-run",
 ) -> argparse.Namespace:
     return argparse.Namespace(
         task_name="config-promote",
         config=str(current_path),
         plan_only=False,
         preflight_only=False,
-        dry_run=True,
-        execute=False,
-        ack_risk=None,
+        dry_run=mode == "dry-run",
+        execute=mode == "execute",
+        ack_risk="CONFIG_PROMOTE" if mode == "execute" else None,
         lock_ttl_seconds=900,
         actor_type="operator",
         actor_id="test",
@@ -89,12 +92,18 @@ def _live_config_promote_report(tmp_path: Path) -> dict[str, object]:
     )
 
 
+def _validate(schema: dict[str, object], artifact: dict[str, object]) -> None:
+    Draft202012Validator.check_schema(schema)
+    Draft202012Validator(schema).validate(artifact)
+
+
 def test_config_promote_report_schema_matches_live_report_keys(
     tmp_path: Path,
 ) -> None:
     report = _live_config_promote_report(tmp_path)
     schema = _load_schema()
 
+    _validate(schema, report)
     assert report["task"] == "config-promote"
     assert report["dryRun"] is True
     assert report["mutationCommitted"] is False
@@ -149,3 +158,23 @@ def test_config_promote_report_schema_tracks_live_shape_not_overlay_stubs() -> N
     assert properties["task"] == {"const": "config-promote"}
     assert properties["diffArtifact"] == {"const": config_promote.CONFIG_DIFF_ARTIFACT}
     assert "previousSnapshotRef" in properties
+
+
+def test_config_promote_report_schema_validates_execute_artifact(
+    tmp_path: Path,
+) -> None:
+    current = _current_config_path(tmp_path)
+    proposed = _proposed_config_path(tmp_path, current)
+
+    result = run_registered_task(
+        _args(tmp_path, current_path=current, proposed_path=proposed, mode="execute")
+    )
+
+    assert result.exit_code == 0
+    assert result.status == "executed"
+    report = json.loads(
+        (
+            Path(result.run_dir or "") / config_promote.CONFIG_REPORT_ARTIFACT
+        ).read_text(encoding="utf-8")
+    )
+    _validate(_load_schema(), report)
