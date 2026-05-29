@@ -1,33 +1,41 @@
-# Active Sprint — Move 0 (2026-04-06 → 2026-04-19)
+# Active Sprint - Hermes Track A on main
 
-## Tracks at a glance
+Rebuilt on 2026-05-28 from live `main` / `origin/main` at `9dd9883` after `git fetch origin main --prune`.
 
-Definitions live in `docs/plans/2026-04-06-red-team-hybrid/00-strategy.md` §2. Quick map:
+## Current State
 
-| Track | Owner | Lever | Status |
-|---|---|---|---|
-| **A** | Eng | Substrate hardening (artifact capture, soft schema, quarantine, Postgres) | Move 0 (shadow paths only) |
-| **B** | Eng + Analyst | Company-episode labelling sprint (target 30-50 episodes) — **canary metric** | Starts now |
-| **C** | Eng | Holdout cohort split from Track B labels + 612 existing signals | After Track B ≥30 |
-| **D** | Eng | CT-log + DNS shadow collectors | After 2026-04-19 (gated on Step 4B regret window) |
-| **E** | Eng | Founder watchlist from Notion CRM | Starts now (analyst seed required) |
+- `main` matches `origin/main`; the checkout is dirty, so inspect `git status --short --branch` before editing.
+- No GitHub PRs are currently open.
+- Old handoff anchors are stale: PR #191 is closed without a merge commit, and PR #192 is merged and superseded by later Hermes work on `main`.
+- The April red-team Move 0 docs are historical unless a task explicitly reopens that plan.
 
-## Move semantics
+## Hermes Track A
 
-- **Move 0** (current) — design + analyst tracks + D1–D12 deliverables. Time-box 2026-04-06 → 2026-04-19. Non-negotiable per §1 "80% rule".
-- **Move 1** (next) — artifact capture on top 3 collectors + analyst tooltip + Tier-1/2 baseline. Starts 2026-04-19.
+Merged sequence now on `main`:
 
-## Key terms
+- PR #192 established Hermes routing, ledger, locks, gates, provider doctor, dry-run CLI, executor adapters, repair prompts, and runbook docs.
+- PR #194 enforced execute-capable routing; PRs #197, #200, and #201 added Gemini reviewer and routing support.
+- PR #198 added the Track A task contract.
+- PRs #199 and #202-#210 added the task runners: `restore-db`, `suppression-sync`, `governance`, `incident`, `deliberate`, `shadow-validate`, `collector-promote`, `outbox-purge`, `ledger-audit`, and `config-promote`.
+- PR #211 added gate runners.
+- PRs #212-#220 added the checked-in Hermes JSON schema surface through `config_promote_diff.schema.json`.
 
-- **Strategic canary** = Track B labelling cadence. If labelling stalls, escalate by 2026-04-15. The framing fails if Track B fails, regardless of Track A success.
-- **Tactical unblock** = Move 0 completion clearing the Step 4B regret-check constraint, unlocking Move 1 production wiring.
-- **Protected paths** during Move 0 (enforced by `scripts/red-team-hybrid/check_protected_paths.sh`):
-  `collectors/`, `workflows/`, `governance/`, `monitoring/`, `connectors/`, `storage/migrations/`
+Current registry evidence:
 
-## Maintenance
+- `registered_task_names()` is pinned in `tests/ops/hermes/test_task_registry.py`.
+- The live tasks are `collector-promote`, `config-promote`, `contract-check`, `deliberate`, `governance`, `incident`, `ledger-audit`, `outbox-purge`, `restore-db`, `shadow-validate`, and `suppression-sync`.
+- The checked-in schema/template surface is intentionally narrow after `config_promote_diff.schema.json`; do not add another Track A slice unless live repo evidence changes.
 
-This file is regenerated at the start of each new move by re-running the `claude-md-improver` skill. Between regenerations, press `#` during a Claude session to incrementally capture learnings into CLAUDE.md.
+## Next Fresh Session
 
-## Why this file exists
+Start with:
 
-The branch name (`prep/red-team-hybrid-prep`) is the most reliable signal of which plan is active. Earlier sessions failed because no agent connected the branch to `docs/plans/2026-04-06-red-team-hybrid/`. The session-start rule now does that resolution automatically; this file holds the deeper context that doesn't fit in CLAUDE.md's always-loaded surface.
+```powershell
+git fetch origin main --prune
+git status --short --branch
+gh pr list --state open --limit 30
+python -m ops.cli hermes providers doctor --json
+python -m pytest -q tests/ops/hermes/test_task_registry.py tests/ops/hermes/test_cli.py
+```
+
+No next unresolved Hermes slice is named here because current evidence does not support one: no open PRs, the registry surface is pinned, and the latest merged Track A PR is #220. If a new Hermes task is requested, start from a fresh worktree off `origin/main`, verify the live registry/emitted JSON shape first, and avoid copying stale overlay assumptions.
