@@ -33,6 +33,28 @@ def test_lock_acquire_writes_metadata_and_release_removes_file(tmp_path: Path) -
     assert not lock_path.exists()
 
 
+def test_lock_exposes_heartbeat_health(tmp_path: Path) -> None:
+    lock_path = tmp_path / "hermes.lock"
+    lock = HermesLock(lock_path, mode="execute", run_id="run-health")
+
+    assert lock.acquire(timeout_seconds=0) is True
+    assert lock.is_healthy() is True
+    assert lock.heartbeat_error() is None
+
+    payload = json.loads(lock_path.read_text(encoding="utf-8"))
+    payload["ownerToken"] = "different-owner"
+    lock_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    assert lock.is_healthy() is False
+    assert "ownerToken" in (lock.heartbeat_error() or "")
+    with pytest.raises(HermesLockError, match="ownerToken"):
+        lock.assert_healthy()
+
+    lock.release()
+    assert lock_path.exists()
+    assert HermesLock(lock_path).force_unlock("cleanup after heartbeat health test") is True
+
+
 def test_lock_context_manager_releases_on_exception(tmp_path: Path) -> None:
     lock_path = tmp_path / "hermes.lock"
 
