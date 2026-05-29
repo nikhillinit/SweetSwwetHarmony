@@ -62,6 +62,107 @@ def _write_gemini_cli_config(tmp_path: Path) -> Path:
     return path
 
 
+def _hermes_task_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+    register_hermes_commands(subparsers)
+    hermes = subparsers.choices["hermes"]
+    hermes_subparsers = next(
+        action
+        for action in hermes._actions
+        if isinstance(action, argparse._SubParsersAction)
+    )
+    return hermes_subparsers.choices["task"]
+
+
+def test_hermes_task_parser_has_no_duplicate_option_strings() -> None:
+    task_parser = _hermes_task_parser()
+    option_strings = [
+        option
+        for action in task_parser._actions
+        for option in action.option_strings
+    ]
+
+    duplicates = sorted(
+        {
+            option
+            for option in option_strings
+            if option_strings.count(option) > 1
+        }
+    )
+
+    assert duplicates == []
+
+
+@pytest.mark.parametrize(
+    ("task_name", "expected_flags"),
+    [
+        (
+            "restore-db",
+            {
+                "--backup",
+                "--target",
+                "--allow-target-create",
+                "--handle-sidecars",
+                "--force",
+                "--api-url",
+                "--expected-schema-version",
+                "--min-row-count",
+            },
+        ),
+        (
+            "deliberate",
+            {
+                "--plan",
+                "--task-text",
+                "--panel",
+                "--rounds",
+                "--synthesizer",
+                "--coding-pair",
+            },
+        ),
+        (
+            "shadow-validate",
+            {
+                "--max-signals",
+                "--sample-rate",
+                "--timeout-seconds",
+                "--max-disagreements",
+                "--min-similarity-threshold",
+                "--max-suggestions",
+                "--min-agreement-rate",
+            },
+        ),
+        (
+            "collector-promote",
+            {
+                "--collector",
+                "--result-id",
+                "--target-state",
+                "--db-path",
+                "--collector-state",
+                "--collector-config",
+                "--idempotency-key",
+                "--allow-collision-as-known",
+                "--reason",
+            },
+        ),
+    ],
+)
+def test_hermes_task_parser_exposes_expected_task_flags(
+    task_name: str,
+    expected_flags: set[str],
+) -> None:
+    task_parser = _hermes_task_parser()
+    available_flags = {
+        option
+        for action in task_parser._actions
+        for option in action.option_strings
+    }
+
+    assert expected_flags <= available_flags, task_name
+
+
 def test_register_hermes_commands_adds_route_parser() -> None:
     parser = argparse.ArgumentParser()
     subparsers = parser.add_subparsers(dest="command")

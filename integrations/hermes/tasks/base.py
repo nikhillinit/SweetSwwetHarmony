@@ -8,16 +8,18 @@ task locks, explicit execute acknowledgement, and repair prompts.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import hashlib
 import json
 import os
 import shutil
 import sqlite3
 import subprocess
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, ClassVar, Iterable, Literal
+from typing import Any, ClassVar, Coroutine, Iterable, Literal, TypeVar
 
 from integrations.hermes.config import PROJECT_ROOT, RoutingConfig, load_config
 from integrations.hermes.ledger import HermesLedger, HermesRun
@@ -33,6 +35,8 @@ EXIT_GATE_FAILURE = 4
 EXIT_LOCK_HELD = 6
 EXIT_LEDGER_FAILURE = 7
 EXIT_ACK_REQUIRED = 75
+T = TypeVar("T")
+SQLITE_COUNT_TABLES = {"signals": '"signals"'}
 
 
 @dataclass(frozen=True)
@@ -822,15 +826,55 @@ def sqlite_integrity(path: Path) -> tuple[bool, dict[str, Any]]:
 
 
 def sqlite_count(path: Path, table: str) -> tuple[int | None, str | None]:
+    table_name = _sqlite_count_table(table)
     try:
         conn = sqlite3.connect(f"file:{path.resolve()}?mode=ro", uri=True, timeout=1)
         try:
-            row = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()
+            row = conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()
             return int(row[0]), None
         finally:
             conn.close()
     except Exception as exc:
         return None, str(exc)
+
+
+def _sqlite_count_table(table: str) -> str:
+    try:
+        return SQLITE_COUNT_TABLES[table]
+    except KeyError as exc:
+        expected = ", ".join(sorted(SQLITE_COUNT_TABLES))
+        raise ValueError(
+            f"unsupported sqlite count table {table!r}; expected one of {expected}"
+        ) from exc
+
+
+def run_async_blocking(coro: Coroutine[Any, Any, T]) -> T:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return asyncio.run(coro)
+
+    result: dict[str, T] = {}
+    errors: list[BaseException] = []
+
+    def runner() -> None:
+        try:
+            result["value"] = asyncio.run(coro)
+        except BaseException as exc:
+            errors.append(exc)
+
+    thread = threading.Thread(
+        target=runner,
+        name="hermes-async-blocking",
+        daemon=True,
+    )
+    thread.start()
+    thread.join()
+    if errors:
+        raise errors[0]
+    if "value" not in result:
+        raise RuntimeError("async runner exited without a result")
+    return result["value"]
 
 
 def copy_snapshot(source: Path, destination: Path) -> Path:

@@ -5,7 +5,12 @@ import re
 from pathlib import Path
 
 from integrations.hermes.config import RoutingConfig
-from integrations.hermes.ledger import HermesLedger, generate_run_id, redact_text
+from integrations.hermes.ledger import (
+    HermesLedger,
+    generate_run_id,
+    redact_payload,
+    redact_text,
+)
 
 from .conftest import minimal_config_dict
 
@@ -42,6 +47,31 @@ def test_redact_text_applies_all_configured_patterns() -> None:
     assert "abc.def.ghi" not in redacted
     assert "ya29.oauth-token" not in redacted
     assert redacted.count("[REDACTED]") == 8
+
+
+def test_redact_payload_preserves_sensitive_key_names_and_redacts_values() -> None:
+    payload = {
+        "api_key": "plain-api-key",
+        "token": "plain-token",
+        "secret": {"nested": "value"},
+        "authorization": "Basic abc123",
+        "password": "plain-password",
+        "safe": "token=abc123",
+        "nested": [{"password": "nested-password", "note": "keep me"}],
+    }
+
+    redacted = redact_payload(payload, [r"token=abc123"])
+
+    assert set(redacted) == set(payload)
+    assert redacted["api_key"] == "[REDACTED]"
+    assert redacted["token"] == "[REDACTED]"
+    assert redacted["secret"] == "[REDACTED]"
+    assert redacted["authorization"] == "[REDACTED]"
+    assert redacted["password"] == "[REDACTED]"
+    assert redacted["safe"] == "[REDACTED]"
+    assert redacted["nested"] == [
+        {"password": "[REDACTED]", "note": "keep me"},
+    ]
 
 
 def test_create_run_writes_redacted_plan_prompt_and_index(tmp_path: Path) -> None:
