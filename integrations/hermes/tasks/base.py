@@ -21,7 +21,7 @@ from typing import Any, ClassVar, Iterable, Literal
 
 from integrations.hermes.config import PROJECT_ROOT, RoutingConfig, load_config
 from integrations.hermes.ledger import HermesLedger, HermesRun
-from integrations.hermes.locks import HermesLock
+from integrations.hermes.locks import HermesLock, HermesLockError
 
 TaskMode = Literal["plan-only", "preflight-only", "dry-run", "execute"]
 TaskRisk = Literal["low", "medium", "high", "critical"]
@@ -352,6 +352,22 @@ class HermesTask:
             )
 
         try:
+            lock_failure = self._lock_health_failure_result(
+                context,
+                plan,
+                stage="after_acquisition",
+            )
+            if lock_failure is not None:
+                return lock_failure
+
+            lock_failure = self._lock_health_failure_result(
+                context,
+                plan,
+                stage="before_preflight",
+            )
+            if lock_failure is not None:
+                return lock_failure
+
             checks = tuple(self.preflight(context, plan))
             context.write_json(
                 "preflight.json",
@@ -446,6 +462,15 @@ class HermesTask:
                 )
 
             required_ack = self.required_ack_token(context, plan)
+            lock_failure = self._lock_health_failure_result(
+                context,
+                plan,
+                stage="before_ack_gated_execute",
+                checks=checks,
+            )
+            if lock_failure is not None:
+                return lock_failure
+
             if required_ack and ack_risk != required_ack:
                 outputs = {"requiredAck": required_ack, "providedAck": ack_risk}
                 context.write_json("approval_required.json", outputs)
@@ -467,6 +492,15 @@ class HermesTask:
                     checks=checks,
                     outputs=outputs,
                 )
+
+            lock_failure = self._lock_health_failure_result(
+                context,
+                plan,
+                stage="before_execute",
+                checks=checks,
+            )
+            if lock_failure is not None:
+                return lock_failure
 
             try:
                 outputs = self.execute(context, plan)
@@ -501,6 +535,16 @@ class HermesTask:
                     outputs=outputs,
                     error=str(exc),
                 )
+
+            lock_failure = self._lock_health_failure_result(
+                context,
+                plan,
+                stage="after_execute",
+                checks=checks,
+                outputs=outputs,
+            )
+            if lock_failure is not None:
+                return lock_failure
 
             context.write_json("execute.json", outputs)
             postflight = tuple(self.postflight(context, plan, outputs))
@@ -559,6 +603,69 @@ class HermesTask:
                 return False
             context.acquired_locks.append(lock)
         return True
+
+    def _lock_health_failure_result(
+        self,
+        context: TaskContext,
+        plan: dict[str, Any],
+        *,
+        stage: str,
+        checks: Iterable[CheckResult] = (),
+        outputs: dict[str, Any] | None = None,
+    ) -> TaskResult | None:
+        try:
+            for lock in context.acquired_locks:
+                lock.assert_healthy()
+        except HermesLockError as exc:
+            checks_tuple = tuple(checks)
+            payload: dict[str, Any] = {
+                "stage": stage,
+                "error": str(exc),
+                "locks": [
+                    {
+                        "path": str(lock.lock_path),
+                        "healthy": lock.is_healthy(),
+                        "heartbeatError": lock.heartbeat_error(),
+                    }
+                    for lock in context.acquired_locks
+                ],
+            }
+            if outputs is not None:
+                payload["outputs"] = outputs
+            context.write_json("lock_health_failure.json", payload)
+            self._repair_prompt(
+                context,
+                plan,
+                failure_type="lock-health",
+                exit_code=EXIT_LOCK_HELD,
+                checks=checks_tuple,
+                next_action=(
+                    "Lock ownership was lost during this Hermes task. "
+                    "Inspect lock_health_failure.json, verify no competing "
+                    "writer is active, and rerun from plan-only."
+                ),
+                arguments=payload,
+            )
+            self._write_record(
+                context,
+                plan,
+                status="lock_unhealthy",
+                checks=checks_tuple,
+                outputs=payload,
+            )
+            return TaskResult(
+                task=self.name,
+                mode=context.mode,
+                exit_code=EXIT_LOCK_HELD,
+                status="lock_unhealthy",
+                plan=plan,
+                run_id=context.run.run_id if context.run else None,
+                run_dir=str(context.run_dir),
+                checks=checks_tuple,
+                outputs=payload,
+                error=str(exc),
+            )
+        return None
 
     def _write_record(
         self,

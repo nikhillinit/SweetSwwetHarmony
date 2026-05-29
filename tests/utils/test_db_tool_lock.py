@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from utils.db_tool_lock import DBToolLock
+import pytest
+
+from utils.db_tool_lock import DBToolLock, DBToolLockError
 
 
 def test_db_tool_lock_acquire_release(tmp_path: Path) -> None:
@@ -26,6 +28,29 @@ def test_db_tool_lock_acquire_release(tmp_path: Path) -> None:
     assert holder["acquired_at"] == holder["acquiredAt"]
     lock.release()
     assert lock.is_locked() is False
+
+
+def test_db_tool_lock_exposes_heartbeat_health(tmp_path: Path) -> None:
+    db_path = tmp_path / "signals.db"
+    db_path.write_text("placeholder", encoding="utf-8")
+
+    lock = DBToolLock(db_path, tool_name="unit-test")
+    assert lock.acquire(timeout_seconds=0)
+    assert lock.is_healthy() is True
+    assert lock.heartbeat_error() is None
+
+    payload = json.loads(lock.lock_path.read_text(encoding="utf-8"))
+    payload["ownerToken"] = "different-owner"
+    lock.lock_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    assert lock.is_healthy() is False
+    assert "ownerToken" in (lock.heartbeat_error() or "")
+    with pytest.raises(DBToolLockError, match="ownerToken"):
+        lock.assert_healthy()
+
+    lock.release()
+    assert lock.lock_path.exists()
+    assert lock.force_break() is True
 
 
 def test_db_tool_lock_stale_break(tmp_path: Path) -> None:
