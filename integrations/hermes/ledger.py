@@ -10,6 +10,14 @@ from typing import Any
 
 from .config import LedgerConfig, PROJECT_ROOT
 
+SENSITIVE_PAYLOAD_KEYS = {
+    "api_key",
+    "token",
+    "secret",
+    "authorization",
+    "password",
+}
+
 
 @dataclass(frozen=True)
 class HermesRun:
@@ -156,18 +164,33 @@ def redact_text(text: str, patterns: list[str]) -> str:
 
 
 def redact_payload(value: Any, patterns: list[str]) -> Any:
+    return _redact_payload(value, patterns, redact_value=False)
+
+
+def _redact_payload(value: Any, patterns: list[str], *, redact_value: bool) -> Any:
+    if redact_value:
+        return "[REDACTED]"
     if isinstance(value, str):
         return redact_text(value, patterns)
     if isinstance(value, list):
-        return [redact_payload(item, patterns) for item in value]
+        return [_redact_payload(item, patterns, redact_value=False) for item in value]
     if isinstance(value, tuple):
-        return [redact_payload(item, patterns) for item in value]
+        return [_redact_payload(item, patterns, redact_value=False) for item in value]
     if isinstance(value, dict):
         return {
-            str(key): redact_payload(item, patterns)
+            str(key): _redact_payload(
+                item,
+                patterns,
+                redact_value=_is_sensitive_key(key),
+            )
             for key, item in value.items()
         }
     return value
+
+
+def _is_sensitive_key(key: Any) -> bool:
+    normalized = str(key).strip().lower().replace("-", "_")
+    return normalized in SENSITIVE_PAYLOAD_KEYS
 
 
 def _relative_to_run(run: HermesRun, path: Path) -> str:

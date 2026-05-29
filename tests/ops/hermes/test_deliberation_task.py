@@ -325,6 +325,25 @@ def test_dry_run_writes_deliberation_artifacts_under_temp_ledger(
     assert not (tmp_path / "signals.db").exists()
 
 
+async def test_dry_run_can_block_from_existing_event_loop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_reviewers(
+        monkeypatch,
+        {
+            "codex": {"verdict": "approve", "confidence": 0.95, "concerns": []},
+            "kimi": {"verdict": "approve", "confidence": 0.95, "concerns": []},
+        },
+    )
+
+    result = run_registered_task(_args(tmp_path, mode="dry-run", panel="codex,kimi"))
+
+    assert result.exit_code == 0
+    assert result.status == "dry_run_passed"
+    assert result.outputs["consensus"]["status"] == "approved"
+
+
 def test_execute_only_commits_deliberation_artifacts(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
