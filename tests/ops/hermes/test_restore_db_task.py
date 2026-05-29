@@ -15,6 +15,7 @@ from integrations.hermes.tasks.base import (
     EXIT_GATE_FAILURE,
     EXIT_LOCK_HELD,
     EXIT_TASK_FAILURE,
+    sqlite_count,
 )
 from integrations.hermes.tasks.registry import run_registered_task
 
@@ -61,6 +62,19 @@ def _row_count(path: Path) -> int:
         return int(conn.execute("SELECT COUNT(*) FROM signals").fetchone()[0])
     finally:
         conn.close()
+
+
+def test_sqlite_count_allows_only_registered_signals_table(tmp_path: Path) -> None:
+    target = tmp_path / "signals.db"
+    _write_db(target, rows=3)
+
+    assert sqlite_count(target, "signals") == (3, None)
+
+    for table_name in ("schema_migrations", "signals; DROP TABLE signals"):
+        with pytest.raises(ValueError, match="unsupported sqlite count table"):
+            sqlite_count(target, table_name)
+
+    assert _row_count(target) == 3
 
 
 def _args(
@@ -390,6 +404,32 @@ def test_wal_shm_sidecars_refuse_preflight_by_default(tmp_path: Path) -> None:
         check for check in result.checks if check.name == "no_unhandled_wal_shm_sidecars"
     )
     assert sidecar_check.passed is False
+    assert _row_count(target) == 2
+
+
+def test_wal_shm_sidecars_can_be_explicitly_delegated_to_restore_helper(
+    tmp_path: Path,
+) -> None:
+    backup = tmp_path / "backup.db"
+    target = tmp_path / "signals.db"
+    _write_db(backup, rows=2)
+    _write_db(target, rows=2)
+    target.with_name(target.name + "-wal").write_text("pending", encoding="utf-8")
+    target.with_name(target.name + "-shm").write_text("pending", encoding="utf-8")
+
+    result = run_registered_task(
+        _args(tmp_path, backup=backup, target=target, handle_sidecars=True)
+    )
+
+    assert result.exit_code == 0
+    sidecar_check = next(
+        check for check in result.checks if check.name == "no_unhandled_wal_shm_sidecars"
+    )
+    assert sidecar_check.passed is True
+    assert sidecar_check.evidence == {
+        "present": ["signals.db-wal", "signals.db-shm"],
+        "handler": "scripts.restore_db._ensure_no_target_sidecars",
+    }
     assert _row_count(target) == 2
 
 

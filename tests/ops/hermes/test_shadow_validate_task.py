@@ -236,6 +236,21 @@ def test_dry_run_invokes_evaluator_without_persistence_and_writes_shadow_artifac
     assert not (tmp_path / "signals.db").exists()
 
 
+async def test_dry_run_can_block_from_existing_event_loop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_valid_database(monkeypatch)
+    calls = _patch_shadow_runtime(monkeypatch)
+
+    result = run_registered_task(_args(tmp_path, mode="dry-run"))
+
+    assert result.exit_code == 0
+    assert result.status == "dry_run_passed"
+    assert calls["writable"] == [False]
+    assert result.outputs["shadowRun"]["status"] == "completed"
+
+
 def test_execute_persists_shadow_rows_and_records_explicit_mutation_metadata(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

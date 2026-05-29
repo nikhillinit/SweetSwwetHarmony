@@ -15,6 +15,8 @@ from .base import (
     sqlite_integrity,
 )
 
+RESTORE_SIDECAR_HANDLER = "scripts.restore_db._ensure_no_target_sidecars"
+
 
 class RestoreDbTask(HermesTask):
     name = "restore-db"
@@ -184,15 +186,17 @@ class RestoreDbTask(HermesTask):
         )
 
         present_sidecars = [path.name for path in _sidecars(target) if path.exists()]
-        sidecars_ok = not present_sidecars or bool(
-            getattr(context.args, "handle_sidecars", False)
-        )
+        handle_sidecars = bool(getattr(context.args, "handle_sidecars", False))
+        sidecars_ok = not present_sidecars or handle_sidecars
+        sidecar_evidence = {"present": present_sidecars}
+        if present_sidecars and handle_sidecars:
+            sidecar_evidence["handler"] = RESTORE_SIDECAR_HANDLER
         checks.append(
             CheckResult(
                 "no_unhandled_wal_shm_sidecars",
                 sidecars_ok,
                 ", ".join(present_sidecars) if present_sidecars else "none",
-                {"present": present_sidecars},
+                sidecar_evidence,
             )
         )
         return checks
@@ -356,10 +360,9 @@ class RestoreDbTask(HermesTask):
 
 
 def _sidecars(db_path: Path) -> tuple[Path, Path]:
-    return (
-        db_path.with_name(db_path.name + "-wal"),
-        db_path.with_name(db_path.name + "-shm"),
-    )
+    from scripts.restore_db import _sidecar_paths
+
+    return _sidecar_paths(db_path)
 
 
 def _restore_helper_outputs(evidence: dict[str, Any]) -> dict[str, Any]:
