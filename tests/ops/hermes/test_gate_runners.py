@@ -6,6 +6,8 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import pytest
+
 from integrations.hermes.gate_runners import (
     deliberation_passed,
     shadow_agreement,
@@ -267,6 +269,69 @@ def test_shadow_agreement_accepts_live_shadow_validation_artifact(
     assert payload["ok"] is True
     assert payload["detail"] == "shadow agreement passed"
     assert payload["evidence"]["agreementRate"] == 0.98
+    assert payload["evidence"]["statusCompatibility"]["deprecated"] is False
+
+
+@pytest.mark.parametrize("legacy_status", ["passed", "pass"])
+def test_shadow_agreement_accepts_legacy_status_with_deprecation_evidence(
+    legacy_status: str,
+    tmp_path: Path,
+    capsys,
+) -> None:
+    run_dir = tmp_path / "runs" / "shadow-legacy"
+    _write_json(
+        run_dir / "shadow_validation.json",
+        {
+            "shadowRun": {
+                "status": legacy_status,
+                "agreementRate": 0.98,
+            }
+        },
+    )
+
+    exit_code = shadow_agreement.main(["--run-dir", str(run_dir), "--min-rate", "0.95"])
+
+    payload = _stdout_payload(capsys)
+    assert exit_code == 0
+    assert payload["ok"] is True
+    assert payload["detail"] == "shadow agreement passed with deprecated status"
+    assert payload["evidence"]["statusCompatibility"] == {
+        "accepted": True,
+        "canonicalStatus": "completed",
+        "deprecated": True,
+        "deprecationDetail": (
+            f"status {legacy_status!r} is deprecated; emit 'completed'"
+        ),
+        "strictStatus": False,
+    }
+
+
+def test_shadow_agreement_strict_status_rejects_legacy_success(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    run_dir = tmp_path / "runs" / "shadow-legacy"
+    _write_json(
+        run_dir / "shadow_validation.json",
+        {
+            "shadowRun": {
+                "status": "passed",
+                "agreementRate": 0.98,
+            }
+        },
+    )
+
+    exit_code = shadow_agreement.main(
+        ["--run-dir", str(run_dir), "--min-rate", "0.95", "--strict-status"]
+    )
+
+    payload = _stdout_payload(capsys)
+    assert exit_code == 4
+    assert payload["ok"] is False
+    assert payload["detail"] == "shadow agreement failed"
+    assert payload["evidence"]["statusCompatibility"]["accepted"] is False
+    assert payload["evidence"]["statusCompatibility"]["deprecated"] is True
+    assert payload["evidence"]["statusCompatibility"]["strictStatus"] is True
 
 
 def test_shadow_agreement_rejects_low_agreement_rate(

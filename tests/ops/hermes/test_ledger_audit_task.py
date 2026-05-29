@@ -3,11 +3,17 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from integrations.hermes.tasks.base import EXIT_GATE_FAILURE, EXIT_INVALID
+from integrations.hermes.tasks.ledger_audit import (
+    LEDGER_AUDIT_REPORT_JSON,
+    LEDGER_AUDIT_REPORT_MD,
+    LedgerAuditTask,
+)
 from integrations.hermes.tasks.registry import run_registered_task
 
 from .conftest import minimal_config_dict
@@ -28,6 +34,7 @@ def _args(
     *,
     mode: str = "plan-only",
     check: str = "all",
+    finding_severity_threshold: str = "critical",
 ) -> argparse.Namespace:
     return argparse.Namespace(
         task_name="ledger-audit",
@@ -42,6 +49,7 @@ def _args(
         actor_id="test",
         json_output=False,
         check=check,
+        finding_severity_threshold=finding_severity_threshold,
     )
 
 
@@ -124,6 +132,91 @@ def test_dry_run_writes_audit_reports_and_does_not_touch_db_or_config(
     assert report_md.exists()
     assert json.loads(report_json.read_text(encoding="utf-8"))["findings"] == []
     assert "Hermes Ledger Audit Report" in report_md.read_text(encoding="utf-8")
+
+
+def test_dry_run_summary_distinguishes_raw_index_rows_from_unique_run_dirs(
+    tmp_path: Path,
+) -> None:
+    root = _ledger_root(tmp_path)
+    run_dir = _write_ledger_run(
+        root,
+        "existing",
+        artifacts={
+            "plan": "task_plan.json",
+            "record": "run_record.json",
+            "ledger": "ledger.json",
+        },
+    )
+    row = {
+        "runId": "existing",
+        "createdAt": "2026-05-29T00:00:00Z",
+        "runDir": str(run_dir),
+    }
+    _append_index(root, row)
+    _append_index(root, row)
+
+    result = run_registered_task(_args(tmp_path, mode="dry-run"))
+
+    summary = result.outputs["summary"]
+    assert summary["rawIndexRows"] > summary["uniqueRunDirsChecked"]
+    assert summary["rawIndexRows"] == summary["validIndexEntries"]
+    assert "checkedRunDirs" not in summary
+
+
+def test_postflight_default_threshold_ignores_non_critical_findings(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / LEDGER_AUDIT_REPORT_JSON).write_text("{}", encoding="utf-8")
+    (tmp_path / LEDGER_AUDIT_REPORT_MD).write_text("# report\n", encoding="utf-8")
+    context = SimpleNamespace(
+        run_dir=tmp_path,
+        args=argparse.Namespace(finding_severity_threshold="critical"),
+    )
+    outputs = {
+        "findings": [
+            {
+                "code": "missing_run_dir",
+                "severity": "high",
+                "path": str(tmp_path / "missing"),
+            }
+        ]
+    }
+
+    checks = LedgerAuditTask().postflight(context, {}, outputs)
+
+    finding_check = next(
+        check for check in checks if check.name == "no_ledger_audit_findings"
+    )
+    assert finding_check.passed is True
+    assert finding_check.evidence["severityThreshold"] == "critical"
+    assert finding_check.evidence["blockingFindings"] == []
+
+
+def test_postflight_threshold_can_fail_on_high_findings(tmp_path: Path) -> None:
+    (tmp_path / LEDGER_AUDIT_REPORT_JSON).write_text("{}", encoding="utf-8")
+    (tmp_path / LEDGER_AUDIT_REPORT_MD).write_text("# report\n", encoding="utf-8")
+    context = SimpleNamespace(
+        run_dir=tmp_path,
+        args=argparse.Namespace(finding_severity_threshold="high"),
+    )
+    outputs = {
+        "findings": [
+            {
+                "code": "missing_run_dir",
+                "severity": "high",
+                "path": str(tmp_path / "missing"),
+            }
+        ]
+    }
+
+    checks = LedgerAuditTask().postflight(context, {}, outputs)
+
+    finding_check = next(
+        check for check in checks if check.name == "no_ledger_audit_findings"
+    )
+    assert finding_check.passed is False
+    assert finding_check.evidence["severityThreshold"] == "high"
+    assert finding_check.evidence["blockingFindings"] == outputs["findings"]
 
 
 def test_preflight_rejects_malformed_index_line_and_emits_repair_prompt(

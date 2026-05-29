@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sweetswwetharmony.local/hermes/gate_batch.schema.json",
+  "title": "Hermes Track A Gate Batch",
+  "type": "object",
+  "required": ["phase", "success", "results"],
+  "properties": {
+    "phase": {"type": "string", "minLength": 1},
+    "success": {"type": "boolean"},
+    "results": {
+      "type": "array",
+      "items": {
+        "$ref": "https://sweetswwetharmony.local/hermes/gate_result.schema.json"
+      }
+    }
+  },
+  "additionalProperties": false
+}

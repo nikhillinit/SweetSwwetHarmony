@@ -9,7 +9,8 @@ from integrations.hermes.config import PROJECT_ROOT
 from integrations.hermes.gate_runners._common import emit, latest_existing, load_json
 
 ARTIFACT_NAMES = ("shadow_validation.json", "shadow_validate.json")
-PASSING_STATUSES = {"completed", "passed", "pass"}
+CANONICAL_PASSING_STATUS = "completed"
+LEGACY_PASSING_STATUSES = {"passed", "pass"}
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -19,6 +20,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--run-dir", default=None)
     parser.add_argument("--ledger-root", default="ai-logs/hermes")
     parser.add_argument("--min-rate", type=float, default=0.95)
+    parser.add_argument(
+        "--strict-status",
+        action="store_true",
+        help="Require the canonical completed status and reject legacy pass statuses",
+    )
     args = parser.parse_args(argv)
 
     artifact_path = _find_artifact(args.run_dir, args.ledger_root)
@@ -34,13 +40,24 @@ def main(argv: list[str] | None = None) -> int:
 
     status = _status(data)
     rate = _agreement_rate(data)
-    ok = status in PASSING_STATUSES and rate >= args.min_rate
+    status_compatibility = _status_compatibility(
+        status,
+        strict_status=bool(args.strict_status),
+    )
+    ok = bool(status_compatibility["accepted"]) and rate >= args.min_rate
+    if ok and status_compatibility["deprecated"]:
+        detail = "shadow agreement passed with deprecated status"
+    elif ok:
+        detail = "shadow agreement passed"
+    else:
+        detail = "shadow agreement failed"
     return emit(
         ok,
-        "shadow agreement passed" if ok else "shadow agreement failed",
+        detail,
         {
             "artifact": str(artifact_path),
             "status": status,
+            "statusCompatibility": status_compatibility,
             "agreementRate": rate,
             "minRate": args.min_rate,
         },
@@ -66,11 +83,30 @@ def _find_artifact(run_dir: str | None, ledger_root: str) -> Path | None:
 def _status(data: dict[str, Any]) -> str:
     shadow_run = data.get("shadowRun")
     if isinstance(shadow_run, dict):
-        return str(shadow_run.get("status") or "").lower()
+        return str(shadow_run.get("status") or "").strip().lower()
     shadow_run = data.get("shadow_run")
     if isinstance(shadow_run, dict):
-        return str(shadow_run.get("status") or "").lower()
-    return str(data.get("status") or "").lower()
+        return str(shadow_run.get("status") or "").strip().lower()
+    return str(data.get("status") or "").strip().lower()
+
+
+def _status_compatibility(
+    status: str,
+    *,
+    strict_status: bool,
+) -> dict[str, Any]:
+    deprecated = status in LEGACY_PASSING_STATUSES
+    accepted = status == CANONICAL_PASSING_STATUS or (deprecated and not strict_status)
+    detail = None
+    if deprecated:
+        detail = f"status {status!r} is deprecated; emit 'completed'"
+    return {
+        "accepted": accepted,
+        "canonicalStatus": CANONICAL_PASSING_STATUS,
+        "deprecated": deprecated,
+        "deprecationDetail": detail,
+        "strictStatus": strict_status,
+    }
 
 
 def _agreement_rate(data: dict[str, Any]) -> float:
