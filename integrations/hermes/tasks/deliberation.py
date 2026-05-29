@@ -13,7 +13,13 @@ from integrations.hermes.adapters import (
     build_reviewer_executor,
 )
 
-from .base import CheckResult, HermesTask, TaskContext, sha256_file
+from .base import (
+    CheckResult,
+    HermesTask,
+    TaskContext,
+    run_async_blocking,
+    sha256_file,
+)
 
 VALID_VERDICTS = {"approve", "block", "needs_changes", "skip"}
 DEFAULT_PANEL = "codex,kimi,gemini"
@@ -134,7 +140,7 @@ class DeliberationTask(HermesTask):
         ]
 
     def dry_run(self, context: TaskContext, plan: dict[str, Any]) -> dict[str, Any]:
-        record = asyncio.run(_run_panel(context, plan))
+        record = run_async_blocking(_run_panel(context, plan))
         _write_deliberation_artifacts(context, record)
         return record
 

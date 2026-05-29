@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import argparse
-import asyncio
 import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncIterator, Awaitable, Callable
 
-from .base import CheckResult, HermesTask, TaskContext, TaskFailure
+from .base import (
+    CheckResult,
+    HermesTask,
+    TaskContext,
+    TaskFailure,
+    run_async_blocking,
+)
 
 COLLECTOR_PROMOTE_ACK = "COLLECTOR_PROMOTE"
 COLLECTOR_DEMOTE_ACK = "COLLECTOR_DEMOTE"
@@ -590,7 +595,7 @@ def _rollback_recipe(
 
 def _run_transition(context: TaskContext, plan: dict[str, Any]) -> dict[str, Any]:
     try:
-        return asyncio.run(_run_transition_async(context, plan))
+        return run_async_blocking(_run_transition_async(context, plan))
     except TaskFailure:
         raise
     except Exception as exc:

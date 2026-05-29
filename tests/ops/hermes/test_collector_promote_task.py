@@ -403,6 +403,27 @@ def test_execute_uses_promotion_bridge_and_records_mutation_metadata(
     ).exists()
 
 
+async def test_execute_can_block_from_existing_event_loop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_valid_preflight(monkeypatch)
+    calls = _patch_runtime(monkeypatch)
+
+    result = run_registered_task(
+        _args(
+            tmp_path,
+            mode="execute",
+            ack_risk=collector_promote.COLLECTOR_PROMOTE_ACK,
+        ),
+    )
+
+    assert result.exit_code == 0
+    assert result.status == "executed"
+    assert calls["writable"] == [True]
+    assert calls["promote"][0]["result_id"] == 123
+
+
 def test_execute_demote_uses_status_bridge_and_demote_ack(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

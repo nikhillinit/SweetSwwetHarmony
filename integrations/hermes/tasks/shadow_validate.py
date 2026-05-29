@@ -1,14 +1,19 @@
 from __future__ import annotations
 
 import argparse
-import asyncio
 import sqlite3
 from contextlib import asynccontextmanager
 from dataclasses import asdict, dataclass, is_dataclass
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Type
 
-from .base import CheckResult, HermesTask, TaskContext, TaskFailure
+from .base import (
+    CheckResult,
+    HermesTask,
+    TaskContext,
+    TaskFailure,
+    run_async_blocking,
+)
 
 SHADOW_TABLES = ("shadow_entity_runs", "shadow_disagreements")
 SHADOW_ARTIFACT = "shadow_validation.json"
@@ -313,7 +318,7 @@ async def _open_shadow_runtime(
 
 def _run_shadow(context: TaskContext, plan: dict[str, Any], *, persist: bool) -> dict[str, Any]:
     try:
-        return asyncio.run(_run_shadow_async(context, plan, persist=persist))
+        return run_async_blocking(_run_shadow_async(context, plan, persist=persist))
     except Exception as exc:
         raise TaskFailure(str(exc)) from exc
 
