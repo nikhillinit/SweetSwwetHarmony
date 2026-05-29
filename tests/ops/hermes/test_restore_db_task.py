@@ -169,6 +169,64 @@ def test_hash_drift_between_plan_and_execute_blocks_restore(
     assert (run_dir / "repair_prompt.md").exists()
 
 
+def test_execute_refuses_mutation_after_task_lock_health_is_lost(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backup = tmp_path / "backup.db"
+    target = tmp_path / "signals.db"
+    _write_db(backup, rows=3)
+    _write_db(target, rows=1)
+
+    from integrations.hermes.tasks.restore_db import RestoreDbTask
+    from scripts import restore_db as restore_script
+
+    original_preflight = RestoreDbTask.preflight
+
+    def lose_lock_after_preflight(self, context, plan):  # type: ignore[no-untyped-def]
+        checks = original_preflight(self, context, plan)
+        assert context.acquired_locks
+        lock_path = context.acquired_locks[0].lock_path
+        payload = json.loads(lock_path.read_text(encoding="utf-8"))
+        payload["ownerToken"] = "stolen-owner"
+        lock_path.write_text(json.dumps(payload), encoding="utf-8")
+        return checks
+
+    def fail_if_called(
+        *_args: object,
+        **_kwargs: object,
+    ) -> restore_script.RestoreBackupResult:
+        raise AssertionError("restore helper should not run after lock health loss")
+
+    monkeypatch.setattr(RestoreDbTask, "preflight", lose_lock_after_preflight)
+    monkeypatch.setattr(
+        restore_script,
+        "restore_backup_with_lock_and_ledger",
+        fail_if_called,
+    )
+
+    result = run_registered_task(
+        _args(
+            tmp_path,
+            backup=backup,
+            target=target,
+            mode="execute",
+            ack_risk="RESTORE_DB",
+        )
+    )
+
+    assert result.exit_code == EXIT_LOCK_HELD
+    assert result.status == "lock_unhealthy"
+    assert _row_count(target) == 1
+    run_dir = Path(result.run_dir or "")
+    assert (run_dir / "lock_health_failure.json").exists()
+    payload = json.loads(
+        (run_dir / "lock_health_failure.json").read_text(encoding="utf-8")
+    )
+    assert payload["stage"] == "before_ack_gated_execute"
+    assert "ownerToken" in payload["error"]
+
+
 def test_execute_uses_shared_restore_helper_and_outputs_db_ops_fields(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

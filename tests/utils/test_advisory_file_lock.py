@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from utils.advisory_file_lock import AdvisoryFileLock
+import pytest
+
+from utils.advisory_file_lock import AdvisoryFileLock, AdvisoryFileLockHealthError
 
 
 def _iso(seconds_ago: int = 0) -> str:
@@ -37,6 +40,15 @@ def _write_lock(
     )
 
 
+def _wait_until(predicate, *, timeout_seconds: float = 2.0) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        if predicate():
+            return
+        time.sleep(0.05)
+    assert predicate()
+
+
 def test_acquire_writes_owner_token_and_release_verifies_token(tmp_path: Path) -> None:
     lock_path = tmp_path / "resource.lock"
 
@@ -64,6 +76,68 @@ def test_acquire_writes_owner_token_and_release_verifies_token(tmp_path: Path) -
 
     assert lock_path.exists()
     assert json.loads(lock_path.read_text(encoding="utf-8"))["ownerToken"] == "someone-else"
+
+
+def test_heartbeat_refresh_prevents_ttl_expiry_during_long_operation(
+    tmp_path: Path,
+) -> None:
+    lock_path = tmp_path / "resource.lock"
+    lock = AdvisoryFileLock(lock_path, ttl_seconds=1, context={"kind": "unit"})
+
+    assert lock.acquire(timeout_seconds=0) is True
+    initial_heartbeat = json.loads(lock_path.read_text(encoding="utf-8"))["heartbeatAt"]
+
+    _wait_until(
+        lambda: json.loads(lock_path.read_text(encoding="utf-8"))["heartbeatAt"]
+        != initial_heartbeat,
+        timeout_seconds=2.0,
+    )
+    time.sleep(1.1)
+
+    contender = AdvisoryFileLock(lock_path, ttl_seconds=1, context={"kind": "unit"})
+    assert contender.acquire(timeout_seconds=0) is False
+    assert lock.is_healthy() is True
+    assert lock.heartbeat_error() is None
+
+    lock.release()
+
+
+def test_heartbeat_health_reports_replaced_owner_token(tmp_path: Path) -> None:
+    lock_path = tmp_path / "resource.lock"
+    lock = AdvisoryFileLock(lock_path, ttl_seconds=1, context={"kind": "unit"})
+
+    assert lock.acquire(timeout_seconds=0) is True
+    payload = json.loads(lock_path.read_text(encoding="utf-8"))
+    payload["ownerToken"] = "different-owner"
+    lock_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    _wait_until(lambda: lock.heartbeat_error() is not None, timeout_seconds=2.0)
+
+    assert lock.is_healthy() is False
+    assert "ownerToken" in (lock.heartbeat_error() or "")
+    with pytest.raises(AdvisoryFileLockHealthError, match="ownerToken"):
+        lock.assert_healthy()
+
+    lock.release()
+    assert lock_path.exists()
+    assert AdvisoryFileLock(lock_path).force_break() is True
+
+
+def test_heartbeat_health_reports_deleted_lock_file(tmp_path: Path) -> None:
+    lock_path = tmp_path / "resource.lock"
+    lock = AdvisoryFileLock(lock_path, ttl_seconds=1, context={"kind": "unit"})
+
+    assert lock.acquire(timeout_seconds=0) is True
+    lock_path.unlink()
+
+    _wait_until(lambda: lock.heartbeat_error() is not None, timeout_seconds=2.0)
+
+    assert lock.is_healthy() is False
+    assert "missing" in (lock.heartbeat_error() or "")
+    with pytest.raises(AdvisoryFileLockHealthError, match="missing"):
+        lock.assert_healthy()
+
+    assert lock.release() is False
 
 
 def test_two_contenders_cannot_both_win_stale_reclaim(tmp_path: Path) -> None:
