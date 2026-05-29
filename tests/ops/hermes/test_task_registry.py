@@ -63,7 +63,7 @@ def test_dry_run_registered_task_stays_non_mutating() -> None:
     assert result.outputs == {"dryRun": True, "mutationCommitted": False}
 
 
-def test_schema_template_surface_stays_narrow_after_outbox_candidates_schema() -> None:
+def test_schema_template_surface_stays_narrow_after_gate_batch_schema() -> None:
     root = Path(__file__).resolve().parents[3] / "integrations" / "hermes"
 
     assert {path.name for path in (root / "schemas").glob("*.json")} == {
@@ -72,6 +72,7 @@ def test_schema_template_surface_stays_narrow_after_outbox_candidates_schema() -
         "config_promote_diff.schema.json",
         "config_promote_report.schema.json",
         "deliberation_record.schema.json",
+        "gate_batch.schema.json",
         "gate_result.schema.json",
         "hermes_response_packet.schema.json",
         "ledger_audit_report.schema.json",
