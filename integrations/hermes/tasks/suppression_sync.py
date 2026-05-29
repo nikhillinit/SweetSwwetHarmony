@@ -33,13 +33,24 @@ class SuppressionSyncTask(HermesTask):
     def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
         parser.add_argument("--db-path", default="signals.db")
         parser.add_argument("--ttl-days", type=int, default=7)
-        parser.add_argument("--delete-stale", action="store_true")
+        cleanup_group = parser.add_mutually_exclusive_group()
+        cleanup_group.add_argument(
+            "--delete-stale",
+            dest="delete_stale",
+            action="store_true",
+            default=None,
+        )
+        cleanup_group.add_argument(
+            "--skip-clean-expired",
+            dest="delete_stale",
+            action="store_false",
+        )
         parser.add_argument("--max-removals", type=int, default=25)
 
     def plan(self, context: TaskContext) -> dict[str, Any]:
         db_path = self._db_path(context)
         state = _inspect_suppression_db(db_path)
-        delete_stale = bool(getattr(context.args, "delete_stale", False))
+        delete_stale = _effective_delete_stale(context.args)
         ack_token = SUPPRESSION_DELETE_ACK if delete_stale else None
 
         plan = self._base_plan(context)
@@ -56,6 +67,7 @@ class SuppressionSyncTask(HermesTask):
                     },
                 },
                 "delete_stale_requested": delete_stale,
+                "delete_stale_argument": getattr(context.args, "delete_stale", None),
                 "expected_changes": {
                     "upserts": "unknown_until_workflow_runs",
                     "expired_removals": state.get("expired_count", 0)
@@ -132,7 +144,7 @@ class SuppressionSyncTask(HermesTask):
             ),
         ]
 
-        if bool(getattr(context.args, "delete_stale", False)):
+        if _effective_delete_stale(context.args):
             max_removals = int(getattr(context.args, "max_removals", 25) or 25)
             estimated = int(state.get("expired_count", 0) or 0)
             checks.append(
@@ -238,7 +250,7 @@ class SuppressionSyncTask(HermesTask):
         return context.resolve(getattr(context.args, "db_path", None)) or context.root / "signals.db"
 
     def _workflow_command(self, context: TaskContext, *, dry_run: bool) -> list[str]:
-        delete_stale = bool(getattr(context.args, "delete_stale", False))
+        delete_stale = _effective_delete_stale(context.args)
         command = [
             sys.executable,
             "-m",
@@ -252,6 +264,13 @@ class SuppressionSyncTask(HermesTask):
             command.append("--dry-run")
         command.append("--delete-stale" if delete_stale else "--skip-clean-expired")
         return command
+
+
+def _effective_delete_stale(args: argparse.Namespace) -> bool:
+    raw = getattr(args, "delete_stale", None)
+    if raw is None:
+        return True
+    return bool(raw)
 
 
 def _inspect_suppression_db(db_path: Path) -> dict[str, Any]:

@@ -19,6 +19,8 @@ from .base import (
     HermesTask,
     TaskContext,
     TaskFailure,
+    TaskMode,
+    TaskResult,
     copy_snapshot,
     sha256_file,
 )
@@ -55,6 +57,21 @@ class ConfigPromoteTask(HermesTask):
                 "Evidence reference allowing routing or execute-support policy "
                 "changes in the proposed config"
             ),
+        )
+
+    def run(
+        self,
+        args: argparse.Namespace,
+        *,
+        mode: TaskMode,
+        config_path: str | Path | None = None,
+        ack_risk: str | None = None,
+    ) -> TaskResult:
+        return super().run(
+            args,
+            mode=mode,
+            config_path=_ledger_config_path(args, config_path),
+            ack_risk=ack_risk,
         )
 
     def plan(self, context: TaskContext) -> dict[str, Any]:
@@ -373,6 +390,19 @@ def _current_config_path(context: TaskContext) -> Path:
     if configured:
         return context.resolve(configured) or Path(configured)
     return context.root / DEFAULT_CONFIG_PATH
+
+
+def _ledger_config_path(
+    args: argparse.Namespace,
+    config_path: str | Path | None,
+) -> str | Path | None:
+    if config_path is None or Path(config_path).exists():
+        return config_path
+
+    proposed = getattr(args, "proposed", None)
+    if proposed and Path(proposed).exists():
+        return proposed
+    return config_path
 
 
 def _inspect_config_file(path: Path | None) -> dict[str, Any]:
