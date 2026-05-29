@@ -12,6 +12,11 @@ LEDGER_AUDIT_REPORT_JSON = "ledger_audit_report.json"
 LEDGER_AUDIT_REPORT_MD = "ledger_audit_report.md"
 
 _ALL_CHECKS = ("index", "runs", "artifacts")
+_FINDING_SEVERITIES = ("low", "medium", "high", "critical")
+_FINDING_SEVERITY_RANK = {
+    severity: index for index, severity in enumerate(_FINDING_SEVERITIES)
+}
+_DEFAULT_FINDING_SEVERITY_THRESHOLD = "critical"
 
 
 class LedgerAuditTask(HermesTask):
@@ -29,6 +34,12 @@ class LedgerAuditTask(HermesTask):
             default="all",
             type=_parse_check_arg,
             help="Comma-separated ledger audit scopes: all,index,runs,artifacts",
+        )
+        parser.add_argument(
+            "--finding-severity-threshold",
+            default=_DEFAULT_FINDING_SEVERITY_THRESHOLD,
+            type=_parse_finding_severity_threshold,
+            help="Minimum finding severity that fails postflight: low,medium,high,critical",
         )
 
     def run(
@@ -49,6 +60,7 @@ class LedgerAuditTask(HermesTask):
 
     def plan(self, context: TaskContext) -> dict[str, Any]:
         checks = _requested_checks(getattr(context.args, "check", "all"))
+        finding_severity_threshold = _finding_severity_threshold(context)
         ledger_root, index_path = _ledger_paths(context)
         audit = _audit_ledger(ledger_root, index_path, checks)
 
@@ -62,6 +74,7 @@ class LedgerAuditTask(HermesTask):
                     "index_malformed_entries": audit["index"]["malformed_count"],
                 },
                 "checks_requested": list(checks),
+                "finding_severity_threshold": finding_severity_threshold,
                 "artifacts": {
                     "audit_report_json": LEDGER_AUDIT_REPORT_JSON,
                     "audit_report_markdown": LEDGER_AUDIT_REPORT_MD,
@@ -164,7 +177,8 @@ class LedgerAuditTask(HermesTask):
                 "indexLines": audit["index"]["line_count"],
                 "validIndexEntries": audit["index"]["valid_count"],
                 "malformedIndexEntries": audit["index"]["malformed_count"],
-                "checkedRunDirs": audit["runs"]["checked_count"],
+                "rawIndexRows": audit["runs"]["raw_index_rows"],
+                "uniqueRunDirsChecked": audit["runs"]["unique_run_dirs_checked"],
                 "missingRunDirs": len(audit["runs"]["missing_run_dirs"]),
                 "missingArtifacts": len(audit["artifacts"]["missing_artifacts"]),
             },
@@ -186,8 +200,13 @@ class LedgerAuditTask(HermesTask):
     ) -> list[CheckResult]:
         json_path = context.run_dir / LEDGER_AUDIT_REPORT_JSON
         md_path = context.run_dir / LEDGER_AUDIT_REPORT_MD
-        findings = outputs.get("findings", [])
-        finding_count = len(findings) if isinstance(findings, list) else 1
+        severity_threshold = _finding_severity_threshold(context)
+        findings = _findings_list(outputs.get("findings", []))
+        blocking_findings = [
+            finding
+            for finding in findings
+            if _finding_meets_threshold(finding, severity_threshold)
+        ]
         return [
             CheckResult(
                 "ledger_audit_report_json_written",
@@ -203,9 +222,17 @@ class LedgerAuditTask(HermesTask):
             ),
             CheckResult(
                 "no_ledger_audit_findings",
-                finding_count == 0,
-                f"findings={finding_count}",
-                {"findings": findings if isinstance(findings, list) else []},
+                len(blocking_findings) == 0,
+                (
+                    f"threshold={severity_threshold}, "
+                    f"blocking_findings={len(blocking_findings)}, "
+                    f"findings={len(findings)}"
+                ),
+                {
+                    "severityThreshold": severity_threshold,
+                    "blockingFindings": blocking_findings,
+                    "findings": findings,
+                },
             ),
         ]
 
@@ -253,6 +280,71 @@ def _parse_check_arg(value: str) -> str:
     return value
 
 
+def _parse_finding_severity_threshold(value: str) -> str:
+    try:
+        return _normalise_finding_severity_threshold(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
+def _finding_severity_threshold(context: TaskContext) -> str:
+    return _normalise_finding_severity_threshold(
+        getattr(
+            getattr(context, "args", None),
+            "finding_severity_threshold",
+            _DEFAULT_FINDING_SEVERITY_THRESHOLD,
+        )
+    )
+
+
+def _normalise_finding_severity_threshold(value: object) -> str:
+    severity = str(value or _DEFAULT_FINDING_SEVERITY_THRESHOLD).strip().lower()
+    if severity not in _FINDING_SEVERITY_RANK:
+        expected = ", ".join(_FINDING_SEVERITIES)
+        raise ValueError(
+            f"unknown ledger-audit finding severity threshold: {severity}; "
+            f"expected one of {expected}"
+        )
+    return severity
+
+
+def _findings_list(value: object) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return [
+            {
+                "code": "malformed_findings_payload",
+                "severity": "critical",
+                "detail": "findings must be a list",
+            }
+        ]
+    findings: list[dict[str, Any]] = []
+    for item in value:
+        if isinstance(item, dict):
+            findings.append(item)
+        else:
+            findings.append(
+                {
+                    "code": "malformed_finding",
+                    "severity": "critical",
+                    "detail": "finding must be a JSON object",
+                }
+            )
+    return findings
+
+
+def _finding_meets_threshold(
+    finding: dict[str, Any],
+    severity_threshold: str,
+) -> bool:
+    severity = str(finding.get("severity") or "critical").strip().lower()
+    severity_rank = _FINDING_SEVERITY_RANK.get(
+        severity,
+        _FINDING_SEVERITY_RANK["critical"],
+    )
+    threshold_rank = _FINDING_SEVERITY_RANK[severity_threshold]
+    return severity_rank >= threshold_rank
+
+
 def _preflight_gate_names(checks: tuple[str, ...]) -> list[str]:
     gates = [
         "ledger_root_readable",
@@ -286,7 +378,8 @@ def _audit_ledger(
         )
 
     runs_state = {
-        "checked_count": 0,
+        "raw_index_rows": index["valid_count"],
+        "unique_run_dirs_checked": 0,
         "missing_run_dirs": [],
         "missing_run_dir_fields": [],
     }
@@ -435,7 +528,8 @@ def _audit_run_dirs(
             )
     return (
         {
-            "checked_count": len(rows),
+            "raw_index_rows": len(rows),
+            "unique_run_dirs_checked": len(seen_run_dirs),
             "missing_run_dirs": missing_dirs,
             "missing_run_dir_fields": missing_fields,
         },
@@ -542,6 +636,8 @@ def _index_jsonl_detail(audit: dict[str, Any]) -> str:
 def _run_dirs_detail(audit: dict[str, Any]) -> str:
     runs = audit["runs"]
     return (
+        f"raw_rows={runs['raw_index_rows']}, "
+        f"unique_run_dirs={runs['unique_run_dirs_checked']}, "
         f"missing_dirs={len(runs['missing_run_dirs'])}, "
         f"missing_fields={len(runs['missing_run_dir_fields'])}"
     )

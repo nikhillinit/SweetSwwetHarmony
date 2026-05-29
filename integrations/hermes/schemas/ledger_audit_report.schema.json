@@ -35,7 +35,8 @@
         "indexLines",
         "validIndexEntries",
         "malformedIndexEntries",
-        "checkedRunDirs",
+        "rawIndexRows",
+        "uniqueRunDirsChecked",
         "missingRunDirs",
         "missingArtifacts"
       ],
@@ -43,7 +44,8 @@
         "indexLines": {"type": "integer", "minimum": 0},
         "validIndexEntries": {"type": "integer", "minimum": 0},
         "malformedIndexEntries": {"type": "integer", "minimum": 0},
-        "checkedRunDirs": {"type": "integer", "minimum": 0},
+        "rawIndexRows": {"type": "integer", "minimum": 0},
+        "uniqueRunDirsChecked": {"type": "integer", "minimum": 0},
         "missingRunDirs": {"type": "integer", "minimum": 0},
         "missingArtifacts": {"type": "integer", "minimum": 0}
       },
