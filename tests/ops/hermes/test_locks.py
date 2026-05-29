@@ -16,9 +16,17 @@ def test_lock_acquire_writes_metadata_and_release_removes_file(tmp_path: Path) -
 
     assert lock.acquire(timeout_seconds=0) is True
     payload = json.loads(lock_path.read_text(encoding="utf-8"))
+    assert "ownerToken" in payload
     assert payload["pid"] == os.getpid()
+    assert "acquiredAt" in payload
+    assert "heartbeatAt" in payload
+    assert payload["ttlSeconds"] == lock.ttl_seconds
+    assert payload["acquired_at"] == payload["acquiredAt"]
     assert payload["mode"] == "dry-run"
     assert payload["runId"] == "run-1"
+    assert payload["context"]["kind"] == "hermes"
+    assert payload["context"]["mode"] == "dry-run"
+    assert payload["context"]["runId"] == "run-1"
 
     lock.release()
 
@@ -101,3 +109,29 @@ def test_context_manager_raises_when_lock_is_held(tmp_path: Path) -> None:
             pass
 
     first.release()
+
+
+def test_lock_release_requires_owner_token(tmp_path: Path) -> None:
+    lock_path = tmp_path / "hermes.lock"
+    lock = HermesLock(lock_path, mode="dry-run", run_id="run-1")
+    assert lock.acquire(timeout_seconds=0) is True
+    payload = json.loads(lock_path.read_text(encoding="utf-8"))
+    payload["ownerToken"] = "different-owner"
+    lock_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    lock.release()
+
+    assert lock_path.exists()
+    assert HermesLock(lock_path).force_unlock("cleanup after owner token mismatch") is True
+
+
+def test_malformed_lock_is_not_reclaimed_without_force_unlock(tmp_path: Path) -> None:
+    lock_path = tmp_path / "hermes.lock"
+    lock_path.write_text("{", encoding="utf-8")
+
+    assert HermesLock(lock_path, ttl_seconds=0).acquire(timeout_seconds=0) is False
+    assert lock_path.exists()
+    assert HermesLock(lock_path).force_unlock("operator confirmed malformed lock") is True
+    lock = HermesLock(lock_path)
+    assert lock.acquire(timeout_seconds=0) is True
+    lock.release()
