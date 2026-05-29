@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from typing import Any
 
 from governance.state_policies import (
@@ -42,6 +43,8 @@ class GovernanceTask(HermesTask):
             "--state-source",
             help="Optional readable JSON state source for postflight verification.",
         )
+        parser.add_argument("--state-verify-attempts", type=int, default=3)
+        parser.add_argument("--state-verify-delay-seconds", type=float, default=1.0)
 
     def plan(self, context: TaskContext) -> dict[str, Any]:
         feature = _arg(context, "feature")
@@ -49,7 +52,15 @@ class GovernanceTask(HermesTask):
         target_state = _arg(context, "target_state")
         reason = _arg(context, "reason")
         transition = _transition(feature, from_state, target_state)
-        command = _governance_command(context, transition, reason)
+        state_source = _state_source_path(context)
+        command = _governance_command(
+            context,
+            transition,
+            reason,
+            feature=feature,
+            from_state=from_state,
+            target_state=target_state,
+        )
 
         plan = self._base_plan(context)
         plan.update(
@@ -64,7 +75,12 @@ class GovernanceTask(HermesTask):
                     "module": "governance",
                     "contract": "python -m governance feature promote|demote FLAG --from OLD --to NEW --reason ...",
                 },
-                "state_source": _state_source_path(context),
+                "state_source": state_source,
+                "state_verification": {
+                    "attempts": _state_verify_attempts(context),
+                    "delay_seconds": _state_verify_delay_seconds(context),
+                    "state_source": state_source,
+                },
                 "locks_required": list(self.required_locks),
                 "ack_risk_required": transition.get("ack_risk_token") is not None,
                 "ack_risk_token": transition.get("ack_risk_token"),
@@ -77,6 +93,7 @@ class GovernanceTask(HermesTask):
                     "governance_cli_available",
                     "feature_registered",
                     "transition_allowed",
+                    "state_source_readable",
                 ],
                 "postflight_gates": [
                     "governance_cli_command_succeeded",
@@ -88,8 +105,8 @@ class GovernanceTask(HermesTask):
                     "command": _rollback_command(
                         context,
                         feature,
-                        target_state,
                         from_state,
+                        target_state,
                     ),
                 },
                 "mutation": {
@@ -122,6 +139,15 @@ class GovernanceTask(HermesTask):
         transition = plan.get("transition", {})
         policy_error = str(transition.get("policy_error") or "")
         registered = _registered_detail(feature)
+        state_source = _read_state_source(
+            context,
+            feature,
+            plan.get("state_source"),
+        )
+        state_source_required = context.mode == "execute"
+        state_source_passed = (
+            bool(state_source.get("readable")) if state_source_required else True
+        )
 
         return [
             CheckResult("feature_declared", bool(feature), str(feature or "missing")),
@@ -158,6 +184,14 @@ class GovernanceTask(HermesTask):
                 policy_error or str(transition.get("action_type") or "not evaluated"),
                 transition,
             ),
+            CheckResult(
+                "state_source_readable",
+                state_source_passed,
+                str(state_source.get("detail") or "")
+                if state_source_required
+                else "not required outside execute mode",
+                state_source,
+            ),
         ]
 
     def dry_run(self, context: TaskContext, plan: dict[str, Any]) -> dict[str, Any]:
@@ -177,8 +211,17 @@ class GovernanceTask(HermesTask):
         return outputs
 
     def execute(self, context: TaskContext, plan: dict[str, Any]) -> dict[str, Any]:
-        state_before = _read_state_source(context, plan.get("feature"))
+        state_before = _read_state_source(
+            context,
+            plan.get("feature"),
+            plan.get("state_source"),
+        )
         context.write_json("pre_governance_state.json", state_before)
+        if not state_before.get("readable"):
+            raise TaskFailure(
+                "governance state source is not readable",
+                evidence=state_before,
+            )
 
         command = plan.get("command", [])
         result = run_command(command, cwd=context.root, timeout_seconds=300)
@@ -203,12 +246,19 @@ class GovernanceTask(HermesTask):
     ) -> list[CheckResult]:
         result = outputs.get("result")
         command_succeeded = result is None or int(result.get("returnCode", 1)) == 0
-        state_after = _read_state_source(context, plan.get("feature"))
-        state_readable = bool(state_after.get("readable"))
-        actual_state = state_after.get("state")
-        target_state = plan.get("target_state")
-        state_matches = (
-            actual_state == target_state if state_readable else True
+        state_check = (
+            _verify_final_state(context, plan)
+            if context.mode == "execute"
+            else CheckResult(
+                "final_state_matches_target",
+                True,
+                "not required outside execute mode",
+                {
+                    "skipped": True,
+                    "mode": context.mode,
+                    "path": plan.get("state_source"),
+                },
+            )
         )
 
         return [
@@ -220,16 +270,7 @@ class GovernanceTask(HermesTask):
                 else "no command result",
                 result if isinstance(result, dict) else {},
             ),
-            CheckResult(
-                "final_state_matches_target",
-                state_matches,
-                (
-                    f"actual={actual_state} target={target_state}"
-                    if state_readable
-                    else "no readable state source"
-                ),
-                state_after,
-            ),
+            state_check,
             CheckResult(
                 "ledger_written",
                 (context.run_dir / "run_record.json").exists(),
@@ -295,10 +336,11 @@ def _governance_command(
     context: TaskContext,
     transition: dict[str, Any],
     reason: str | None,
+    *,
+    feature: str | None,
+    from_state: str | None,
+    target_state: str | None,
 ) -> list[str]:
-    feature = _arg(context, "feature")
-    from_state = _arg(context, "from_state")
-    target_state = _arg(context, "target_state")
     cli_subcommand = transition.get("cli_subcommand")
     if not feature or not from_state or not target_state or not cli_subcommand:
         return []
@@ -349,8 +391,21 @@ def _rollback_command(
 ) -> list[str]:
     if not feature or not from_state or not target_state:
         return []
-    rollback_transition = _transition(feature, from_state, target_state)
-    return _governance_command(context, rollback_transition, _arg(context, "reason"))
+    rollback_from_state = target_state
+    rollback_target_state = from_state
+    rollback_transition = _transition(
+        feature,
+        rollback_from_state,
+        rollback_target_state,
+    )
+    return _governance_command(
+        context,
+        rollback_transition,
+        _arg(context, "reason"),
+        feature=feature,
+        from_state=rollback_from_state,
+        target_state=rollback_target_state,
+    )
 
 
 def _registered_detail(feature: Any) -> dict[str, Any]:
@@ -369,12 +424,24 @@ def _affected_files(context: TaskContext) -> list[str]:
 
 
 def _state_source_path(context: TaskContext) -> str | None:
-    path = context.resolve(getattr(context.args, "state_source", None))
+    raw_path = getattr(context.args, "state_source", None)
+    if raw_path in (None, ""):
+        return None
+    path = context.resolve(raw_path)
     return str(path) if path else None
 
 
-def _read_state_source(context: TaskContext, feature: Any) -> dict[str, Any]:
-    path = context.resolve(getattr(context.args, "state_source", None))
+def _read_state_source(
+    context: TaskContext,
+    feature: Any,
+    state_source: Any = None,
+) -> dict[str, Any]:
+    raw_path = (
+        state_source
+        if state_source not in (None, "")
+        else getattr(context.args, "state_source", None)
+    )
+    path = context.resolve(raw_path) if raw_path not in (None, "") else None
     evidence: dict[str, Any] = {
         "path": str(path) if path else None,
         "readable": False,
@@ -404,6 +471,71 @@ def _read_state_source(context: TaskContext, feature: Any) -> dict[str, Any]:
         }
     )
     return evidence
+
+
+def _verify_final_state(
+    context: TaskContext,
+    plan: dict[str, Any],
+) -> CheckResult:
+    target_state = plan.get("target_state")
+    attempts_count = _state_verify_attempts(context)
+    delay_seconds = _state_verify_delay_seconds(context)
+    attempts: list[dict[str, Any]] = []
+
+    for attempt_number in range(1, attempts_count + 1):
+        attempt = _read_state_source(
+            context,
+            plan.get("feature"),
+            plan.get("state_source"),
+        )
+        attempt["attempt"] = attempt_number
+        attempts.append(attempt)
+        if attempt.get("readable") and attempt.get("state") == target_state:
+            break
+        if attempt_number < attempts_count and delay_seconds > 0:
+            time.sleep(delay_seconds)
+
+    final_attempt = attempts[-1]
+    actual_state = final_attempt.get("state")
+    passed = bool(final_attempt.get("readable")) and actual_state == target_state
+    evidence = {
+        "path": final_attempt.get("path"),
+        "feature": plan.get("feature"),
+        "target_state": target_state,
+        "actual_state": actual_state,
+        "readable": bool(final_attempt.get("readable")),
+        "attempts_configured": attempts_count,
+        "delay_seconds": delay_seconds,
+        "attempts": attempts,
+    }
+    context.write_json("state_verification.json", evidence)
+    detail = (
+        f"actual={actual_state} target={target_state}"
+        if final_attempt.get("readable")
+        else f"state source unreadable: {final_attempt.get('detail')}"
+    )
+    return CheckResult(
+        "final_state_matches_target",
+        passed,
+        detail,
+        evidence,
+    )
+
+
+def _state_verify_attempts(context: TaskContext) -> int:
+    value = getattr(context.args, "state_verify_attempts", 3)
+    try:
+        return max(1, int(value))
+    except (TypeError, ValueError):
+        return 3
+
+
+def _state_verify_delay_seconds(context: TaskContext) -> float:
+    value = getattr(context.args, "state_verify_delay_seconds", 1.0)
+    try:
+        return max(0.0, float(value))
+    except (TypeError, ValueError):
+        return 1.0
 
 
 def _extract_feature_state(data: Any, feature: str) -> str | None:
