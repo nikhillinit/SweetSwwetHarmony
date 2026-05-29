@@ -12,6 +12,7 @@ from .base import CheckResult, HermesTask, TaskContext, TaskFailure
 COLLECTOR_PROMOTE_ACK = "COLLECTOR_PROMOTE"
 COLLECTOR_DEMOTE_ACK = "COLLECTOR_DEMOTE"
 COLLECTOR_PROMOTION_ARTIFACT = "collector_promotion.json"
+DRY_RUN_DRIFT_ARTIFACT = "dry_run_drift.json"
 
 PROMOTE_TARGETS = {"active", "promoted"}
 DEMOTE_TARGETS = {"shadow", "disabled", "off", "not_relevant", "not-relevant"}
@@ -91,6 +92,7 @@ class CollectorPromoteTask(HermesTask):
                 ],
                 "postflight_gates": [
                     "collector_promotion_artifact_written",
+                    "no_dry_run_input_drift",
                     "promotion_result_success",
                     "desired_outcome_satisfied",
                     "ledger_written",
@@ -196,6 +198,27 @@ class CollectorPromoteTask(HermesTask):
             mutation_committed=False,
             promotion_result=None,
         )
+        observed = _inspect_hunter_result(_db_path(context), plan.get("result_id"))
+        drifts = _collector_dry_run_drifts(plan, observed)
+        if drifts:
+            drift_payload = {
+                "task": CollectorPromoteTask.name,
+                "mode": "dry-run",
+                "dryRun": True,
+                "mutationCommitted": False,
+                "driftDetected": True,
+                "drifts": drifts,
+                "stalePreview": payload,
+                "observed": {"hunterResult": observed},
+                "dryRunDriftArtifact": DRY_RUN_DRIFT_ARTIFACT,
+                "nextAction": (
+                    "Refresh the collector promotion plan against current "
+                    "hunter result state before rerunning dry-run."
+                ),
+            }
+            context.write_json(DRY_RUN_DRIFT_ARTIFACT, drift_payload)
+            return drift_payload
+
         _write_collector_artifact(context, payload)
         return payload
 
@@ -214,7 +237,7 @@ class CollectorPromoteTask(HermesTask):
         result = outputs.get("promotionResult")
         dry_run_success = bool(outputs.get("dryRun")) and not bool(
             outputs.get("mutationCommitted")
-        )
+        ) and not bool(outputs.get("driftDetected"))
         result_success = dry_run_success or (
             isinstance(result, dict) and bool(result.get("success"))
         )
@@ -227,6 +250,19 @@ class CollectorPromoteTask(HermesTask):
                 artifact_path.exists(),
                 COLLECTOR_PROMOTION_ARTIFACT if artifact_path.exists() else "missing",
                 {"path": str(artifact_path)},
+            ),
+            CheckResult(
+                "no_dry_run_input_drift",
+                not bool(outputs.get("driftDetected")),
+                _dry_run_drift_detail(outputs),
+                {
+                    "drifts": outputs.get("drifts", []),
+                    "artifact": (
+                        str(context.run_dir / DRY_RUN_DRIFT_ARTIFACT)
+                        if outputs.get("driftDetected")
+                        else None
+                    ),
+                },
             ),
             CheckResult(
                 "promotion_result_success",
@@ -671,6 +707,35 @@ def _collector_payload(
             "externalSystems": [],
         },
     }
+
+
+def _collector_dry_run_drifts(
+    plan: dict[str, Any],
+    observed: dict[str, Any],
+) -> list[dict[str, Any]]:
+    database = plan.get("database")
+    planned = database if isinstance(database, dict) else {}
+    drifts: list[dict[str, Any]] = []
+    for field in ("status", "updated_at"):
+        planned_value = planned.get(field)
+        observed_value = observed.get(field)
+        if planned_value == observed_value:
+            continue
+        drifts.append(
+            {
+                "field": field,
+                "planned": planned_value,
+                "observed": observed_value,
+                "resultId": plan.get("result_id"),
+            }
+        )
+    return drifts
+
+
+def _dry_run_drift_detail(outputs: dict[str, Any]) -> str:
+    if not outputs.get("driftDetected"):
+        return "no dry-run input drift"
+    return f"drifts={len(outputs.get('drifts', []))}"
 
 
 def _write_collector_artifact(context: TaskContext, payload: dict[str, Any]) -> Path:

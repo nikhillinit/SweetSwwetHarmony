@@ -281,6 +281,62 @@ def test_dry_run_does_not_invoke_promotion_persistence(
     assert not (tmp_path / "signals.db").exists()
 
 
+def test_dry_run_detects_hunter_result_status_and_version_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    planned = {
+        **_valid_hunter_result(),
+        "status": "relevant",
+        "updated_at": "2026-05-29T06:00:00+00:00",
+    }
+    observed = {
+        **_valid_hunter_result(),
+        "status": "promoted",
+        "updated_at": "2026-05-29T06:05:00+00:00",
+    }
+    states = [planned, planned, observed]
+
+    def fake_inspect(*_: Any) -> dict[str, Any]:
+        return states.pop(0) if states else observed
+
+    monkeypatch.setattr(
+        collector_promote,
+        "_inspect_collector_state",
+        _valid_collector_state,
+    )
+    monkeypatch.setattr(collector_promote, "_inspect_hunter_result", fake_inspect)
+    monkeypatch.setattr(
+        collector_promote,
+        "_promotion_bridge_import_check",
+        lambda: {
+            "available": True,
+            "detail": "fake bridge importable",
+            "module": "workflows.hunter_promotion",
+        },
+    )
+    calls = _patch_runtime(monkeypatch)
+
+    result = run_registered_task(_args(tmp_path, mode="dry-run"))
+
+    assert result.exit_code == EXIT_GATE_FAILURE
+    assert result.status == "dry_run_failed"
+    assert calls["promote"] == []
+    assert "writable" not in calls
+    failed_checks = {check.name for check in result.checks if not check.passed}
+    assert "no_dry_run_input_drift" in failed_checks
+    run_dir = Path(result.run_dir or "")
+    drift = json.loads((run_dir / "dry_run_drift.json").read_text(encoding="utf-8"))
+    assert drift["driftDetected"] is True
+    assert drift["stalePreview"]["actualResultStatus"] == "relevant"
+    assert drift["observed"]["hunterResult"]["status"] == "promoted"
+    assert drift["observed"]["hunterResult"]["updated_at"] == (
+        "2026-05-29T06:05:00+00:00"
+    )
+    assert {item["field"] for item in drift["drifts"]} == {"status", "updated_at"}
+    assert (run_dir / "repair_prompt.md").exists()
+
+
 def test_execute_requires_ack_before_mutating(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -276,6 +276,92 @@ def test_dry_run_writes_diff_and_report_without_modifying_config(
     assert report["currentConfig"]["path"] == str(current)
 
 
+def test_dry_run_detects_current_config_hash_drift_after_preflight(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current = _current_config_path(tmp_path)
+    proposed = _proposed_config_path(tmp_path, current)
+
+    from integrations.hermes.tasks.config_promote import ConfigPromoteTask
+
+    original_preflight = ConfigPromoteTask.preflight
+
+    def drift_current_after_preflight(
+        self: ConfigPromoteTask,
+        context: Any,
+        plan: dict[str, Any],
+    ) -> list[Any]:
+        checks = original_preflight(self, context, plan)
+        data = json.loads(current.read_text(encoding="utf-8"))
+        data["ledger"]["redactionPatterns"].append("config-drift-current-[A-Z]+")
+        current.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        return checks
+
+    monkeypatch.setattr(ConfigPromoteTask, "preflight", drift_current_after_preflight)
+
+    result = run_registered_task(
+        _args(tmp_path, current_path=current, proposed_path=proposed, mode="dry-run"),
+    )
+
+    assert result.exit_code == EXIT_GATE_FAILURE
+    assert result.status == "dry_run_failed"
+    failed_checks = {check.name for check in result.checks if not check.passed}
+    assert "no_dry_run_input_drift" in failed_checks
+    run_dir = Path(result.run_dir or "")
+    drift = json.loads((run_dir / "dry_run_drift.json").read_text(encoding="utf-8"))
+    assert drift["driftDetected"] is True
+    assert drift["stalePreview"]["currentConfig"]["sha256Before"] == result.plan[
+        "current_config"
+    ]["sha256"]
+    assert drift["observed"]["currentConfig"]["sha256"] != result.plan[
+        "current_config"
+    ]["sha256"]
+    assert {item["input"] for item in drift["drifts"]} == {"currentConfig"}
+    assert (run_dir / "repair_prompt.md").exists()
+
+
+def test_dry_run_detects_proposed_config_hash_drift_after_preflight(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    current = _current_config_path(tmp_path)
+    proposed = _proposed_config_path(tmp_path, current)
+
+    from integrations.hermes.tasks.config_promote import ConfigPromoteTask
+
+    original_preflight = ConfigPromoteTask.preflight
+
+    def drift_proposed_after_preflight(
+        self: ConfigPromoteTask,
+        context: Any,
+        plan: dict[str, Any],
+    ) -> list[Any]:
+        checks = original_preflight(self, context, plan)
+        data = json.loads(proposed.read_text(encoding="utf-8"))
+        data["ledger"]["redactionPatterns"].append("config-drift-proposed-[A-Z]+")
+        proposed.write_text(json.dumps(data, indent=2), encoding="utf-8")
+        return checks
+
+    monkeypatch.setattr(ConfigPromoteTask, "preflight", drift_proposed_after_preflight)
+
+    result = run_registered_task(
+        _args(tmp_path, current_path=current, proposed_path=proposed, mode="dry-run"),
+    )
+
+    assert result.exit_code == EXIT_GATE_FAILURE
+    assert result.status == "dry_run_failed"
+    failed_checks = {check.name for check in result.checks if not check.passed}
+    assert "no_dry_run_input_drift" in failed_checks
+    drift = json.loads(
+        (Path(result.run_dir or "") / "dry_run_drift.json").read_text(encoding="utf-8")
+    )
+    assert drift["observed"]["proposedConfig"]["sha256"] != result.plan[
+        "proposed_config"
+    ]["sha256"]
+    assert {item["input"] for item in drift["drifts"]} == {"proposedConfig"}
+
+
 def test_execute_requires_config_promote_ack_before_mutation(
     tmp_path: Path,
 ) -> None:
