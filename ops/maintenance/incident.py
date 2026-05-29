@@ -7,7 +7,7 @@ traceback, context, and artifacts for automated repair.
 import json
 import logging
 import traceback
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, asdict, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Dict, Any, List
@@ -38,6 +38,18 @@ class MaintenanceIncident:
             self.created_at = datetime.now(timezone.utc).isoformat()
         if not self.updated_at:
             self.updated_at = self.created_at
+
+
+def _artifacts_root(artifacts_dir: Path | str | None = None) -> Path:
+    return Path(artifacts_dir) if artifacts_dir is not None else ARTIFACTS_DIR
+
+
+def _incident_dir(
+    incident_id: str,
+    *,
+    artifacts_dir: Path | str | None = None,
+) -> Path:
+    return _artifacts_root(artifacts_dir) / incident_id
 
 
 def create_incident(
@@ -76,9 +88,13 @@ def create_incident(
     return incident
 
 
-def load_incident(incident_id: str) -> Optional[MaintenanceIncident]:
+def load_incident(
+    incident_id: str,
+    *,
+    artifacts_dir: Path | str | None = None,
+) -> Optional[MaintenanceIncident]:
     """Load an incident capsule by ID."""
-    artifact_dir = ARTIFACTS_DIR / incident_id
+    artifact_dir = _incident_dir(incident_id, artifacts_dir=artifacts_dir)
     incident_path = artifact_dir / "incident.json"
 
     if not incident_path.exists():
@@ -94,22 +110,33 @@ def update_incident_status(
     incident_id: str,
     status: str,
     notes: str = "",
+    *,
+    artifacts_dir: Path | str | None = None,
 ) -> Optional[MaintenanceIncident]:
     """Update an incident's status."""
-    incident = load_incident(incident_id)
+    incident = load_incident(incident_id, artifacts_dir=artifacts_dir)
     if not incident:
         return None
 
-    incident.status = status
-    incident.updated_at = datetime.now(timezone.utc).isoformat()
+    artifact_dir = _incident_dir(incident_id, artifacts_dir=artifacts_dir)
+    updated_at = datetime.now(timezone.utc).isoformat()
+    repair_attempts = list(incident.repair_attempts)
     if notes:
-        incident.repair_attempts.append({
-            "timestamp": incident.updated_at,
-            "status": status,
-            "notes": notes,
-        })
+        repair_attempts.append(
+            {
+                "timestamp": updated_at,
+                "status": status,
+                "notes": notes,
+            }
+        )
 
-    artifact_dir = Path(incident.artifact_dir)
+    incident = replace(
+        incident,
+        status=status,
+        updated_at=updated_at,
+        artifact_dir=str(artifact_dir),
+        repair_attempts=repair_attempts,
+    )
     incident_path = artifact_dir / "incident.json"
     with open(incident_path, "w") as f:
         json.dump(asdict(incident), f, indent=2, default=str)
@@ -117,13 +144,18 @@ def update_incident_status(
     return incident
 
 
-def list_incidents(status_filter: Optional[str] = None) -> List[MaintenanceIncident]:
+def list_incidents(
+    status_filter: Optional[str] = None,
+    *,
+    artifacts_dir: Path | str | None = None,
+) -> List[MaintenanceIncident]:
     """List all incident capsules, optionally filtered by status."""
     incidents = []
-    if not ARTIFACTS_DIR.exists():
+    root = _artifacts_root(artifacts_dir)
+    if not root.exists():
         return incidents
 
-    for incident_dir in sorted(ARTIFACTS_DIR.iterdir(), reverse=True):
+    for incident_dir in sorted(root.iterdir(), reverse=True):
         if not incident_dir.is_dir():
             continue
         incident_path = incident_dir / "incident.json"

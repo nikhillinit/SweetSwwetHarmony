@@ -10,6 +10,7 @@ import pytest
 from integrations.hermes.locks import HermesLock
 from integrations.hermes.tasks.base import EXIT_GATE_FAILURE, EXIT_LOCK_HELD
 from integrations.hermes.tasks.registry import run_registered_task
+from ops.maintenance import incident as incident_capsules
 from ops.maintenance.incident import MaintenanceIncident
 
 from .conftest import minimal_config_dict
@@ -208,6 +209,106 @@ def test_execute_updates_capsule_and_writes_bounded_response_packet(
     assert packet_md.exists()
     assert (Path(result.run_dir or "") / "incident_response_artifacts.json").exists()
     assert (Path(result.run_dir or "") / "run_record.json").exists()
+
+
+def test_execute_verify_phase_resolves_capsule_and_response_packet(
+    tmp_path: Path,
+) -> None:
+    artifact_root = tmp_path / "maintenance"
+    _write_incident(artifact_root, status="investigating")
+
+    result = run_registered_task(
+        _args(tmp_path, mode="execute", incident_phase="verify", artifact_root=artifact_root),
+    )
+
+    assert result.exit_code == 0
+    assert result.status == "executed"
+    assert result.plan["expected_capsule_state"]["status_after"] == "resolved"
+    assert result.outputs["statusBefore"] == "investigating"
+    assert result.outputs["statusAfter"] == "resolved"
+    packet_json = artifact_root / "github_20260528_010203" / "hermes_response_packet.json"
+    packet = json.loads(packet_json.read_text(encoding="utf-8"))
+    updated = json.loads((artifact_root / "github_20260528_010203" / "incident.json").read_text(encoding="utf-8"))
+    assert packet["phase"] == "verify"
+    assert packet["statusAfter"] == "resolved"
+    assert updated["status"] == "resolved"
+
+
+def test_execute_non_verify_phase_does_not_reopen_resolved_capsule(
+    tmp_path: Path,
+) -> None:
+    artifact_root = tmp_path / "maintenance"
+    _write_incident(artifact_root, status="resolved")
+
+    result = run_registered_task(
+        _args(tmp_path, mode="execute", incident_phase="analyze", artifact_root=artifact_root),
+    )
+
+    assert result.exit_code == 0
+    assert result.status == "executed"
+    assert result.plan["expected_capsule_state"]["status_after"] == "resolved"
+    assert result.outputs["statusBefore"] == "resolved"
+    assert result.outputs["statusAfter"] == "resolved"
+    updated = json.loads((artifact_root / "github_20260528_010203" / "incident.json").read_text(encoding="utf-8"))
+    assert updated["status"] == "resolved"
+
+
+def test_hermes_passes_artifact_root_explicitly_without_global_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    artifact_root = tmp_path / "maintenance"
+    _write_incident(artifact_root)
+    sentinel_root = tmp_path / "global-maintenance"
+    sentinel_root.mkdir()
+    monkeypatch.setattr(incident_capsules, "ARTIFACTS_DIR", sentinel_root)
+    original_load = incident_capsules.load_incident
+    original_update = incident_capsules.update_incident_status
+    calls: list[tuple[str, Path, Path | None]] = []
+
+    def guarded_load(
+        incident_id: str,
+        *,
+        artifacts_dir: Path | None = None,
+    ) -> MaintenanceIncident | None:
+        calls.append(("load", incident_capsules.ARTIFACTS_DIR, artifacts_dir))
+        if incident_capsules.ARTIFACTS_DIR != sentinel_root:
+            raise AssertionError("Hermes mutated the global maintenance artifact root")
+        if artifacts_dir is None:
+            raise AssertionError("Hermes did not pass an explicit maintenance artifact root")
+        return original_load(incident_id, artifacts_dir=artifacts_dir)
+
+    def guarded_update(
+        incident_id: str,
+        status: str,
+        notes: str = "",
+        *,
+        artifacts_dir: Path | None = None,
+    ) -> MaintenanceIncident | None:
+        calls.append(("update", incident_capsules.ARTIFACTS_DIR, artifacts_dir))
+        if incident_capsules.ARTIFACTS_DIR != sentinel_root:
+            raise AssertionError("Hermes mutated the global maintenance artifact root")
+        if artifacts_dir is None:
+            raise AssertionError("Hermes did not pass an explicit maintenance artifact root")
+        return original_update(
+            incident_id,
+            status,
+            notes,
+            artifacts_dir=artifacts_dir,
+        )
+
+    monkeypatch.setattr(incident_capsules, "load_incident", guarded_load)
+    monkeypatch.setattr(incident_capsules, "update_incident_status", guarded_update)
+
+    result = run_registered_task(
+        _args(tmp_path, mode="execute", artifact_root=artifact_root),
+    )
+
+    assert result.exit_code == 0
+    assert result.status == "executed"
+    assert calls
+    assert all(call_root == sentinel_root for _, call_root, _ in calls)
+    assert all(explicit_root == artifact_root for _, _, explicit_root in calls)
 
 
 def test_postflight_catches_missing_packet_files(
