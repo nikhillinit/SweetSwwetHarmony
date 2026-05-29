@@ -14,11 +14,11 @@
 
 ## Active Work
 
-- **Current context:** see `@docs/claude/active-sprint.md` for the refreshed operational handoff, rebuilt on 2026-05-29 from live `main` / `origin/main` at `b834492`.
-- **Hermes Track A:** code/hardening work is merged through PR #233 (`fix: harden hermes low-risk edges`); PR #234 (`docs: refresh hermes post-hardening handoff`) refreshed the docs/state handoff surface and added tracked root `AGENTS.md`. No GitHub PRs were open at the last live refresh. Treat older PR #191/#192 notes as historical, not current active work.
+- **Current context:** see `@docs/claude/active-sprint.md` for the refreshed operational handoff, rebuilt on 2026-05-29 from live `main` / `origin/main` at `e153f3c`.
+- **Hermes Track A:** code/hardening work is merged through PR #233 (`fix: harden hermes low-risk edges`); PR #234 (`docs: refresh hermes post-hardening handoff`) refreshed the docs/state handoff surface and added tracked root `AGENTS.md`; PR #235 (`docs: refresh hermes post-pr234 handoff`) refreshed the post-PR234 docs/state handoff. No GitHub PRs were open at the last live refresh. Treat older PR #191/#192 notes as historical, not current active work.
 - **Dirty checkout caution:** the primary checkout often has local state, `.omx` plans, and keepalive artifacts. Do not reset, clean, stage, or commit that dirt; use fresh `.worktrees/...` lanes from `origin/main` for new slices and stage exact paths only.
 - **Session-start rule:** run `git fetch origin main --prune`, check `git status --short --branch`, and inspect relevant PR state before acting. This repo often has local artifacts and branch drift; do not infer active work from stale sprint text.
-- **Hermes code work:** no next Hermes code slice is named by current evidence. Future Hermes code changes must begin from fresh live discovery of the registry, CLI, emitted artifacts, and PR state.
+- **Hermes code work:** no next Hermes code slice is named by current evidence. Future Hermes code changes must begin from fresh live discovery of the registry, CLI, emitted artifacts, and PR state before choosing a worktree slice.
 
 ## Investment Thesis
 **One-liner:** Press On Ventures invests in Pre-Seed to Series A consumer companies in CPG (food, beverage, beauty), health tech (fitness, wellness, mental health), travel & hospitality, and consumer marketplaces — excluding B2B, enterprise SaaS, developer tools, crypto, and hardware.
