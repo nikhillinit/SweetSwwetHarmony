@@ -14,7 +14,7 @@ from integrations.hermes.tasks.base import (
     EXIT_LOCK_HELD,
     EXIT_TASK_FAILURE,
 )
-from integrations.hermes.tasks.registry import run_registered_task
+from integrations.hermes.tasks.registry import add_task_arguments, run_registered_task
 
 from .conftest import minimal_config_dict
 
@@ -39,6 +39,8 @@ def _args(
     mode: str = "preflight-only",
     ack_risk: str | None = None,
     state_source: Path | None = None,
+    state_verify_attempts: int = 1,
+    state_verify_delay_seconds: float = 0.0,
 ) -> argparse.Namespace:
     return argparse.Namespace(
         task_name="governance",
@@ -63,6 +65,8 @@ def _args(
         incident_id=None,
         direct_db=None,
         state_source=str(state_source) if state_source else None,
+        state_verify_attempts=state_verify_attempts,
+        state_verify_delay_seconds=state_verify_delay_seconds,
     )
 
 
@@ -83,6 +87,35 @@ def test_plan_only_writes_ledger_artifacts_and_stays_non_mutating(
     assert (run_dir / "task_plan.json").exists()
     assert (run_dir / "run_record.json").exists()
     assert (run_dir / "plan.md").exists()
+
+
+def test_plan_records_inverse_rollback_command(tmp_path: Path) -> None:
+    result = run_registered_task(_args(tmp_path, mode="plan-only"))
+
+    rollback = result.plan["rollback"]["command"]
+
+    assert result.exit_code == 0
+    assert rollback[1:5] == ["-m", "governance", "feature", "demote"]
+    assert rollback[rollback.index("--from") + 1] == "active"
+    assert rollback[rollback.index("--to") + 1] == "shadow"
+
+
+def test_registry_parser_exposes_state_verification_retry_options() -> None:
+    parser = argparse.ArgumentParser()
+    add_task_arguments(parser)
+
+    args = parser.parse_args(
+        [
+            "governance",
+            "--state-verify-attempts",
+            "4",
+            "--state-verify-delay-seconds",
+            "0.25",
+        ]
+    )
+
+    assert args.state_verify_attempts == 4
+    assert args.state_verify_delay_seconds == 0.25
 
 
 @pytest.mark.parametrize(
@@ -177,6 +210,11 @@ def test_execute_promote_requires_promote_ack_before_command(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[list[str]] = []
+    state_source = tmp_path / "feature-state.json"
+    state_source.write_text(
+        json.dumps({"boilerplate_defense": {"state": "shadow"}}),
+        encoding="utf-8",
+    )
 
     def fake_run_command(command: list[str], **_: Any) -> dict[str, Any]:
         calls.append(command)
@@ -184,7 +222,9 @@ def test_execute_promote_requires_promote_ack_before_command(
 
     monkeypatch.setattr("integrations.hermes.tasks.governance.run_command", fake_run_command)
 
-    result = run_registered_task(_args(tmp_path, mode="execute"))
+    result = run_registered_task(
+        _args(tmp_path, mode="execute", state_source=state_source)
+    )
 
     assert result.exit_code == EXIT_ACK_REQUIRED
     assert result.status == "approval_required"
@@ -197,6 +237,11 @@ def test_execute_demote_requires_rollback_ack_before_command(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[list[str]] = []
+    state_source = tmp_path / "feature-state.json"
+    state_source.write_text(
+        json.dumps({"boilerplate_defense": {"state": "active"}}),
+        encoding="utf-8",
+    )
 
     def fake_run_command(command: list[str], **_: Any) -> dict[str, Any]:
         calls.append(command)
@@ -205,7 +250,13 @@ def test_execute_demote_requires_rollback_ack_before_command(
     monkeypatch.setattr("integrations.hermes.tasks.governance.run_command", fake_run_command)
 
     result = run_registered_task(
-        _args(tmp_path, from_state="active", target_state="shadow", mode="execute")
+        _args(
+            tmp_path,
+            from_state="active",
+            target_state="shadow",
+            mode="execute",
+            state_source=state_source,
+        )
     )
 
     assert result.exit_code == EXIT_ACK_REQUIRED
@@ -219,9 +270,18 @@ def test_execute_with_ack_calls_live_shaped_command_and_records_ledger(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls: list[list[str]] = []
+    state_source = tmp_path / "feature-state.json"
+    state_source.write_text(
+        json.dumps({"boilerplate_defense": {"state": "shadow"}}),
+        encoding="utf-8",
+    )
 
     def fake_run_command(command: list[str], **_: Any) -> dict[str, Any]:
         calls.append(command)
+        state_source.write_text(
+            json.dumps({"boilerplate_defense": {"state": "active"}}),
+            encoding="utf-8",
+        )
         return {
             "command": command,
             "returnCode": 0,
@@ -233,7 +293,12 @@ def test_execute_with_ack_calls_live_shaped_command_and_records_ledger(
     monkeypatch.setattr("integrations.hermes.tasks.governance.run_command", fake_run_command)
 
     result = run_registered_task(
-        _args(tmp_path, mode="execute", ack_risk="GOVERNANCE_PROMOTE")
+        _args(
+            tmp_path,
+            mode="execute",
+            ack_risk="GOVERNANCE_PROMOTE",
+            state_source=state_source,
+        )
     )
 
     assert result.exit_code == 0
@@ -248,10 +313,40 @@ def test_execute_with_ack_calls_live_shaped_command_and_records_ledger(
     assert (run_dir / "run_record.json").exists()
 
 
+def test_execute_requires_readable_state_source_before_command(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run_command(command: list[str], **_: Any) -> dict[str, Any]:
+        calls.append(command)
+        return {"command": command, "returnCode": 0, "stdout": "", "stderr": ""}
+
+    monkeypatch.setattr("integrations.hermes.tasks.governance.run_command", fake_run_command)
+
+    result = run_registered_task(
+        _args(tmp_path, mode="execute", ack_risk="GOVERNANCE_PROMOTE")
+    )
+
+    assert result.exit_code == EXIT_GATE_FAILURE
+    assert result.status == "preflight_failed"
+    check = next(check for check in result.checks if check.name == "state_source_readable")
+    assert check.passed is False
+    assert calls == []
+    assert (Path(result.run_dir or "") / "repair_prompt.md").exists()
+
+
 def test_execute_command_failure_emits_repair_state(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    state_source = tmp_path / "feature-state.json"
+    state_source.write_text(
+        json.dumps({"boilerplate_defense": {"state": "shadow"}}),
+        encoding="utf-8",
+    )
+
     def fake_run_command(command: list[str], **_: Any) -> dict[str, Any]:
         return {
             "command": command,
@@ -264,7 +359,12 @@ def test_execute_command_failure_emits_repair_state(
     monkeypatch.setattr("integrations.hermes.tasks.governance.run_command", fake_run_command)
 
     result = run_registered_task(
-        _args(tmp_path, mode="execute", ack_risk="GOVERNANCE_PROMOTE")
+        _args(
+            tmp_path,
+            mode="execute",
+            ack_risk="GOVERNANCE_PROMOTE",
+            state_source=state_source,
+        )
     )
 
     assert result.exit_code == EXIT_TASK_FAILURE
@@ -296,6 +396,7 @@ def test_postflight_catches_mismatched_final_state_when_state_source_readable(
             mode="execute",
             ack_risk="GOVERNANCE_PROMOTE",
             state_source=state_source,
+            state_verify_attempts=3,
         )
     )
 
@@ -303,5 +404,87 @@ def test_postflight_catches_mismatched_final_state_when_state_source_readable(
     assert result.status == "postflight_failed"
     check = next(check for check in result.checks if check.name == "final_state_matches_target")
     assert check.passed is False
+    assert len(check.evidence["attempts"]) == 3
     assert check.evidence["actual_state"] == "shadow"
     assert (Path(result.run_dir or "") / "repair_prompt.md").exists()
+
+
+def test_postflight_uses_planned_state_source_after_args_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    planned_state_source = tmp_path / "planned-feature-state.json"
+    planned_state_source.write_text(
+        json.dumps({"boilerplate_defense": {"state": "shadow"}}),
+        encoding="utf-8",
+    )
+    stale_args_state_source = tmp_path / "stale-args-feature-state.json"
+    stale_args_state_source.write_text(
+        json.dumps({"boilerplate_defense": {"state": "shadow"}}),
+        encoding="utf-8",
+    )
+    args = _args(
+        tmp_path,
+        mode="execute",
+        ack_risk="GOVERNANCE_PROMOTE",
+        state_source=planned_state_source,
+    )
+
+    def fake_run_command(command: list[str], **_: Any) -> dict[str, Any]:
+        args.state_source = str(stale_args_state_source)
+        planned_state_source.write_text(
+            json.dumps({"boilerplate_defense": {"state": "active"}}),
+            encoding="utf-8",
+        )
+        return {"command": command, "returnCode": 0, "stdout": "", "stderr": ""}
+
+    monkeypatch.setattr("integrations.hermes.tasks.governance.run_command", fake_run_command)
+
+    result = run_registered_task(args)
+
+    assert result.exit_code == 0
+    check = next(check for check in result.checks if check.name == "final_state_matches_target")
+    assert check.passed is True
+    assert check.evidence["path"] == str(planned_state_source)
+
+
+def test_delayed_final_state_propagation_passes_after_retry(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state_source = tmp_path / "feature-state.json"
+    state_source.write_text(
+        json.dumps({"boilerplate_defense": {"state": "shadow"}}),
+        encoding="utf-8",
+    )
+    sleeps: list[float] = []
+
+    def fake_run_command(command: list[str], **_: Any) -> dict[str, Any]:
+        return {"command": command, "returnCode": 0, "stdout": "", "stderr": ""}
+
+    def fake_sleep(delay: float) -> None:
+        sleeps.append(delay)
+        state_source.write_text(
+            json.dumps({"boilerplate_defense": {"state": "active"}}),
+            encoding="utf-8",
+        )
+
+    monkeypatch.setattr("integrations.hermes.tasks.governance.run_command", fake_run_command)
+    monkeypatch.setattr("time.sleep", fake_sleep)
+
+    result = run_registered_task(
+        _args(
+            tmp_path,
+            mode="execute",
+            ack_risk="GOVERNANCE_PROMOTE",
+            state_source=state_source,
+            state_verify_attempts=2,
+            state_verify_delay_seconds=0.5,
+        )
+    )
+
+    assert result.exit_code == 0
+    check = next(check for check in result.checks if check.name == "final_state_matches_target")
+    assert check.passed is True
+    assert len(check.evidence["attempts"]) == 2
+    assert sleeps == [0.5]
