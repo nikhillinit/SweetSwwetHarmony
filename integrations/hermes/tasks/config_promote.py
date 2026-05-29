@@ -29,6 +29,7 @@ CONFIG_PROMOTE_ACK = "CONFIG_PROMOTE"
 CONFIG_DIFF_ARTIFACT = "config_promote_diff.json"
 CONFIG_REPORT_ARTIFACT = "config_promote_report.json"
 CONFIG_PREVIOUS_SNAPSHOT = "snapshots/model-routing.previous.json"
+DRY_RUN_DRIFT_ARTIFACT = "dry_run_drift.json"
 
 _ROUTING_POLICY_KEYS = ("phases", "specialists", "riskDefaults", "routing", "modes")
 
@@ -117,6 +118,7 @@ class ConfigPromoteTask(HermesTask):
                 "postflight_gates": [
                     "current_config_schema_valid",
                     "provider_doctor_postflight",
+                    "no_dry_run_input_drift",
                     "config_hash_matches_expected",
                     "config_report_artifact_written",
                     "previous_config_snapshot_written",
@@ -214,6 +216,19 @@ class ConfigPromoteTask(HermesTask):
         return checks
 
     def dry_run(self, context: TaskContext, plan: dict[str, Any]) -> dict[str, Any]:
+        drift_payload = _dry_run_drift_payload(context, plan)
+        if drift_payload["driftDetected"]:
+            context.write_json(DRY_RUN_DRIFT_ARTIFACT, drift_payload)
+            return {
+                "dryRun": True,
+                "mutationCommitted": False,
+                "driftDetected": True,
+                "dryRunDriftArtifact": DRY_RUN_DRIFT_ARTIFACT,
+                "drifts": drift_payload["drifts"],
+                "stalePreview": drift_payload["stalePreview"],
+                "observed": drift_payload["observed"],
+            }
+
         diff_payload = _diff_artifact_payload(plan)
         context.write_json(CONFIG_DIFF_ARTIFACT, diff_payload)
         report = _report_payload(
@@ -356,9 +371,23 @@ class ConfigPromoteTask(HermesTask):
         expected_hash = (
             proposed_hash if execute_mode else plan["current_config"].get("sha256")
         )
+        dry_run_drift_check = CheckResult(
+            "no_dry_run_input_drift",
+            not bool(outputs.get("driftDetected")),
+            _dry_run_drift_detail(outputs),
+            {
+                "drifts": outputs.get("drifts", []),
+                "artifact": (
+                    str(context.run_dir / DRY_RUN_DRIFT_ARTIFACT)
+                    if outputs.get("driftDetected")
+                    else None
+                ),
+            },
+        )
         return [
             schema_check,
             doctor_check,
+            dry_run_drift_check,
             CheckResult(
                 "config_hash_matches_expected",
                 current_hash == expected_hash,
@@ -583,6 +612,80 @@ def _diff_artifact_payload(plan: dict[str, Any]) -> dict[str, Any]:
         "diff": plan["config_diff"],
         "policyReview": plan["policy_review"],
     }
+
+
+def _dry_run_drift_payload(
+    context: TaskContext,
+    plan: dict[str, Any],
+) -> dict[str, Any]:
+    stale_preview = _report_payload(
+        context,
+        plan,
+        dry_run=True,
+        mutation_committed=False,
+        previous_snapshot_ref=None,
+        resulting_hash=plan["current_config"].get("sha256"),
+    )
+    observed = {
+        "currentConfig": _observed_file_state(plan["current_config"].get("path")),
+        "proposedConfig": _observed_file_state(plan["proposed_config"].get("path")),
+    }
+    drifts = _config_hash_drifts(plan, observed)
+    return {
+        "task": ConfigPromoteTask.name,
+        "mode": "dry-run",
+        "dryRun": True,
+        "mutationCommitted": False,
+        "driftDetected": bool(drifts),
+        "drifts": drifts,
+        "stalePreview": stale_preview,
+        "observed": observed,
+        "nextAction": "Refresh the plan against current inputs before rerunning dry-run.",
+    }
+
+
+def _observed_file_state(path_value: object) -> dict[str, Any]:
+    path = Path(str(path_value)) if path_value else None
+    state: dict[str, Any] = {
+        "path": str(path) if path else None,
+        "exists": bool(path and path.exists()),
+        "sha256": None,
+    }
+    if path and path.exists() and path.is_file():
+        state["sha256"] = sha256_file(path)
+    return state
+
+
+def _config_hash_drifts(
+    plan: dict[str, Any],
+    observed: dict[str, dict[str, Any]],
+) -> list[dict[str, Any]]:
+    drifts: list[dict[str, Any]] = []
+    for input_name, plan_key in (
+        ("currentConfig", "current_config"),
+        ("proposedConfig", "proposed_config"),
+    ):
+        planned_sha = plan[plan_key].get("sha256")
+        observed_state = observed[input_name]
+        observed_sha = observed_state.get("sha256")
+        if planned_sha == observed_sha:
+            continue
+        drifts.append(
+            {
+                "input": input_name,
+                "field": "sha256",
+                "path": observed_state.get("path"),
+                "planned": planned_sha,
+                "observed": observed_sha,
+            }
+        )
+    return drifts
+
+
+def _dry_run_drift_detail(outputs: dict[str, Any]) -> str:
+    if not outputs.get("driftDetected"):
+        return "no dry-run input drift"
+    return f"drifts={len(outputs.get('drifts', []))}"
 
 
 def _report_payload(
