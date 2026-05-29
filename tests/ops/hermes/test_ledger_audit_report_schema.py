@@ -90,5 +90,8 @@ def test_ledger_audit_report_schema_tracks_live_camel_case_shape() -> None:
     assert "ledger_entries" not in properties
     assert "drifts" not in properties
     assert "checksRun" in properties
+    assert "checkedRunDirs" not in summary["properties"]
+    assert "rawIndexRows" in summary["properties"]
+    assert "uniqueRunDirsChecked" in summary["properties"]
     assert "validIndexEntries" in summary["properties"]
     assert report_artifacts["required"] == ["json", "markdown"]
