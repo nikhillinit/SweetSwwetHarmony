@@ -11,7 +11,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from utils.advisory_file_lock import AdvisoryFileLock
+from utils.advisory_file_lock import AdvisoryFileLock, AdvisoryFileLockHealthError
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +71,18 @@ class DBToolLock:
 
     def is_locked(self) -> bool:
         return self._lock.is_locked()
+
+    def assert_healthy(self) -> None:
+        try:
+            self._lock.assert_healthy()
+        except AdvisoryFileLockHealthError as exc:
+            raise DBToolLockError(str(exc)) from exc
+
+    def is_healthy(self) -> bool:
+        return self._lock.is_healthy()
+
+    def heartbeat_error(self) -> str | None:
+        return self._lock.heartbeat_error()
 
     def __enter__(self) -> "DBToolLock":
         if not self.acquire():

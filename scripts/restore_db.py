@@ -26,6 +26,7 @@ from typing import Any
 
 from utils.db_path_helper import add_db_path_args, resolve_db_path, resolve_db_path_env
 from utils.db_tool_errors import DBToolError
+from utils.db_tool_lock import DBToolLockError
 
 logger = logging.getLogger(__name__)
 
@@ -265,6 +266,7 @@ def restore_backup_with_lock_and_ledger(
             resolved_db_path,
             force,
             api_url,
+            _lock=lock,
         )
         target_sha256_after = _sha256_file(resolved_db_path)
         integrity_check = _sqlite_integrity_check(resolved_db_path)
@@ -346,6 +348,8 @@ def restore_backup(
     db_path: str | Path | None = None,
     force: bool = False,
     api_url: str = DEFAULT_API_URL,
+    *,
+    _lock: Any | None = None,
 ) -> Path:
     """Restore a database from backup.
 
@@ -416,6 +420,7 @@ def restore_backup(
 
     # Restore: copy backup over current DB
     logger.info("Restoring from %s to %s", backup_path, db_path)
+    _assert_restore_lock_healthy(_lock)
     shutil.copy2(str(backup_path), str(db_path))
 
     # Post-restore integrity check
@@ -444,6 +449,23 @@ def restore_backup(
 
     logger.info("Restore complete: %s", db_path)
     return pre_restore_path or db_path
+
+
+def _assert_restore_lock_healthy(lock: Any | None) -> None:
+    if lock is None:
+        return
+    try:
+        lock.assert_healthy()
+    except DBToolLockError as exc:
+        heartbeat_error = lock.heartbeat_error()
+        raise RestoreError(
+            "DB tool lock health lost before target overwrite",
+            partial_evidence={
+                "lock_path": str(lock.lock_path),
+                "heartbeat_error": heartbeat_error or str(exc),
+                "health_check_error": str(exc),
+            },
+        ) from exc
 
 
 def main(argv: list[str] | None = None) -> int:

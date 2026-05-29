@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+import threading
 import time
 import uuid
 from dataclasses import dataclass
@@ -23,6 +24,10 @@ class _LockState:
     @property
     def malformed(self) -> bool:
         return self.exists and self.metadata is None
+
+
+class AdvisoryFileLockHealthError(RuntimeError):
+    """Raised when an acquired advisory lock no longer owns its lock file."""
 
 
 class AdvisoryFileLock:
@@ -53,12 +58,19 @@ class AdvisoryFileLock:
         self._break_owner_token = str(uuid.uuid4())
         self._pid = os.getpid()
         self._acquired = False
+        self._state_lock = threading.RLock()
+        self._heartbeat_stop = threading.Event()
+        self._heartbeat_thread: threading.Thread | None = None
+        self._heartbeat_error: str | None = None
 
     def acquire(self, timeout_seconds: int = 0) -> bool:
         start = time.monotonic()
         while True:
             if self._try_create_target_lock():
-                self._acquired = True
+                with self._state_lock:
+                    self._acquired = True
+                    self._heartbeat_error = None
+                self._start_heartbeat()
                 return True
 
             state = self._read_state(self.lock_path)
@@ -71,23 +83,30 @@ class AdvisoryFileLock:
             time.sleep(0.5)
 
     def release(self) -> bool:
-        if not self._acquired:
-            return False
-        released = False
-        try:
-            state = self._read_state(self.lock_path)
-            if state.metadata and state.metadata.get("ownerToken") == self.owner_token:
-                self.lock_path.unlink(missing_ok=True)
-                released = True
-        finally:
-            self._acquired = False
-        return released
+        self._stop_heartbeat()
+        with self._state_lock:
+            if not self._acquired:
+                return False
+            released = False
+            try:
+                state = self._read_state(self.lock_path)
+                if (
+                    state.metadata
+                    and state.metadata.get("ownerToken") == self.owner_token
+                ):
+                    self.lock_path.unlink(missing_ok=True)
+                    released = True
+            finally:
+                self._acquired = False
+            return released
 
     def force_break(self) -> bool:
+        self._stop_heartbeat()
         if not self.lock_path.exists():
             return False
         self.lock_path.unlink(missing_ok=True)
-        self._acquired = False
+        with self._state_lock:
+            self._acquired = False
         return True
 
     def get_holder_info(self) -> dict[str, Any] | None:
@@ -103,20 +122,108 @@ class AdvisoryFileLock:
         context: dict[str, Any] | None = None,
         legacy_metadata: dict[str, Any] | None = None,
     ) -> bool:
-        if not self._acquired:
+        with self._state_lock:
+            if not self._acquired:
+                return False
+            if context is not None:
+                self.context = dict(context)
+            if legacy_metadata is not None:
+                self.legacy_metadata = dict(legacy_metadata)
+            return self._refresh_owned_metadata_locked()
+
+    def assert_healthy(self) -> None:
+        with self._state_lock:
+            if not self._acquired:
+                raise AdvisoryFileLockHealthError(
+                    self._heartbeat_error or "lock is not acquired"
+                )
+            if self._heartbeat_error is not None:
+                raise AdvisoryFileLockHealthError(self._heartbeat_error)
+            error = self._owner_health_error(self._read_state(self.lock_path))
+            if error is not None:
+                self._record_heartbeat_error(error)
+                raise AdvisoryFileLockHealthError(error)
+
+    def is_healthy(self) -> bool:
+        try:
+            self.assert_healthy()
+        except AdvisoryFileLockHealthError:
             return False
+        return True
+
+    def heartbeat_error(self) -> str | None:
+        with self._state_lock:
+            return self._heartbeat_error
+
+    def _start_heartbeat(self) -> None:
+        self._stop_heartbeat()
+        self._heartbeat_stop = threading.Event()
+        self._heartbeat_thread = threading.Thread(
+            target=self._heartbeat_loop,
+            name=f"AdvisoryFileLock heartbeat {self.lock_path.name}",
+            daemon=True,
+        )
+        self._heartbeat_thread.start()
+
+    def _stop_heartbeat(self) -> None:
+        thread = self._heartbeat_thread
+        if thread is None:
+            return
+        self._heartbeat_stop.set()
+        if thread is not threading.current_thread():
+            thread.join(timeout=max(1.0, self._heartbeat_interval_seconds() * 2))
+        self._heartbeat_thread = None
+
+    def _heartbeat_loop(self) -> None:
+        while not self._heartbeat_stop.wait(self._heartbeat_interval_seconds()):
+            with self._state_lock:
+                if not self._acquired:
+                    return
+                try:
+                    if not self._refresh_owned_metadata_locked():
+                        return
+                except Exception as exc:
+                    self._record_heartbeat_error(f"heartbeat refresh failed: {exc}")
+                    return
+
+    def _heartbeat_interval_seconds(self) -> float:
+        if self.ttl_seconds <= 0:
+            return 0.5
+        return max(0.05, min(5.0, self.ttl_seconds / 3))
+
+    def _refresh_owned_metadata_locked(self) -> bool:
         state = self._read_state(self.lock_path)
-        if not state.metadata or state.metadata.get("ownerToken") != self.owner_token:
-            self._acquired = False
+        error = self._owner_health_error(state)
+        if error is not None:
+            self._record_heartbeat_error(error)
             return False
 
-        if context is not None:
-            self.context = dict(context)
-        if legacy_metadata is not None:
-            self.legacy_metadata = dict(legacy_metadata)
-        metadata = self._metadata(acquired_at=str(state.metadata.get("acquiredAt") or self._now()))
-        self._write_metadata_atomic(self.lock_path, metadata)
+        acquired_at = str(
+            state.metadata.get("acquiredAt")
+            or state.metadata.get("acquired_at")
+            or self._now()
+        )
+        self._write_metadata_atomic(
+            self.lock_path,
+            self._metadata(acquired_at=acquired_at),
+        )
         return True
+
+    def _owner_health_error(self, state: _LockState) -> str | None:
+        if not state.exists:
+            return f"lock file missing: {self.lock_path}"
+        if state.malformed or not state.metadata:
+            return f"lock file unreadable or malformed: {self.lock_path}"
+        observed_token = state.metadata.get("ownerToken")
+        if observed_token != self.owner_token:
+            return (
+                "lock ownerToken mismatch: "
+                f"expected {self.owner_token}, observed {observed_token}"
+            )
+        return None
+
+    def _record_heartbeat_error(self, error: str) -> None:
+        self._heartbeat_error = error
 
     def _try_create_target_lock(self) -> bool:
         self.lock_path.parent.mkdir(parents=True, exist_ok=True)

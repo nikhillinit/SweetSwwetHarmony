@@ -178,6 +178,51 @@ def test_restore_helper_writes_lock_blocked_ledger_row(
     )
 
 
+def test_restore_helper_refuses_overwrite_after_lock_health_is_lost(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backup = _write_db(tmp_path / "backup.db", rows=5)
+    target = _write_db(tmp_path / "signals.db", rows=1)
+    ledger = tmp_path / "db_ops_ledger.jsonl"
+    original_copy2 = restore_db.shutil.copy2
+
+    monkeypatch.setenv("DB_OPS_LEDGER_PATH", str(ledger))
+    monkeypatch.setattr(restore_db, "_check_api_reachable", lambda _url: False)
+
+    def steal_lock_after_pre_restore_copy(
+        src: object,
+        dst: object,
+        *args: object,
+        **kwargs: object,
+    ) -> object:
+        result = original_copy2(src, dst, *args, **kwargs)
+        destination = Path(dst)
+        if destination.name.startswith(restore_db.PRE_RESTORE_PREFIX):
+            lock_path = target.resolve().with_suffix(".db.dbtool.lock")
+            payload = json.loads(lock_path.read_text(encoding="utf-8"))
+            payload["ownerToken"] = "stolen-owner"
+            lock_path.write_text(json.dumps(payload), encoding="utf-8")
+        return result
+
+    monkeypatch.setattr(restore_db.shutil, "copy2", steal_lock_after_pre_restore_copy)
+
+    with pytest.raises(RestoreError, match="lock health"):
+        restore_backup_with_lock_and_ledger(
+            backup,
+            target,
+            api_url="http://127.0.0.1:9/health",
+        )
+
+    assert _row_count(target) == 1
+    rows = _read_ledger(ledger)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["status"] == "error"
+    assert "ownerToken" in row["details"]["heartbeat_error"]
+    assert row["details"]["target_sha256_before"] == _sha256(target)
+
+
 def test_cli_main_uses_restore_helper_on_success(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
