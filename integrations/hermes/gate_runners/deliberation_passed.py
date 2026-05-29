@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -21,6 +22,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--ledger-root", default="ai-logs/hermes")
     parser.add_argument("--plan-hash", default=None)
+    parser.add_argument("--allow-unbound", action="store_true")
+    parser.add_argument("--allow-mtime-freshness", action="store_true")
     parser.add_argument("--max-age-seconds", type=int, default=86400)
     args = parser.parse_args(argv)
 
@@ -35,11 +38,23 @@ def main(argv: list[str] | None = None) -> int:
     if not isinstance(record, dict):
         return emit(False, "deliberation record must be a JSON object")
 
+    plan_binding = _plan_binding_evidence(args.plan_hash, args.allow_unbound)
+    if args.plan_hash is None and not args.allow_unbound:
+        return emit(
+            False,
+            "plan hash required",
+            {
+                "record": str(record_path),
+                "planBinding": plan_binding,
+            },
+        )
+
     plan_hash_ok = _plan_hash_matches(record, args.plan_hash)
-    age_ok, age_seconds, max_age_seconds = _freshness_status(
+    age_ok, age_seconds, max_age_seconds, freshness_source = _freshness_status(
         record,
         record_path,
         args.max_age_seconds,
+        allow_mtime_freshness=args.allow_mtime_freshness,
     )
     consensus = _dict_value(record.get("consensus"))
     blockers = list(consensus.get("blockers") or [])
@@ -53,9 +68,11 @@ def main(argv: list[str] | None = None) -> int:
         {
             "record": str(record_path),
             "planHashOk": plan_hash_ok,
+            "planBinding": plan_binding,
             "ageOk": age_ok,
             "ageSeconds": age_seconds,
             "maxAgeSeconds": max_age_seconds,
+            "freshnessSource": freshness_source,
             "consensus": consensus,
         },
     )
@@ -97,11 +114,30 @@ def _normalize_hash(value: str) -> str:
     return value.removeprefix("sha256:")
 
 
+def _plan_binding_evidence(
+    expected_hash: str | None,
+    allow_unbound: bool,
+) -> dict[str, Any]:
+    if expected_hash is not None:
+        return {
+            "mode": "bound",
+            "unsafe": False,
+            "required": True,
+        }
+    return {
+        "mode": "unbound" if allow_unbound else "required",
+        "unsafe": bool(allow_unbound),
+        "required": not allow_unbound,
+    }
+
+
 def _freshness_status(
     record: dict[str, Any],
     record_path: Path,
     max_age_seconds: int,
-) -> tuple[bool, int, int]:
+    *,
+    allow_mtime_freshness: bool = False,
+) -> tuple[bool, int | None, int, str | None]:
     ttl_seconds = _int_value(
         record.get("freshnessTtlSeconds")
         or record.get("freshness_ttl_seconds")
@@ -109,9 +145,56 @@ def _freshness_status(
         default=max_age_seconds,
     )
     effective_max_age = max(0, min(ttl_seconds, max_age_seconds))
-    modified_at = datetime.fromtimestamp(record_path.stat().st_mtime, timezone.utc)
-    age_seconds = int((datetime.now(timezone.utc) - modified_at).total_seconds())
-    return age_seconds <= effective_max_age, age_seconds, effective_max_age
+    source_time, source = _freshness_source(record)
+    if source_time is None and allow_mtime_freshness:
+        source_time = datetime.fromtimestamp(record_path.stat().st_mtime, timezone.utc)
+        source = "mtime"
+    if source_time is None:
+        return False, None, effective_max_age, None
+
+    age_seconds = max(
+        0,
+        int((datetime.now(timezone.utc) - source_time).total_seconds()),
+    )
+    return age_seconds <= effective_max_age, age_seconds, effective_max_age, source
+
+
+def _freshness_source(record: dict[str, Any]) -> tuple[datetime | None, str | None]:
+    created_at = _parse_iso_datetime(record.get("createdAt") or record.get("created_at"))
+    if created_at is not None:
+        return created_at, "createdAt"
+
+    deliberation_id_time = _parse_deliberation_id_timestamp(
+        str(record.get("deliberationId") or record.get("deliberation_id") or "")
+    )
+    if deliberation_id_time is not None:
+        return deliberation_id_time, "deliberationId"
+
+    return None, None
+
+
+def _parse_iso_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
+def _parse_deliberation_id_timestamp(value: str) -> datetime | None:
+    match = re.search(r"deliberate-(\d{8}T\d{6}Z)", value)
+    if match is None:
+        return None
+    try:
+        return datetime.strptime(match.group(1), "%Y%m%dT%H%M%SZ").replace(
+            tzinfo=timezone.utc
+        )
+    except ValueError:
+        return None
 
 
 def _dict_value(value: Any) -> dict[str, Any]:

@@ -9,6 +9,11 @@ import pytest
 
 from integrations.hermes.adapters import ExecutorResult
 from integrations.hermes.tasks.base import EXIT_GATE_FAILURE
+from integrations.hermes.tasks.deliberation import (
+    _classify_text_response,
+    _parse_reviewer_payload,
+    _synthesize,
+)
 from integrations.hermes.tasks.registry import run_registered_task
 
 from .conftest import minimal_config_dict
@@ -104,6 +109,133 @@ def _patch_reviewers(
     return calls
 
 
+def _executor_result(content: str, *, success: bool = True) -> ExecutorResult:
+    return ExecutorResult(
+        executor="codex",
+        success=success,
+        exit_code=0 if success else 1,
+        content=content,
+        duration_ms=12,
+        token_usage={"total_tokens": 9},
+    )
+
+
+def _approval(executor: str) -> dict[str, Any]:
+    return {
+        "executor": executor,
+        "success": True,
+        "parsed": True,
+        "verdict": "approve",
+        "confidence": 0.9,
+        "concerns": [],
+        "requiredChanges": [],
+        "contentExcerpt": "",
+    }
+
+
+def test_empty_reviewer_content_yields_skip_and_cannot_approve_alone() -> None:
+    payload = _parse_reviewer_payload(_executor_result(""))
+
+    assert payload["verdict"] == "skip"
+    assert payload["parsed"] is False
+    consensus = _synthesize([{"executor": "codex", "success": True, **payload}])
+    assert consensus["status"] == "no_quorum"
+
+
+def test_malformed_non_empty_reviewer_content_blocks_approval() -> None:
+    payload = _parse_reviewer_payload(_executor_result("{not json"))
+
+    assert payload["verdict"] == "needs_changes"
+    assert payload["parsed"] is False
+    consensus = _synthesize([_approval("codex"), {"executor": "kimi", "success": True, **payload}])
+    assert consensus["status"] == "blocked"
+    assert consensus["blockers"] == ["kimi"]
+
+
+def test_fallback_text_classifier_never_approves() -> None:
+    assert _classify_text_response("approve this plan")["verdict"] == "needs_changes"
+    assert _classify_text_response("block this plan")["verdict"] == "block"
+    assert _classify_text_response("")["verdict"] == "skip"
+
+
+def test_invalid_verdict_does_not_count_as_approval() -> None:
+    payload = _parse_reviewer_payload(
+        _executor_result(
+            json.dumps(
+                {
+                    "verdict": "ship_it",
+                    "confidence": 0.9,
+                    "concerns": [],
+                    "required_changes": [],
+                }
+            )
+        )
+    )
+
+    assert payload["parsed"] is True
+    assert payload["verdict"] == "needs_changes"
+    consensus = _synthesize([_approval("codex"), {"executor": "kimi", "success": True, **payload}])
+    assert consensus["status"] == "blocked"
+
+
+def test_high_risk_deliberation_requires_two_valid_approvals() -> None:
+    assert _synthesize([_approval("codex")])["status"] == "no_quorum"
+    assert _synthesize([_approval("codex"), _approval("kimi")])["status"] == "approved"
+
+
+def test_skip_is_neutral_for_approval_quorum() -> None:
+    consensus = _synthesize(
+        [
+            _approval("codex"),
+            {
+                "executor": "gemini",
+                "success": False,
+                "parsed": False,
+                "verdict": "skip",
+            },
+            _approval("kimi"),
+        ]
+    )
+
+    assert consensus["status"] == "approved"
+    assert consensus["dissent"]["present"] is False
+
+
+def test_one_approval_plus_needs_changes_does_not_approve() -> None:
+    consensus = _synthesize(
+        [
+            _approval("codex"),
+            {
+                "executor": "kimi",
+                "success": True,
+                "parsed": True,
+                "verdict": "needs_changes",
+            },
+        ]
+    )
+
+    assert consensus["status"] == "blocked"
+
+
+def test_one_valid_approval_high_risk_dry_run_fails_no_quorum(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_reviewers(
+        monkeypatch,
+        {"codex": {"verdict": "approve", "confidence": 0.95, "concerns": []}},
+    )
+
+    result = run_registered_task(_args(tmp_path, mode="dry-run", panel="codex"))
+
+    assert result.exit_code == EXIT_GATE_FAILURE
+    assert result.status == "dry_run_failed"
+    assert result.outputs["consensus"]["status"] == "no_quorum"
+    check = next(check for check in result.checks if check.name == "quorum_completed")
+    assert check.passed is False
+    assert check.evidence == {"active": 1, "required": 2}
+
+
 def test_plan_only_writes_ledger_artifacts_and_stays_non_mutating(
     tmp_path: Path,
 ) -> None:
@@ -140,27 +272,31 @@ def test_unknown_and_disabled_panel_providers_are_skipped_without_external_calls
 ) -> None:
     calls = _patch_reviewers(
         monkeypatch,
-        {"codex": {"verdict": "approve", "confidence": 0.9, "concerns": []}},
+        {
+            "codex": {"verdict": "approve", "confidence": 0.9, "concerns": []},
+            "kimi": {"verdict": "approve", "confidence": 0.9, "concerns": []},
+        },
     )
 
     result = run_registered_task(
         _args(
             tmp_path,
             mode="dry-run",
-            panel="missing,antigravity,codex",
+            panel="missing,antigravity,codex,kimi",
             include_disabled=True,
         )
     )
 
     assert result.exit_code == 0
     assert result.status == "dry_run_passed"
-    assert calls == ["codex"]
+    assert calls == ["codex", "kimi"]
     assert result.outputs["mutationCommitted"] is False
     verdicts = {item["executor"]: item["verdict"] for item in result.outputs["panel"]}
     assert verdicts == {
         "missing": "skip",
         "antigravity": "skip",
         "codex": "approve",
+        "kimi": "approve",
     }
 
 
@@ -170,10 +306,13 @@ def test_dry_run_writes_deliberation_artifacts_under_temp_ledger(
 ) -> None:
     _patch_reviewers(
         monkeypatch,
-        {"codex": {"verdict": "approve", "confidence": 0.95, "concerns": []}},
+        {
+            "codex": {"verdict": "approve", "confidence": 0.95, "concerns": []},
+            "kimi": {"verdict": "approve", "confidence": 0.95, "concerns": []},
+        },
     )
 
-    result = run_registered_task(_args(tmp_path, mode="dry-run", panel="codex"))
+    result = run_registered_task(_args(tmp_path, mode="dry-run", panel="codex,kimi"))
 
     run_dir = Path(result.run_dir or "")
     assert result.exit_code == 0
@@ -192,10 +331,13 @@ def test_execute_only_commits_deliberation_artifacts(
 ) -> None:
     _patch_reviewers(
         monkeypatch,
-        {"codex": {"verdict": "approve", "confidence": 0.95, "concerns": []}},
+        {
+            "codex": {"verdict": "approve", "confidence": 0.95, "concerns": []},
+            "kimi": {"verdict": "approve", "confidence": 0.95, "concerns": []},
+        },
     )
 
-    result = run_registered_task(_args(tmp_path, mode="execute", panel="codex"))
+    result = run_registered_task(_args(tmp_path, mode="execute", panel="codex,kimi"))
 
     run_dir = Path(result.run_dir or "")
     assert result.exit_code == 0
