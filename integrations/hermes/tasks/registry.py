@@ -121,7 +121,18 @@ def add_task_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--min-row-count", type=int, default=0)
     parser.add_argument("--db-path", default="signals.db")
     parser.add_argument("--ttl-days", type=int, default=7)
-    parser.add_argument("--delete-stale", action="store_true")
+    cleanup_group = parser.add_mutually_exclusive_group()
+    cleanup_group.add_argument(
+        "--delete-stale",
+        dest="delete_stale",
+        action="store_true",
+        default=None,
+    )
+    cleanup_group.add_argument(
+        "--skip-clean-expired",
+        dest="delete_stale",
+        action="store_false",
+    )
     parser.add_argument("--max-removals", type=int, default=25)
     parser.add_argument("--feature")
     parser.add_argument("--from-state")

@@ -130,6 +130,26 @@ def test_missing_proposed_file_fails_safely_and_emits_repair_prompt(
     assert (Path(result.run_dir or "") / "repair_prompt.md").exists()
 
 
+def test_missing_current_config_fails_preflight_without_fresh_create(
+    tmp_path: Path,
+) -> None:
+    runtime = _current_config_path(tmp_path)
+    current = tmp_path / "missing-model-routing.json"
+    proposed = _proposed_config_path(tmp_path, runtime)
+
+    result = run_registered_task(
+        _args(tmp_path, current_path=current, proposed_path=proposed),
+    )
+
+    assert result.exit_code == EXIT_GATE_FAILURE
+    assert result.status == "preflight_failed"
+    assert current.exists() is False
+    check = next(check for check in result.checks if check.name == "current_config_readable")
+    assert check.passed is False
+    assert check.evidence["path"] == str(current)
+    assert (Path(result.run_dir or "") / "repair_prompt.md").exists()
+
+
 def test_malformed_proposed_json_fails_safely_and_emits_repair_prompt(
     tmp_path: Path,
 ) -> None:
@@ -246,9 +266,14 @@ def test_dry_run_writes_diff_and_report_without_modifying_config(
     assert current.read_text(encoding="utf-8") == before
     assert result.outputs["dryRun"] is True
     assert result.outputs["mutationCommitted"] is False
+    assert result.outputs["currentConfig"]["path"] == str(current)
     run_dir = Path(result.run_dir or "")
-    assert (run_dir / "config_promote_diff.json").exists()
-    assert (run_dir / "config_promote_report.json").exists()
+    diff = json.loads((run_dir / "config_promote_diff.json").read_text(encoding="utf-8"))
+    report = json.loads(
+        (run_dir / "config_promote_report.json").read_text(encoding="utf-8")
+    )
+    assert diff["currentConfig"]["path"] == str(current)
+    assert report["currentConfig"]["path"] == str(current)
 
 
 def test_execute_requires_config_promote_ack_before_mutation(
