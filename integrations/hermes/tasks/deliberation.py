@@ -18,6 +18,7 @@ from .base import CheckResult, HermesTask, TaskContext, sha256_file
 VALID_VERDICTS = {"approve", "block", "needs_changes", "skip"}
 DEFAULT_PANEL = "codex,kimi,gemini"
 TASK_TEXT_LIMIT = 12000
+HIGH_RISK_APPROVAL_QUORUM = 2
 
 
 class DeliberationTask(HermesTask):
@@ -150,9 +151,12 @@ class DeliberationTask(HermesTask):
         consensus = dict(outputs.get("consensus") or {})
         blockers = list(consensus.get("blockers") or [])
         dissent = bool(consensus.get("dissent", {}).get("present"))
-        active_count = sum(1 for item in panel if item.get("verdict") != "skip")
-        available_count = len(plan.get("reviewers", {}).get("available") or [])
-        quorum_target = max(1, min(2, available_count))
+        active_count = sum(
+            1
+            for item in panel
+            if item.get("verdict") != "skip" and _trusted_reviewer(item)
+        )
+        quorum_target = HIGH_RISK_APPROVAL_QUORUM
         record_path = context.run_dir / "deliberation_record.json"
         markdown_path = context.run_dir / "deliberation.md"
 
@@ -196,8 +200,10 @@ async def _run_panel(context: TaskContext, plan: dict[str, Any]) -> dict[str, An
         *[_run_reviewer(context, str(name), prompt) for name in reviewers]
     )
     consensus = _synthesize(panel)
+    created_at = datetime.now(timezone.utc)
     return {
-        "deliberationId": _deliberation_id(),
+        "deliberationId": _deliberation_id(created_at),
+        "createdAt": created_at.isoformat(),
         "task": DeliberationTask.name,
         "mode": context.mode,
         "dryRun": context.mode == "dry-run",
@@ -246,6 +252,7 @@ async def _run_reviewer(
     payload = _parse_reviewer_payload(result)
     if not result.success:
         payload["verdict"] = "skip"
+        payload["parsed"] = False
     payload.update(
         {
             "executor": name,
@@ -280,8 +287,8 @@ def _prompt_packet(plan: dict[str, Any]) -> str:
 
 def _parse_reviewer_payload(result: ExecutorResult) -> dict[str, Any]:
     content = result.content.strip()
-    parsed = _parse_json_object(content)
-    if not parsed:
+    parsed, parsed_ok = _parse_json_object(content)
+    if not parsed_ok:
         parsed = _classify_text_response(content)
 
     verdict = str(parsed.get("verdict", "skip")).lower()
@@ -290,6 +297,7 @@ def _parse_reviewer_payload(result: ExecutorResult) -> dict[str, Any]:
 
     return {
         "verdict": verdict,
+        "parsed": parsed_ok,
         "confidence": _float_value(parsed.get("confidence")),
         "concerns": _string_list(parsed.get("concerns")),
         "requiredChanges": _string_list(parsed.get("required_changes")),
@@ -297,14 +305,14 @@ def _parse_reviewer_payload(result: ExecutorResult) -> dict[str, Any]:
     }
 
 
-def _parse_json_object(content: str) -> dict[str, Any]:
+def _parse_json_object(content: str) -> tuple[dict[str, Any], bool]:
     if not content:
-        return {}
+        return {}, False
     try:
         parsed = json.loads(content)
     except json.JSONDecodeError:
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
+        return {}, False
+    return (parsed, True) if isinstance(parsed, dict) else ({}, False)
 
 
 def _classify_text_response(content: str) -> dict[str, Any]:
@@ -323,7 +331,11 @@ def _classify_text_response(content: str) -> dict[str, Any]:
             "confidence": 0.5,
             "concerns": [content[:500]],
         }
-    return {"verdict": "approve", "confidence": 0.5}
+    return {
+        "verdict": "needs_changes",
+        "confidence": 0.5,
+        "concerns": [content[:500]],
+    }
 
 
 def _synthesize(panel: list[dict[str, Any]]) -> dict[str, Any]:
@@ -333,7 +345,11 @@ def _synthesize(panel: list[dict[str, Any]]) -> dict[str, Any]:
         for item in active
         if item.get("verdict") in {"block", "needs_changes"}
     ]
-    approvals = [item for item in active if item.get("verdict") == "approve"]
+    approvals = [
+        item
+        for item in active
+        if item.get("verdict") == "approve" and _trusted_reviewer(item)
+    ]
     verdicts = {item.get("verdict") for item in active}
     dissent_present = len(verdicts) > 1
 
@@ -341,7 +357,7 @@ def _synthesize(panel: list[dict[str, Any]]) -> dict[str, Any]:
         status = "blocked"
     elif dissent_present:
         status = "conflicted"
-    elif active and len(approvals) == len(active):
+    elif len(approvals) >= HIGH_RISK_APPROVAL_QUORUM:
         status = "approved"
     else:
         status = "no_quorum"
@@ -362,6 +378,10 @@ def _dissent_summary(active: list[dict[str, Any]]) -> str:
     return "; ".join(
         f"{item.get('executor')}={item.get('verdict')}" for item in active
     )
+
+
+def _trusted_reviewer(item: dict[str, Any]) -> bool:
+    return item.get("success") is True and item.get("parsed") is True
 
 
 def _deliberation_markdown(record: dict[str, Any]) -> str:
@@ -443,6 +463,7 @@ def _skipped_result(name: str, reason: str) -> dict[str, Any]:
     return {
         "executor": name,
         "verdict": "skip",
+        "parsed": False,
         "success": False,
         "error": reason,
         "confidence": 0.0,
@@ -467,6 +488,6 @@ def _float_value(value: Any) -> float:
         return 0.0
 
 
-def _deliberation_id() -> str:
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+def _deliberation_id(created_at: datetime | None = None) -> str:
+    stamp = (created_at or datetime.now(timezone.utc)).strftime("%Y%m%dT%H%M%SZ")
     return f"deliberate-{stamp}"

@@ -52,7 +52,7 @@ def _args(tmp_path: Path) -> argparse.Namespace:
         json_output=False,
         plan=None,
         task_text="Review this Hermes plan.",
-        panel="codex",
+        panel="codex,kimi",
         rounds=1,
         synthesizer="codex",
         coding_pair=False,
@@ -107,6 +107,7 @@ def test_deliberation_record_schema_matches_live_record_keys(
     assert set(record) == set(schema["properties"])
     assert schema["required"] == [
         "deliberationId",
+        "createdAt",
         "task",
         "mode",
         "dryRun",
@@ -129,8 +130,10 @@ def test_deliberation_record_schema_tracks_live_camel_case_shape() -> None:
 
     assert schema["additionalProperties"] is False
     assert "deliberation_id" not in properties
+    assert properties["createdAt"]["type"] == "string"
     assert "input_plan_hash" not in properties
     assert "freshness_ttl_seconds" not in properties
+    assert panel_item["properties"]["parsed"]["type"] == "boolean"
     assert panel_item["properties"]["requiredChanges"]["type"] == "array"
     assert "required_changes" not in panel_item["properties"]
     assert consensus["properties"]["overrideAllowed"]["type"] == "boolean"
