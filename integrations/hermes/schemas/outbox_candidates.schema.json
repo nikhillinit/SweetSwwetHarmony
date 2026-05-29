@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sweetswwetharmony.local/hermes/outbox_candidates.schema.json",
+  "title": "Hermes Outbox Candidates Artifact",
+  "type": "object",
+  "required": [
+    "candidateCount",
+    "candidateIds",
+    "candidateIdHash",
+    "candidateHash",
+    "rows"
+  ],
+  "properties": {
+    "candidateCount": {"type": "integer", "minimum": 0},
+    "candidateIds": {
+      "type": "array",
+      "items": {"type": "integer", "minimum": 1},
+      "uniqueItems": true
+    },
+    "candidateIdHash": {"type": "string", "minLength": 1},
+    "candidateHash": {"type": "string", "minLength": 1},
+    "rows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "idempotency_key",
+          "payload_json",
+          "status",
+          "attempts",
+          "next_attempt_at",
+          "last_error",
+          "created_at",
+          "updated_at",
+          "event_type",
+          "max_attempts"
+        ],
+        "properties": {
+          "id": {"type": "integer", "minimum": 1},
+          "idempotency_key": {"type": "string", "minLength": 1},
+          "payload_json": {"type": "string", "minLength": 1},
+          "status": {"enum": ["failed", "pending", "processing", "sent"]},
+          "attempts": {"type": "integer", "minimum": 0},
+          "next_attempt_at": {"type": ["string", "null"], "format": "date-time"},
+          "last_error": {"type": ["string", "null"]},
+          "created_at": {"type": "string", "format": "date-time"},
+          "updated_at": {"type": "string", "format": "date-time"},
+          "event_type": {"type": "string", "minLength": 1},
+          "max_attempts": {"type": "integer", "minimum": 0},
+          "created_by": {"type": ["string", "null"]}
+        },
+        "additionalProperties": false
+      }
+    },
+    "error": {"type": "string", "minLength": 1}
+  },
+  "additionalProperties": false
+}
