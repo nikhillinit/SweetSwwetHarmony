@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import argparse
 import json
-from contextlib import contextmanager
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from ops.maintenance import incident as incident_capsules
 from ops.maintenance.incident import MaintenanceIncident
@@ -14,7 +13,13 @@ from ops.maintenance.incident import MaintenanceIncident
 from .base import CheckResult, HermesTask, TaskContext
 
 INCIDENT_PHASES = ("freeze", "analyze", "repair-plan", "verify")
-INCIDENT_RESPONSE_STATUS = "investigating"
+INCIDENT_STATUS_BY_PHASE = {
+    "freeze": "investigating",
+    "analyze": "investigating",
+    "repair-plan": "investigating",
+    "verify": "resolved",
+}
+RESOLVED_INCIDENT_STATUS = "resolved"
 PACKET_JSON = "hermes_response_packet.json"
 PACKET_MARKDOWN = "hermes_response_packet.md"
 
@@ -47,6 +52,10 @@ class IncidentResponseTask(HermesTask):
         phase = _phase(context)
         artifact_root = _artifact_root(context)
         incident_state = _inspect_incident(artifact_root, incident_id)
+        status_after = _expected_incident_status(
+            phase,
+            incident_state.get("status"),
+        )
         artifact_dir = (
             artifact_root / incident_id
             if incident_id
@@ -70,7 +79,7 @@ class IncidentResponseTask(HermesTask):
                     "markdown_path": str(artifact_dir / PACKET_MARKDOWN),
                 },
                 "expected_capsule_state": {
-                    "status_after": INCIDENT_RESPONSE_STATUS,
+                    "status_after": status_after,
                     "response_phase": phase,
                 },
                 "locks_required": list(self.required_locks),
@@ -171,15 +180,9 @@ class IncidentResponseTask(HermesTask):
         incident_id = str(plan.get("incident_id") or "")
         artifact_root = Path(str(plan.get("artifact_root")))
         phase = str(plan.get("phase") or "")
-        expected_status = str(
-            plan.get("expected_capsule_state", {}).get(
-                "status_after",
-                INCIDENT_RESPONSE_STATUS,
-            )
-        )
-
         incident_before = _load_incident(artifact_root, incident_id)
         status_before = incident_before.status if incident_before else None
+        expected_status = _expected_incident_status(phase, status_before)
 
         _update_incident_status(
             artifact_root,
@@ -237,7 +240,10 @@ class IncidentResponseTask(HermesTask):
         incident_id = str(plan.get("incident_id") or "")
         incident_state = _inspect_incident(artifact_root, incident_id)
         actual_status = incident_state.get("status")
-        expected_status = plan.get("expected_capsule_state", {}).get("status_after")
+        expected_status = _expected_incident_status(
+            str(plan.get("phase") or ""),
+            outputs.get("statusBefore"),
+        )
         packet_matches = (
             packet_state.get("readable")
             and packet_state.get("incidentId") == incident_id
@@ -288,22 +294,11 @@ def _artifact_root(context: TaskContext) -> Path:
     )
 
 
-@contextmanager
-def _capsule_root(root: Path) -> Iterator[None]:
-    previous = incident_capsules.ARTIFACTS_DIR
-    incident_capsules.ARTIFACTS_DIR = root
-    try:
-        yield
-    finally:
-        incident_capsules.ARTIFACTS_DIR = previous
-
-
 def _load_incident(root: Path, incident_id: str | None) -> MaintenanceIncident | None:
     if not incident_id:
         return None
     try:
-        with _capsule_root(root):
-            return incident_capsules.load_incident(incident_id)
+        return incident_capsules.load_incident(incident_id, artifacts_dir=root)
     except Exception:
         return None
 
@@ -314,8 +309,18 @@ def _update_incident_status(
     status: str,
     notes: str,
 ) -> MaintenanceIncident | None:
-    with _capsule_root(root):
-        return incident_capsules.update_incident_status(incident_id, status, notes)
+    return incident_capsules.update_incident_status(
+        incident_id,
+        status,
+        notes,
+        artifacts_dir=root,
+    )
+
+
+def _expected_incident_status(phase: str, current_status: object) -> str:
+    if current_status == RESOLVED_INCIDENT_STATUS and phase != "verify":
+        return RESOLVED_INCIDENT_STATUS
+    return INCIDENT_STATUS_BY_PHASE.get(phase, "investigating")
 
 
 def _inspect_incident(root: Path, incident_id: str | None) -> dict[str, Any]:
