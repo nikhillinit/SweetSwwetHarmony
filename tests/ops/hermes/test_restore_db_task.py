@@ -169,6 +169,125 @@ def test_hash_drift_between_plan_and_execute_blocks_restore(
     assert (run_dir / "repair_prompt.md").exists()
 
 
+def test_execute_uses_shared_restore_helper_and_outputs_db_ops_fields(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backup = tmp_path / "backup.db"
+    target = tmp_path / "signals.db"
+    pre_restore = tmp_path / "canonical-pre-restore.db"
+    lock_path = target.resolve().with_suffix(".db.dbtool.lock")
+    _write_db(backup, rows=4)
+    _write_db(target, rows=1)
+    calls: list[tuple[object, ...]] = []
+
+    from scripts import restore_db as restore_script
+
+    def fake_restore_helper(*args: object, **_kwargs: object) -> restore_script.RestoreBackupResult:
+        calls.append(args)
+        return restore_script.RestoreBackupResult(
+            backup_path=backup,
+            db_path=target.resolve(),
+            pre_restore_backup=pre_restore,
+            target_sha256_before="target-before",
+            target_sha256_after="target-after",
+            backup_sha256="backup-hash",
+            integrity_check="ok",
+            schema_version=53,
+            db_ops_ledger_status="success",
+            lock_path=lock_path,
+        )
+
+    monkeypatch.setattr(
+        restore_script,
+        "restore_backup_with_lock_and_ledger",
+        fake_restore_helper,
+    )
+
+    result = run_registered_task(
+        _args(
+            tmp_path,
+            backup=backup,
+            target=target,
+            mode="execute",
+            ack_risk="RESTORE_DB",
+        )
+    )
+
+    assert result.exit_code == 0
+    assert result.status == "executed"
+    assert calls == [
+        (
+            backup,
+            target,
+            True,
+            "http://127.0.0.1:9/health",
+        )
+    ]
+    assert result.outputs["dbOpsLedgerStatus"] == "success"
+    assert result.outputs["dbToolLockPath"] == str(lock_path)
+    assert result.outputs["canonicalPreRestorePath"] == str(pre_restore)
+    assert result.outputs["targetSha256Before"] == "target-before"
+    assert result.outputs["targetSha256"] == "target-after"
+    assert result.outputs["backupSha256"] == "backup-hash"
+
+
+def test_execute_wraps_restore_helper_partial_evidence_on_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backup = tmp_path / "backup.db"
+    target = tmp_path / "signals.db"
+    lock_path = target.resolve().with_suffix(".db.dbtool.lock")
+    _write_db(backup, rows=4)
+    _write_db(target, rows=1)
+
+    from scripts import restore_db as restore_script
+
+    def fail_restore_helper(*_args: object, **_kwargs: object) -> restore_script.RestoreBackupResult:
+        error = restore_script.RestoreError(
+            "helper failed",
+            integrity_check="bad-page",
+        )
+        error.partial_evidence.update(
+            {
+                "db_ops_ledger_status": "error",
+                "lock_path": str(lock_path),
+                "target_sha256_before": "target-before",
+                "target_sha256_after": "target-after",
+                "backup_sha256": "backup-hash",
+            }
+        )
+        raise error
+
+    monkeypatch.setattr(
+        restore_script,
+        "restore_backup_with_lock_and_ledger",
+        fail_restore_helper,
+    )
+
+    result = run_registered_task(
+        _args(
+            tmp_path,
+            backup=backup,
+            target=target,
+            mode="execute",
+            ack_risk="RESTORE_DB",
+        )
+    )
+
+    assert result.exit_code == EXIT_TASK_FAILURE
+    assert result.status == "failed"
+    evidence = result.outputs["evidence"]
+    assert evidence["dbOpsLedgerStatus"] == "error"
+    assert evidence["dbToolLockPath"] == str(lock_path)
+    assert evidence["targetSha256Before"] == "target-before"
+    assert evidence["targetSha256"] == "target-after"
+    assert evidence["backupSha256"] == "backup-hash"
+    assert evidence["restoreHelperEvidence"]["integrity_check"] == "bad-page"
+    assert evidence["restoreHelperEvidence"]["db_ops_ledger_status"] == "error"
+
+
 def test_lock_conflict_refuses_mutation(tmp_path: Path) -> None:
     backup = tmp_path / "backup.db"
     target = tmp_path / "signals.db"
