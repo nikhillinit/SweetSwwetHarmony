@@ -35,6 +35,7 @@ class CollectorPromoteTask(HermesTask):
         parser.add_argument("--collector-state", default="state/collectors.json")
         parser.add_argument("--collector-config", default=None)
         parser.add_argument("--idempotency-key", default=None)
+        parser.add_argument("--allow-collision-as-known", action="store_true")
 
     def plan(self, context: TaskContext) -> dict[str, Any]:
         collector = _arg(context, "collector")
@@ -42,6 +43,8 @@ class CollectorPromoteTask(HermesTask):
         target_state = _arg(context, "target_state")
         db_path = _db_path(context)
         transition = _transition(target_state)
+        database = _inspect_hunter_result(db_path, result_id)
+        collector_state = _inspect_collector_state(context, collector)
 
         plan = self._base_plan(context)
         plan.update(
@@ -51,17 +54,20 @@ class CollectorPromoteTask(HermesTask):
                 "target_state": target_state,
                 "result_target_state": transition.get("result_target_state"),
                 "transition": transition,
-                "database": _inspect_hunter_result(db_path, result_id),
-                "collector_state": _inspect_collector_state(context, collector),
+                "database": database,
+                "planned_result_updated_at": database.get("updated_at"),
+                "collector_state": collector_state,
                 "workflow": {
                     "module": "workflows.hunter_promotion",
                     "promotion_contract": (
                         "async promote_hunter_result(store, result_id, "
-                        "actor='system', idempotency_key=None)"
+                        "actor='system', idempotency_key=None, "
+                        "expected_updated_at=None)"
                     ),
                     "demotion_contract": (
                         "async storage.hunter_result_store.update_result_status("
-                        "store, result_id, 'not_relevant', ...)"
+                        "store, result_id, 'not_relevant', "
+                        "expected_updated_at=None, ...)"
                     ),
                 },
                 "artifacts": {
@@ -86,6 +92,7 @@ class CollectorPromoteTask(HermesTask):
                 "postflight_gates": [
                     "collector_promotion_artifact_written",
                     "promotion_result_success",
+                    "desired_outcome_satisfied",
                     "ledger_written",
                 ],
                 "mutation": {
@@ -211,6 +218,9 @@ class CollectorPromoteTask(HermesTask):
         result_success = dry_run_success or (
             isinstance(result, dict) and bool(result.get("success"))
         )
+        desired_outcome_satisfied = dry_run_success or bool(
+            outputs.get("desiredOutcomeSatisfied")
+        )
         return [
             CheckResult(
                 "collector_promotion_artifact_written",
@@ -223,6 +233,27 @@ class CollectorPromoteTask(HermesTask):
                 result_success,
                 "dry-run" if dry_run_success else str(result or "missing"),
                 result if isinstance(result, dict) else {},
+            ),
+            CheckResult(
+                "desired_outcome_satisfied",
+                desired_outcome_satisfied,
+                "dry-run"
+                if dry_run_success
+                else (
+                    "desired outcome satisfied"
+                    if desired_outcome_satisfied
+                    else "requested target not reached"
+                ),
+                {
+                    "requestedResultStatus": outputs.get("requestedResultStatus"),
+                    "actualResultStatus": outputs.get("actualResultStatus"),
+                    "requestedTargetReached": outputs.get("requestedTargetReached"),
+                    "desiredOutcomeSatisfied": outputs.get("desiredOutcomeSatisfied"),
+                    "allowCollisionAsKnown": bool(
+                        getattr(context.args, "allow_collision_as_known", False)
+                    ),
+                    "collision": outputs.get("collision"),
+                },
             ),
             CheckResult(
                 "ledger_written",
@@ -363,6 +394,7 @@ def _inspect_hunter_result(db_path: Path, result_id: Any) -> dict[str, Any]:
         "query_collector": None,
         "canonical_key": None,
         "promoted_signal_id": None,
+        "updated_at": None,
     }
     if result_id is None:
         return evidence
@@ -391,7 +423,7 @@ def _inspect_hunter_result(db_path: Path, result_id: Any) -> dict[str, Any]:
                 row = conn.execute(
                     """
                     SELECT r.id, r.status, r.source_api, r.canonical_key,
-                           r.promoted_signal_id, q.collector
+                           r.promoted_signal_id, q.collector, r.updated_at
                     FROM hunter_results r
                     LEFT JOIN hunter_queries q ON q.id = r.query_id
                     WHERE r.id = ?
@@ -402,7 +434,7 @@ def _inspect_hunter_result(db_path: Path, result_id: Any) -> dict[str, Any]:
                 row = conn.execute(
                     """
                     SELECT id, status, source_api, canonical_key,
-                           promoted_signal_id, NULL
+                           promoted_signal_id, NULL, updated_at
                     FROM hunter_results
                     WHERE id = ?
                     """,
@@ -423,6 +455,7 @@ def _inspect_hunter_result(db_path: Path, result_id: Any) -> dict[str, Any]:
                     "canonical_key": row[3],
                     "promoted_signal_id": row[4],
                     "query_collector": row[5],
+                    "updated_at": row[6],
                 }
             )
         finally:
@@ -522,6 +555,8 @@ def _rollback_recipe(
 def _run_transition(context: TaskContext, plan: dict[str, Any]) -> dict[str, Any]:
     try:
         return asyncio.run(_run_transition_async(context, plan))
+    except TaskFailure:
+        raise
     except Exception as exc:
         raise TaskFailure(str(exc)) from exc
 
@@ -534,40 +569,49 @@ async def _run_transition_async(
     db_path = _db_path(context)
     result_id = int(plan.get("result_id"))
     actor = _actor(context)
+    expected_updated_at = _planned_result_updated_at(plan)
 
     async with _open_signal_store(db_path, writable=True) as store:
-        if transition.get("action_type") == "hunter_promote":
-            promote = _load_promote_hunter_result()
-            result = await promote(
-                store,
-                result_id,
-                actor=actor,
-                idempotency_key=getattr(context.args, "idempotency_key", None),
-            )
-        elif transition.get("action_type") == "hunter_demote":
-            update_status = _load_update_result_status()
-            await update_status(
-                store,
-                result_id,
-                "not_relevant",
-                operator_feedback=_arg(context, "reason"),
-                actor=actor,
-            )
-            result = {
-                "success": True,
-                "result_id": result_id,
-                "status": "not_relevant",
-                "message": "Hunter result demoted to not_relevant",
-            }
-        else:
-            raise TaskFailure("unsupported collector promotion transition")
+        try:
+            if transition.get("action_type") == "hunter_promote":
+                promote = _load_promote_hunter_result()
+                result = await promote(
+                    store,
+                    result_id,
+                    actor=actor,
+                    idempotency_key=getattr(context.args, "idempotency_key", None),
+                    expected_updated_at=expected_updated_at,
+                )
+            elif transition.get("action_type") == "hunter_demote":
+                update_status = _load_update_result_status()
+                await update_status(
+                    store,
+                    result_id,
+                    "not_relevant",
+                    operator_feedback=_arg(context, "reason"),
+                    actor=actor,
+                    expected_updated_at=expected_updated_at,
+                )
+                result = {
+                    "success": True,
+                    "result_id": result_id,
+                    "status": "not_relevant",
+                    "message": "Hunter result demoted to not_relevant",
+                }
+            else:
+                raise TaskFailure("unsupported collector promotion transition")
+        except Exception as exc:
+            if _is_stale_update_error(exc):
+                raise _stale_update_failure(context, plan, exc) from exc
+            raise
 
     promotion_result = _promotion_result_to_dict(result)
+    writes_committed = _writes_committed(dry_run=False, promotion_result=promotion_result)
     return _collector_payload(
         context,
         plan,
         dry_run=False,
-        mutation_committed=bool(promotion_result.get("success")),
+        mutation_committed=writes_committed,
         promotion_result=promotion_result,
     )
 
@@ -580,6 +624,23 @@ def _collector_payload(
     mutation_committed: bool,
     promotion_result: dict[str, Any] | None,
 ) -> dict[str, Any]:
+    requested_status = _requested_result_status(plan)
+    actual_status = _actual_result_status(
+        plan,
+        dry_run=dry_run,
+        promotion_result=promotion_result,
+    )
+    idempotent = _idempotent(promotion_result)
+    collision = bool(promotion_result and promotion_result.get("collision"))
+    requested_target_reached = bool(
+        requested_status and actual_status and requested_status == actual_status
+    )
+    desired_outcome_satisfied = requested_target_reached or (
+        collision
+        and bool(getattr(context.args, "allow_collision_as_known", False))
+        and requested_status == "promoted"
+        and actual_status == "already_known"
+    )
     return {
         "task": CollectorPromoteTask.name,
         "mode": context.mode,
@@ -589,6 +650,13 @@ def _collector_payload(
         "resultId": plan.get("result_id"),
         "targetState": plan.get("target_state"),
         "resultTargetState": plan.get("result_target_state"),
+        "requestedResultStatus": requested_status,
+        "actualResultStatus": actual_status,
+        "requestedTargetReached": requested_target_reached,
+        "desiredOutcomeSatisfied": desired_outcome_satisfied,
+        "idempotent": idempotent,
+        "collision": collision,
+        "writesCommitted": mutation_committed,
         "transition": plan.get("transition", {}),
         "promotionResult": promotion_result,
         "artifactCommit": {
@@ -622,6 +690,89 @@ def _promotion_result_to_dict(result: Any) -> dict[str, Any]:
         "message": getattr(result, "message", ""),
         "collision": bool(getattr(result, "collision", False)),
     }
+
+
+def _planned_result_updated_at(plan: dict[str, Any]) -> str | None:
+    value = plan.get("planned_result_updated_at")
+    if value:
+        return str(value)
+    database = plan.get("database")
+    if isinstance(database, dict) and database.get("updated_at"):
+        return str(database["updated_at"])
+    return None
+
+
+def _requested_result_status(plan: dict[str, Any]) -> str | None:
+    value = plan.get("result_target_state")
+    return str(value) if value else None
+
+
+def _actual_result_status(
+    plan: dict[str, Any],
+    *,
+    dry_run: bool,
+    promotion_result: dict[str, Any] | None,
+) -> str | None:
+    if dry_run or not promotion_result:
+        database = plan.get("database")
+        if isinstance(database, dict) and database.get("status"):
+            return str(database["status"])
+        return None
+
+    status = str(promotion_result.get("status") or "")
+    if status == "already_promoted":
+        return "promoted"
+    return status or None
+
+
+def _idempotent(promotion_result: dict[str, Any] | None) -> bool:
+    return bool(promotion_result and promotion_result.get("status") == "already_promoted")
+
+
+def _writes_committed(
+    *,
+    dry_run: bool,
+    promotion_result: dict[str, Any] | None,
+) -> bool:
+    if dry_run or not promotion_result or not bool(promotion_result.get("success")):
+        return False
+    return str(promotion_result.get("status") or "") != "already_promoted"
+
+
+def _is_stale_update_error(exc: Exception) -> bool:
+    return exc.__class__.__name__ == "StaleUpdateError"
+
+
+def _stale_update_failure(
+    context: TaskContext,
+    plan: dict[str, Any],
+    exc: Exception,
+) -> TaskFailure:
+    observed = _inspect_hunter_result(_db_path(context), plan.get("result_id"))
+    planned = plan.get("database") if isinstance(plan.get("database"), dict) else {}
+    planned_updated_at = _planned_result_updated_at(plan)
+    observed_updated_at = (
+        str(observed.get("updated_at")) if observed.get("updated_at") else None
+    )
+    return TaskFailure(
+        (
+            f"stale hunter result version for result {plan.get('result_id')}: "
+            f"planned updated_at={planned_updated_at}, "
+            f"observed updated_at={observed_updated_at}"
+        ),
+        evidence={
+            "result_id": plan.get("result_id"),
+            "planned": {
+                "updated_at": planned_updated_at,
+                "hunter_result": planned,
+            },
+            "observed": {
+                "updated_at": observed_updated_at,
+                "hunter_result": observed,
+            },
+            "error": str(exc),
+        },
+    )
 
 
 def _actor(context: TaskContext) -> str:

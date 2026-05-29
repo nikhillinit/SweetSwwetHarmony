@@ -58,6 +58,7 @@ def _args(
     target_state: str | None = "active",
     ack_risk: str | None = None,
     idempotency_key: str | None = "idem-123",
+    allow_collision_as_known: bool = False,
 ) -> argparse.Namespace:
     return argparse.Namespace(
         task_name="collector-promote",
@@ -78,6 +79,7 @@ def _args(
         collector_state=str(_collector_state(tmp_path)),
         collector_config=None,
         idempotency_key=idempotency_key,
+        allow_collision_as_known=allow_collision_as_known,
         reason="operator decision",
     )
 
@@ -111,6 +113,7 @@ def _valid_hunter_result(*_: Any) -> dict[str, Any]:
         "query_collector": "github",
         "canonical_key": "domain:acme.ai",
         "promoted_signal_id": None,
+        "updated_at": "2026-05-29T06:00:00+00:00",
     }
 
 
@@ -166,6 +169,7 @@ def _patch_runtime(
         *,
         actor: str,
         idempotency_key: str | None,
+        expected_updated_at: str | None = None,
     ) -> dict[str, Any]:
         calls["promote"].append(
             {
@@ -173,6 +177,7 @@ def _patch_runtime(
                 "result_id": result_id,
                 "actor": actor,
                 "idempotency_key": idempotency_key,
+                "expected_updated_at": expected_updated_at,
             }
         )
         return promotion_result or {
@@ -191,6 +196,7 @@ def _patch_runtime(
         *,
         operator_feedback: str | None,
         actor: str,
+        expected_updated_at: str | None = None,
     ) -> None:
         calls["update_status"].append(
             {
@@ -199,6 +205,7 @@ def _patch_runtime(
                 "new_status": new_status,
                 "operator_feedback": operator_feedback,
                 "actor": actor,
+                "expected_updated_at": expected_updated_at,
             }
         )
 
@@ -312,6 +319,7 @@ def test_execute_uses_promotion_bridge_and_records_mutation_metadata(
     assert calls["update_status"] == []
     assert calls["promote"][0]["actor"] == "operator:test"
     assert calls["promote"][0]["idempotency_key"] == "idem-123"
+    assert calls["promote"][0]["expected_updated_at"] == "2026-05-29T06:00:00+00:00"
     assert result.plan["mutation"] == {
         "allowed": True,
         "affected_db": str(tmp_path / "signals.db"),
@@ -320,6 +328,13 @@ def test_execute_uses_promotion_bridge_and_records_mutation_metadata(
         "external_systems": [],
     }
     assert result.outputs["mutationCommitted"] is True
+    assert result.outputs["writesCommitted"] is True
+    assert result.outputs["requestedResultStatus"] == "promoted"
+    assert result.outputs["actualResultStatus"] == "promoted"
+    assert result.outputs["requestedTargetReached"] is True
+    assert result.outputs["desiredOutcomeSatisfied"] is True
+    assert result.outputs["idempotent"] is False
+    assert result.outputs["collision"] is False
     assert result.outputs["persistence"] == {
         "persisted": True,
         "affectedDb": str(tmp_path / "signals.db"),
@@ -365,6 +380,7 @@ def test_execute_demote_uses_status_bridge_and_demote_ack(
         "new_status": "not_relevant",
         "operator_feedback": "operator decision",
         "actor": "operator:test",
+        "expected_updated_at": "2026-05-29T06:00:00+00:00",
     }
     assert result.plan["mutation"]["affected_tables"] == collector_promote.DEMOTION_TABLES
     assert result.outputs["promotionResult"] == {
@@ -373,6 +389,254 @@ def test_execute_demote_uses_status_bridge_and_demote_ack(
         "status": "not_relevant",
         "message": "Hunter result demoted to not_relevant",
     }
+    assert result.outputs["requestedResultStatus"] == "not_relevant"
+    assert result.outputs["actualResultStatus"] == "not_relevant"
+    assert result.outputs["requestedTargetReached"] is True
+    assert result.outputs["writesCommitted"] is True
+
+
+def test_execute_already_promoted_is_idempotent_and_non_mutating(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_valid_preflight(monkeypatch)
+    _patch_runtime(
+        monkeypatch,
+        promotion_result={
+            "success": True,
+            "signal_id": 456,
+            "result_id": 123,
+            "status": "already_promoted",
+            "message": "Result already promoted",
+            "collision": False,
+        },
+    )
+
+    result = run_registered_task(
+        _args(
+            tmp_path,
+            mode="execute",
+            ack_risk=collector_promote.COLLECTOR_PROMOTE_ACK,
+        ),
+    )
+
+    assert result.exit_code == 0
+    assert result.status == "executed"
+    assert result.outputs["mutationCommitted"] is False
+    assert result.outputs["writesCommitted"] is False
+    assert result.outputs["requestedResultStatus"] == "promoted"
+    assert result.outputs["actualResultStatus"] == "promoted"
+    assert result.outputs["requestedTargetReached"] is True
+    assert result.outputs["desiredOutcomeSatisfied"] is True
+    assert result.outputs["idempotent"] is True
+    assert result.outputs["collision"] is False
+
+
+def test_execute_collision_fails_postflight_without_explicit_allowance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_valid_preflight(monkeypatch)
+    _patch_runtime(
+        monkeypatch,
+        promotion_result={
+            "success": True,
+            "signal_id": 789,
+            "result_id": 123,
+            "status": "already_known",
+            "message": "Canonical key collision",
+            "collision": True,
+        },
+    )
+
+    result = run_registered_task(
+        _args(
+            tmp_path,
+            mode="execute",
+            ack_risk=collector_promote.COLLECTOR_PROMOTE_ACK,
+        ),
+    )
+
+    assert result.exit_code == EXIT_GATE_FAILURE
+    assert result.status == "postflight_failed"
+    assert result.outputs["mutationCommitted"] is True
+    assert result.outputs["writesCommitted"] is True
+    assert result.outputs["actualResultStatus"] == "already_known"
+    assert result.outputs["requestedTargetReached"] is False
+    assert result.outputs["desiredOutcomeSatisfied"] is False
+    assert result.outputs["collision"] is True
+
+
+def test_execute_collision_can_be_explicitly_accepted_as_known(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_valid_preflight(monkeypatch)
+    _patch_runtime(
+        monkeypatch,
+        promotion_result={
+            "success": True,
+            "signal_id": 789,
+            "result_id": 123,
+            "status": "already_known",
+            "message": "Canonical key collision",
+            "collision": True,
+        },
+    )
+
+    result = run_registered_task(
+        _args(
+            tmp_path,
+            mode="execute",
+            ack_risk=collector_promote.COLLECTOR_PROMOTE_ACK,
+            allow_collision_as_known=True,
+        ),
+    )
+
+    assert result.exit_code == 0
+    assert result.status == "executed"
+    assert result.outputs["actualResultStatus"] == "already_known"
+    assert result.outputs["requestedTargetReached"] is False
+    assert result.outputs["desiredOutcomeSatisfied"] is True
+    assert result.outputs["collision"] is True
+
+
+def test_stale_promotion_fails_with_planned_and_observed_versions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed = {
+        **_valid_hunter_result(),
+        "updated_at": "2026-05-29T06:05:00+00:00",
+    }
+    states = [
+        {
+            **_valid_hunter_result(),
+            "updated_at": "2026-05-29T06:00:00+00:00",
+        },
+        {
+            **_valid_hunter_result(),
+            "updated_at": "2026-05-29T06:00:00+00:00",
+        },
+    ]
+
+    def fake_inspect(*_: Any) -> dict[str, Any]:
+        return states.pop(0) if states else observed
+
+    monkeypatch.setattr(
+        collector_promote,
+        "_inspect_collector_state",
+        _valid_collector_state,
+    )
+    monkeypatch.setattr(collector_promote, "_inspect_hunter_result", fake_inspect)
+    monkeypatch.setattr(
+        collector_promote,
+        "_promotion_bridge_import_check",
+        lambda: {
+            "available": True,
+            "detail": "fake bridge importable",
+            "module": "workflows.hunter_promotion",
+        },
+    )
+    calls = _patch_runtime(monkeypatch)
+
+    class StaleUpdateError(Exception):
+        pass
+
+    async def stale_promote(*_: Any, **__: Any) -> dict[str, Any]:
+        raise StaleUpdateError("stale row version")
+
+    monkeypatch.setattr(
+        collector_promote,
+        "_load_promote_hunter_result",
+        lambda: stale_promote,
+    )
+
+    result = run_registered_task(
+        _args(
+            tmp_path,
+            mode="execute",
+            ack_risk=collector_promote.COLLECTOR_PROMOTE_ACK,
+        ),
+    )
+
+    assert calls["writable"] == [True]
+    assert result.status == "failed"
+    assert result.outputs["evidence"]["planned"]["updated_at"] == (
+        "2026-05-29T06:00:00+00:00"
+    )
+    assert result.outputs["evidence"]["observed"]["updated_at"] == (
+        "2026-05-29T06:05:00+00:00"
+    )
+
+
+def test_stale_demotion_fails_with_planned_and_observed_versions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed = {
+        **_valid_hunter_result(),
+        "updated_at": "2026-05-29T06:07:00+00:00",
+    }
+    states = [
+        {
+            **_valid_hunter_result(),
+            "updated_at": "2026-05-29T06:00:00+00:00",
+        },
+        {
+            **_valid_hunter_result(),
+            "updated_at": "2026-05-29T06:00:00+00:00",
+        },
+    ]
+
+    def fake_inspect(*_: Any) -> dict[str, Any]:
+        return states.pop(0) if states else observed
+
+    monkeypatch.setattr(
+        collector_promote,
+        "_inspect_collector_state",
+        _valid_collector_state,
+    )
+    monkeypatch.setattr(collector_promote, "_inspect_hunter_result", fake_inspect)
+    monkeypatch.setattr(
+        collector_promote,
+        "_promotion_bridge_import_check",
+        lambda: {
+            "available": True,
+            "detail": "fake bridge importable",
+            "module": "workflows.hunter_promotion",
+        },
+    )
+    _patch_runtime(monkeypatch)
+
+    class StaleUpdateError(Exception):
+        pass
+
+    async def stale_demote(*_: Any, **__: Any) -> None:
+        raise StaleUpdateError("stale row version")
+
+    monkeypatch.setattr(
+        collector_promote,
+        "_load_update_result_status",
+        lambda: stale_demote,
+    )
+
+    result = run_registered_task(
+        _args(
+            tmp_path,
+            mode="execute",
+            target_state="shadow",
+            ack_risk=collector_promote.COLLECTOR_DEMOTE_ACK,
+        ),
+    )
+
+    assert result.status == "failed"
+    assert result.outputs["evidence"]["planned"]["updated_at"] == (
+        "2026-05-29T06:00:00+00:00"
+    )
+    assert result.outputs["evidence"]["observed"]["updated_at"] == (
+        "2026-05-29T06:07:00+00:00"
+    )
 
 
 def test_postflight_catches_missing_collector_promotion_artifact(
