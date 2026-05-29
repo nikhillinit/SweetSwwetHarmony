@@ -14,12 +14,15 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import logging
 import shutil
 import sqlite3
 import sys
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 from utils.db_path_helper import add_db_path_args, resolve_db_path, resolve_db_path_env
 from utils.db_tool_errors import DBToolError
@@ -28,6 +31,21 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_API_URL = "http://localhost:8000/api/v1/health"
 PRE_RESTORE_PREFIX = "pre-restore-"
+LOCK_TIMEOUT_SECONDS = 5
+
+
+@dataclass(frozen=True)
+class RestoreBackupResult:
+    backup_path: Path
+    db_path: Path
+    pre_restore_backup: Path
+    target_sha256_before: str | None
+    target_sha256_after: str
+    backup_sha256: str
+    integrity_check: str
+    schema_version: int | None
+    db_ops_ledger_status: str
+    lock_path: Path
 
 
 class RestoreError(DBToolError):
@@ -40,16 +58,19 @@ class RestoreError(DBToolError):
         pre_restore_backup: Path | None = None,
         sidecar_state: dict | list | str | None = None,
         integrity_check: str | None = None,
+        partial_evidence: dict[str, Any] | None = None,
     ) -> None:
+        evidence = {
+            "pre_restore_backup": (
+                str(pre_restore_backup) if pre_restore_backup else None
+            ),
+            "sidecar_state": sidecar_state,
+            "integrity_check": integrity_check,
+        }
+        evidence.update(partial_evidence or {})
         super().__init__(
             message,
-            partial_evidence={
-                "pre_restore_backup": (
-                    str(pre_restore_backup) if pre_restore_backup else None
-                ),
-                "sidecar_state": sidecar_state,
-                "integrity_check": integrity_check,
-            },
+            partial_evidence=evidence,
         )
         self.pre_restore_backup = pre_restore_backup
         self.sidecar_state = sidecar_state
@@ -143,6 +164,181 @@ def _get_schema_version(db_path: Path) -> int | None:
             conn.close()
     except sqlite3.OperationalError:
         return None
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _sha256_if_exists(path: Path) -> str | None:
+    return _sha256_file(path) if path.exists() else None
+
+
+def _sqlite_integrity_check(db_path: Path) -> str:
+    conn = sqlite3.connect(str(db_path))
+    try:
+        row = conn.execute("PRAGMA integrity_check").fetchone()
+        return row[0] if row else "missing"
+    finally:
+        conn.close()
+
+
+def _restore_ledger_details(
+    *,
+    backup_path: Path,
+    lock_path: Path,
+    status: str,
+    pre_restore_backup: Path | None = None,
+    target_sha256_before: str | None = None,
+    target_sha256_after: str | None = None,
+    backup_sha256: str | None = None,
+    integrity_check: str | None = None,
+    schema_version: int | None = None,
+    extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    details = {
+        "backup_file": str(backup_path),
+        "backup_path": str(backup_path),
+        "pre_restore_backup": str(pre_restore_backup) if pre_restore_backup else None,
+        "target_sha256_before": target_sha256_before,
+        "target_sha256_after": target_sha256_after,
+        "backup_sha256": backup_sha256,
+        "integrity_check": integrity_check,
+        "schema_version": schema_version,
+        "db_ops_ledger_status": status,
+        "lock_path": str(lock_path),
+    }
+    details.update(extra or {})
+    details["db_ops_ledger_status"] = status
+    return details
+
+
+def restore_backup_with_lock_and_ledger(
+    backup_path: str | Path,
+    db_path: str | Path | None = None,
+    force: bool = False,
+    api_url: str = DEFAULT_API_URL,
+    *,
+    lock_timeout_seconds: int = LOCK_TIMEOUT_SECONDS,
+) -> RestoreBackupResult:
+    """Restore a backup while owning DB tool lock and DB ops ledger writes."""
+
+    from utils.db_ops_ledger import append_db_ops_ledger
+    from utils.db_tool_lock import DBToolLock
+
+    backup = Path(backup_path)
+    resolved_db_path = Path(resolve_db_path_env(db_path)).resolve()
+    lock = DBToolLock(resolved_db_path, tool_name="restore_db")
+    lock_path = lock.lock_path
+    target_sha256_before = _sha256_if_exists(resolved_db_path)
+    backup_sha256 = _sha256_if_exists(backup)
+
+    if not lock.acquire(timeout_seconds=lock_timeout_seconds):
+        holder = lock.get_holder_info()
+        details = _restore_ledger_details(
+            backup_path=backup,
+            lock_path=lock_path,
+            status="lock_blocked",
+            target_sha256_before=target_sha256_before,
+            backup_sha256=backup_sha256,
+            extra={"holder": holder},
+        )
+        append_db_ops_ledger(
+            tool_name="restore_db",
+            db_path=str(resolved_db_path),
+            action="restore_backup",
+            status="lock_blocked",
+            details=details,
+        )
+        raise RestoreError(
+            f"Could not acquire DB tool lock. Holder: {holder}",
+            partial_evidence=details,
+        )
+
+    try:
+        pre_restore = restore_backup(
+            backup,
+            resolved_db_path,
+            force,
+            api_url,
+        )
+        target_sha256_after = _sha256_file(resolved_db_path)
+        integrity_check = _sqlite_integrity_check(resolved_db_path)
+        schema_version = _get_schema_version(resolved_db_path)
+        result = RestoreBackupResult(
+            backup_path=backup,
+            db_path=resolved_db_path,
+            pre_restore_backup=pre_restore,
+            target_sha256_before=target_sha256_before,
+            target_sha256_after=target_sha256_after,
+            backup_sha256=backup_sha256 or _sha256_file(backup),
+            integrity_check=integrity_check,
+            schema_version=schema_version,
+            db_ops_ledger_status="success",
+            lock_path=lock_path,
+        )
+        append_db_ops_ledger(
+            tool_name="restore_db",
+            db_path=str(resolved_db_path),
+            action="restore_backup",
+            status="success",
+            details=_restore_ledger_details(
+                backup_path=result.backup_path,
+                lock_path=result.lock_path,
+                status=result.db_ops_ledger_status,
+                pre_restore_backup=result.pre_restore_backup,
+                target_sha256_before=result.target_sha256_before,
+                target_sha256_after=result.target_sha256_after,
+                backup_sha256=result.backup_sha256,
+                integrity_check=result.integrity_check,
+                schema_version=result.schema_version,
+            ),
+        )
+        return result
+    except RestoreError as exc:
+        details = _restore_ledger_details(
+            backup_path=backup,
+            lock_path=lock_path,
+            status="error",
+            target_sha256_before=target_sha256_before,
+            target_sha256_after=_sha256_if_exists(resolved_db_path),
+            backup_sha256=backup_sha256,
+            extra=exc.partial_evidence,
+        )
+        details["error"] = str(exc)
+        exc.partial_evidence = details
+        append_db_ops_ledger(
+            tool_name="restore_db",
+            db_path=str(resolved_db_path),
+            action="restore_backup",
+            status="error",
+            details=details,
+        )
+        raise
+    except Exception as exc:
+        details = _restore_ledger_details(
+            backup_path=backup,
+            lock_path=lock_path,
+            status="error",
+            target_sha256_before=target_sha256_before,
+            target_sha256_after=_sha256_if_exists(resolved_db_path),
+            backup_sha256=backup_sha256,
+        )
+        details["error"] = str(exc)
+        append_db_ops_ledger(
+            tool_name="restore_db",
+            db_path=str(resolved_db_path),
+            action="restore_backup",
+            status="error",
+            details=details,
+        )
+        raise RestoreError(str(exc), partial_evidence=details) from exc
+    finally:
+        lock.release()
 
 
 def restore_backup(
@@ -277,64 +473,18 @@ def main(argv: list[str] | None = None) -> int:
         format="%(asctime)s [%(levelname)s] %(message)s",
     )
 
-    from utils.db_ops_ledger import append_db_ops_ledger
-    from utils.db_tool_lock import DBToolLock
-
-    lock = DBToolLock(resolved_db_path, tool_name="restore_db")
-    if not lock.acquire(timeout_seconds=5):
-        holder = lock.get_holder_info()
-        append_db_ops_ledger(
-            tool_name="restore_db",
-            db_path=resolved_db_path,
-            action="restore_backup",
-            status="lock_blocked",
-            details={"holder": holder, "backup_file": args.backup_file},
-        )
-        print(f"ERROR: Could not acquire DB tool lock. Holder: {holder}", file=sys.stderr)
-        return 1
-
     try:
-        pre_restore = restore_backup(
+        result = restore_backup_with_lock_and_ledger(
             args.backup_file,
             resolved_db_path,
             args.force,
             args.api_url,
         )
-        append_db_ops_ledger(
-            tool_name="restore_db",
-            db_path=resolved_db_path,
-            action="restore_backup",
-            status="success",
-            details={"backup_file": args.backup_file, "pre_restore_backup": str(pre_restore)},
-        )
-        print(f"Restore complete. Pre-restore backup: {pre_restore}")
+        print(f"Restore complete. Pre-restore backup: {result.pre_restore_backup}")
         return 0
-    except RestoreError as e:
-        append_db_ops_ledger(
-            tool_name="restore_db",
-            db_path=resolved_db_path,
-            action="restore_backup",
-            status="error",
-            details={
-                **e.partial_evidence,
-                "backup_file": args.backup_file,
-                "error": str(e),
-            },
-        )
-        print(f"ERROR: {e}", file=sys.stderr)
-        return 1
     except Exception as e:
-        append_db_ops_ledger(
-            tool_name="restore_db",
-            db_path=resolved_db_path,
-            action="restore_backup",
-            status="error",
-            details={"backup_file": args.backup_file, "error": str(e)},
-        )
         print(f"ERROR: {e}", file=sys.stderr)
         return 1
-    finally:
-        lock.release()
 
 
 if __name__ == "__main__":
