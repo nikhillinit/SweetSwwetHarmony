@@ -27,7 +27,6 @@ from typing import Any, Dict, Optional, TYPE_CHECKING
 from storage.audit_events import insert_event
 from storage.hunter_result_store import (
     InvalidHunterTransition,
-    RESULT_TRANSITIONS,
     StaleUpdateError,
 )
 
@@ -73,6 +72,7 @@ async def promote_hunter_result(
     *,
     actor: str = "system",
     idempotency_key: Optional[str] = None,
+    expected_updated_at: Optional[str] = None,
 ) -> PromotionResult:
     """Promote a hunter result to the signals table.
 
@@ -81,6 +81,8 @@ async def promote_hunter_result(
         result_id: Hunter result ID to promote
         actor: Who initiated the promotion
         idempotency_key: Client-supplied idempotency key
+        expected_updated_at: Planned hunter_results.updated_at value. When
+            provided, the row version is compared inside the write transaction.
 
     Returns:
         PromotionResult with success status and signal_id.
@@ -92,22 +94,23 @@ async def promote_hunter_result(
     if not idempotency_key:
         idempotency_key = f"hunter_promote:{result_id}:auto"
 
-    # 1. Idempotency pre-check (fast path)
-    cursor = await db.execute(
-        "SELECT resource_id FROM idempotency_keys WHERE key = ? LIMIT 1",
-        (idempotency_key,),
-    )
-    existing_idem = await cursor.fetchone()
-    if existing_idem:
-        # Already promoted — return existing signal_id
-        existing_signal_id = int(existing_idem[0]) if existing_idem[0] else None
-        return PromotionResult(
-            success=True,
-            signal_id=existing_signal_id,
-            result_id=result_id,
-            status="already_promoted",
-            message="Idempotent: promotion already completed",
+    # 1. Idempotency pre-check (fast path). Version-bound callers must inspect
+    # the planned row version inside BEGIN IMMEDIATE before returning success.
+    if expected_updated_at is None:
+        cursor = await db.execute(
+            "SELECT resource_id FROM idempotency_keys WHERE key = ? LIMIT 1",
+            (idempotency_key,),
         )
+        existing_idem = await cursor.fetchone()
+        if existing_idem:
+            existing_signal_id = int(existing_idem[0]) if existing_idem[0] else None
+            return PromotionResult(
+                success=True,
+                signal_id=existing_signal_id,
+                result_id=result_id,
+                status="already_promoted",
+                message="Idempotent: promotion already completed",
+            )
 
     # 2. BEGIN IMMEDIATE
     async with store.transaction_immediate() as tx:
@@ -126,6 +129,12 @@ async def promote_hunter_result(
             _, current_status, canonical_key, company_name,
             source_api, raw_data_str, confidence, updated_at, company_id,
         ) = row
+
+        if expected_updated_at and updated_at != expected_updated_at:
+            raise StaleUpdateError(
+                f"Result {result_id} was modified. "
+                f"Expected updated_at={expected_updated_at}, got {updated_at}"
+            )
 
         # Already promoted? Return existing signal_id (idempotent)
         if current_status == "promoted":

@@ -12,6 +12,13 @@
     "resultId",
     "targetState",
     "resultTargetState",
+    "requestedResultStatus",
+    "actualResultStatus",
+    "requestedTargetReached",
+    "desiredOutcomeSatisfied",
+    "idempotent",
+    "collision",
+    "writesCommitted",
     "transition",
     "promotionResult",
     "artifactCommit",
@@ -26,6 +33,15 @@
     "resultId": {"type": "integer", "minimum": 1},
     "targetState": {"type": "string", "minLength": 1},
     "resultTargetState": {"enum": ["promoted", "not_relevant"]},
+    "requestedResultStatus": {"enum": ["promoted", "not_relevant"]},
+    "actualResultStatus": {
+      "enum": ["pending", "relevant", "promoted", "not_relevant", "already_known", null]
+    },
+    "requestedTargetReached": {"type": "boolean"},
+    "desiredOutcomeSatisfied": {"type": "boolean"},
+    "idempotent": {"type": "boolean"},
+    "collision": {"type": "boolean"},
+    "writesCommitted": {"type": "boolean"},
     "transition": {
       "type": "object",
       "required": [

@@ -1,11 +1,11 @@
 """Tests for Hunter Promotion Bridge — the ONLY module writing to signals."""
 
-import json
 import pytest
 
 from storage.signal_store import SignalStore
 from storage.hunter_result_store import (
     InvalidHunterTransition,
+    StaleUpdateError,
     create_query,
     create_result,
     update_result_status,
@@ -73,6 +73,29 @@ class TestSuccessfulPromotion:
         assert hr["promoted_signal_id"] == result.signal_id
         assert hr["promoted_at"] is not None
 
+    @pytest.mark.asyncio
+    async def test_stale_expected_updated_at_rejects_without_writes(self, store):
+        rid = await _create_relevant_result(store)
+        planned = await get_result_by_id(store, rid)
+        await store._db.execute(
+            "UPDATE hunter_results SET updated_at = ? WHERE id = ?",
+            ("2026-05-29T06:05:00+00:00", rid),
+        )
+        await store._db.commit()
+
+        with pytest.raises(StaleUpdateError, match="Expected updated_at"):
+            await promote_hunter_result(
+                store,
+                rid,
+                expected_updated_at=planned["updated_at"],
+            )
+
+        after = await get_result_by_id(store, rid)
+        assert after["status"] == "relevant"
+        assert after["promoted_signal_id"] is None
+        cursor = await store._db.execute("SELECT COUNT(*) FROM signals")
+        assert (await cursor.fetchone())[0] == 0
+
 
 class TestIdempotency:
     @pytest.mark.asyncio
@@ -80,6 +103,23 @@ class TestIdempotency:
         rid = await _create_relevant_result(store)
         result1 = await promote_hunter_result(store, rid, idempotency_key="key1")
         result2 = await promote_hunter_result(store, rid, idempotency_key="key1")
+
+        assert result2.success is True
+        assert result2.status == "already_promoted"
+        assert result2.signal_id == result1.signal_id
+
+    @pytest.mark.asyncio
+    async def test_already_promoted_accepts_matching_expected_updated_at(self, store):
+        rid = await _create_relevant_result(store)
+        result1 = await promote_hunter_result(store, rid, idempotency_key="key1")
+        promoted = await get_result_by_id(store, rid)
+
+        result2 = await promote_hunter_result(
+            store,
+            rid,
+            idempotency_key="key2",
+            expected_updated_at=promoted["updated_at"],
+        )
 
         assert result2.success is True
         assert result2.status == "already_promoted"
