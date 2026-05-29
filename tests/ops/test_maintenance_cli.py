@@ -9,8 +9,6 @@ from unittest.mock import patch, MagicMock
 
 from ops.maintenance.incident import (
     MaintenanceIncident,
-    ARTIFACTS_DIR,
-    create_incident,
 )
 
 
