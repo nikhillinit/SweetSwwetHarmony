@@ -265,19 +265,38 @@ class RestoreDbTask(HermesTask):
             outputs["preRestoreSnapshotSha256"] = sha256_file(snapshot)
 
         try:
-            from scripts.restore_db import DEFAULT_API_URL, restore_backup
+            from scripts.restore_db import (
+                DEFAULT_API_URL,
+                RestoreError,
+                restore_backup_with_lock_and_ledger,
+            )
 
-            pre_restore = restore_backup(
+            restore_result = restore_backup_with_lock_and_ledger(
                 backup,
                 target,
                 bool(getattr(context.args, "force", False)),
                 getattr(context.args, "api_url", None) or DEFAULT_API_URL,
             )
+        except RestoreError as exc:
+            evidence = {
+                **outputs,
+                **_restore_helper_outputs(exc.partial_evidence),
+                "restoreHelperEvidence": dict(exc.partial_evidence),
+            }
+            raise TaskFailure(str(exc), evidence=evidence) from exc
         except Exception as exc:
             raise TaskFailure(str(exc), evidence=outputs) from exc
 
-        outputs["canonicalPreRestorePath"] = str(pre_restore)
-        outputs["targetSha256"] = sha256_file(target) if target.exists() else None
+        outputs.update(
+            {
+                "dbOpsLedgerStatus": restore_result.db_ops_ledger_status,
+                "dbToolLockPath": str(restore_result.lock_path),
+                "canonicalPreRestorePath": str(restore_result.pre_restore_backup),
+                "targetSha256Before": restore_result.target_sha256_before,
+                "targetSha256": restore_result.target_sha256_after,
+                "backupSha256": restore_result.backup_sha256,
+            }
+        )
         return outputs
 
     def postflight(
@@ -341,3 +360,19 @@ def _sidecars(db_path: Path) -> tuple[Path, Path]:
         db_path.with_name(db_path.name + "-wal"),
         db_path.with_name(db_path.name + "-shm"),
     )
+
+
+def _restore_helper_outputs(evidence: dict[str, Any]) -> dict[str, Any]:
+    outputs: dict[str, Any] = {}
+    key_map = {
+        "db_ops_ledger_status": "dbOpsLedgerStatus",
+        "lock_path": "dbToolLockPath",
+        "pre_restore_backup": "canonicalPreRestorePath",
+        "target_sha256_before": "targetSha256Before",
+        "target_sha256_after": "targetSha256",
+        "backup_sha256": "backupSha256",
+    }
+    for source_key, output_key in key_map.items():
+        if source_key in evidence:
+            outputs[output_key] = evidence[source_key]
+    return outputs
