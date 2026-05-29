@@ -145,6 +145,8 @@ def add_task_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--incident-id")
     parser.add_argument("--direct-db")
     parser.add_argument("--state-source")
+    parser.add_argument("--state-verify-attempts", type=int, default=3)
+    parser.add_argument("--state-verify-delay-seconds", type=float, default=1.0)
     DeliberationTask.add_arguments(parser)
     parser.add_argument(
         "--phase-name",
