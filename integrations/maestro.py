@@ -247,7 +247,7 @@ class Maestro:
 
     Supports two LLM backends with smart selection:
     - Codex CLI (default): Sandbox-isolated, uses ChatGPT Pro subscription
-    - Kimi: API-based, supports up to 256K context, cost-effective
+    - Kimi: CLI-backed shared generation wrapper
 
     Kimi Modes:
     - auto: Smart selection based on context size (>=5 files or >=20K tokens)
@@ -305,8 +305,8 @@ class Maestro:
     def kimi(self):
         """Lazy-load Kimi client for forensic workflow."""
         if self._kimi is None:
-            from .kimi_client import KimiClient
-            self._kimi = KimiClient()
+            from .llm_cli import KimiCLIClient
+            self._kimi = KimiCLIClient()
         return self._kimi
 
     def _estimate_context_size(
@@ -561,8 +561,6 @@ class Maestro:
         Returns:
             ForensicResult with all phase iterations and final state
         """
-        # Resolve effective mode (override takes precedence)
-        effective_mode = mode_override if mode_override else self.kimi_mode
         original_mode = self.kimi_mode
         if mode_override:
             self.kimi_mode = mode_override  # Temporarily set for _get_backend_for_phase
@@ -1315,7 +1313,10 @@ def main():
     )
 
     # Budget command
-    budget_parser = subparsers.add_parser("budget", help="Show Kimi API budget status")
+    budget_parser = subparsers.add_parser(
+        "budget",
+        help="Show legacy Kimi API budget status",
+    )
     budget_parser.add_argument(
         "--reset",
         action="store_true",
@@ -1340,9 +1341,9 @@ def main():
             print(json.dumps(result.to_dict(), indent=2))
 
         elif args.command == "budget":
-            from .kimi_client import get_budget_status, _load_budget, _save_budget, DAILY_TOKEN_LIMIT
+            from .kimi_client import get_budget_status, _load_budget, _save_budget
             status = get_budget_status()
-            print(f"Kimi API Budget Status")
+            print("Legacy Kimi API Budget Status")
             print(f"{'='*40}")
             print(f"Daily tokens:   {status['daily_tokens']:>10,} / {status['daily_limit']:,}")
             print(f"Daily remaining:{status['daily_remaining']:>10,} ({100-status['daily_percent']:.1f}%)")
@@ -1354,7 +1355,7 @@ def main():
                 budget = _load_budget()
                 budget.daily_tokens = 0
                 _save_budget()
-                print(f"\n[RESET] Daily budget counter reset to 0")
+                print("\n[RESET] Daily budget counter reset to 0")
 
         elif args.command == "forensic":
             kimi_mode = KimiMode(getattr(args, 'kimi_mode', 'auto'))
@@ -1365,16 +1366,19 @@ def main():
                 from .kimi_client import get_budget_status
                 status = get_budget_status()
                 if status['warning']:
-                    print(f"[BUDGET WARNING] Kimi at {status['daily_percent']:.1f}% daily limit")
+                    print(
+                        f"[LEGACY API BUDGET WARNING] "
+                        f"Kimi at {status['daily_percent']:.1f}% daily limit"
+                    )
                     print(f"                 {status['daily_remaining']:,} tokens remaining")
                     print()
             except Exception:
                 pass
 
-            print(f"Starting Forensic Engineer workflow...")
+            print("Starting Forensic Engineer workflow...")
             print(f"  Task: {args.task}")
             print(f"  Kimi mode: {kimi_mode.value}")
-            print(f"  Phases: ANALYZE -> PLAN -> EXECUTE -> VERIFY")
+            print("  Phases: ANALYZE -> PLAN -> EXECUTE -> VERIFY")
             print()
 
             result = await maestro.forensic_collaborate(
@@ -1387,7 +1391,7 @@ def main():
 
             # Print phase summary
             print(f"\n{'='*60}")
-            print(f"FORENSIC WORKFLOW COMPLETE")
+            print("FORENSIC WORKFLOW COMPLETE")
             print(f"{'='*60}")
             print(f"Final State: {result.final_state.value}")
             print(f"Phases Completed: {len(result.iterations)}")
@@ -1397,12 +1401,12 @@ def main():
                 print(f"  [{status}] {it.phase.value.upper()}: {it.objective[:50]}...")
 
             if result.agreed_points:
-                print(f"\nAgreed Points:")
+                print("\nAgreed Points:")
                 for p in result.agreed_points[:5]:
                     print(f"  - {p[:80]}...")
 
             if result.remaining_issues:
-                print(f"\nRemaining Issues:")
+                print("\nRemaining Issues:")
                 for i in result.remaining_issues[:5]:
                     print(f"  - {i[:80]}...")
 
