@@ -87,7 +87,7 @@ def test_recovery_canary_fixture_records_logical_restore_evidence() -> None:
     assert logical["final_filesystem_sidecars_present"] == []
 
 
-def test_recovery_canary_fixture_keeps_e3_blocker_explicit() -> None:
+def test_recovery_canary_fixture_records_retired_e3_blocker() -> None:
     manifest = _load_manifest()
     f6 = {assertion["name"]: assertion for assertion in manifest["f6_assertions"]}
 
@@ -98,21 +98,23 @@ def test_recovery_canary_fixture_keeps_e3_blocker_explicit() -> None:
         "integrity_check_ok",
         "db_ops_ledger_row_present",
         "hermes_run_dir_present",
+        "no_unexpected_sidecars",
+        "no_repair_prompt",
     ):
         assert f6[name]["passed"] is True
 
-    assert f6["no_unexpected_sidecars"]["passed"] is False
-    assert f6["no_unexpected_sidecars"]["observed_by_execute_postflight"] == [
-        "signals.db.canary-wal",
-        "signals.db.canary-shm",
-    ]
+    assert f6["no_unexpected_sidecars"]["observed_by_execute_postflight"] == []
     assert f6["no_unexpected_sidecars"]["final_filesystem_sidecars_present"] == []
     assert f6["no_repair_prompt"] == {
         "name": "no_repair_prompt",
-        "passed": False,
-        "repair_prompt_ref": "runs/hermes_20260530_060707_3daf76be/repair_prompt.md",
+        "passed": True,
+        "repair_prompt_written": False,
     }
-    assert manifest["commands"]["execute"]["status"] == "postflight_failed"
-    assert manifest["commands"]["execute"]["repair_prompt_written"] is True
+    assert manifest["commands"]["execute"]["status"] == "executed"
+    assert manifest["commands"]["execute"]["exit_code"] == 0
+    assert manifest["commands"]["execute"]["repair_prompt_written"] is False
     assert manifest["blocker"]["kind"] == "restore_task_transient_wal_sidecar_postflight"
-    assert manifest["blocker"]["not_fixed_in_this_pr"] is True
+    assert manifest["blocker"]["status"] == "retired"
+    assert manifest["blocker"]["observed_in_pr"] == "#241"
+    assert manifest["blocker"]["not_fixed_in_pr_241"] is True
+    assert manifest["blocker"]["retired_by_this_follow_up"] is True
