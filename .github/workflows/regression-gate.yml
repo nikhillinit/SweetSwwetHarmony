@@ -46,6 +46,11 @@ jobs:
       - name: Identity pattern lint
         run: python scripts/lint_identity_patterns.py --check --baseline scripts/identity_lint_baseline.json --root .
 
+      - name: CLI-exclusive LLM generation guard
+        run: |
+          python -m pytest tests/ci/test_cli_exclusive_generation.py \
+            --tb=short -q
+
       - name: Schema version fast-fail
         run: |
           python -m pytest tests/storage/test_schema_version_parity.py \

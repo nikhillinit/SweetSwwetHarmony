@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "metadata": {
+    "description": "CLI-exclusive LLM generation ratchet. Existing API-backed generation surfaces are baselined; new files or per-file count increases fail. Gemini embeddings remain a documented API carve-out and are checked in the pytest guard.",
+    "generated_from_commit": "02c86fd",
+    "generated_for_branch": "codex/llm-cli-generation-guard"
+  },
+  "rules": {
+    "llm-generation-api-surface": {
+      "metadata": {
+        "total_files": 13,
+        "total_occurrences": 33
+      },
+      "files": {
+        "consumer/_gemini_instructor.py": {
+          "count": 1,
+          "note": "Deferred classifier helper: Instructor/Google GenAI structured-output support stays API-backed until the classifier migration phase."
+        },
+        "consumer/functional_extractor.py": {
+          "count": 1,
+          "note": "Migration target: free-form consumer extractor still calls Gemini generate_content."
+        },
+        "consumer/llm_classifier_v2.py": {
+          "count": 4,
+          "note": "Deferred classifier path: structured Gemini classification remains API-backed for a later phase."
+        },
+        "consumer/thesis_filter/llm_classifier.py": {
+          "count": 5,
+          "note": "Deferred thesis classifier: structured-output migration is intentionally out of scope for this guard-first PR."
+        },
+        "integrations/hermes/adapters.py": {
+          "count": 1,
+          "note": "Migration target: Hermes Kimi executor still constructs the API-backed KimiClient until the provider migration PR."
+        },
+        "integrations/kimi_client.py": {
+          "count": 5,
+          "note": "Migration target: Kimi/Moonshot OpenAI-compatible API client will be replaced by the shared CLI generation layer."
+        },
+        "integrations/maestro.py": {
+          "count": 1,
+          "note": "Migration target: Maestro still lazy-loads the API-backed KimiClient."
+        },
+        "integrations/openai_mcp.py": {
+          "count": 4,
+          "note": "Migration target: OpenAI API bridge still constructs AsyncOpenAI and calls chat.completions.create."
+        },
+        "integrations/strategy_iterator.py": {
+          "count": 1,
+          "note": "Migration target: strategy iteration still constructs OpenAIMCPServer for API-backed OpenAI perspective generation."
+        },
+        "ops/llm_classifier_v2.py": {
+          "count": 3,
+          "note": "Deferred classifier path: ops classification still uses Google GenAI API generation."
+        },
+        "ops/memory/extractor.py": {
+          "count": 3,
+          "note": "Migration target: memory extractor still calls Gemini generate_content."
+        },
+        "profilers/extractors/llm_extractor.py": {
+          "count": 2,
+          "note": "Migration target: profiler LLM extractor still calls Gemini generate_content."
+        },
+        "utils/news_digest.py": {
+          "count": 2,
+          "note": "Migration target: news digest helper still calls Gemini generate_content; embedding APIs remain the permanent carve-out."
+        }
+      }
+    }
+  }
+}
