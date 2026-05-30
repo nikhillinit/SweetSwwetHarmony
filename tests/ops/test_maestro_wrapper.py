@@ -8,14 +8,12 @@ Tests:
 - Decision record creation
 """
 
-import json
 import pytest
 from unittest.mock import MagicMock, AsyncMock, patch
 from pydantic import BaseModel
 
 from ops.integrations.maestro_wrapper import (
     OpsLayerMaestro,
-    ContextSizeDecision,
     StructuredOutputMeta,
     VersionedOutput,
 )
@@ -226,6 +224,127 @@ class TestTextOnlyRouting:
         )
 
         assert should_use is False
+
+
+# =============================================================================
+# KIMI CLI BACKEND TESTS
+# =============================================================================
+
+class TestMaestroKimiCliBackend:
+    """Tests for Maestro routing through the shared Kimi CLI wrapper."""
+
+    def test_maestro_lazy_loads_kimi_cli_client(self):
+        """Verify Maestro lazy-loads the shared CLI-backed Kimi client."""
+        from integrations.maestro import Maestro, KimiMode
+
+        fake_client = MagicMock()
+
+        with patch(
+            "integrations.llm_cli.KimiCLIClient",
+            return_value=fake_client,
+        ) as client_cls:
+            maestro = Maestro(kimi_mode=KimiMode.ALWAYS)
+
+            assert maestro._kimi is None
+            assert maestro.kimi is fake_client
+            assert maestro.kimi is fake_client
+
+        client_cls.assert_called_once_with()
+
+    def test_forced_kimi_selection_uses_cli_backend(self):
+        """Verify forced Kimi routing returns the CLI-backed client."""
+        from integrations.maestro import ForensicPhase, Maestro, KimiMode
+
+        fake_client = MagicMock()
+
+        with patch("integrations.llm_cli.KimiCLIClient", return_value=fake_client):
+            maestro = Maestro(kimi_mode=KimiMode.ALWAYS)
+            backend, backend_name = maestro._get_backend_for_phase(
+                ForensicPhase.PLAN,
+                context_files=None,
+            )
+
+        assert backend is fake_client
+        assert backend_name == "Kimi"
+        assert maestro._kimi_used_this_session is True
+
+    def test_auto_kimi_selection_uses_cli_backend_for_large_context(self):
+        """Verify auto Kimi routing returns the CLI-backed client."""
+        from integrations.maestro import ForensicPhase, Maestro, KimiMode
+
+        fake_client = MagicMock()
+        large_context = "x" * 100_000
+
+        with patch("integrations.llm_cli.KimiCLIClient", return_value=fake_client):
+            maestro = Maestro(kimi_mode=KimiMode.AUTO)
+            backend, backend_name = maestro._get_backend_for_phase(
+                ForensicPhase.ANALYZE,
+                context_files=None,
+                context_text=large_context,
+            )
+
+        assert backend is fake_client
+        assert backend_name == "Kimi"
+        assert maestro._kimi_used_this_session is True
+
+    def test_never_and_dual_kimi_modes_keep_existing_semantics(self):
+        """Verify non-default Kimi modes keep their routing behavior."""
+        from integrations.maestro import ForensicPhase, Maestro, KimiMode
+
+        never_maestro = Maestro(kimi_mode=KimiMode.NEVER)
+        assert never_maestro._should_use_kimi(
+            context_files=["a.py"] * 10,
+            phase=ForensicPhase.ANALYZE,
+            context_text="x" * 100_000,
+        ) is False
+
+        dual_maestro = Maestro(kimi_mode=KimiMode.DUAL)
+        assert dual_maestro._should_use_kimi(
+            context_files=None,
+            phase=ForensicPhase.ANALYZE,
+        ) is True
+        assert dual_maestro._should_use_kimi(
+            context_files=None,
+            phase=ForensicPhase.PLAN,
+        ) is False
+
+    @pytest.mark.asyncio
+    async def test_kimi_cli_phase_methods_delegate_through_exec(self):
+        """Verify Maestro-compatible Kimi phase methods call CLI exec."""
+        from integrations.llm_cli import KimiCLIClient, KimiCLIResponse
+
+        client = KimiCLIClient(binary="unused-kimi-cli")
+        client.exec = AsyncMock(return_value=KimiCLIResponse(content="ok"))
+
+        await client.analyze("Audit task", context_files=["a.py"])
+        prompt = client.exec.await_args.args[0]
+        assert "FORENSIC AUDIT - Iteration 0" in prompt
+        assert "Audit task" in prompt
+        assert client.exec.await_args.kwargs["context_files"] == ["a.py"]
+
+        await client.plan("Plan task", "finding one", context_files=["b.py"])
+        prompt = client.exec.await_args.args[0]
+        assert "STRATEGY REFINEMENT - Iteration 1" in prompt
+        assert "finding one" in prompt
+        assert client.exec.await_args.kwargs["context_files"] == ["b.py"]
+
+        await client.execute("Do step", "plan body", context_files=["c.py"])
+        prompt = client.exec.await_args.args[0]
+        assert "STEP EXECUTION - Iteration 2" in prompt
+        assert "Do step" in prompt
+        assert "plan body" in prompt
+        assert client.exec.await_args.kwargs["context_files"] == ["c.py"]
+
+        await client.verify(
+            task="Verify task",
+            implementation_summary="changed files",
+            requirements="all checks pass",
+        )
+        prompt = client.exec.await_args.args[0]
+        assert "FINAL VERIFICATION - Iteration 3" in prompt
+        assert "changed files" in prompt
+        assert "all checks pass" in prompt
+        assert "context_files" not in client.exec.await_args.kwargs
 
 
 # =============================================================================
