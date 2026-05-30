@@ -1,0 +1,146 @@
+{
+  "schema_version": 1,
+  "fixture": "recovery_sprint_canary_restore",
+  "captured_at_utc": "2026-05-30T06:07:13Z",
+  "source_backup": {
+    "path_ref": "backups/signals-20260529-190655.db",
+    "sha256": "01ced671a3c1a3800646edad42c2fa9ef2841f587d8255b4049a7c6e3fdd0a26",
+    "size_bytes": 9756672,
+    "integrity_check": "ok",
+    "signals_row_count": 612,
+    "schema_version": 53
+  },
+  "scope_guard": {
+    "production_target": "signals.db",
+    "canary_target": "signals.db.canary",
+    "production_db_mutated": false,
+    "live_restore_attempted": false,
+    "keepalive_reactivated": false,
+    "issue_149_closed": false,
+    "raw_db_or_ai_logs_committed": false
+  },
+  "environment": {
+    "repo_base": "origin/main@8401a914b7a223162f8f86264e6fe7e72d0b0411",
+    "api_reachable_before_restore": false,
+    "python_runtime": "Python 3.11 system runtime with project dependencies",
+    "provider_doctor_required_providers_ok": true
+  },
+  "commands": {
+    "dry_run": {
+      "run_id": "hermes_20260530_060646_856f8127",
+      "mode": "dry-run",
+      "status": "dry_run_passed",
+      "exit_code": 0,
+      "artifact_refs": [
+        "runs/hermes_20260530_060646_856f8127/task_plan.json",
+        "runs/hermes_20260530_060646_856f8127/run_record.json",
+        "runs/hermes_20260530_060646_856f8127/dry_run.json",
+        "runs/hermes_20260530_060646_856f8127/snapshots/dry_run_target_snapshot.db"
+      ],
+      "mutation_committed": false,
+      "backup_sha256": "01ced671a3c1a3800646edad42c2fa9ef2841f587d8255b4049a7c6e3fdd0a26",
+      "backup_signals_row_count": 612,
+      "target_snapshot_sha256": "9035290a40461164e92e512bc99ea3e679029399e296c0ceb1539f7f9e818905"
+    },
+    "preflight": {
+      "run_id": "hermes_20260530_060656_bd148846",
+      "mode": "preflight-only",
+      "status": "preflight_passed",
+      "exit_code": 0,
+      "artifact_refs": [
+        "runs/hermes_20260530_060656_bd148846/task_plan.json",
+        "runs/hermes_20260530_060656_bd148846/run_record.json",
+        "runs/hermes_20260530_060656_bd148846/preflight.json"
+      ],
+      "checks_passed": [
+        "backup_exists",
+        "backup_readable",
+        "backup_hash_recorded",
+        "backup_sqlite_integrity_ok",
+        "target_exists_or_create_allowed",
+        "target_snapshot_possible",
+        "no_unhandled_wal_shm_sidecars"
+      ]
+    },
+    "execute": {
+      "run_id": "hermes_20260530_060707_3daf76be",
+      "mode": "execute",
+      "status": "postflight_failed",
+      "exit_code": 4,
+      "ack_risk": "RESTORE_DB",
+      "artifact_refs": [
+        "runs/hermes_20260530_060707_3daf76be/task_plan.json",
+        "runs/hermes_20260530_060707_3daf76be/run_record.json",
+        "runs/hermes_20260530_060707_3daf76be/execute.json",
+        "runs/hermes_20260530_060707_3daf76be/preflight.json",
+        "runs/hermes_20260530_060707_3daf76be/snapshots/pre_restore_target.db",
+        "runs/hermes_20260530_060707_3daf76be/repair_prompt.md"
+      ],
+      "db_ops_ledger_status": "success",
+      "pre_restore_snapshot_sha256": "9035290a40461164e92e512bc99ea3e679029399e296c0ceb1539f7f9e818905",
+      "target_sha256_before": "9035290a40461164e92e512bc99ea3e679029399e296c0ceb1539f7f9e818905",
+      "target_sha256_after": "01ced671a3c1a3800646edad42c2fa9ef2841f587d8255b4049a7c6e3fdd0a26",
+      "repair_prompt_written": true
+    }
+  },
+  "logical_restore_evidence": {
+    "target": "signals.db.canary",
+    "integrity_check": "ok",
+    "signals_row_count": 612,
+    "schema_version": 53,
+    "target_sha256_after": "01ced671a3c1a3800646edad42c2fa9ef2841f587d8255b4049a7c6e3fdd0a26",
+    "final_filesystem_sidecars_present": []
+  },
+  "f6_assertions": [
+    {
+      "name": "backup_sha256_matches_phase0_source",
+      "passed": true
+    },
+    {
+      "name": "row_count_is_612",
+      "passed": true
+    },
+    {
+      "name": "schema_version_is_53",
+      "passed": true
+    },
+    {
+      "name": "integrity_check_ok",
+      "passed": true
+    },
+    {
+      "name": "db_ops_ledger_row_present",
+      "passed": true
+    },
+    {
+      "name": "hermes_run_dir_present",
+      "passed": true
+    },
+    {
+      "name": "no_unexpected_sidecars",
+      "passed": false,
+      "observed_by_execute_postflight": [
+        "signals.db.canary-wal",
+        "signals.db.canary-shm"
+      ],
+      "final_filesystem_sidecars_present": []
+    },
+    {
+      "name": "no_repair_prompt",
+      "passed": false,
+      "repair_prompt_ref": "runs/hermes_20260530_060707_3daf76be/repair_prompt.md"
+    }
+  ],
+  "blocker": {
+    "kind": "restore_task_transient_wal_sidecar_postflight",
+    "summary": "The canary execute restored the expected DB and wrote a success DB ops ledger row, but the Hermes task returned postflight_failed because no_unexpected_sidecars observed transient WAL sidecars after integrity verification.",
+    "not_fixed_in_this_pr": true,
+    "follow_up_expected": "Update the restore task postflight or SQLite integrity helper so the E3 canary can pass no_unexpected_sidecars and no_repair_prompt without committing raw DB or ai-log artifacts."
+  },
+  "sanitization": {
+    "absolute_paths_redacted": true,
+    "secrets_redacted": true,
+    "raw_database_files_omitted": true,
+    "raw_ai_logs_omitted": true
+  }
+}
