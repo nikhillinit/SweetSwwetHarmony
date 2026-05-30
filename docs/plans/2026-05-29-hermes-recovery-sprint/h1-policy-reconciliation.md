@@ -2,7 +2,7 @@
 
 > Date: 2026-05-30
 > Scope: Hermes recovery sprint H1 policy document and E3 canary evidence boundary.
-> Status: Documentation and test-fixture down payment only. No production restore is implemented here.
+> Status: Restore canary postflight remediation and fixture refresh. No production restore is implemented here.
 
 ## Purpose
 
@@ -59,27 +59,30 @@ any production target mutation:
 7. Before any live restore, Phase 2 deliberation must record a Codex plus Kimi quorum and the
    operator must give explicit approval.
 
-## Canary Evidence Recorded By This PR
+## Canary Evidence Recorded By This Follow-Up
 
-This PR records the Phase 1 canary rehearsal in
+This follow-up refreshes the Phase 1 canary rehearsal in
 `tests/ops/hermes/fixtures/recovery_sprint_canary_restore/manifest.json`.
 
-The rehearsal verified the logical restore path without mutating `signals.db`:
+The rehearsal verifies the restore path without mutating `signals.db`:
 
 - Backup SHA256 matched the Phase 0 source.
 - API reachability guard was checked before restore work.
 - Dry-run passed after the disposable target was normalized to avoid WAL sidecars during the
   non-mutating postflight.
 - Preflight passed.
-- Execute copied the 612-row, schema 53 backup to `signals.db.canary`.
+- Execute copied the 612-row, schema 53 backup to `signals.db.canary` and returned
+  `executed`.
 - The DB ops ledger recorded `success`.
 - Independent SQLite verification after execute returned integrity `ok`, 612 rows, and schema 53.
+- The task's own postflight `no_unexpected_sidecars` gate passed.
+- No `repair_prompt.md` was written for the successful execute run.
 
-The same execute run also exposed an enforcement gap: the task runner reported
-`postflight_failed` because its own postflight integrity check observed transient
-`signals.db.canary-wal` and `signals.db.canary-shm` files before process exit. A
-`repair_prompt.md` was written for that run. This PR does not hide that result; the manifest and
-fixture test record it as the current E3 blocker.
+PR #241 exposed the enforcement gap that this follow-up retires: the task runner
+reported `postflight_failed` because read-only SQLite verification materialized transient
+`signals.db.canary-wal` and `signals.db.canary-shm` files before the sidecar postflight
+gate. The manifest keeps that as historical blocker context and records the refreshed
+green F6 evidence.
 
 ## What H1 Does Not Implement
 
@@ -90,7 +93,6 @@ H1 does not implement H2 gate-binding for critical restore execution. The curren
 bypass still depends on explicit operator approval plus Codex/Kimi deliberation before any live
 restore.
 
-H1 does not change Hermes source code. In particular, it does not fix the restore task's
-transient WAL-sidecar postflight behavior observed during the canary rehearsal. That fix belongs
-in a follow-up code PR because this PR is intentionally limited to policy documentation, a
-sanitized fixture, and fixture assertions.
+PR #241 did not change Hermes source code. This follow-up changes only the shared
+Hermes read-only SQLite verification helper and the sanitized fixture/docs needed to
+retire the transient WAL-sidecar postflight blocker.
