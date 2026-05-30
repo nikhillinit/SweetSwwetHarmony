@@ -261,6 +261,115 @@ def test_hash_drift_between_plan_and_execute_blocks_restore(
     assert (run_dir / "repair_prompt.md").exists()
 
 
+def test_backup_wal_sidecar_appears_between_plan_and_execute_blocks_restore(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backup = tmp_path / "backup.db"
+    target = tmp_path / "signals.db"
+    _write_wal_mode_db(backup, rows=3)
+    _write_db(target, rows=1)
+    writers: list[sqlite3.Connection] = []
+
+    from integrations.hermes.tasks.restore_db import RestoreDbTask
+    from scripts import restore_db as restore_script
+
+    original_preflight = RestoreDbTask.preflight
+
+    def drift_wal_after_preflight(self, context, plan):  # type: ignore[no-untyped-def]
+        checks = original_preflight(self, context, plan)
+        writer = sqlite3.connect(backup)
+        writers.append(writer)
+        writer.execute("PRAGMA wal_autocheckpoint=0")
+        writer.execute("INSERT INTO signals (company_name) VALUES (?)", ("drift",))
+        writer.commit()
+        return checks
+
+    def fail_if_called(
+        *_args: object,
+        **_kwargs: object,
+    ) -> restore_script.RestoreBackupResult:
+        raise AssertionError("restore helper should not run after backup sidecar drift")
+
+    monkeypatch.setattr(RestoreDbTask, "preflight", drift_wal_after_preflight)
+    monkeypatch.setattr(
+        restore_script,
+        "restore_backup_with_lock_and_ledger",
+        fail_if_called,
+    )
+
+    try:
+        result = run_registered_task(
+            _args(
+                tmp_path,
+                backup=backup,
+                target=target,
+                mode="execute",
+                ack_risk="RESTORE_DB",
+            )
+        )
+    finally:
+        for writer in writers:
+            writer.close()
+
+    assert result.exit_code == EXIT_TASK_FAILURE
+    assert result.status == "failed"
+    assert "backup WAL sidecars" in (result.error or "")
+    assert _row_count(target) == 1
+
+
+def test_backup_wal_sidecars_refuse_preflight_before_restore(tmp_path: Path) -> None:
+    backup = tmp_path / "backup.db"
+    target = tmp_path / "signals.db"
+    writer = _write_open_wal_mode_db(backup, rows=3)
+    _write_db(target, rows=1)
+
+    try:
+        result = run_registered_task(_args(tmp_path, backup=backup, target=target))
+    finally:
+        writer.close()
+
+    assert result.exit_code == EXIT_GATE_FAILURE
+    assert result.status == "preflight_failed"
+    sidecar_check = next(
+        check
+        for check in result.checks
+        if check.name == "no_uncheckpointed_backup_wal_sidecars"
+    )
+    assert sidecar_check.passed is False
+    assert sidecar_check.evidence["present"] == ["backup.db-wal"]
+    assert "Checkpoint" in sidecar_check.evidence["required_action"]
+    assert _row_count(target) == 1
+
+
+def test_plan_records_backup_wal_sidecars_in_hash_evidence(tmp_path: Path) -> None:
+    backup = tmp_path / "backup.db"
+    target = tmp_path / "signals.db"
+    writer = _write_open_wal_mode_db(backup, rows=3)
+    _write_db(target, rows=1)
+
+    try:
+        result = run_registered_task(
+            _args(tmp_path, backup=backup, target=target, mode="plan-only")
+        )
+    finally:
+        writer.close()
+
+    backup_plan = result.plan["backup"]
+    assert result.exit_code == 0
+    assert backup_plan["sha256"] != backup_plan["main_sha256"]
+    assert backup_plan["sha256_algorithm"] == "sha256:sqlite-main-and-wal-v1"
+    assert [sidecar["name"] for sidecar in backup_plan["sidecars"]] == [
+        "backup.db-wal",
+        "backup.db-shm",
+    ]
+    assert all(sidecar["sha256"] for sidecar in backup_plan["sidecars"])
+    assert [sidecar["included_in_sha256"] for sidecar in backup_plan["sidecars"]] == [
+        True,
+        False,
+    ]
+
+
 def test_execute_refuses_mutation_after_task_lock_health_is_lost(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -379,7 +488,8 @@ def test_execute_uses_shared_restore_helper_and_outputs_db_ops_fields(
     assert result.outputs["canonicalPreRestorePath"] == str(pre_restore)
     assert result.outputs["targetSha256Before"] == "target-before"
     assert result.outputs["targetSha256"] == "target-after"
-    assert result.outputs["backupSha256"] == "backup-hash"
+    assert result.outputs["backupSha256"] == result.plan["backup"]["sha256"]
+    assert result.outputs["restoreHelperBackupSha256"] == "backup-hash"
 
 
 def test_execute_postflight_keeps_wal_mode_restore_sidecar_free(
@@ -464,7 +574,8 @@ def test_execute_wraps_restore_helper_partial_evidence_on_failure(
     assert evidence["dbToolLockPath"] == str(lock_path)
     assert evidence["targetSha256Before"] == "target-before"
     assert evidence["targetSha256"] == "target-after"
-    assert evidence["backupSha256"] == "backup-hash"
+    assert evidence["backupSha256"] == result.plan["backup"]["sha256"]
+    assert evidence["restoreHelperBackupSha256"] == "backup-hash"
     assert evidence["restoreHelperEvidence"]["integrity_check"] == "bad-page"
     assert evidence["restoreHelperEvidence"]["db_ops_ledger_status"] == "error"
 
