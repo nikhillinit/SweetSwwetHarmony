@@ -849,8 +849,22 @@ def _sqlite_count_table(table: str) -> str:
 
 
 def _sqlite_readonly_uri(path: Path) -> str:
-    # immutable=1 keeps read-only verification from materializing WAL/SHM sidecars.
-    return f"file:{path.resolve()}?mode=ro&immutable=1"
+    resolved = path.resolve()
+    # immutable=1 avoids materializing WAL/SHM sidecars for sidecar-free WAL-mode
+    # databases, but it must not be used when committed frames already exist in WAL.
+    immutable = (
+        ""
+        if any(sidecar.exists() for sidecar in _sqlite_sidecars(resolved))
+        else "&immutable=1"
+    )
+    return f"file:{resolved}?mode=ro{immutable}"
+
+
+def _sqlite_sidecars(path: Path) -> tuple[Path, Path]:
+    return (
+        path.with_name(path.name + "-wal"),
+        path.with_name(path.name + "-shm"),
+    )
 
 
 def run_async_blocking(coro: Coroutine[Any, Any, T]) -> T:
