@@ -8,8 +8,8 @@
   "rules": {
     "llm-generation-api-surface": {
       "metadata": {
-        "total_files": 12,
-        "total_occurrences": 32
+        "total_files": 11,
+        "total_occurrences": 31
       },
       "files": {
         "consumer/_gemini_instructor.py": {
@@ -31,10 +31,6 @@
         "integrations/kimi_client.py": {
           "count": 5,
           "note": "Migration target: Kimi/Moonshot OpenAI-compatible API client will be replaced by the shared CLI generation layer."
-        },
-        "integrations/maestro.py": {
-          "count": 1,
-          "note": "Migration target: Maestro still lazy-loads the API-backed KimiClient."
         },
         "integrations/openai_mcp.py": {
           "count": 4,

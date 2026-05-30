@@ -120,6 +120,52 @@ class KimiCLIClient:
             exit_code=exit_code,
         )
 
+    async def analyze(
+        self,
+        task: str,
+        context_files: list[str] | None = None,
+    ) -> KimiCLIResponse:
+        """Run the Maestro forensic audit phase through Kimi CLI."""
+        return await self.exec(
+            _analyze_prompt(task),
+            context_files=context_files,
+        )
+
+    async def plan(
+        self,
+        task: str,
+        findings: str,
+        context_files: list[str] | None = None,
+    ) -> KimiCLIResponse:
+        """Run the Maestro strategy refinement phase through Kimi CLI."""
+        return await self.exec(
+            _plan_prompt(task, findings),
+            context_files=context_files,
+        )
+
+    async def execute(
+        self,
+        step: str,
+        plan_context: str,
+        context_files: list[str] | None = None,
+    ) -> KimiCLIResponse:
+        """Run the Maestro execution planning phase through Kimi CLI."""
+        return await self.exec(
+            _execute_prompt(step, plan_context),
+            context_files=context_files,
+        )
+
+    async def verify(
+        self,
+        task: str,
+        implementation_summary: str,
+        requirements: str,
+    ) -> KimiCLIResponse:
+        """Run the Maestro final verification phase through Kimi CLI."""
+        return await self.exec(
+            _verify_prompt(task, implementation_summary, requirements),
+        )
+
 
 def _kimi_cli_args(resolved_binary: str, *, work_dir: Path) -> list[str]:
     return [
@@ -163,6 +209,159 @@ async def _create_cli_process(
 
 def _default_cli_cwd() -> Path:
     return Path(tempfile.gettempdir()) / "hermes-kimi-cli"
+
+
+def _analyze_prompt(task: str) -> str:
+    return f"""## FORENSIC AUDIT - Iteration 0
+
+### Objective
+Validate assumptions against actual codebase state. Do NOT assume the plan is perfect.
+
+### Task
+{task}
+
+### Instructions
+1. Verify the current state of relevant files/modules
+2. Check for discrepancies between plan assumptions and reality
+3. Identify existing infrastructure that can be reused
+4. Flag potential risks or missing dependencies
+5. Document exact file paths and line numbers for findings
+
+### Output Format
+**Ground Truth Findings:**
+1. [Finding with file:line reference]
+
+**Discrepancies Found:**
+- [Assumption vs Reality]
+
+**Existing Infrastructure:**
+- [Reusable component with path]
+
+**Risks Identified:**
+- [Risk with severity]
+"""
+
+
+def _plan_prompt(task: str, findings: str) -> str:
+    return f"""## STRATEGY REFINEMENT - Iteration 1
+
+### Objective
+Refine the execution plan based on audit findings. Address identified risks.
+
+### Task
+{task}
+
+### Audit Findings (from Iteration 0)
+{findings}
+
+### Instructions
+1. Break down the task into atomic, verifiable steps
+2. Define exact commands or code changes for each step
+3. Identify verification steps for each stage
+4. Address the risks identified in the audit
+5. Note any blocking dependencies
+
+### Output Format
+**Revised Plan:**
+
+**Phase 1: [Name]**
+- Task 1.1: [Specific action]
+  - File: [path]
+  - Change: [what to modify]
+  - Verify: [how to test]
+
+**Decisions Made:**
+- D1: [Decision with rationale]
+
+**Risks Addressed:**
+- R1: [How risk is mitigated]
+
+**Open Questions:**
+- [Questions needing human input]
+"""
+
+
+def _execute_prompt(step: str, plan_context: str) -> str:
+    return f"""## STEP EXECUTION - Iteration 2
+
+### Objective
+Execute this step safely, verifying preconditions and postconditions.
+
+### Step to Execute
+{step}
+
+### Plan Context
+{plan_context}
+
+### Instructions
+1. Verify preconditions are met
+2. Propose the exact code changes (with file paths and line numbers)
+3. Provide verification command to confirm success
+4. Note any side effects or dependent changes needed
+
+### Output Format
+**Preconditions Check:**
+- [x] [Condition verified]
+
+**Proposed Changes:**
+```diff
+--- a/path/to/file.py
++++ b/path/to/file.py
+@@ -line,count +line,count @@
+ context
+-old line
++new line
+ context
+```
+
+**Verification Command:**
+```bash
+[command to verify success]
+```
+
+**Side Effects:**
+- [Any additional changes needed]
+"""
+
+
+def _verify_prompt(task: str, implementation_summary: str, requirements: str) -> str:
+    return f"""## FINAL VERIFICATION - Iteration 3
+
+### Objective
+Verify the implementation meets all requirements. Identify any remaining issues.
+
+### Original Task
+{task}
+
+### Implementation Summary
+{implementation_summary}
+
+### Success Requirements
+{requirements}
+
+### Instructions
+1. Verify each requirement is met
+2. Check for regressions or side effects
+3. Identify any cleanup needed (temp files, debug code)
+4. Document final metrics/state
+
+### Output Format
+**Requirements Check:**
+- [x] [Requirement]: [Evidence it's met]
+- [ ] [Requirement]: [Why not met / what's needed]
+
+**Regression Check:**
+- [Tests run and results]
+
+**Cleanup Needed:**
+- [Items to clean up]
+
+**Final Metrics:**
+- [Before/after comparison]
+
+**Remaining Issues:**
+- [Any open items]
+"""
 
 
 def _prompt_with_context(prompt: str, context_files: list[str] | None) -> str:
