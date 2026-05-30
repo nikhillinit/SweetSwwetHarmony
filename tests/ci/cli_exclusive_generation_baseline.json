@@ -8,8 +8,8 @@
   "rules": {
     "llm-generation-api-surface": {
       "metadata": {
-        "total_files": 13,
-        "total_occurrences": 33
+        "total_files": 12,
+        "total_occurrences": 32
       },
       "files": {
         "consumer/_gemini_instructor.py": {
@@ -27,10 +27,6 @@
         "consumer/thesis_filter/llm_classifier.py": {
           "count": 5,
           "note": "Deferred thesis classifier: structured-output migration is intentionally out of scope for this guard-first PR."
-        },
-        "integrations/hermes/adapters.py": {
-          "count": 1,
-          "note": "Migration target: Hermes Kimi executor still constructs the API-backed KimiClient until the provider migration PR."
         },
         "integrations/kimi_client.py": {
           "count": 5,

@@ -24,7 +24,8 @@ def minimal_config_dict() -> dict[str, Any]:
                 "displayName": "Kimi",
                 "enabled": True,
                 "required": False,
-                "env": ["KIMI_API_KEY"],
+                "binary": "kimi-cli",
+                "env": [],
             },
         },
         "deferredExecutors": {
