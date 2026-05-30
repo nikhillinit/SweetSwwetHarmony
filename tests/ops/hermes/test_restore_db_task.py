@@ -83,6 +83,22 @@ def _write_wal_mode_db(path: Path, *, rows: int) -> None:
             sidecar.unlink()
 
 
+def _write_open_wal_mode_db(path: Path, *, rows: int) -> sqlite3.Connection:
+    conn = sqlite3.connect(path)
+    mode = conn.execute("PRAGMA journal_mode=WAL").fetchone()[0]
+    assert mode.lower() == "wal"
+    conn.execute("PRAGMA wal_autocheckpoint=0")
+    conn.execute("CREATE TABLE schema_migrations (version INTEGER)")
+    conn.execute("INSERT INTO schema_migrations (version) VALUES (53)")
+    conn.execute("CREATE TABLE signals (id INTEGER PRIMARY KEY, company_name TEXT)")
+    conn.executemany(
+        "INSERT INTO signals (company_name) VALUES (?)",
+        [(f"company-{index}",) for index in range(rows)],
+    )
+    conn.commit()
+    return conn
+
+
 def _row_count(path: Path) -> int:
     conn = sqlite3.connect(path)
     try:
@@ -115,6 +131,28 @@ def test_readonly_sqlite_helpers_do_not_materialize_wal_sidecars(tmp_path: Path)
     assert evidence["schema_version"] == 53
     assert sqlite_count(target, "signals") == (3, None)
     assert _existing_sidecars(target) == []
+
+
+def test_readonly_sqlite_helpers_consult_existing_wal_sidecars(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "signals.db"
+    conn = _write_open_wal_mode_db(target, rows=3)
+    try:
+        assert set(_existing_sidecars(target)) == {
+            "signals.db-wal",
+            "signals.db-shm",
+        }
+
+        ok, evidence = sqlite_integrity(target)
+
+        assert ok is True
+        assert evidence["integrity_check"] == "ok"
+        assert evidence["schema_version"] == 53
+        assert "signals" in evidence["tables"]
+        assert sqlite_count(target, "signals") == (3, None)
+    finally:
+        conn.close()
 
 
 def _args(
