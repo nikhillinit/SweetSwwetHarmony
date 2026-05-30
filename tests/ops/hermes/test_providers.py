@@ -15,9 +15,7 @@ def test_doctor_reports_imports_binaries_env_and_deferred_status(
 ) -> None:
     data = minimal_config_dict()
     data["executors"]["codex"]["binary"] = "codex"
-    data["executors"]["kimi"]["env"] = ["KIMI_API_KEY"]
     config = RoutingConfig.model_validate(data)
-    monkeypatch.setenv("KIMI_API_KEY", "present")
     monkeypatch.setattr("shutil.which", lambda name: f"/usr/bin/{name}")
 
     report = doctor(config)
@@ -26,7 +24,10 @@ def test_doctor_reports_imports_binaries_env_and_deferred_status(
     codex = report.providers["codex"]
     assert codex.checks_by_name["wrapper_import"].ok is True
     assert codex.checks_by_name["binary"].detail == "/usr/bin/codex"
-    assert report.providers["kimi"].checks_by_name["env:KIMI_API_KEY"].ok is True
+    kimi = report.providers["kimi"]
+    assert kimi.checks_by_name["wrapper_import"].detail == "integrations.llm_cli.kimi"
+    assert kimi.checks_by_name["binary"].detail == "/usr/bin/kimi-cli"
+    assert "env:KIMI_API_KEY" not in kimi.checks_by_name
     assert report.deferred["gemini"].provider == "gemini"
     assert isinstance(report, ProviderReport)
 
@@ -45,20 +46,19 @@ def test_required_missing_binary_makes_report_unsuccessful(monkeypatch) -> None:
     assert report.providers["codex"].checks_by_name["binary"].required is True
 
 
-def test_optional_missing_env_is_reported_without_failing_report(monkeypatch) -> None:
+def test_optional_missing_binary_is_reported_without_failing_report(monkeypatch) -> None:
     data = minimal_config_dict()
     data["executors"]["kimi"]["required"] = False
-    data["executors"]["kimi"]["env"] = ["KIMI_API_KEY"]
     data["executors"]["codex"].pop("binary", None)
     config = RoutingConfig.model_validate(data)
-    monkeypatch.delenv("KIMI_API_KEY", raising=False)
+    monkeypatch.setattr("shutil.which", lambda name: None)
 
     report = doctor(config)
 
     assert report.success is True
-    env_check = report.providers["kimi"].checks_by_name["env:KIMI_API_KEY"]
-    assert env_check.ok is False
-    assert env_check.required is False
+    binary_check = report.providers["kimi"].checks_by_name["binary"]
+    assert binary_check.ok is False
+    assert binary_check.required is False
 
 
 def test_past_sunset_date_fails_required_provider() -> None:
@@ -79,7 +79,7 @@ def test_provider_report_json_and_text_shapes(monkeypatch) -> None:
     data = minimal_config_dict()
     data["executors"]["codex"].pop("binary", None)
     config = RoutingConfig.model_validate(data)
-    monkeypatch.setenv("KIMI_API_KEY", "present")
+    monkeypatch.setattr("shutil.which", lambda name: f"/usr/bin/{name}")
 
     report = doctor(config)
     payload = report.to_dict()

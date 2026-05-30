@@ -6,7 +6,7 @@ from typing import Any, Protocol
 
 from integrations.codex_wrapper import CodexCLI
 from integrations.gemini_antigravity_client import GeminiAntigravityClient
-from integrations.kimi_client import KimiClient
+from integrations.llm_cli import KimiCLIClient
 
 from .config import RoutingConfig
 
@@ -69,8 +69,8 @@ class CodexHermesExecutor:
 class KimiHermesExecutor:
     client: Any
 
-    def __init__(self, client: Any | None = None):
-        object.__setattr__(self, "client", client or KimiClient())
+    def __init__(self, client: Any | None = None, *, binary: str = "kimi-cli"):
+        object.__setattr__(self, "client", client or KimiCLIClient(binary=binary))
 
     async def execute(
         self,
@@ -81,7 +81,7 @@ class KimiHermesExecutor:
         return ExecutorResult(
             executor="kimi",
             success=response.success,
-            exit_code=0 if response.success else 1,
+            exit_code=response.exit_code,
             content=response.content,
             duration_ms=response.execution_time_ms,
             error=response.error,
@@ -188,7 +188,7 @@ def _build_executor(
     if executor.provider == "codex":
         return CodexHermesExecutor(codex_client)
     if executor.provider == "kimi":
-        return KimiHermesExecutor(kimi_client)
+        return KimiHermesExecutor(kimi_client, binary=executor.binary or "kimi-cli")
     if executor.provider == "gemini":
         return GeminiHermesExecutor(
             gemini_client

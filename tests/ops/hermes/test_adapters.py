@@ -12,7 +12,7 @@ from integrations.hermes.adapters import (
     build_executor,
 )
 from integrations.hermes.config import RoutingConfig
-from integrations.kimi_client import KimiResponse
+from integrations.llm_cli import KimiCLIResponse
 
 from .conftest import minimal_config_dict
 
@@ -38,12 +38,13 @@ class FakeKimiClient:
 
     async def exec(self, prompt, context_files=None):
         self.calls.append((prompt, context_files))
-        return KimiResponse(
+        return KimiCLIResponse(
             content="kimi done",
-            model="kimi-k2.5",
+            model="kimi-cli",
             usage={"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5},
             finish_reason="stop",
             execution_time_ms=34,
+            exit_code=0,
         )
 
 

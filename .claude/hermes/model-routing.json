@@ -15,9 +15,8 @@
       "displayName": "Kimi",
       "enabled": true,
       "required": false,
-      "env": [
-        "KIMI_API_KEY"
-      ],
+      "binary": "kimi-cli",
+      "env": [],
       "supportsExecute": true
     },
     "claude": {
