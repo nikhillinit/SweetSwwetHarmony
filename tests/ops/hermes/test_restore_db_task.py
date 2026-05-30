@@ -16,6 +16,7 @@ from integrations.hermes.tasks.base import (
     EXIT_LOCK_HELD,
     EXIT_TASK_FAILURE,
     sqlite_count,
+    sqlite_integrity,
 )
 from integrations.hermes.tasks.registry import run_registered_task
 
@@ -56,6 +57,32 @@ def _write_db(path: Path, *, rows: int) -> None:
         conn.close()
 
 
+def _sidecars(path: Path) -> tuple[Path, Path]:
+    return (
+        path.with_name(path.name + "-wal"),
+        path.with_name(path.name + "-shm"),
+    )
+
+
+def _existing_sidecars(path: Path) -> list[str]:
+    return [sidecar.name for sidecar in _sidecars(path) if sidecar.exists()]
+
+
+def _write_wal_mode_db(path: Path, *, rows: int) -> None:
+    _write_db(path, rows=rows)
+    conn = sqlite3.connect(path)
+    try:
+        mode = conn.execute("PRAGMA journal_mode=WAL").fetchone()[0]
+        assert mode.lower() == "wal"
+        conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    finally:
+        conn.close()
+
+    for sidecar in _sidecars(path):
+        if sidecar.exists():
+            sidecar.unlink()
+
+
 def _row_count(path: Path) -> int:
     conn = sqlite3.connect(path)
     try:
@@ -75,6 +102,19 @@ def test_sqlite_count_allows_only_registered_signals_table(tmp_path: Path) -> No
             sqlite_count(target, table_name)
 
     assert _row_count(target) == 3
+
+
+def test_readonly_sqlite_helpers_do_not_materialize_wal_sidecars(tmp_path: Path) -> None:
+    target = tmp_path / "signals.db"
+    _write_wal_mode_db(target, rows=3)
+
+    assert _existing_sidecars(target) == []
+    ok, evidence = sqlite_integrity(target)
+    assert ok is True
+    assert evidence["integrity_check"] == "ok"
+    assert evidence["schema_version"] == 53
+    assert sqlite_count(target, "signals") == (3, None)
+    assert _existing_sidecars(target) == []
 
 
 def _args(
@@ -302,6 +342,37 @@ def test_execute_uses_shared_restore_helper_and_outputs_db_ops_fields(
     assert result.outputs["targetSha256Before"] == "target-before"
     assert result.outputs["targetSha256"] == "target-after"
     assert result.outputs["backupSha256"] == "backup-hash"
+
+
+def test_execute_postflight_keeps_wal_mode_restore_sidecar_free(
+    tmp_path: Path,
+) -> None:
+    backup = tmp_path / "backup.db"
+    target = tmp_path / "signals.db"
+    _write_wal_mode_db(backup, rows=4)
+    _write_wal_mode_db(target, rows=1)
+
+    result = run_registered_task(
+        _args(
+            tmp_path,
+            backup=backup,
+            target=target,
+            mode="execute",
+            ack_risk="RESTORE_DB",
+            min_row_count=4,
+        )
+    )
+
+    assert result.exit_code == 0
+    assert result.status == "executed"
+    assert _row_count(target) == 4
+    sidecar_check = next(
+        check for check in result.checks if check.name == "no_unexpected_sidecars"
+    )
+    assert sidecar_check.passed is True
+    assert sidecar_check.evidence == {"present": []}
+    assert _existing_sidecars(target) == []
+    assert not (Path(result.run_dir or "") / "repair_prompt.md").exists()
 
 
 def test_execute_wraps_restore_helper_partial_evidence_on_failure(

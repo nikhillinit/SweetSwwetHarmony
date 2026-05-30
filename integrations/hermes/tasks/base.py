@@ -800,7 +800,7 @@ def sqlite_integrity(path: Path) -> tuple[bool, dict[str, Any]]:
         evidence["error"] = "missing"
         return False, evidence
     try:
-        conn = sqlite3.connect(f"file:{path.resolve()}?mode=ro", uri=True, timeout=1)
+        conn = sqlite3.connect(_sqlite_readonly_uri(path), uri=True, timeout=1)
         try:
             row = conn.execute("PRAGMA integrity_check").fetchone()
             evidence["integrity_check"] = row[0] if row else "missing"
@@ -828,7 +828,7 @@ def sqlite_integrity(path: Path) -> tuple[bool, dict[str, Any]]:
 def sqlite_count(path: Path, table: str) -> tuple[int | None, str | None]:
     table_name = _sqlite_count_table(table)
     try:
-        conn = sqlite3.connect(f"file:{path.resolve()}?mode=ro", uri=True, timeout=1)
+        conn = sqlite3.connect(_sqlite_readonly_uri(path), uri=True, timeout=1)
         try:
             row = conn.execute(f"SELECT COUNT(*) FROM {table_name}").fetchone()
             return int(row[0]), None
@@ -846,6 +846,11 @@ def _sqlite_count_table(table: str) -> str:
         raise ValueError(
             f"unsupported sqlite count table {table!r}; expected one of {expected}"
         ) from exc
+
+
+def _sqlite_readonly_uri(path: Path) -> str:
+    # immutable=1 keeps read-only verification from materializing WAL/SHM sidecars.
+    return f"file:{path.resolve()}?mode=ro&immutable=1"
 
 
 def run_async_blocking(coro: Coroutine[Any, Any, T]) -> T:
