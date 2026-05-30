@@ -789,6 +789,47 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def sqlite_payload_fingerprint(path: Path) -> dict[str, Any]:
+    main_sha256 = sha256_file(path)
+    sidecars = [
+        _sqlite_fingerprint_component(sidecar)
+        for sidecar in _sqlite_sidecars(path)
+        if sidecar.exists()
+    ]
+    wal_sidecars = [
+        sidecar for sidecar in sidecars if sidecar["name"].endswith("-wal")
+    ]
+    for sidecar in sidecars:
+        sidecar["included_in_sha256"] = sidecar in wal_sidecars
+    if not wal_sidecars:
+        return {
+            "sha256": main_sha256,
+            "main_sha256": main_sha256,
+            "sha256_algorithm": "sha256:file-v1",
+            "sidecars": sidecars,
+        }
+
+    digest = hashlib.sha256()
+    digest.update(b"sqlite-main-and-wal-v1\0")
+    _update_sqlite_fingerprint_digest(
+        digest,
+        {
+            "name": path.name,
+            "sha256": main_sha256,
+            "size_bytes": path.stat().st_size,
+        },
+    )
+    for sidecar in wal_sidecars:
+        _update_sqlite_fingerprint_digest(digest, sidecar)
+
+    return {
+        "sha256": digest.hexdigest(),
+        "main_sha256": main_sha256,
+        "sha256_algorithm": "sha256:sqlite-main-and-wal-v1",
+        "sidecars": sidecars,
+    }
+
+
 def sqlite_integrity(path: Path) -> tuple[bool, dict[str, Any]]:
     evidence: dict[str, Any] = {
         "path": str(path),
@@ -865,6 +906,27 @@ def _sqlite_sidecars(path: Path) -> tuple[Path, Path]:
         path.with_name(path.name + "-wal"),
         path.with_name(path.name + "-shm"),
     )
+
+
+def _sqlite_fingerprint_component(path: Path) -> dict[str, Any]:
+    return {
+        "name": path.name,
+        "path": str(path),
+        "sha256": sha256_file(path),
+        "size_bytes": path.stat().st_size,
+    }
+
+
+def _update_sqlite_fingerprint_digest(
+    digest: Any,
+    component: dict[str, Any],
+) -> None:
+    digest.update(str(component["name"]).encode("utf-8"))
+    digest.update(b"\0")
+    digest.update(str(component["size_bytes"]).encode("ascii"))
+    digest.update(b"\0")
+    digest.update(str(component["sha256"]).encode("ascii"))
+    digest.update(b"\0")
 
 
 def run_async_blocking(coro: Coroutine[Any, Any, T]) -> T:
