@@ -13,6 +13,7 @@ from .base import (
     sha256_file,
     sqlite_count,
     sqlite_integrity,
+    sqlite_payload_fingerprint,
 )
 
 RESTORE_SIDECAR_HANDLER = "scripts.restore_db._ensure_no_target_sidecars"
@@ -48,9 +49,13 @@ class RestoreDbTask(HermesTask):
             "exists": bool(backup and backup.exists()),
         }
         if backup and backup.exists():
+            backup_fingerprint = sqlite_payload_fingerprint(backup)
             backup_payload.update(
                 {
-                    "sha256": sha256_file(backup),
+                    "sha256": backup_fingerprint["sha256"],
+                    "main_sha256": backup_fingerprint["main_sha256"],
+                    "sha256_algorithm": backup_fingerprint["sha256_algorithm"],
+                    "sidecars": backup_fingerprint["sidecars"],
                     "size_bytes": backup.stat().st_size,
                 }
             )
@@ -68,10 +73,16 @@ class RestoreDbTask(HermesTask):
             "snapshot_required": target.exists(),
         }
         if target.exists():
+            target_fingerprint = sqlite_payload_fingerprint(target)
             row_count, row_error = sqlite_count(target, "signals")
             target_payload.update(
                 {
-                    "current_sha256": sha256_file(target),
+                    "current_sha256": target_fingerprint["sha256"],
+                    "current_main_sha256": target_fingerprint["main_sha256"],
+                    "current_sha256_algorithm": target_fingerprint[
+                        "sha256_algorithm"
+                    ],
+                    "sidecars": target_fingerprint["sidecars"],
                     "size_bytes": target.stat().st_size,
                     "signals_row_count": row_count,
                     "signals_row_error": row_error,
@@ -89,6 +100,7 @@ class RestoreDbTask(HermesTask):
                     "backup_exists",
                     "backup_readable",
                     "backup_hash_recorded",
+                    "no_uncheckpointed_backup_wal_sidecars",
                     "backup_sqlite_integrity_ok",
                     "target_exists_or_create_allowed",
                     "target_snapshot_possible",
@@ -142,7 +154,8 @@ class RestoreDbTask(HermesTask):
             )
         )
         if backup and backup.exists():
-            current_hash = sha256_file(backup)
+            current_fingerprint = sqlite_payload_fingerprint(backup)
+            current_hash = current_fingerprint["sha256"]
             planned_hash = plan.get("backup", {}).get("sha256")
             ok, evidence = sqlite_integrity(backup)
             checks.append(
@@ -150,7 +163,40 @@ class RestoreDbTask(HermesTask):
                     "backup_hash_recorded",
                     bool(planned_hash) and current_hash == planned_hash,
                     current_hash,
-                    {"planned_sha256": planned_hash, "current_sha256": current_hash},
+                    {
+                        "planned_sha256": planned_hash,
+                        "current_sha256": current_hash,
+                        "planned_main_sha256": plan.get("backup", {}).get(
+                            "main_sha256"
+                        ),
+                        "current_main_sha256": current_fingerprint["main_sha256"],
+                        "planned_sha256_algorithm": plan.get("backup", {}).get(
+                            "sha256_algorithm"
+                        ),
+                        "current_sha256_algorithm": current_fingerprint[
+                            "sha256_algorithm"
+                        ],
+                        "planned_sidecars": plan.get("backup", {}).get(
+                            "sidecars", []
+                        ),
+                        "current_sidecars": current_fingerprint["sidecars"],
+                    },
+                )
+            )
+            backup_wal_sidecars = _fingerprint_wal_sidecars(current_fingerprint)
+            checks.append(
+                CheckResult(
+                    "no_uncheckpointed_backup_wal_sidecars",
+                    not backup_wal_sidecars,
+                    ", ".join(backup_wal_sidecars) if backup_wal_sidecars else "none",
+                    {
+                        "present": backup_wal_sidecars,
+                        "sidecars": current_fingerprint["sidecars"],
+                        "required_action": (
+                            "Checkpoint or copy a sidecar-free backup before restore; "
+                            "Hermes restore copies only the main backup DB file."
+                        ),
+                    },
                 )
             )
             checks.append(
@@ -164,6 +210,13 @@ class RestoreDbTask(HermesTask):
         else:
             checks.append(
                 CheckResult("backup_hash_recorded", False, "backup missing")
+            )
+            checks.append(
+                CheckResult(
+                    "no_uncheckpointed_backup_wal_sidecars",
+                    False,
+                    "backup missing",
+                )
             )
             checks.append(
                 CheckResult("backup_sqlite_integrity_ok", False, "backup missing")
@@ -211,8 +264,14 @@ class RestoreDbTask(HermesTask):
             "target": str(target),
         }
         if backup and backup.exists():
+            backup_fingerprint = sqlite_payload_fingerprint(backup)
             row_count, row_error = sqlite_count(backup, "signals")
-            outputs["backupSha256"] = sha256_file(backup)
+            outputs["backupSha256"] = backup_fingerprint["sha256"]
+            outputs["backupMainSha256"] = backup_fingerprint["main_sha256"]
+            outputs["backupSha256Algorithm"] = backup_fingerprint[
+                "sha256_algorithm"
+            ]
+            outputs["backupSidecars"] = backup_fingerprint["sidecars"]
             outputs["backupSignalsRowCount"] = row_count
             outputs["backupSignalsRowError"] = row_error
         if target.exists():
@@ -231,7 +290,22 @@ class RestoreDbTask(HermesTask):
             raise TaskFailure("backup missing", evidence={"backup": str(backup)})
 
         planned_backup_hash = plan.get("backup", {}).get("sha256")
-        current_backup_hash = sha256_file(backup)
+        backup_fingerprint = sqlite_payload_fingerprint(backup)
+        current_backup_hash = backup_fingerprint["sha256"]
+        backup_wal_sidecars = _fingerprint_wal_sidecars(backup_fingerprint)
+        if backup_wal_sidecars:
+            raise TaskFailure(
+                "backup WAL sidecars must be checkpointed before restore",
+                evidence={
+                    "backup": str(backup),
+                    "present": backup_wal_sidecars,
+                    "sidecars": backup_fingerprint["sidecars"],
+                    "required_action": (
+                        "Checkpoint or copy a sidecar-free backup before restore; "
+                        "Hermes restore copies only the main backup DB file."
+                    ),
+                },
+            )
         if planned_backup_hash != current_backup_hash:
             raise TaskFailure(
                 "backup hash drift detected between plan and execute",
@@ -239,12 +313,25 @@ class RestoreDbTask(HermesTask):
                     "backup": str(backup),
                     "planned_sha256": planned_backup_hash,
                     "current_sha256": current_backup_hash,
+                    "planned_main_sha256": plan.get("backup", {}).get(
+                        "main_sha256"
+                    ),
+                    "current_main_sha256": backup_fingerprint["main_sha256"],
+                    "planned_sha256_algorithm": plan.get("backup", {}).get(
+                        "sha256_algorithm"
+                    ),
+                    "current_sha256_algorithm": backup_fingerprint[
+                        "sha256_algorithm"
+                    ],
+                    "planned_sidecars": plan.get("backup", {}).get("sidecars", []),
+                    "current_sidecars": backup_fingerprint["sidecars"],
                 },
             )
 
         planned_target_hash = plan.get("target", {}).get("current_sha256")
         if target.exists() and planned_target_hash:
-            current_target_hash = sha256_file(target)
+            target_fingerprint = sqlite_payload_fingerprint(target)
+            current_target_hash = target_fingerprint["sha256"]
             if current_target_hash != planned_target_hash:
                 raise TaskFailure(
                     "target hash drift detected between plan and execute",
@@ -252,6 +339,20 @@ class RestoreDbTask(HermesTask):
                         "target": str(target),
                         "planned_sha256": planned_target_hash,
                         "current_sha256": current_target_hash,
+                        "planned_main_sha256": plan.get("target", {}).get(
+                            "current_main_sha256"
+                        ),
+                        "current_main_sha256": target_fingerprint["main_sha256"],
+                        "planned_sha256_algorithm": plan.get("target", {}).get(
+                            "current_sha256_algorithm"
+                        ),
+                        "current_sha256_algorithm": target_fingerprint[
+                            "sha256_algorithm"
+                        ],
+                        "planned_sidecars": plan.get("target", {}).get(
+                            "sidecars", []
+                        ),
+                        "current_sidecars": target_fingerprint["sidecars"],
                     },
                 )
 
@@ -259,6 +360,9 @@ class RestoreDbTask(HermesTask):
             "backup": str(backup),
             "target": str(target),
             "backupSha256": current_backup_hash,
+            "backupMainSha256": backup_fingerprint["main_sha256"],
+            "backupSha256Algorithm": backup_fingerprint["sha256_algorithm"],
+            "backupSidecars": backup_fingerprint["sidecars"],
         }
         if target.exists():
             snapshot = copy_snapshot(
@@ -298,7 +402,7 @@ class RestoreDbTask(HermesTask):
                 "canonicalPreRestorePath": str(restore_result.pre_restore_backup),
                 "targetSha256Before": restore_result.target_sha256_before,
                 "targetSha256": restore_result.target_sha256_after,
-                "backupSha256": restore_result.backup_sha256,
+                "restoreHelperBackupSha256": restore_result.backup_sha256,
             }
         )
         return outputs
@@ -365,6 +469,14 @@ def _sidecars(db_path: Path) -> tuple[Path, Path]:
     return _sidecar_paths(db_path)
 
 
+def _fingerprint_wal_sidecars(fingerprint: dict[str, Any]) -> list[str]:
+    return [
+        sidecar["name"]
+        for sidecar in fingerprint.get("sidecars", [])
+        if sidecar.get("included_in_sha256")
+    ]
+
+
 def _restore_helper_outputs(evidence: dict[str, Any]) -> dict[str, Any]:
     outputs: dict[str, Any] = {}
     key_map = {
@@ -373,7 +485,7 @@ def _restore_helper_outputs(evidence: dict[str, Any]) -> dict[str, Any]:
         "pre_restore_backup": "canonicalPreRestorePath",
         "target_sha256_before": "targetSha256Before",
         "target_sha256_after": "targetSha256",
-        "backup_sha256": "backupSha256",
+        "backup_sha256": "restoreHelperBackupSha256",
     }
     for source_key, output_key in key_map.items():
         if source_key in evidence:
