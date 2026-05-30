@@ -213,6 +213,7 @@ def test_provider_doctor_failure_fails_preflight_and_emits_repair_prompt(
     current = _current_config_path(tmp_path)
     data = json.loads(current.read_text(encoding="utf-8"))
     data["executors"]["kimi"]["required"] = True
+    data["executors"]["kimi"]["binary"] = "definitely-missing-kimi-binary"
     proposed = _write_json(tmp_path / "provider-fail-model-routing.json", data)
 
     result = run_registered_task(
