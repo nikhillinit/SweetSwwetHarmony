@@ -653,6 +653,75 @@ def test_wal_shm_sidecars_can_be_explicitly_delegated_to_restore_helper(
     assert _row_count(target) == 2
 
 
+def test_plan_declares_full_database_file_replacement_blast_radius(
+    tmp_path: Path,
+) -> None:
+    backup = tmp_path / "backup.db"
+    target = tmp_path / "signals.db"
+    _write_db(backup, rows=4)
+    _write_db(target, rows=1)
+
+    result = run_registered_task(
+        _args(tmp_path, backup=backup, target=target, mode="plan-only")
+    )
+
+    mutation = result.plan["mutation"]
+    assert mutation["operation"] == "replace_sqlite_database_file"
+    assert mutation["blast_radius"] == "entire_sqlite_database_file"
+    assert mutation["affected_files"] == [str(target)]
+    assert mutation["affected_databases"] == [str(target)]
+    assert mutation["affected_table_scope"] == "all_tables_in_database"
+    assert mutation["affected_tables"] == ["*"]
+
+
+def test_plan_documents_global_restore_lock_for_canary_target(
+    tmp_path: Path,
+) -> None:
+    backup = tmp_path / "backup.db"
+    target = tmp_path / "signals.db.canary"
+    _write_db(backup, rows=4)
+    _write_db(target, rows=1)
+
+    result = run_registered_task(
+        _args(tmp_path, backup=backup, target=target, mode="plan-only")
+    )
+
+    assert result.plan["locks_required"] == ["signals.db"]
+    assert result.plan["lock_scope"] == {
+        "type": "global_restore_operation",
+        "target_path": str(target),
+        "locks_required": ["signals.db"],
+        "reason": (
+            "restore-db uses the shared signals.db task lock to serialize all "
+            "SQLite restore operations, including canary targets"
+        ),
+    }
+
+
+def test_plan_exposes_row_count_watermark_contract(tmp_path: Path) -> None:
+    backup = tmp_path / "backup.db"
+    target = tmp_path / "signals.db"
+    _write_db(backup, rows=4)
+    _write_db(target, rows=1)
+
+    result = run_registered_task(
+        _args(
+            tmp_path,
+            backup=backup,
+            target=target,
+            mode="plan-only",
+            min_row_count=4,
+        )
+    )
+
+    assert result.plan["postflight_gate_contracts"]["row_count_above_watermark"] == {
+        "table": "signals",
+        "operator": ">=",
+        "min_row_count": 4,
+        "actual_row_count_source": "postflight target signals count",
+    }
+
+
 def test_low_row_count_watermark_fails_postflight(tmp_path: Path) -> None:
     backup = tmp_path / "backup.db"
     target = tmp_path / "signals.db"
