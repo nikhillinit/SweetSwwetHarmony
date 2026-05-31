@@ -17,6 +17,10 @@ from .base import (
 )
 
 RESTORE_SIDECAR_HANDLER = "scripts.restore_db._ensure_no_target_sidecars"
+RESTORE_GLOBAL_LOCK_REASON = (
+    "restore-db uses the shared signals.db task lock to serialize all SQLite "
+    "restore operations, including canary targets"
+)
 
 
 class RestoreDbTask(HermesTask):
@@ -43,6 +47,7 @@ class RestoreDbTask(HermesTask):
         plan = self._base_plan(context)
         backup = context.resolve(getattr(context.args, "backup", None))
         target = self._target(context)
+        min_row_count = int(getattr(context.args, "min_row_count", 0) or 0)
 
         backup_payload: dict[str, Any] = {
             "path": str(backup) if backup else None,
@@ -113,6 +118,22 @@ class RestoreDbTask(HermesTask):
                     "schema_version_matches_if_declared",
                     "no_unexpected_sidecars",
                 ],
+                "postflight_gate_contracts": {
+                    "row_count_above_watermark": {
+                        "table": "signals",
+                        "operator": ">=",
+                        "min_row_count": min_row_count,
+                        "actual_row_count_source": (
+                            "postflight target signals count"
+                        ),
+                    }
+                },
+                "lock_scope": {
+                    "type": "global_restore_operation",
+                    "target_path": str(target),
+                    "locks_required": list(self.required_locks),
+                    "reason": RESTORE_GLOBAL_LOCK_REASON,
+                },
                 "sidecars": [str(path) for path in _sidecars(target) if path.exists()],
                 "rollback": {
                     "available": target.exists(),
@@ -121,8 +142,12 @@ class RestoreDbTask(HermesTask):
                 },
                 "mutation": {
                     "allowed": context.mode == "execute",
+                    "operation": "replace_sqlite_database_file",
+                    "blast_radius": "entire_sqlite_database_file",
                     "affected_files": [str(target)],
-                    "affected_tables": ["signals", "schema_migrations"],
+                    "affected_databases": [str(target)],
+                    "affected_table_scope": "all_tables_in_database",
+                    "affected_tables": ["*"],
                     "external_systems": [],
                 },
             }
