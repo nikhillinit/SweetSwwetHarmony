@@ -168,6 +168,7 @@ def _args(
     ack_risk: str | None = None,
     min_row_count: int = 0,
     handle_sidecars: bool = False,
+    expected_schema_version: int | None = None,
 ) -> argparse.Namespace:
     return argparse.Namespace(
         task_name="restore-db",
@@ -187,7 +188,7 @@ def _args(
         handle_sidecars=handle_sidecars,
         force=True,
         api_url="http://127.0.0.1:9/health",
-        expected_schema_version=None,
+        expected_schema_version=expected_schema_version,
         min_row_count=min_row_count,
     )
 
@@ -744,6 +745,77 @@ def test_plan_exposes_row_count_watermark_contract(tmp_path: Path) -> None:
         "min_row_count": 4,
         "actual_row_count_source": "postflight target signals count",
     }
+
+
+def test_execute_preflight_writes_restore_readiness_evidence(tmp_path: Path) -> None:
+    backup = tmp_path / "backup.db"
+    target = tmp_path / "signals.db"
+    _write_db(backup, rows=4)
+    _write_db(target, rows=1)
+
+    result = run_registered_task(
+        _args(
+            tmp_path,
+            backup=backup,
+            target=target,
+            mode="execute",
+            min_row_count=4,
+            expected_schema_version=53,
+        )
+    )
+
+    assert result.status == "approval_required"
+    assert _row_count(target) == 1
+    run_dir = Path(result.run_dir or "")
+    readiness = json.loads(
+        (run_dir / "restore_readiness.json").read_text(encoding="utf-8")
+    )
+    assert readiness["task"] == "restore-db"
+    assert readiness["mode"] == "execute"
+    assert readiness["executeEligible"] is True
+    assert readiness["executePlanHash"] == result.plan["planHash"]
+    assert readiness["target"] == {
+        "path": str(target),
+        "identity": "signals.db",
+        "class": "live",
+        "exists": True,
+    }
+    assert readiness["backup"]["path"] == str(backup)
+    assert readiness["backup"]["sha256"] == result.plan["backup"]["sha256"]
+    assert readiness["postflight"] == {
+        "minRowCount": 4,
+        "expectedSchemaVersion": 53,
+    }
+    readiness_check = next(
+        check for check in result.checks if check.name == "restore_readiness_bound"
+    )
+    assert readiness_check.passed is True
+
+
+def test_restore_plan_hash_distinguishes_execute_from_plan_only(
+    tmp_path: Path,
+) -> None:
+    backup = tmp_path / "backup.db"
+    target = tmp_path / "signals.db"
+    _write_db(backup, rows=4)
+    _write_db(target, rows=1)
+
+    plan_only = run_registered_task(
+        _args(tmp_path, backup=backup, target=target, mode="plan-only")
+    )
+    execute_shaped = run_registered_task(
+        _args(tmp_path, backup=backup, target=target, mode="execute")
+    )
+
+    assert plan_only.plan["mutation"]["allowed"] is False
+    assert execute_shaped.plan["mutation"]["allowed"] is True
+    assert plan_only.plan["planHash"] != execute_shaped.plan["planHash"]
+    readiness = json.loads(
+        (
+            Path(execute_shaped.run_dir or "") / "restore_readiness.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert readiness["executePlanHash"] == execute_shaped.plan["planHash"]
 
 
 def test_low_row_count_watermark_fails_postflight(tmp_path: Path) -> None:

@@ -17,6 +17,7 @@ from .base import (
 )
 
 RESTORE_SIDECAR_HANDLER = "scripts.restore_db._ensure_no_target_sidecars"
+RESTORE_READINESS_ARTIFACT = "restore_readiness.json"
 RESTORE_GLOBAL_LOCK_REASON = (
     "restore-db uses the shared signals.db task lock to serialize all SQLite "
     "restore operations, including canary targets"
@@ -48,6 +49,7 @@ class RestoreDbTask(HermesTask):
         backup = context.resolve(getattr(context.args, "backup", None))
         target = self._target(context)
         min_row_count = int(getattr(context.args, "min_row_count", 0) or 0)
+        expected_schema = getattr(context.args, "expected_schema_version", None)
 
         backup_payload: dict[str, Any] = {
             "path": str(backup) if backup else None,
@@ -74,6 +76,7 @@ class RestoreDbTask(HermesTask):
 
         target_payload: dict[str, Any] = {
             "path": str(target),
+            "target_class": _target_class(target),
             "exists": target.exists(),
             "snapshot_required": target.exists(),
         }
@@ -126,7 +129,13 @@ class RestoreDbTask(HermesTask):
                         "actual_row_count_source": (
                             "postflight target signals count"
                         ),
+                    },
+                    "schema_version_matches_if_declared": {
+                        "expected_schema_version": expected_schema,
                     }
+                },
+                "artifacts": {
+                    "restore_readiness": RESTORE_READINESS_ARTIFACT,
                 },
                 "lock_scope": {
                     "type": "global_restore_operation",
@@ -277,6 +286,17 @@ class RestoreDbTask(HermesTask):
                 sidecar_evidence,
             )
         )
+        if context.mode == "execute":
+            readiness = _restore_readiness_payload(context, plan, target, backup)
+            context.write_json(RESTORE_READINESS_ARTIFACT, readiness)
+            checks.append(
+                CheckResult(
+                    "restore_readiness_bound",
+                    _restore_readiness_bound(readiness),
+                    str(readiness.get("status") or ""),
+                    readiness,
+                )
+            )
         return checks
 
     def dry_run(self, context: TaskContext, plan: dict[str, Any]) -> dict[str, Any]:
@@ -500,6 +520,62 @@ def _fingerprint_wal_sidecars(fingerprint: dict[str, Any]) -> list[str]:
         for sidecar in fingerprint.get("sidecars", [])
         if sidecar.get("included_in_sha256")
     ]
+
+
+def _restore_readiness_payload(
+    context: TaskContext,
+    plan: dict[str, Any],
+    target: Path,
+    backup: Path | None,
+) -> dict[str, Any]:
+    min_row_count = int(getattr(context.args, "min_row_count", 0) or 0)
+    expected_schema = getattr(context.args, "expected_schema_version", None)
+    execute_eligible = context.mode == "execute"
+    plan_hash = plan.get("planHash")
+    return {
+        "artifactVersion": 1,
+        "task": RestoreDbTask.name,
+        "mode": context.mode,
+        "status": "bound" if execute_eligible and plan_hash else "not_bound",
+        "executeEligible": execute_eligible,
+        "executePlanHash": plan_hash if execute_eligible else None,
+        "target": {
+            "path": str(target),
+            "identity": target.name,
+            "class": _target_class(target),
+            "exists": target.exists(),
+        },
+        "backup": {
+            "path": str(backup) if backup else None,
+            "sha256": plan.get("backup", {}).get("sha256"),
+        },
+        "postflight": {
+            "minRowCount": min_row_count,
+            "expectedSchemaVersion": expected_schema,
+        },
+    }
+
+
+def _restore_readiness_bound(readiness: dict[str, Any]) -> bool:
+    return (
+        readiness.get("task") == RestoreDbTask.name
+        and readiness.get("mode") == "execute"
+        and readiness.get("executeEligible") is True
+        and bool(readiness.get("executePlanHash"))
+        and bool(readiness.get("target", {}).get("path"))
+        and readiness.get("target", {}).get("class") in {"live", "canary", "custom"}
+        and bool(readiness.get("backup", {}).get("sha256"))
+        and readiness.get("postflight", {}).get("minRowCount") is not None
+    )
+
+
+def _target_class(target: Path) -> str:
+    name = target.name.lower()
+    if name == "signals.db":
+        return "live"
+    if name == "signals.db.canary" or name.endswith(".canary"):
+        return "canary"
+    return "custom"
 
 
 def _restore_helper_outputs(evidence: dict[str, Any]) -> dict[str, Any]:
