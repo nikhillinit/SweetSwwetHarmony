@@ -7,6 +7,11 @@ from pathlib import Path
 from typing import Any
 
 from .base import CheckResult, HermesTask, TaskContext, TaskMode, TaskResult
+from .ledger_audit_restore_sqlite import (
+    RESTORE_SQLITE_SUBSYSTEM as _RESTORE_SQLITE_SUBSYSTEM,
+    audit_restore_sqlite_subsystem as _audit_restore_sqlite_subsystem,
+    empty_restore_sqlite_subsystem as _empty_restore_sqlite_subsystem,
+)
 
 LEDGER_AUDIT_REPORT_JSON = "ledger_audit_report.json"
 LEDGER_AUDIT_REPORT_MD = "ledger_audit_report.md"
@@ -183,6 +188,7 @@ class LedgerAuditTask(HermesTask):
                 "missingArtifacts": len(audit["artifacts"]["missing_artifacts"]),
             },
             "findings": audit["findings"],
+            "subsystems": audit["subsystems"],
             "reportArtifacts": {
                 "json": LEDGER_AUDIT_REPORT_JSON,
                 "markdown": LEDGER_AUDIT_REPORT_MD,
@@ -366,6 +372,11 @@ def _audit_ledger(
     index = _read_index(index_path)
     findings: list[dict[str, Any]] = []
     root_state = _root_state(ledger_root)
+    subsystems = {
+        _RESTORE_SQLITE_SUBSYSTEM: _empty_restore_sqlite_subsystem(
+            enabled="artifacts" in checks
+        )
+    }
 
     for malformed in index["malformed_rows"]:
         findings.append(
@@ -406,12 +417,16 @@ def _audit_ledger(
     if "artifacts" in checks:
         artifacts_state, artifact_findings = _audit_artifacts(index["entries"])
         findings.extend(artifact_findings)
+        restore_sqlite_state = _audit_restore_sqlite_subsystem(index["entries"])
+        subsystems[_RESTORE_SQLITE_SUBSYSTEM] = restore_sqlite_state
+        findings.extend(restore_sqlite_state["findings"])
 
     return {
         "root": root_state,
         "index": index,
         "runs": runs_state,
         "artifacts": artifacts_state,
+        "subsystems": subsystems,
         "findings": findings,
     }
 
@@ -653,6 +668,7 @@ def _artifacts_detail(audit: dict[str, Any]) -> str:
 
 def _report_markdown(report: dict[str, Any]) -> str:
     findings = report.get("findings", [])
+    subsystems = report.get("subsystems", {})
     lines = [
         "# Hermes Ledger Audit Report",
         "",
@@ -675,5 +691,15 @@ def _report_markdown(report: dict[str, Any]) -> str:
             if detail:
                 suffix = f"{suffix}: {detail}"
             lines.append(f"- {code}{suffix}")
+        lines.append("")
+    if subsystems:
+        lines.append("## Subsystems")
+        lines.append("")
+        for name, subsystem in subsystems.items():
+            subsystem_findings = subsystem.get("findings", [])
+            lines.append(
+                f"- {name}: runs={subsystem.get('runsChecked', 0)}, "
+                f"findings={len(subsystem_findings)}"
+            )
         lines.append("")
     return "\n".join(lines) + "\n"
