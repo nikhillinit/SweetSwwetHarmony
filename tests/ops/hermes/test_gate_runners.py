@@ -90,6 +90,76 @@ def _approved_deliberation_record(
     return record
 
 
+def _restore_plan(
+    *,
+    plan_hash: str = "sha256:live123",
+    mode: str = "execute",
+    target_path: str = "signals.db",
+    target_class: str = "live",
+    backup_sha256: str = "backup123",
+    min_row_count: int = 612,
+    expected_schema_version: int | None = 53,
+) -> dict[str, object]:
+    return {
+        "contractVersion": 2,
+        "task": "restore-db",
+        "mode": mode,
+        "risk_level": "critical",
+        "planHash": plan_hash,
+        "target": {
+            "path": target_path,
+            "target_class": target_class,
+        },
+        "backup": {
+            "sha256": backup_sha256,
+        },
+        "postflight_gate_contracts": {
+            "row_count_above_watermark": {
+                "min_row_count": min_row_count,
+            },
+            "schema_version_matches_if_declared": {
+                "expected_schema_version": expected_schema_version,
+            },
+        },
+        "mutation": {
+            "allowed": mode == "execute",
+            "affected_databases": [target_path],
+        },
+    }
+
+
+def _restore_readiness(
+    *,
+    plan_hash: str = "sha256:live123",
+    target_path: str = "signals.db",
+    target_class: str = "live",
+    backup_sha256: str | None = "backup123",
+    min_row_count: int | None = 612,
+    expected_schema_version: int | None = 53,
+) -> dict[str, object]:
+    return {
+        "artifactVersion": 1,
+        "task": "restore-db",
+        "mode": "execute",
+        "executeEligible": True,
+        "executePlanHash": plan_hash,
+        "target": {
+            "path": target_path,
+            "identity": Path(target_path).name,
+            "class": target_class,
+            "exists": True,
+        },
+        "backup": {
+            "path": "backup.db",
+            "sha256": backup_sha256,
+        },
+        "postflight": {
+            "minRowCount": min_row_count,
+            "expectedSchemaVersion": expected_schema_version,
+        },
+    }
+
+
 def test_deliberation_passed_accepts_live_record_shape(
     tmp_path: Path,
     capsys,
@@ -317,6 +387,237 @@ def test_deliberation_passed_rejects_wrong_or_missing_record_plan_hash(
     assert wrong_payload["evidence"]["planHashOk"] is False
     assert missing_exit_code == 4
     assert missing_payload["evidence"]["planHashOk"] is False
+
+
+def test_deliberation_passed_requires_restore_readiness_for_restore_plan(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    run_dir = tmp_path / "runs" / "restore-readiness-missing"
+    _write_json(
+        run_dir / "deliberation_record.json",
+        _approved_deliberation_record(plan_hash="sha256:live123"),
+    )
+    plan_path = _write_json(tmp_path / "task_plan.json", _restore_plan())
+
+    exit_code = deliberation_passed.main(
+        [
+            "--run-dir",
+            str(run_dir),
+            "--plan-hash",
+            "sha256:live123",
+            "--restore-plan",
+            str(plan_path),
+        ]
+    )
+
+    payload = _stdout_payload(capsys)
+    assert exit_code == 4
+    assert payload["ok"] is False
+    assert payload["evidence"]["restoreReadiness"]["status"] == "missing_readiness"
+
+
+def test_deliberation_passed_accepts_matching_restore_readiness(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    run_dir = tmp_path / "runs" / "restore-readiness-matching"
+    _write_json(
+        run_dir / "deliberation_record.json",
+        _approved_deliberation_record(plan_hash="sha256:live123"),
+    )
+    target = str(tmp_path / "signals.db")
+    plan_path = _write_json(
+        tmp_path / "task_plan.json",
+        _restore_plan(target_path=target),
+    )
+    readiness_path = _write_json(
+        tmp_path / "restore_readiness.json",
+        _restore_readiness(target_path=target),
+    )
+
+    exit_code = deliberation_passed.main(
+        [
+            "--run-dir",
+            str(run_dir),
+            "--plan-hash",
+            "sha256:live123",
+            "--restore-plan",
+            str(plan_path),
+            "--restore-readiness",
+            str(readiness_path),
+        ]
+    )
+
+    payload = _stdout_payload(capsys)
+    assert exit_code == 0
+    assert payload["ok"] is True
+    assert payload["evidence"]["restoreReadiness"]["status"] == "satisfied"
+
+
+def test_deliberation_passed_rejects_canary_readiness_for_live_restore_plan(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    run_dir = tmp_path / "runs" / "restore-readiness-target-mismatch"
+    _write_json(
+        run_dir / "deliberation_record.json",
+        _approved_deliberation_record(plan_hash="sha256:live123"),
+    )
+    live_target = str(tmp_path / "signals.db")
+    canary_target = str(tmp_path / "signals.db.canary")
+    plan_path = _write_json(
+        tmp_path / "live_task_plan.json",
+        _restore_plan(target_path=live_target, target_class="live"),
+    )
+    readiness_path = _write_json(
+        tmp_path / "canary_restore_readiness.json",
+        _restore_readiness(target_path=canary_target, target_class="canary"),
+    )
+
+    exit_code = deliberation_passed.main(
+        [
+            "--run-dir",
+            str(run_dir),
+            "--plan-hash",
+            "sha256:live123",
+            "--restore-plan",
+            str(plan_path),
+            "--restore-readiness",
+            str(readiness_path),
+        ]
+    )
+
+    payload = _stdout_payload(capsys)
+    assert exit_code == 4
+    assert payload["ok"] is False
+    assert payload["evidence"]["restoreReadiness"]["ok"] is False
+    assert "target_path_mismatch" in payload["evidence"]["restoreReadiness"]["reasons"]
+    assert "target_class_mismatch" in payload["evidence"]["restoreReadiness"]["reasons"]
+
+
+def test_deliberation_passed_rejects_non_execute_restore_plan(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    run_dir = tmp_path / "runs" / "restore-readiness-plan-only"
+    _write_json(
+        run_dir / "deliberation_record.json",
+        _approved_deliberation_record(plan_hash="sha256:planonly"),
+    )
+    plan_path = _write_json(
+        tmp_path / "plan_only_task_plan.json",
+        _restore_plan(plan_hash="sha256:planonly", mode="plan-only"),
+    )
+    readiness_path = _write_json(
+        tmp_path / "restore_readiness.json",
+        _restore_readiness(plan_hash="sha256:planonly"),
+    )
+
+    exit_code = deliberation_passed.main(
+        [
+            "--run-dir",
+            str(run_dir),
+            "--plan-hash",
+            "sha256:planonly",
+            "--restore-plan",
+            str(plan_path),
+            "--restore-readiness",
+            str(readiness_path),
+        ]
+    )
+
+    payload = _stdout_payload(capsys)
+    assert exit_code == 4
+    assert payload["evidence"]["restoreReadiness"]["ok"] is False
+    assert "restore_plan_not_execute_mode" in payload["evidence"]["restoreReadiness"][
+        "reasons"
+    ]
+
+
+def test_deliberation_passed_rejects_mismatched_restore_readiness_fields(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    run_dir = tmp_path / "runs" / "restore-readiness-field-mismatch"
+    _write_json(
+        run_dir / "deliberation_record.json",
+        _approved_deliberation_record(plan_hash="sha256:live123"),
+    )
+    plan_path = _write_json(
+        tmp_path / "task_plan.json",
+        _restore_plan(
+            backup_sha256="backup-expected",
+            min_row_count=612,
+            expected_schema_version=53,
+        ),
+    )
+    readiness_path = _write_json(
+        tmp_path / "restore_readiness.json",
+        _restore_readiness(
+            backup_sha256="backup-actual",
+            min_row_count=4,
+            expected_schema_version=26,
+        ),
+    )
+
+    exit_code = deliberation_passed.main(
+        [
+            "--run-dir",
+            str(run_dir),
+            "--plan-hash",
+            "sha256:live123",
+            "--restore-plan",
+            str(plan_path),
+            "--restore-readiness",
+            str(readiness_path),
+        ]
+    )
+
+    payload = _stdout_payload(capsys)
+    assert exit_code == 4
+    assert payload["evidence"]["restoreReadiness"]["ok"] is False
+    assert {
+        "backup_hash_mismatch",
+        "min_row_count_mismatch",
+        "expected_schema_version_mismatch",
+    }.issubset(set(payload["evidence"]["restoreReadiness"]["reasons"]))
+
+
+def test_deliberation_passed_rejects_missing_restore_readiness_fields(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    run_dir = tmp_path / "runs" / "restore-readiness-field-missing"
+    _write_json(
+        run_dir / "deliberation_record.json",
+        _approved_deliberation_record(plan_hash="sha256:live123"),
+    )
+    plan_path = _write_json(tmp_path / "task_plan.json", _restore_plan())
+    readiness_path = _write_json(
+        tmp_path / "restore_readiness.json",
+        _restore_readiness(backup_sha256=None, min_row_count=None),
+    )
+
+    exit_code = deliberation_passed.main(
+        [
+            "--run-dir",
+            str(run_dir),
+            "--plan-hash",
+            "sha256:live123",
+            "--restore-plan",
+            str(plan_path),
+            "--restore-readiness",
+            str(readiness_path),
+        ]
+    )
+
+    payload = _stdout_payload(capsys)
+    assert exit_code == 4
+    assert {
+        "backup_hash_missing",
+        "min_row_count_missing",
+    }.issubset(set(payload["evidence"]["restoreReadiness"]["reasons"]))
 
 
 def test_deliberation_passed_rejects_stale_created_at_records(
