@@ -106,6 +106,7 @@ def test_ledger_audit_report_schema_tracks_live_camel_case_shape() -> None:
         "governance_config",
         "collector_promotion",
         "suppression_outbox",
+        "bypass_lifecycle",
     ]
     assert subsystems["properties"]["restore_sqlite"]["required"] == [
         "subsystem",
@@ -137,6 +138,18 @@ def test_ledger_audit_report_schema_tracks_live_camel_case_shape() -> None:
         "enabled",
         "runsChecked",
         "resourcesChecked",
+        "findings",
+    ]
+    assert subsystems["properties"]["bypass_lifecycle"]["required"] == [
+        "subsystem",
+        "ownerTask",
+        "enabled",
+        "runsChecked",
+        "resourcesChecked",
+        "activeRecords",
+        "expiredRecords",
+        "remediatedRecords",
+        "revokedRecords",
         "findings",
     ]
     assert report_artifacts["required"] == ["json", "markdown"]

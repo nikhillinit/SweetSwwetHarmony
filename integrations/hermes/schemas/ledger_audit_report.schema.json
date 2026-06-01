@@ -84,7 +84,8 @@
         "restore_sqlite",
         "governance_config",
         "collector_promotion",
-        "suppression_outbox"
+        "suppression_outbox",
+        "bypass_lifecycle"
       ],
       "properties": {
         "restore_sqlite": {
@@ -172,6 +173,37 @@
             "enabled": {"type": "boolean"},
             "runsChecked": {"type": "integer", "minimum": 0},
             "resourcesChecked": {"type": "integer", "minimum": 0},
+            "findings": {
+              "type": "array",
+              "items": {"$ref": "#/$defs/finding"}
+            }
+          },
+          "additionalProperties": false
+        },
+        "bypass_lifecycle": {
+          "type": "object",
+          "required": [
+            "subsystem",
+            "ownerTask",
+            "enabled",
+            "runsChecked",
+            "resourcesChecked",
+            "activeRecords",
+            "expiredRecords",
+            "remediatedRecords",
+            "revokedRecords",
+            "findings"
+          ],
+          "properties": {
+            "subsystem": {"const": "bypass_lifecycle"},
+            "ownerTask": {"const": "ledgered-bypass-artifacts"},
+            "enabled": {"type": "boolean"},
+            "runsChecked": {"type": "integer", "minimum": 0},
+            "resourcesChecked": {"type": "integer", "minimum": 0},
+            "activeRecords": {"type": "integer", "minimum": 0},
+            "expiredRecords": {"type": "integer", "minimum": 0},
+            "remediatedRecords": {"type": "integer", "minimum": 0},
+            "revokedRecords": {"type": "integer", "minimum": 0},
             "findings": {
               "type": "array",
               "items": {"$ref": "#/$defs/finding"}
