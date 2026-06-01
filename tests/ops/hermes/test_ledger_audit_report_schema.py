@@ -76,6 +76,7 @@ def test_ledger_audit_report_schema_matches_live_report_keys(tmp_path: Path) -> 
         "ledgerIndex",
         "checksRun",
         "summary",
+        "operatorSummary",
         "findings",
         "subsystems",
         "reportArtifacts",
@@ -87,6 +88,7 @@ def test_ledger_audit_report_schema_tracks_live_camel_case_shape() -> None:
     schema = _load_schema()
     properties = schema["properties"]
     summary = properties["summary"]
+    operator_summary = properties["operatorSummary"]
     subsystems = properties["subsystems"]
     report_artifacts = properties["reportArtifacts"]
 
@@ -101,6 +103,24 @@ def test_ledger_audit_report_schema_tracks_live_camel_case_shape() -> None:
     assert "rawIndexRows" in summary["properties"]
     assert "uniqueRunDirsChecked" in summary["properties"]
     assert "validIndexEntries" in summary["properties"]
+    assert operator_summary["required"] == [
+        "status",
+        "severityThreshold",
+        "totalFindings",
+        "blockingFindings",
+        "severityCounts",
+        "subsystemsWithFindings",
+        "nextAction",
+    ]
+    assert operator_summary["properties"]["status"]["enum"] == [
+        "pass",
+        "action_required",
+    ]
+    assert operator_summary["properties"]["nextAction"]["enum"] == [
+        "no_action_required",
+        "review_non_blocking_findings",
+        "review_blocking_findings",
+    ]
     assert subsystems["required"] == [
         "restore_sqlite",
         "governance_config",

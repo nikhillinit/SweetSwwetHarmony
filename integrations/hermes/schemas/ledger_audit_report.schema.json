@@ -35,6 +35,7 @@
     "ledgerIndex",
     "checksRun",
     "summary",
+    "operatorSummary",
     "findings",
     "subsystems",
     "reportArtifacts"
@@ -71,6 +72,47 @@
         "uniqueRunDirsChecked": {"type": "integer", "minimum": 0},
         "missingRunDirs": {"type": "integer", "minimum": 0},
         "missingArtifacts": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "operatorSummary": {
+      "type": "object",
+      "required": [
+        "status",
+        "severityThreshold",
+        "totalFindings",
+        "blockingFindings",
+        "severityCounts",
+        "subsystemsWithFindings",
+        "nextAction"
+      ],
+      "properties": {
+        "status": {"enum": ["pass", "action_required"]},
+        "severityThreshold": {"enum": ["low", "medium", "high", "critical"]},
+        "totalFindings": {"type": "integer", "minimum": 0},
+        "blockingFindings": {"type": "integer", "minimum": 0},
+        "severityCounts": {
+          "type": "object",
+          "required": ["low", "medium", "high", "critical"],
+          "properties": {
+            "low": {"type": "integer", "minimum": 0},
+            "medium": {"type": "integer", "minimum": 0},
+            "high": {"type": "integer", "minimum": 0},
+            "critical": {"type": "integer", "minimum": 0}
+          },
+          "additionalProperties": false
+        },
+        "subsystemsWithFindings": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
+        "nextAction": {
+          "enum": [
+            "no_action_required",
+            "review_non_blocking_findings",
+            "review_blocking_findings"
+          ]
+        }
       },
       "additionalProperties": false
     },

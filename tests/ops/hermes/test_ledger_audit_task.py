@@ -299,6 +299,30 @@ def test_dry_run_writes_audit_reports_and_does_not_touch_db_or_config(
     assert "Hermes Ledger Audit Report" in report_md.read_text(encoding="utf-8")
 
 
+def test_dry_run_writes_operator_summary_for_clean_audit(tmp_path: Path) -> None:
+    result = run_registered_task(_args(tmp_path, mode="dry-run"))
+
+    assert result.outputs["operatorSummary"] == {
+        "status": "pass",
+        "severityThreshold": "critical",
+        "totalFindings": 0,
+        "blockingFindings": 0,
+        "severityCounts": {
+            "low": 0,
+            "medium": 0,
+            "high": 0,
+            "critical": 0,
+        },
+        "subsystemsWithFindings": [],
+        "nextAction": "no_action_required",
+    }
+    report_md = Path(result.run_dir or "") / "ledger_audit_report.md"
+    markdown = report_md.read_text(encoding="utf-8")
+    assert "## Operator Summary" in markdown
+    assert "- Status: pass" in markdown
+    assert "- Next action: no_action_required" in markdown
+
+
 def test_dry_run_summary_distinguishes_raw_index_rows_from_unique_run_dirs(
     tmp_path: Path,
 ) -> None:
@@ -367,6 +391,20 @@ def test_dry_run_fails_closed_on_missing_restore_required_artifact(
     assert finding["subsystem"] == "restore_sqlite"
     assert finding["resourceId"] == "restore_readiness"
     assert finding["evidencePath"] == str(run_dir / "restore_readiness.json")
+    assert result.outputs["operatorSummary"] == {
+        "status": "action_required",
+        "severityThreshold": "critical",
+        "totalFindings": 1,
+        "blockingFindings": 1,
+        "severityCounts": {
+            "low": 0,
+            "medium": 0,
+            "high": 0,
+            "critical": 1,
+        },
+        "subsystemsWithFindings": ["restore_sqlite"],
+        "nextAction": "review_blocking_findings",
+    }
     assert (Path(result.run_dir or "") / "repair_prompt.md").exists()
 
 
