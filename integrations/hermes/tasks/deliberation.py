@@ -12,6 +12,12 @@ from integrations.hermes.adapters import (
     build_prompt_packet,
     build_reviewer_executor,
 )
+from integrations.hermes.deliberation_policy import (
+    evaluate_reviewer_policy,
+    quorum_record_evidence,
+    reviewer_policy_from_plan,
+)
+from integrations.hermes.plan_contract import CURRENT_CONTRACT_VERSION
 
 from .base import (
     CheckResult,
@@ -155,14 +161,11 @@ class DeliberationTask(HermesTask):
     ) -> list[CheckResult]:
         panel = list(outputs.get("panel") or [])
         consensus = dict(outputs.get("consensus") or {})
+        quorum = dict(consensus.get("quorum") or {})
         blockers = list(consensus.get("blockers") or [])
         dissent = bool(consensus.get("dissent", {}).get("present"))
-        active_count = sum(
-            1
-            for item in panel
-            if item.get("verdict") != "skip" and _trusted_reviewer(item)
-        )
-        quorum_target = HIGH_RISK_APPROVAL_QUORUM
+        active_count = len(list(quorum.get("countedApprovals") or []))
+        quorum_target = int(quorum.get("required") or HIGH_RISK_APPROVAL_QUORUM)
         record_path = context.run_dir / "deliberation_record.json"
         markdown_path = context.run_dir / "deliberation.md"
 
@@ -175,9 +178,9 @@ class DeliberationTask(HermesTask):
             ),
             CheckResult(
                 "quorum_completed",
-                active_count >= quorum_target,
+                quorum.get("status") == "satisfied",
                 f"active={active_count} required={quorum_target}",
-                {"active": active_count, "required": quorum_target},
+                quorum,
             ),
             CheckResult(
                 "no_blocker_or_dissent_verdict",
@@ -205,9 +208,11 @@ async def _run_panel(context: TaskContext, plan: dict[str, Any]) -> dict[str, An
     panel = await asyncio.gather(
         *[_run_reviewer(context, str(name), prompt) for name in reviewers]
     )
-    consensus = _synthesize(panel)
+    reviewer_policy = reviewer_policy_from_plan(plan)
+    consensus = _synthesize(panel, reviewer_policy)
     created_at = datetime.now(timezone.utc)
     return {
+        "contractVersion": CURRENT_CONTRACT_VERSION,
         "deliberationId": _deliberation_id(created_at),
         "createdAt": created_at.isoformat(),
         "task": DeliberationTask.name,
@@ -225,6 +230,7 @@ async def _run_panel(context: TaskContext, plan: dict[str, Any]) -> dict[str, An
             "taskTextChars": plan.get("input", {}).get("task_text_chars", 0),
         },
         "panel": panel,
+        "reviewerPolicy": reviewer_policy,
         "synthesizer": {
             "executor": plan.get("reviewers", {}).get("synthesizer"),
             "strategy": "deterministic-majority-with-dissent",
@@ -344,18 +350,21 @@ def _classify_text_response(content: str) -> dict[str, Any]:
     }
 
 
-def _synthesize(panel: list[dict[str, Any]]) -> dict[str, Any]:
+def _synthesize(
+    panel: list[dict[str, Any]],
+    reviewer_policy: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     active = [item for item in panel if item.get("verdict") != "skip"]
     blockers = [
         item
         for item in active
         if item.get("verdict") in {"block", "needs_changes"}
     ]
-    approvals = [
-        item
-        for item in active
-        if item.get("verdict") == "approve" and _trusted_reviewer(item)
-    ]
+    quorum = evaluate_reviewer_policy(
+        panel,
+        reviewer_policy or reviewer_policy_from_plan({"task": DeliberationTask.name}),
+    )
+    persisted_quorum = quorum_record_evidence(quorum)
     verdicts = {item.get("verdict") for item in active}
     dissent_present = len(verdicts) > 1
 
@@ -363,7 +372,7 @@ def _synthesize(panel: list[dict[str, Any]]) -> dict[str, Any]:
         status = "blocked"
     elif dissent_present:
         status = "conflicted"
-    elif len(approvals) >= HIGH_RISK_APPROVAL_QUORUM:
+    elif persisted_quorum.get("status") == "satisfied":
         status = "approved"
     else:
         status = "no_quorum"
@@ -375,6 +384,7 @@ def _synthesize(panel: list[dict[str, Any]]) -> dict[str, Any]:
             "present": dissent_present,
             "summary": _dissent_summary(active) if dissent_present else "",
         },
+        "quorum": persisted_quorum,
         "overrideAllowed": status != "approved",
         "overrideAckToken": "DELIBERATION_OVERRIDE" if status != "approved" else None,
     }
@@ -384,10 +394,6 @@ def _dissent_summary(active: list[dict[str, Any]]) -> str:
     return "; ".join(
         f"{item.get('executor')}={item.get('verdict')}" for item in active
     )
-
-
-def _trusted_reviewer(item: dict[str, Any]) -> bool:
-    return item.get("success") is True and item.get("parsed") is True
 
 
 def _deliberation_markdown(record: dict[str, Any]) -> str:

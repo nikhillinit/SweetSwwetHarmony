@@ -34,18 +34,60 @@ def _approved_deliberation_record(
     plan_hash: str | None = "sha256:abc123",
     created_at: str | None = None,
     deliberation_id: str = "deliberate-20260529T040000Z",
+    include_policy: bool = True,
+    panel: list[dict[str, object]] | None = None,
 ) -> dict[str, object]:
-    return {
+    panel = panel or [
+        {
+            "executor": "codex",
+            "verdict": "approve",
+            "parsed": True,
+            "success": True,
+        },
+        {
+            "executor": "kimi",
+            "verdict": "approve",
+            "parsed": True,
+            "success": True,
+        },
+    ]
+    record: dict[str, object] = {
+        "contractVersion": 2,
         "deliberationId": deliberation_id,
         "createdAt": created_at if created_at is not None else _iso_timestamp(),
         "input": {"planHash": plan_hash},
+        "panel": panel,
         "consensus": {
             "status": "approved",
             "blockers": [],
-            "dissent": {"present": False},
+            "dissent": {"present": False, "summary": ""},
+            "quorum": {
+                "status": "satisfied",
+                "required": 2,
+                "countedApprovals": ["codex", "kimi"],
+                "trustedReviewers": ["codex", "gemini", "kimi"],
+                "untrustedApprovals": [],
+                "nonCompliantApprovals": [],
+                "malformedReviewers": [],
+            },
         },
         "freshnessTtlSeconds": 86400,
     }
+    if include_policy:
+        record["reviewerPolicy"] = {
+            "policyVersion": 1,
+            "task": "deliberate",
+            "riskLevel": "high",
+            "trustedReviewers": ["codex", "gemini", "kimi"],
+            "requiredQuorum": 2,
+            "approvalCriteria": {
+                "verdict": "approve",
+                "success": True,
+                "parsed": True,
+                "schema": "structured_json_v1",
+            },
+        }
+    return record
 
 
 def test_deliberation_passed_accepts_live_record_shape(
@@ -67,6 +109,149 @@ def test_deliberation_passed_accepts_live_record_shape(
     assert payload["ok"] is True
     assert payload["detail"] == "deliberation passed"
     assert payload["evidence"]["consensus"]["status"] == "approved"
+    assert payload["evidence"]["reviewerPolicy"]["status"] == "satisfied"
+    assert payload["evidence"]["reviewerPolicy"]["countedApprovals"] == [
+        "codex",
+        "kimi",
+    ]
+    assert payload["evidence"]["reviewerPolicy"]["required"] == 2
+
+
+def test_deliberation_passed_rejects_missing_reviewer_policy_evidence(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    run_dir = tmp_path / "runs" / "missing-policy"
+    _write_json(
+        run_dir / "deliberation_record.json",
+        _approved_deliberation_record(include_policy=False),
+    )
+
+    exit_code = deliberation_passed.main(
+        ["--run-dir", str(run_dir), "--plan-hash", "abc123"]
+    )
+
+    payload = _stdout_payload(capsys)
+    assert exit_code == 4
+    assert payload["ok"] is False
+    assert payload["detail"] == "deliberation failed"
+    assert payload["evidence"]["reviewerPolicy"]["status"] == "missing_policy"
+
+
+def test_deliberation_passed_rejects_missing_recorded_quorum_evidence(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    run_dir = tmp_path / "runs" / "missing-quorum"
+    record = _approved_deliberation_record()
+    del record["consensus"]["quorum"]
+    _write_json(run_dir / "deliberation_record.json", record)
+
+    exit_code = deliberation_passed.main(
+        ["--run-dir", str(run_dir), "--plan-hash", "abc123"]
+    )
+
+    payload = _stdout_payload(capsys)
+    assert exit_code == 4
+    assert payload["ok"] is False
+    assert payload["detail"] == "deliberation failed"
+    assert payload["evidence"]["reviewerPolicy"]["status"] == "missing_quorum_evidence"
+    assert payload["evidence"]["reviewerPolicy"]["quorumEvidencePresent"] is False
+
+
+def test_deliberation_passed_rejects_stale_recorded_quorum_evidence(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    run_dir = tmp_path / "runs" / "stale-quorum"
+    record = _approved_deliberation_record()
+    record["consensus"]["quorum"]["countedApprovals"] = ["codex", "claude"]
+    record["consensus"]["quorum"]["untrustedApprovals"] = []
+    _write_json(run_dir / "deliberation_record.json", record)
+
+    exit_code = deliberation_passed.main(
+        ["--run-dir", str(run_dir), "--plan-hash", "abc123"]
+    )
+
+    payload = _stdout_payload(capsys)
+    assert exit_code == 4
+    assert payload["ok"] is False
+    assert payload["detail"] == "deliberation failed"
+    assert payload["evidence"]["reviewerPolicy"]["status"] == "quorum_evidence_mismatch"
+    assert payload["evidence"]["reviewerPolicy"]["quorumEvidenceMatches"] is False
+    assert payload["evidence"]["reviewerPolicy"]["countedApprovals"] == [
+        "codex",
+        "kimi",
+    ]
+    assert payload["evidence"]["reviewerPolicy"]["untrustedApprovals"] == []
+
+
+def test_deliberation_passed_rejects_recorded_quorum_status_mismatch(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    run_dir = tmp_path / "runs" / "quorum-status-mismatch"
+    record = _approved_deliberation_record()
+    record["consensus"]["quorum"]["status"] = "insufficient_quorum"
+    _write_json(run_dir / "deliberation_record.json", record)
+
+    exit_code = deliberation_passed.main(
+        ["--run-dir", str(run_dir), "--plan-hash", "abc123"]
+    )
+
+    payload = _stdout_payload(capsys)
+    assert exit_code == 4
+    assert payload["evidence"]["reviewerPolicy"]["status"] == "quorum_evidence_mismatch"
+    assert payload["evidence"]["reviewerPolicy"]["quorumEvidenceMatches"] is False
+
+
+def test_deliberation_passed_rejects_untrusted_reviewer_approval(
+    tmp_path: Path,
+    capsys,
+) -> None:
+    run_dir = tmp_path / "runs" / "untrusted-reviewer"
+    record = _approved_deliberation_record(
+        panel=[
+            {
+                "executor": "codex",
+                "verdict": "approve",
+                "parsed": True,
+                "success": True,
+            },
+            {
+                "executor": "claude",
+                "verdict": "approve",
+                "parsed": True,
+                "success": True,
+            },
+        ],
+    )
+    record["consensus"]["quorum"] = {
+        "status": "insufficient_quorum",
+        "required": 2,
+        "countedApprovals": ["codex"],
+        "trustedReviewers": ["codex", "gemini", "kimi"],
+        "untrustedApprovals": ["claude"],
+        "nonCompliantApprovals": [
+            {"executor": "claude", "reasons": ["untrusted_reviewer"]}
+        ],
+        "malformedReviewers": [],
+    }
+    _write_json(
+        run_dir / "deliberation_record.json",
+        record,
+    )
+
+    exit_code = deliberation_passed.main(
+        ["--run-dir", str(run_dir), "--plan-hash", "abc123"]
+    )
+
+    payload = _stdout_payload(capsys)
+    assert exit_code == 4
+    assert payload["ok"] is False
+    assert payload["evidence"]["reviewerPolicy"]["status"] == "insufficient_quorum"
+    assert payload["evidence"]["reviewerPolicy"]["countedApprovals"] == ["codex"]
+    assert payload["evidence"]["reviewerPolicy"]["untrustedApprovals"] == ["claude"]
 
 
 def test_deliberation_passed_requires_plan_hash_by_default(
