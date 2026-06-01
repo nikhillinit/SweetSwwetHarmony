@@ -160,8 +160,10 @@ first enforced brick. The full E0–E5 program proceeds afterward on a live corp
 ## Relationship between the two artifacts
 
 - The `.omx/plans/hermes-integration-ralplan-dr-20260527.md` addendum (Track A hardening
-  PRs 1A–9) is **landed** and is now architecture history for the *build* phase.
-- The post-PR235 proposal is the forward **enforcement** program (E0–E5 / H1–H5). It
-  supersedes "keep hardening / doc-refresh" as the post-recovery roadmap.
+  PRs 1A-9) is **landed** and is now architecture history for the *build* phase.
+- The tracked post-PR235 enforcement strategy is
+  `docs/superpowers/specs/2026-06-01-hermes-track-a-post-pr235-hardening.md`. It is the
+  forward **enforcement** program definition (H0-H5) and supersedes "keep hardening /
+  doc-refresh" as the post-recovery roadmap.
 - This recovery sprint (S4) is the bridge: it is both the product recovery and the
   enforcement program's first real (non-fixture) E3 evidence.
