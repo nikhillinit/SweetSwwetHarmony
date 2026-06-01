@@ -105,6 +105,7 @@ def test_ledger_audit_report_schema_tracks_live_camel_case_shape() -> None:
         "restore_sqlite",
         "governance_config",
         "collector_promotion",
+        "suppression_outbox",
     ]
     assert subsystems["properties"]["restore_sqlite"]["required"] == [
         "subsystem",
@@ -123,6 +124,14 @@ def test_ledger_audit_report_schema_tracks_live_camel_case_shape() -> None:
         "findings",
     ]
     assert subsystems["properties"]["collector_promotion"]["required"] == [
+        "subsystem",
+        "ownerTask",
+        "enabled",
+        "runsChecked",
+        "resourcesChecked",
+        "findings",
+    ]
+    assert subsystems["properties"]["suppression_outbox"]["required"] == [
         "subsystem",
         "ownerTask",
         "enabled",

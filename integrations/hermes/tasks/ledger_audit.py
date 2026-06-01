@@ -22,6 +22,11 @@ from .ledger_audit_restore_sqlite import (
     audit_restore_sqlite_subsystem as _audit_restore_sqlite_subsystem,
     empty_restore_sqlite_subsystem as _empty_restore_sqlite_subsystem,
 )
+from .ledger_audit_suppression_outbox import (
+    SUPPRESSION_OUTBOX_SUBSYSTEM as _SUPPRESSION_OUTBOX_SUBSYSTEM,
+    audit_suppression_outbox_subsystem as _audit_suppression_outbox_subsystem,
+    empty_suppression_outbox_subsystem as _empty_suppression_outbox_subsystem,
+)
 
 LEDGER_AUDIT_REPORT_JSON = "ledger_audit_report.json"
 LEDGER_AUDIT_REPORT_MD = "ledger_audit_report.md"
@@ -392,6 +397,9 @@ def _audit_ledger(
         _COLLECTOR_PROMOTION_SUBSYSTEM: _empty_collector_promotion_subsystem(
             enabled="artifacts" in checks
         ),
+        _SUPPRESSION_OUTBOX_SUBSYSTEM: _empty_suppression_outbox_subsystem(
+            enabled="artifacts" in checks
+        ),
     }
 
     for malformed in index["malformed_rows"]:
@@ -446,6 +454,11 @@ def _audit_ledger(
         )
         subsystems[_COLLECTOR_PROMOTION_SUBSYSTEM] = collector_promotion_state
         findings.extend(collector_promotion_state["findings"])
+        suppression_outbox_state = _audit_suppression_outbox_subsystem(
+            index["entries"]
+        )
+        subsystems[_SUPPRESSION_OUTBOX_SUBSYSTEM] = suppression_outbox_state
+        findings.extend(suppression_outbox_state["findings"])
 
     return {
         "root": root_state,
