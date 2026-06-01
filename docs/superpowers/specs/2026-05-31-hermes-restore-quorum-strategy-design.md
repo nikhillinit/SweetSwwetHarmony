@@ -89,6 +89,36 @@ Codex blocked the quorum despite never emitting valid JSON.
    `claude` reference is a config path (`.claude/hermes/model-routing.json`).
    The probe (Workstream B) is authoritative — do not assume doctor-green ==
    usable reviewer.
+5. **Two clean `approve` verdicts are required — not `approve`+`skip`.** A
+   `skip` (e.g., disabled/unavailable reviewer) leaves <2 approvals → `no_quorum`.
+   Mixed verdicts (e.g., one `approve`, one `needs_changes`) set `dissent` → the
+   gate fails. So both gating reviewers must independently emit valid-JSON
+   `approve`.
+
+### 2.2 The deliberation gate is plan-hash bound (this shapes WS-C/WS-D)
+
+`integrations/hermes/gate_runners/deliberation_passed.py` is the gate that
+consumes a deliberation result. It enforces (lines 42-63):
+
+- `--plan-hash` is **required** (else "plan hash required"), unless the explicitly
+  **unsafe** `--allow-unbound` is passed (`planBinding.unsafe = true`).
+- `record.input.planHash` must equal `--plan-hash` (the deliberation must be bound
+  to the **exact** `task_plan.json` that will be executed).
+- `consensus.status == "approved"` AND no `blockers` AND no `dissent`.
+- Freshness: the deliberation must be within its TTL (`freshnessTtlSeconds`,
+  default **86400s / 24h**) at gate time.
+- The gate checks status/blockers/dissent/plan-hash/age — **not reviewer
+  identity**. Excluding `codex` from the gating panel is therefore
+  gate-legitimate; probe-then-select is policy-compliant. (But advisory `codex`
+  must run **separately** — left in the panel it creates dissent and fails the
+  gate.)
+
+**Load-bearing consequence:** a deliberation bound to the **canary** plan
+(`target=signals.db.canary`) has a different plan hash than the **live** plan
+(`target=signals.db`), so it **cannot** gate the live restore. The live restore
+requires its **own bound deliberation** on the live-target plan (or the operator
+consciously accepts the unsafe `--allow-unbound`). The canary deliberation is a
+**mechanism rehearsal**, not the live gate.
 
 ---
 
@@ -125,16 +155,21 @@ Codex blocked the quorum despite never emitting valid JSON.
 
 ### WS-B · Reviewer JSON-emission probe (hard gate — the actual critical path)
 
-1. Dry-run a deliberation per candidate reviewer (kimi, gemini, codex) against a
+1. **Probe Gemini first as a go/no-go** (cheapest determinant of whether honest
+   quorum is achievable at all): if Gemini does not emit valid JSON and Codex
+   also can't be repaired, only Kimi is trusted (1) → honest quorum is impossible
+   and the operator should decide between Codex repair vs the D1 override
+   *before* sinking effort into plan regeneration / canary re-runs.
+2. Dry-run a deliberation per candidate reviewer (kimi, gemini, codex) against a
    small scratch plan.
-2. Eligible gating reviewers = those returning `parsed=True`. Kimi is proven;
+3. Eligible gating reviewers = those returning `parsed=True`. Kimi is proven;
    **Gemini must pass the probe**; Codex is advisory unless it passes.
-3. **Require ≥ 2 eligible reviewers.** If fewer than 2:
+4. **Require ≥ 2 eligible reviewers.** If fewer than 2:
    - escalate to the D1 override fallback (documented justification + operator
      sign-off), **or**
    - invest in repairing a reviewer (e.g., Codex's `windows sandbox: spawn setup
      refresh` + JSON emission) — higher effort, uncertain.
-4. Record each reviewer's true status honestly (doctor-green ≠ JSON-capable).
+5. Record each reviewer's true status honestly (doctor-green ≠ JSON-capable).
 
 ### WS-C · Regenerate plan & re-run deliberation
 
@@ -149,9 +184,15 @@ Codex blocked the quorum despite never emitting valid JSON.
    actually contains the fixed `affected_tables`, `lock_scope.reason`, and
    `min_row_count` (guard against the 12,000-char `task_text` truncation in
    `deliberation.py:26,421-430`).
-4. **Gate on consensus:** `approved` → operator gate (WS-D). `no_quorum` /
+4. **Gate on consensus:** `approved` → proceed to WS-D. `no_quorum` /
    `conflicted` / `blocked` → diagnose the specific failing reviewer, fix,
    re-run; override only as the D1 fallback.
+
+> **This canary deliberation is a mechanism rehearsal, not the live-restore
+> gate.** Per §2.2 the `deliberation_passed` gate is bound to the executed
+> plan's hash, and the canary plan's hash differs from the live plan's. WS-C
+> proves the reviewers emit JSON and approve the contract shape; WS-D runs the
+> actual gating deliberation against the live-target plan.
 
 **Residual risk to capture explicitly:** PR #245's lock change is
 *documentation, not alignment* — `locks_required` still names `signals.db` for a
@@ -169,9 +210,31 @@ procedure:
 - `.omx/plans/corrected-operational-priorities-ralplan-dr-20260514.md` (operator
   approves mutation; scheduler/task changes approved separately from code).
 
+**Quorum is not restore-correctness.** An approving deliberation certifies the
+plan document is internally self-consistent and honest about blast radius / locks
+/ watermark. It does **not** certify that this is the *right* recovery action,
+the *right* backup, or the *right* watermark — reviewers see only the plan text
+(≤12,000 chars), not the actual backup contents or live target. **The human
+operator gate is the safety check on the live parameters.**
+
+**Bound live deliberation (the actual gate — distinct from the WS-C rehearsal):**
+
+1. Generate the **live-target** restore plan: `restore-db` plan-only with
+   `--target signals.db`, the **operator-selected backup** (see step 3), and the
+   operator-selected `--min-row-count`. Capture the resulting `task_plan.json`
+   and its SHA-256.
+2. Run the gating deliberation with `--panel <eligible JSON reviewers>` bound to
+   that exact plan file; then run `deliberation_passed` with `--plan-hash <that
+   SHA-256>`. The gate passes only on `approved` + no blockers + no dissent +
+   plan-hash match + age within the **24h freshness TTL**. Advisory Codex, if
+   used, runs as a **separate** invocation (never in the gating panel).
+3. If operator approval lags >24h after the bound deliberation, it goes stale —
+   **regenerate and re-run** before proceeding.
+
 Pre-conditions checklist:
 
-1. **Approving quorum artifact** from WS-C (or documented D1 override).
+1. **Approving, plan-hash-bound deliberation** on the live-target plan (or a
+   consciously accepted, documented `--allow-unbound` override per D1).
 2. **Backup selection is an operator decision via the DR audit.** The DR default
    names `backups/signals-20260511-030832.db` as the leading 612/53 candidate
    (compared read-only against `signals.backup-20260511T105827.db`,
@@ -185,6 +248,13 @@ Pre-conditions checklist:
    `signals.db` is currently 4 rows / schema 26.)
 4. **Exclusivity gate:** `HarmonicKeepAlive` remains disabled (already done as
    containment) until the live restore + a one-shot collection + health pass.
+   The restore script's **only hard guard is API-reachability**
+   (`scripts/restore_db.py` refuses if the API server is reachable; `--force`
+   overrides). The API is currently **down**, so restore is permitted **without
+   `--force`** — do **not** start the API before restoring, or you must pass
+   `--force`. (There is no `catastrophic_drop_detected`/`watermark_missing`
+   refusal in the restore path; those guards live on the read/health path, so the
+   current 4-row drop state does not block the forward restore.)
 5. **Restore invocation:** `--expected-schema-version 53`, an operator-selected
    `--min-row-count` (≥ 612 for the named baseline; a fuller recovery requires an
    explicit operator-selected count/source), sidecar-safe handling, rollback
@@ -197,6 +267,23 @@ Pre-conditions checklist:
 All live commands are written but **gated behind explicit operator "go."**
 
 ---
+
+## 4.5 Risk register (red-team, 2026-05-31)
+
+Severity × Likelihood (1-5 each); score = S×L.
+
+| # | Risk | S×L | Score | Disposition |
+|---|---|---|---|---|
+| R1 | Canary quorum can't gate live restore — `deliberation_passed` is **plan-hash bound** (§2.2) | 4×4 | **16 — showstopper** | Revised: WS-D runs its own bound deliberation on the live-target plan + `--plan-hash` gate. |
+| R2 | 24h freshness TTL expires between quorum and operator "go" | 3×3 | 9 — monitor | WS-D step 3: regenerate + re-run if stale. |
+| R4 | Approving quorum misread as restore-*correctness* approval | 3×3 | 9 — monitor | WS-D opening note: quorum = plan self-consistency; operator gate is the safety check. |
+| R3 | API reachable / accidental `--force` corrupts DB at restore | 4×2 | 8 — monitor | WS-D step 4: restore with API down, no `--force`. |
+| R5 | Gemini probe fails late → wasted cycles / forced override | 2×3 | 6 — monitor | WS-B step 1: probe Gemini first as go/no-go. |
+| R6 | Codex left in gating panel → guaranteed dissent/block | 3×2 | 6 — monitor | Advisory Codex runs as a separate invocation only. |
+
+Defused (verified non-issues): excluding `codex` from the gating panel does **not**
+violate any gate — `deliberation_passed` checks status/blockers/dissent/plan-hash/
+age, not reviewer identity. The drop-state does not block the forward restore.
 
 ## 5. Guardrails
 
@@ -216,6 +303,7 @@ All live commands are written but **gated behind explicit operator "go."**
 | b | Authoritative `--min-row-count` for the *real* `signals.db`? | **612** for the named baseline; any fuller recovery requires an explicit operator-selected count/source. |
 | c | Gemini JSON reliability? | **Deferred to WS-B probe** (load-bearing; unproven). |
 | d | Canonical deliberation input artifact? | **Resolved: `task_plan.json`** (D4). |
+| e | Does the canary quorum authorize the live restore? | **Resolved: no** — `deliberation_passed` is plan-hash bound (§2.2); the live restore needs its own bound deliberation on the live-target plan (WS-D). |
 
 ---
 
@@ -228,7 +316,9 @@ All live commands are written but **gated behind explicit operator "go."**
 - Contract fix: PR #245 / commit `3522fab` (merged `c1f0a23`).
 - Code: `integrations/hermes/tasks/restore_db.py`,
   `integrations/hermes/tasks/deliberation.py`,
-  `integrations/hermes/tasks/base.py`, `integrations/hermes/adapters.py`.
+  `integrations/hermes/tasks/base.py`, `integrations/hermes/adapters.py`,
+  `integrations/hermes/gate_runners/deliberation_passed.py` (plan-hash + freshness
+  gate), `scripts/restore_db.py` (API-reachability `--force` guard).
 - State: `.omx/state/db_watermark.json` (612/53), live `signals.db` (4 rows /
   schema 26), canary backup `backups/signals-20260529-190655.db`
   (SHA `01ced671a3c1a3800646edad42c2fa9ef2841f587d8255b4049a7c6e3fdd0a26`).
