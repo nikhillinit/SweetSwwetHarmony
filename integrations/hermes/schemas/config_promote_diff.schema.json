@@ -4,6 +4,7 @@
   "title": "Hermes Config Promote Diff Artifact",
   "type": "object",
   "required": [
+    "artifactVersion",
     "generatedAt",
     "currentConfig",
     "proposedConfig",
@@ -11,6 +12,7 @@
     "policyReview"
   ],
   "properties": {
+    "artifactVersion": {"const": 1},
     "generatedAt": {"type": "string", "format": "date-time"},
     "currentConfig": {
       "type": "object",

@@ -7,6 +7,11 @@ from pathlib import Path
 from typing import Any
 
 from .base import CheckResult, HermesTask, TaskContext, TaskMode, TaskResult
+from .ledger_audit_governance_config import (
+    GOVERNANCE_CONFIG_SUBSYSTEM as _GOVERNANCE_CONFIG_SUBSYSTEM,
+    audit_governance_config_subsystem as _audit_governance_config_subsystem,
+    empty_governance_config_subsystem as _empty_governance_config_subsystem,
+)
 from .ledger_audit_restore_sqlite import (
     RESTORE_SQLITE_SUBSYSTEM as _RESTORE_SQLITE_SUBSYSTEM,
     audit_restore_sqlite_subsystem as _audit_restore_sqlite_subsystem,
@@ -375,7 +380,10 @@ def _audit_ledger(
     subsystems = {
         _RESTORE_SQLITE_SUBSYSTEM: _empty_restore_sqlite_subsystem(
             enabled="artifacts" in checks
-        )
+        ),
+        _GOVERNANCE_CONFIG_SUBSYSTEM: _empty_governance_config_subsystem(
+            enabled="artifacts" in checks
+        ),
     }
 
     for malformed in index["malformed_rows"]:
@@ -420,6 +428,11 @@ def _audit_ledger(
         restore_sqlite_state = _audit_restore_sqlite_subsystem(index["entries"])
         subsystems[_RESTORE_SQLITE_SUBSYSTEM] = restore_sqlite_state
         findings.extend(restore_sqlite_state["findings"])
+        governance_config_state = _audit_governance_config_subsystem(
+            index["entries"]
+        )
+        subsystems[_GOVERNANCE_CONFIG_SUBSYSTEM] = governance_config_state
+        findings.extend(governance_config_state["findings"])
 
     return {
         "root": root_state,
