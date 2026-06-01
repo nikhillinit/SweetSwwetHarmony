@@ -185,9 +185,11 @@ class LedgerAuditTask(HermesTask):
 
     def dry_run(self, context: TaskContext, plan: dict[str, Any]) -> dict[str, Any]:
         checks = tuple(plan.get("checks_requested") or _ALL_CHECKS)
+        severity_threshold = _finding_severity_threshold(context)
         ledger_root = Path(plan["ledger"]["root"])
         index_path = Path(plan["ledger"]["index"])
         audit = _audit_ledger(ledger_root, index_path, checks)
+        findings = _findings_list(audit["findings"])
         generated_at_dt = datetime.now(timezone.utc)
         report = {
             "auditId": f"ledger-audit-{generated_at_dt.strftime('%Y%m%dT%H%M%SZ')}",
@@ -207,7 +209,8 @@ class LedgerAuditTask(HermesTask):
                 "missingRunDirs": len(audit["runs"]["missing_run_dirs"]),
                 "missingArtifacts": len(audit["artifacts"]["missing_artifacts"]),
             },
-            "findings": audit["findings"],
+            "operatorSummary": _operator_summary(findings, severity_threshold),
+            "findings": findings,
             "subsystems": audit["subsystems"],
             "reportArtifacts": {
                 "json": LEDGER_AUDIT_REPORT_JSON,
@@ -358,17 +361,56 @@ def _findings_list(value: object) -> list[dict[str, Any]]:
     return findings
 
 
+def _normalise_finding_severity(finding: dict[str, Any]) -> str:
+    severity = str(finding.get("severity") or "critical").strip().lower()
+    if severity not in _FINDING_SEVERITY_RANK:
+        return "critical"
+    return severity
+
+
 def _finding_meets_threshold(
     finding: dict[str, Any],
     severity_threshold: str,
 ) -> bool:
-    severity = str(finding.get("severity") or "critical").strip().lower()
-    severity_rank = _FINDING_SEVERITY_RANK.get(
-        severity,
-        _FINDING_SEVERITY_RANK["critical"],
-    )
+    severity = _normalise_finding_severity(finding)
+    severity_rank = _FINDING_SEVERITY_RANK[severity]
     threshold_rank = _FINDING_SEVERITY_RANK[severity_threshold]
     return severity_rank >= threshold_rank
+
+
+def _operator_summary(
+    findings: list[dict[str, Any]],
+    severity_threshold: str,
+) -> dict[str, Any]:
+    severity_counts = {severity: 0 for severity in _FINDING_SEVERITIES}
+    subsystems_with_findings: set[str] = set()
+    blocking_findings = 0
+
+    for finding in findings:
+        severity = _normalise_finding_severity(finding)
+        severity_counts[severity] += 1
+        if _finding_meets_threshold(finding, severity_threshold):
+            blocking_findings += 1
+        subsystem = finding.get("subsystem")
+        if isinstance(subsystem, str) and subsystem.strip():
+            subsystems_with_findings.add(subsystem.strip())
+
+    if blocking_findings:
+        next_action = "review_blocking_findings"
+    elif findings:
+        next_action = "review_non_blocking_findings"
+    else:
+        next_action = "no_action_required"
+
+    return {
+        "status": "action_required" if blocking_findings else "pass",
+        "severityThreshold": severity_threshold,
+        "totalFindings": len(findings),
+        "blockingFindings": blocking_findings,
+        "severityCounts": severity_counts,
+        "subsystemsWithFindings": sorted(subsystems_with_findings),
+        "nextAction": next_action,
+    }
 
 
 def _preflight_gate_names(checks: tuple[str, ...]) -> list[str]:
@@ -720,6 +762,7 @@ def _artifacts_detail(audit: dict[str, Any]) -> str:
 
 def _report_markdown(report: dict[str, Any]) -> str:
     findings = report.get("findings", [])
+    operator_summary = report.get("operatorSummary", {})
     subsystems = report.get("subsystems", {})
     lines = [
         "# Hermes Ledger Audit Report",
@@ -732,6 +775,27 @@ def _report_markdown(report: dict[str, Any]) -> str:
         f"- Findings: {len(findings)}",
         "",
     ]
+    if operator_summary:
+        severity_counts = operator_summary.get("severityCounts", {})
+        lines.append("## Operator Summary")
+        lines.append("")
+        lines.append(f"- Status: {operator_summary.get('status')}")
+        lines.append(
+            f"- Severity threshold: {operator_summary.get('severityThreshold')}"
+        )
+        lines.append(
+            f"- Blocking findings: {operator_summary.get('blockingFindings')}"
+        )
+        lines.append(f"- Total findings: {operator_summary.get('totalFindings')}")
+        lines.append(
+            "- Severity counts: "
+            + ", ".join(
+                f"{severity}={severity_counts.get(severity, 0)}"
+                for severity in _FINDING_SEVERITIES
+            )
+        )
+        lines.append(f"- Next action: {operator_summary.get('nextAction')}")
+        lines.append("")
     if findings:
         lines.append("## Findings")
         lines.append("")
