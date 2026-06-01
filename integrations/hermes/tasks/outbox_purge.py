@@ -14,6 +14,7 @@ OUTBOX_PURGE_ACK = "OUTBOX_PURGE"
 OUTBOX_TABLE = "notion_outbox"
 OUTBOX_CANDIDATES_ARTIFACT = "outbox_candidates.json"
 OUTBOX_PURGE_RESULT_ARTIFACT = "outbox_purge_result.json"
+OUTBOX_PURGE_ARTIFACT_VERSION = 1
 
 OUTBOX_STATUS_CHOICES = ("failed", "pending", "processing", "sent")
 EXPECTED_OUTBOX_COLUMNS = (
@@ -228,6 +229,7 @@ class OutboxPurgeTask(HermesTask):
 
         after = _matching_summary(db_path, criteria)
         payload = {
+            "artifactVersion": OUTBOX_PURGE_ARTIFACT_VERSION,
             "dryRun": False,
             "mutationCommitted": bool(delete_result["success"]),
             "dbPath": str(db_path),
@@ -588,6 +590,7 @@ def _snapshot_payload(
 ) -> dict[str, Any]:
     ids = [int(row["id"]) for row in rows if row.get("id") is not None]
     payload = {
+        "artifactVersion": OUTBOX_PURGE_ARTIFACT_VERSION,
         "candidateCount": len(rows),
         "candidateIds": ids,
         "candidateIdHash": _hash_json(ids),
