@@ -58,6 +58,7 @@ def test_collector_promotion_schema_matches_live_artifact_keys(
     assert artifact["task"] == "collector-promote"
     assert set(artifact) == set(schema["properties"])
     assert schema["required"] == [
+        "artifactVersion",
         "task",
         "mode",
         "dryRun",
@@ -77,6 +78,7 @@ def test_collector_promotion_schema_matches_live_artifact_keys(
         "promotionResult",
         "artifactCommit",
         "persistence",
+        "auditEvidence",
     ]
     assert all(key in artifact for key in schema["required"])
 
@@ -98,7 +100,9 @@ def test_collector_promotion_schema_tracks_live_shape_not_overlay_stubs() -> Non
     assert "result" not in properties
     assert "collectorPromotionTemplate" not in properties
     assert "repairPromptTemplate" not in properties
+    assert properties["artifactVersion"] == {"const": 1}
     assert properties["task"] == {"const": "collector-promote"}
     assert properties["mode"]["enum"] == ["dry-run", "execute"]
     assert "resultId" in properties
     assert "result_id" not in properties
+    assert "auditEvidence" in properties
