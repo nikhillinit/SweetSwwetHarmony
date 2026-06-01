@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sweetswwetharmony.local/hermes/bypass_record.schema.json",
+  "title": "Hermes Bypass Lifecycle Record",
+  "type": "object",
+  "required": [
+    "bypassId",
+    "kind",
+    "scope",
+    "policyRef",
+    "reason",
+    "severity",
+    "affectedResources",
+    "operator",
+    "authorizer",
+    "createdAt",
+    "expiresAt",
+    "deadline",
+    "expectedRemediation",
+    "actualRemediationRunId",
+    "status",
+    "planHash",
+    "evidence"
+  ],
+  "properties": {
+    "bypassId": {"type": "string", "minLength": 1},
+    "kind": {"type": "string", "minLength": 1},
+    "scope": {"enum": ["run", "resource", "task", "policy"]},
+    "policyRef": {"type": "string", "minLength": 1},
+    "reason": {"type": "string", "minLength": 1},
+    "severity": {"enum": ["low", "medium", "high", "critical"]},
+    "affectedResources": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["type", "id"],
+        "properties": {
+          "type": {"type": "string", "minLength": 1},
+          "id": {"type": "string", "minLength": 1},
+          "task": {"type": "string", "minLength": 1},
+          "table": {"type": "string", "minLength": 1},
+          "path": {"type": "string", "minLength": 1}
+        },
+        "additionalProperties": true
+      }
+    },
+    "operator": {"type": "string", "minLength": 1},
+    "authorizer": {"type": "string", "minLength": 1},
+    "createdAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "(Z|[+-][0-9]{2}:[0-9]{2})$"
+    },
+    "expiresAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "(Z|[+-][0-9]{2}:[0-9]{2})$"
+    },
+    "deadline": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "(Z|[+-][0-9]{2}:[0-9]{2})$"
+    },
+    "expectedRemediation": {"type": "string", "minLength": 1},
+    "actualRemediationRunId": {
+      "type": ["string", "null"],
+      "minLength": 1
+    },
+    "status": {"enum": ["active", "remediated", "expired", "revoked"]},
+    "planHash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "evidence": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

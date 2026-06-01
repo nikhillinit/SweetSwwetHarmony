@@ -12,6 +12,11 @@ from .ledger_audit_collector_promotion import (
     audit_collector_promotion_subsystem as _audit_collector_promotion_subsystem,
     empty_collector_promotion_subsystem as _empty_collector_promotion_subsystem,
 )
+from .ledger_audit_bypass_lifecycle import (
+    BYPASS_LIFECYCLE_SUBSYSTEM as _BYPASS_LIFECYCLE_SUBSYSTEM,
+    audit_bypass_lifecycle_subsystem as _audit_bypass_lifecycle_subsystem,
+    empty_bypass_lifecycle_subsystem as _empty_bypass_lifecycle_subsystem,
+)
 from .ledger_audit_governance_config import (
     GOVERNANCE_CONFIG_SUBSYSTEM as _GOVERNANCE_CONFIG_SUBSYSTEM,
     audit_governance_config_subsystem as _audit_governance_config_subsystem,
@@ -400,6 +405,9 @@ def _audit_ledger(
         _SUPPRESSION_OUTBOX_SUBSYSTEM: _empty_suppression_outbox_subsystem(
             enabled="artifacts" in checks
         ),
+        _BYPASS_LIFECYCLE_SUBSYSTEM: _empty_bypass_lifecycle_subsystem(
+            enabled="artifacts" in checks
+        ),
     }
 
     for malformed in index["malformed_rows"]:
@@ -459,6 +467,11 @@ def _audit_ledger(
         )
         subsystems[_SUPPRESSION_OUTBOX_SUBSYSTEM] = suppression_outbox_state
         findings.extend(suppression_outbox_state["findings"])
+        bypass_lifecycle_state = _audit_bypass_lifecycle_subsystem(
+            index["entries"]
+        )
+        subsystems[_BYPASS_LIFECYCLE_SUBSYSTEM] = bypass_lifecycle_state
+        findings.extend(bypass_lifecycle_state["findings"])
 
     return {
         "root": root_state,
