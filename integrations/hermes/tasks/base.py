@@ -24,6 +24,10 @@ from typing import Any, ClassVar, Coroutine, Iterable, Literal, TypeVar
 from integrations.hermes.config import PROJECT_ROOT, RoutingConfig, load_config
 from integrations.hermes.ledger import HermesLedger, HermesRun
 from integrations.hermes.locks import HermesLock, HermesLockError
+from integrations.hermes.plan_contract import (
+    CURRENT_CONTRACT_VERSION,
+    attach_plan_contract,
+)
 
 TaskMode = Literal["plan-only", "preflight-only", "dry-run", "execute"]
 TaskRisk = Literal["low", "medium", "high", "critical"]
@@ -209,6 +213,7 @@ class HermesTask:
 
     def _base_plan(self, context: TaskContext) -> dict[str, Any]:
         return {
+            "contractVersion": CURRENT_CONTRACT_VERSION,
             "task": self.name,
             "mode": context.mode,
             "description": self.description,
@@ -231,7 +236,7 @@ class HermesTask:
             )
 
         context = self.build_context(args, mode=mode)
-        plan = self.plan(context)
+        plan = attach_plan_contract(self.plan(context))
         checks = tuple(self.preflight(context, plan)) if mode != "plan-only" else ()
         if checks and not all(check.passed for check in checks):
             return TaskResult(
@@ -282,6 +287,7 @@ class HermesTask:
             ledger = HermesLedger(config.ledger, root=_resolve_repo_path(config.ledger.root))
             run = ledger.create_run(
                 plan={
+                    "contractVersion": CURRENT_CONTRACT_VERSION,
                     "task": self.name,
                     "mode": mode,
                     "risk": self.risk_level,
@@ -319,6 +325,7 @@ class HermesTask:
         plan.setdefault("locks_required", list(self.required_locks))
         plan.setdefault("ack_risk_required", self.ack_risk_token is not None)
         plan.setdefault("ack_risk_token", self.ack_risk_token)
+        plan = attach_plan_contract(plan)
         context.write_json("task_plan.json", plan)
         self._write_record(context, plan, status="planned", checks=(), outputs={})
 
@@ -683,8 +690,10 @@ class HermesTask:
         if context.ledger is None or context.run is None:
             raise RuntimeError("task context has no ledger")
         checks_tuple = tuple(checks)
+        contract_version = int(plan.get("contractVersion", CURRENT_CONTRACT_VERSION))
         record = {
             "run_id": context.run.run_id,
+            "contract_version": contract_version,
             "task": self.name,
             "mode": context.mode,
             "risk_level": self.risk_level,

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from integrations.hermes.plan_contract import CURRENT_CONTRACT_VERSION
 from integrations.hermes.tasks.registry import registered_task_names, run_registered_task
 
 
@@ -39,6 +40,8 @@ def test_plan_only_registered_task_is_non_mutating() -> None:
 
     assert result.exit_code == 0
     assert result.status == "planned"
+    assert result.plan["contractVersion"] == CURRENT_CONTRACT_VERSION
+    assert "contract_version" not in result.plan
     assert result.outputs == {}
     assert result.plan["mutation"] == {"allowed": False, "external_systems": []}
 
