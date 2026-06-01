@@ -228,11 +228,38 @@ procedure. **Precedence (newest wins):**
 > and (ii) Codex demonstrably emits prose (not JSON) on this box, so it cannot
 > currently be a trusted approver and would *block* if placed in the gating
 > panel. **D2's probe-then-select / Codex-advisory therefore conflicts with the
-> literal H1 policy.** Resolve before the live gate by **operator choice**:
-> (a) repair Codex so it emits valid-JSON `approve` and satisfy the named quorum,
-> or (b) amend H1 rule 7 to "two JSON-eligible reviewers (Kimi + one of
-> Gemini/Codex)" with documented rationale. Do **not** silently route around a
-> named-provider policy.
+> literal H1 policy.** Do **not** silently route around a named-provider policy.
+>
+> **Recommended resolution path (decision remains OPEN; operator selects).**
+> The conflict is a governance decision, not an execution detail. The Council
+> (2026-05-31) recommends, in order:
+>
+> 1. **Repair Codex first — ONE time-boxed attempt.** The failure is
+>    environmental (`windows sandbox: spawn setup refresh`), not a principled
+>    reason Codex cannot review. If repair lands, the named Codex+Kimi quorum
+>    stands as written and R7 closes with **no variance**. Do not let an uncertain
+>    infra repair become an indefinite precondition for a dead pipeline.
+> 2. **Else, if Codex repair doesn't land promptly AND Gemini passes the WS-B
+>    JSON probe → accept Kimi + Gemini as a *temporary recovery variance* (NOT a
+>    policy amendment).** This preserves two independent-vendor reviewers
+>    (Moonshot + Google) and leaves H1 rule 7 intact on paper. The variance MUST
+>    be operationally crisp:
+>    - **Scope:** this restore incident only.
+>    - **Evidence:** Codex env-failure log + Gemini JSON-probe transcript.
+>    - **Expiry:** on recovery completion OR Codex repair, whichever comes first.
+>    - **No precedent:** does not authorize dropping below two JSON-eligible
+>      reviewers in any future deliberation.
+>    - **Audit:** recorded as a signed operator/governance variance (the same
+>      kind of governed exception this repo already uses for promotions / regret
+>      checks), not a silent substitution.
+> 3. **`DELIBERATION_OVERRIDE` (Kimi-only) only as last resort** — if two JSON
+>    reviewers are genuinely unobtainable and the operator consciously accepts
+>    single-reviewer risk (the D1 fallback).
+>
+> A *temporary recovery variance* is deliberately preferred over a general H1
+> amendment: a permanent rule change risks a future operator misreading a
+> one-time recovery exception as the new floor. Choose the permanent amendment
+> **only** if the intent is genuinely to change H1 for all future deliberations.
 
 **Quorum is not restore-correctness.** An approving deliberation certifies the
 plan document is internally self-consistent and honest about blast radius / locks
@@ -329,7 +356,7 @@ Severity × Likelihood (1-5 each); score = S×L.
 | R3 | API reachable / accidental `--force` corrupts DB at restore | 4×2 | 8 — monitor | WS-D step 4: restore with API down, no `--force`. |
 | R5 | Gemini probe fails late → wasted cycles / forced override | 2×3 | 6 — monitor | WS-B step 1: probe Gemini first as go/no-go. |
 | R6 | Codex left in gating panel → guaranteed dissent/block | 3×2 | 6 — monitor | Advisory Codex runs as a separate invocation only. |
-| R7 | D2 (Codex-advisory) conflicts with H1 policy rule 7 ("Codex + Kimi quorum") | 4×3 | **12 — high priority** | Operator resolves before live gate: repair Codex to emit JSON, or amend H1 rule 7 with rationale. |
+| R7 | D2 (Codex-advisory) conflicts with H1 policy rule 7 ("Codex + Kimi quorum") | 4×3 | **12 — high priority** | Operator resolves before live gate (path in WS-D, decision OPEN): (1) repair Codex (one time-boxed attempt) → named quorum stands; (2) else Kimi+Gemini as a *temporary recovery variance* (scoped/evidenced/expiring, NOT a permanent H1 amendment); (3) `DELIBERATION_OVERRIDE` last resort. |
 | R8 | Live gate bound to plan-only hash (≠ execute hash) → ceremonial/`--allow-unbound` | 4×3 | **12 — high priority** | WS-D step 1: bind to execute-shaped (`--execute` without `--ack-risk`) plan. |
 
 Defused (verified non-issues): excluding `codex` from the gating panel does **not**
@@ -356,7 +383,7 @@ age, not reviewer identity. The drop-state does not block the forward restore.
 | d | Canonical deliberation input artifact? | **Resolved: `task_plan.json`** (D4). |
 | e | Does the canary quorum authorize the live restore? | **Resolved: no** — `deliberation_passed` is plan-hash bound (§2.2); the live restore needs its own bound deliberation on the live-target plan (WS-D). |
 | f | Live restore backup source of record? | **Resolved: `backups/signals-20260529-190655.db`** (SHA `01ced671…`), per 2026-05-29 HANDOFF + H1 policy. May-13 candidate is superseded for source selection. |
-| g | Does "Codex advisory" satisfy H1 policy rule 7's "Codex + Kimi quorum"? | **Open — operator decision (R7):** repair Codex to emit JSON, or amend the policy with rationale. |
+| g | Does "Codex advisory" satisfy H1 policy rule 7's "Codex + Kimi quorum"? | **Open — operator decision (R7).** Recommended path (WS-D): (1) repair Codex (one time-boxed attempt) → named quorum stands; (2) else Kimi+Gemini as a *temporary recovery variance* — scoped to this incident, evidenced, expiring on recovery/Codex-repair, no precedent, signed audit — **not** a permanent H1 amendment; (3) `DELIBERATION_OVERRIDE` (Kimi-only) last resort. Decision itself remains OPEN. |
 
 ---
 
