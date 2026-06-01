@@ -16,6 +16,7 @@ from .base import (
 
 COLLECTOR_PROMOTE_ACK = "COLLECTOR_PROMOTE"
 COLLECTOR_DEMOTE_ACK = "COLLECTOR_DEMOTE"
+COLLECTOR_PROMOTION_ARTIFACT_VERSION = 1
 COLLECTOR_PROMOTION_ARTIFACT = "collector_promotion.json"
 DRY_RUN_DRIFT_ARTIFACT = "dry_run_drift.json"
 
@@ -207,6 +208,7 @@ class CollectorPromoteTask(HermesTask):
         drifts = _collector_dry_run_drifts(plan, observed)
         if drifts:
             drift_payload = {
+                "artifactVersion": COLLECTOR_PROMOTION_ARTIFACT_VERSION,
                 "task": CollectorPromoteTask.name,
                 "mode": "dry-run",
                 "dryRun": True,
@@ -683,6 +685,7 @@ def _collector_payload(
         and actual_status == "already_known"
     )
     return {
+        "artifactVersion": COLLECTOR_PROMOTION_ARTIFACT_VERSION,
         "task": CollectorPromoteTask.name,
         "mode": context.mode,
         "dryRun": dry_run,
@@ -711,6 +714,21 @@ def _collector_payload(
             "affectedTables": plan.get("mutation", {}).get("affected_tables", []),
             "externalSystems": [],
         },
+        "auditEvidence": _collector_audit_evidence(plan),
+    }
+
+
+def _collector_audit_evidence(plan: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "planHash": plan.get("planHash"),
+        "plannedResultUpdatedAt": _planned_result_updated_at(plan),
+        "database": plan.get("database") if isinstance(plan.get("database"), dict) else {},
+        "collectorState": (
+            plan.get("collector_state")
+            if isinstance(plan.get("collector_state"), dict)
+            else {}
+        ),
+        "ackRiskToken": plan.get("transition", {}).get("ack_risk_token"),
     }
 
 

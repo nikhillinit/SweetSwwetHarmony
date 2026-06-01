@@ -4,6 +4,7 @@
   "title": "Hermes Collector Promotion Artifact",
   "type": "object",
   "required": [
+    "artifactVersion",
     "task",
     "mode",
     "dryRun",
@@ -22,9 +23,11 @@
     "transition",
     "promotionResult",
     "artifactCommit",
-    "persistence"
+    "persistence",
+    "auditEvidence"
   ],
   "properties": {
+    "artifactVersion": {"const": 1},
     "task": {"const": "collector-promote"},
     "mode": {"enum": ["dry-run", "execute"]},
     "dryRun": {"type": "boolean"},
@@ -95,6 +98,24 @@
           "type": "array",
           "maxItems": 0
         }
+      },
+      "additionalProperties": false
+    },
+    "auditEvidence": {
+      "type": "object",
+      "required": [
+        "planHash",
+        "plannedResultUpdatedAt",
+        "database",
+        "collectorState",
+        "ackRiskToken"
+      ],
+      "properties": {
+        "planHash": {"type": ["string", "null"]},
+        "plannedResultUpdatedAt": {"type": ["string", "null"]},
+        "database": {"type": "object"},
+        "collectorState": {"type": "object"},
+        "ackRiskToken": {"enum": ["COLLECTOR_PROMOTE", "COLLECTOR_DEMOTE", null]}
       },
       "additionalProperties": false
     }
