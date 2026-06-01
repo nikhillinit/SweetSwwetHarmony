@@ -30,6 +30,7 @@ CONFIG_DIFF_ARTIFACT = "config_promote_diff.json"
 CONFIG_REPORT_ARTIFACT = "config_promote_report.json"
 CONFIG_PREVIOUS_SNAPSHOT = "snapshots/model-routing.previous.json"
 DRY_RUN_DRIFT_ARTIFACT = "dry_run_drift.json"
+CONFIG_PROMOTE_ARTIFACT_VERSION = 1
 
 _ROUTING_POLICY_KEYS = ("phases", "specialists", "riskDefaults", "routing", "modes")
 
@@ -600,6 +601,7 @@ def _policy_evidence(context: TaskContext) -> list[str]:
 
 def _diff_artifact_payload(plan: dict[str, Any]) -> dict[str, Any]:
     return {
+        "artifactVersion": CONFIG_PROMOTE_ARTIFACT_VERSION,
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "currentConfig": {
             "path": plan["current_config"]["path"],
@@ -698,6 +700,7 @@ def _report_payload(
     resulting_hash: str | None,
 ) -> dict[str, Any]:
     return {
+        "artifactVersion": CONFIG_PROMOTE_ARTIFACT_VERSION,
         "generatedAt": datetime.now(timezone.utc).isoformat(),
         "task": ConfigPromoteTask.name,
         "runId": context.run.run_id if context.run else None,

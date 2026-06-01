@@ -107,6 +107,7 @@ def test_config_promote_diff_schema_matches_live_diff_keys(
     _validate(schema, artifact)
     assert set(artifact) == set(schema["properties"])
     assert schema["required"] == [
+        "artifactVersion",
         "generatedAt",
         "currentConfig",
         "proposedConfig",
@@ -114,6 +115,7 @@ def test_config_promote_diff_schema_matches_live_diff_keys(
         "policyReview",
     ]
     assert all(key in artifact for key in schema["required"])
+    assert artifact["artifactVersion"] == 1
 
     current_config = schema["properties"]["currentConfig"]
     proposed_config = schema["properties"]["proposedConfig"]
@@ -156,6 +158,7 @@ def test_config_promote_diff_schema_tracks_live_shape_not_overlay_stubs() -> Non
     assert "rollback" not in properties
     assert "configPromotionTemplate" not in properties
     assert "repairPromptTemplate" not in properties
+    assert properties["artifactVersion"] == {"const": 1}
     assert "current_config" not in properties
     assert "proposed_config" not in properties
     assert properties["generatedAt"] == {"type": "string", "format": "date-time"}
