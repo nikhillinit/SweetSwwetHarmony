@@ -7,6 +7,11 @@ from pathlib import Path
 from typing import Any
 
 from .base import CheckResult, HermesTask, TaskContext, TaskMode, TaskResult
+from .ledger_audit_collector_promotion import (
+    COLLECTOR_PROMOTION_SUBSYSTEM as _COLLECTOR_PROMOTION_SUBSYSTEM,
+    audit_collector_promotion_subsystem as _audit_collector_promotion_subsystem,
+    empty_collector_promotion_subsystem as _empty_collector_promotion_subsystem,
+)
 from .ledger_audit_governance_config import (
     GOVERNANCE_CONFIG_SUBSYSTEM as _GOVERNANCE_CONFIG_SUBSYSTEM,
     audit_governance_config_subsystem as _audit_governance_config_subsystem,
@@ -384,6 +389,9 @@ def _audit_ledger(
         _GOVERNANCE_CONFIG_SUBSYSTEM: _empty_governance_config_subsystem(
             enabled="artifacts" in checks
         ),
+        _COLLECTOR_PROMOTION_SUBSYSTEM: _empty_collector_promotion_subsystem(
+            enabled="artifacts" in checks
+        ),
     }
 
     for malformed in index["malformed_rows"]:
@@ -433,6 +441,11 @@ def _audit_ledger(
         )
         subsystems[_GOVERNANCE_CONFIG_SUBSYSTEM] = governance_config_state
         findings.extend(governance_config_state["findings"])
+        collector_promotion_state = _audit_collector_promotion_subsystem(
+            index["entries"]
+        )
+        subsystems[_COLLECTOR_PROMOTION_SUBSYSTEM] = collector_promotion_state
+        findings.extend(collector_promotion_state["findings"])
 
     return {
         "root": root_state,

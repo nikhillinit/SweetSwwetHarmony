@@ -101,7 +101,11 @@ def test_ledger_audit_report_schema_tracks_live_camel_case_shape() -> None:
     assert "rawIndexRows" in summary["properties"]
     assert "uniqueRunDirsChecked" in summary["properties"]
     assert "validIndexEntries" in summary["properties"]
-    assert subsystems["required"] == ["restore_sqlite", "governance_config"]
+    assert subsystems["required"] == [
+        "restore_sqlite",
+        "governance_config",
+        "collector_promotion",
+    ]
     assert subsystems["properties"]["restore_sqlite"]["required"] == [
         "subsystem",
         "ownerTask",
@@ -111,6 +115,14 @@ def test_ledger_audit_report_schema_tracks_live_camel_case_shape() -> None:
         "findings",
     ]
     assert subsystems["properties"]["governance_config"]["required"] == [
+        "subsystem",
+        "ownerTask",
+        "enabled",
+        "runsChecked",
+        "resourcesChecked",
+        "findings",
+    ]
+    assert subsystems["properties"]["collector_promotion"]["required"] == [
         "subsystem",
         "ownerTask",
         "enabled",
