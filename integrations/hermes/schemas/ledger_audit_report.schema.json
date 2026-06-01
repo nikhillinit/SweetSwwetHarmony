@@ -3,6 +3,28 @@
   "$id": "https://sweetswwetharmony.local/hermes/ledger_audit_report.schema.json",
   "title": "Hermes Ledger Audit Report",
   "type": "object",
+  "$defs": {
+    "finding": {
+      "type": "object",
+      "required": ["code", "severity"],
+      "properties": {
+        "code": {"type": "string", "minLength": 1},
+        "severity": {"enum": ["low", "medium", "high", "critical"]},
+        "line": {"type": "integer", "minimum": 1},
+        "runId": {"type": "string", "minLength": 1},
+        "path": {"type": "string", "minLength": 1},
+        "detail": {"type": "string", "minLength": 1},
+        "raw": {"type": "string"},
+        "subsystem": {"type": "string", "minLength": 1},
+        "resourceId": {"type": "string", "minLength": 1},
+        "evidencePath": {"type": "string", "minLength": 1},
+        "remediationHint": {"type": "string", "minLength": 1},
+        "observedDigest": {"type": "string", "minLength": 1},
+        "expectedDigest": {"type": "string", "minLength": 1}
+      },
+      "additionalProperties": false
+    }
+  },
   "required": [
     "auditId",
     "generatedAt",
@@ -14,6 +36,7 @@
     "checksRun",
     "summary",
     "findings",
+    "subsystems",
     "reportArtifacts"
   ],
   "properties": {
@@ -53,20 +76,37 @@
     },
     "findings": {
       "type": "array",
-      "items": {
-        "type": "object",
-        "required": ["code", "severity"],
-        "properties": {
-          "code": {"type": "string", "minLength": 1},
-          "severity": {"enum": ["low", "medium", "high", "critical"]},
-          "line": {"type": "integer", "minimum": 1},
-          "runId": {"type": "string", "minLength": 1},
-          "path": {"type": "string", "minLength": 1},
-          "detail": {"type": "string", "minLength": 1},
-          "raw": {"type": "string"}
-        },
-        "additionalProperties": false
-      }
+      "items": {"$ref": "#/$defs/finding"}
+    },
+    "subsystems": {
+      "type": "object",
+      "required": ["restore_sqlite"],
+      "properties": {
+        "restore_sqlite": {
+          "type": "object",
+          "required": [
+            "subsystem",
+            "ownerTask",
+            "enabled",
+            "runsChecked",
+            "resourcesChecked",
+            "findings"
+          ],
+          "properties": {
+            "subsystem": {"const": "restore_sqlite"},
+            "ownerTask": {"const": "restore-db"},
+            "enabled": {"type": "boolean"},
+            "runsChecked": {"type": "integer", "minimum": 0},
+            "resourcesChecked": {"type": "integer", "minimum": 0},
+            "findings": {
+              "type": "array",
+              "items": {"$ref": "#/$defs/finding"}
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
     },
     "reportArtifacts": {
       "type": "object",
