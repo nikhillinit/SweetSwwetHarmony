@@ -17,6 +17,7 @@ from .base import CheckResult, HermesTask, TaskContext, TaskFailure, run_command
 
 GOVERNANCE_PROMOTE_ACK = "GOVERNANCE_PROMOTE"
 GOVERNANCE_ROLLBACK_ACK = "GOVERNANCE_ROLLBACK"
+GOVERNANCE_ARTIFACT_VERSION = 1
 
 
 class GovernanceTask(HermesTask):
@@ -197,6 +198,7 @@ class GovernanceTask(HermesTask):
     def dry_run(self, context: TaskContext, plan: dict[str, Any]) -> dict[str, Any]:
         command = plan.get("command", [])
         outputs = {
+            "artifactVersion": GOVERNANCE_ARTIFACT_VERSION,
             "dryRun": True,
             "mutationCommitted": False,
             "command": command,
@@ -211,11 +213,14 @@ class GovernanceTask(HermesTask):
         return outputs
 
     def execute(self, context: TaskContext, plan: dict[str, Any]) -> dict[str, Any]:
-        state_before = _read_state_source(
-            context,
-            plan.get("feature"),
-            plan.get("state_source"),
-        )
+        state_before = {
+            "artifactVersion": GOVERNANCE_ARTIFACT_VERSION,
+            **_read_state_source(
+                context,
+                plan.get("feature"),
+                plan.get("state_source"),
+            ),
+        }
         context.write_json("pre_governance_state.json", state_before)
         if not state_before.get("readable"):
             raise TaskFailure(
@@ -225,7 +230,11 @@ class GovernanceTask(HermesTask):
 
         command = plan.get("command", [])
         result = run_command(command, cwd=context.root, timeout_seconds=300)
-        command_record = {"command": command, "result": result}
+        command_record = {
+            "artifactVersion": GOVERNANCE_ARTIFACT_VERSION,
+            "command": command,
+            "result": result,
+        }
         context.write_json("governance_command.json", command_record)
         if int(result.get("returnCode", 1)) != 0:
             raise TaskFailure(
@@ -499,6 +508,7 @@ def _verify_final_state(
     actual_state = final_attempt.get("state")
     passed = bool(final_attempt.get("readable")) and actual_state == target_state
     evidence = {
+        "artifactVersion": GOVERNANCE_ARTIFACT_VERSION,
         "path": final_attempt.get("path"),
         "feature": plan.get("feature"),
         "target_state": target_state,
