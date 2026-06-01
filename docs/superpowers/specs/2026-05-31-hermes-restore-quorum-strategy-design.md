@@ -275,7 +275,8 @@ operator gate is the safety check on the live parameters.**
    differs by mode: `restore_db.py:143` sets `mutation.allowed = (mode ==
    "execute")`, so the plan-only and execute `task_plan.json` hashes **differ**;
    binding the gate to a plan-only hash would be ceremonial. Instead run
-   `restore-db --execute --target signals.db <backup> --min-row-count …`
+   `restore-db --execute --backup <backup> --target signals.db --min-row-count …`
+   (`--backup` is a **required flag**, not positional — `restore_db.py:37`)
    **without `--ack-risk`**: `base.py:478` returns `approval_required`
    (exit 75) **before** any mutation (`execute()` at `:510`), while still writing
    an **execute-mode** `task_plan.json` (`:315-322`, `mutation.allowed=true`).
@@ -331,9 +332,12 @@ Pre-conditions checklist:
    those guards live on the read/health path, so the current 4-row drop state
    does not block the forward restore.)
 5. **Restore invocation (per h1-policy-reconciliation.md gate rules):**
-   `--ack-risk RESTORE_DB --handle-sidecars --min-row-count 612
-   --expected-schema-version 53` against `--target signals.db` with the step-2
-   source backup. A fuller-than-612 recovery requires an explicit
+   `restore-db --execute --backup <step-2 source> --target signals.db
+   --ack-risk RESTORE_DB --handle-sidecars --min-row-count 612
+   --expected-schema-version 53`. (`--backup` is required and takes the step-2
+   source path as a **flag value**, not a positional — `restore_db.py:37`;
+   `--target` defaults to `signals.db` per `:38`.) A fuller-than-612 recovery
+   requires an explicit
    operator-selected count/source. The Hermes `restore-db` execute path wraps
    `scripts.restore_db.restore_backup_with_lock_and_ledger` (lock + ledger +
    pre-restore backup), consistent with the canonical `scripts/restore_db.py`.
