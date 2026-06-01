@@ -180,10 +180,15 @@ consciously accepts the unsafe `--allow-unbound`). The canary deliberation is a
    watermark gate is non-trivial — the blocked run used `min_row_count=0`, and a
    0 watermark could itself draw a fresh concern.
 3. Re-run the deliberation with `--panel <eligible JSON reviewers from WS-B>`,
-   feeding the **fresh** `task_plan.json` path. Verify the generated input file
-   actually contains the fixed `affected_tables`, `lock_scope.reason`, and
-   `min_row_count` (guard against the 12,000-char `task_text` truncation in
-   `deliberation.py:26,421-430`).
+   feeding the **fresh** `task_plan.json` path. **Truncation guard — check the
+   reviewer-visible text, not the file:** Hermes sends only the first 12,000
+   chars of the plan file as `task_text` (`deliberation.py:26,421-430`), so
+   verify **either** the deliberation record's `input.taskTextChars < 12000`
+   (whole plan fits) **or** that the reviewer-visible prompt excerpt actually
+   contains `affected_tables`, `lock_scope.reason`, and `min_row_count`. (The
+   restore `task_plan.json` is ~8.3 KB today, so it fits — but make this a
+   contract check, since the fields are only enforced if reviewers actually see
+   them.)
 4. **Gate on consensus:** `approved` → proceed to WS-D. `no_quorum` /
    `conflicted` / `blocked` → diagnose the specific failing reviewer, fix,
    re-run; override only as the D1 fallback.
@@ -201,14 +206,33 @@ strict re-reviewing Kimi may still flag it. Capture Kimi's verdict verbatim.
 
 ### WS-D · Operator gate + live-restore runbook (written, NOT executed)
 
-Reconcile with / cite the authoritative DR plans rather than inventing a
-procedure:
+Reconcile with / cite the authoritative recovery docs rather than inventing a
+procedure. **Precedence (newest wins):**
 
-- `.omx/plans/db-recovery-before-collection-ralplan-dr-20260513.md` (Branch A is
-  the chosen default: audited 612/53 in-place restore via `scripts/restore_db.py`
-  after exclusivity + evidence-copy gates).
-- `.omx/plans/corrected-operational-priorities-ralplan-dr-20260514.md` (operator
-  approves mutation; scheduler/task changes approved separately from code).
+- **Authoritative (2026-05-29):**
+  `docs/plans/2026-05-29-hermes-recovery-sprint/HANDOFF.md` and
+  `h1-policy-reconciliation.md` — name the restore source, the high-risk gate
+  rules, and the exact execute flags. These supersede the older `.omx` DR docs
+  for source selection and invocation.
+- **Audit method / escape hatch (2026-05-13/14):**
+  `.omx/plans/db-recovery-before-collection-ralplan-dr-20260513.md` (read-only
+  audit procedure for 612/53 candidates) and
+  `corrected-operational-priorities-ralplan-dr-20260514.md` (operator approves
+  mutation; scheduler/task changes approved separately from code). Use for
+  *method*, not as the latest source-of-record.
+
+> **Governance conflict to resolve before relying on D2.**
+> `h1-policy-reconciliation.md` gate rule 7 literally requires *"a Codex plus
+> Kimi quorum"* before a live restore. That names **Codex specifically** — but
+> (i) the `deliberation_passed` gate does **not** check reviewer identity (§2.2),
+> and (ii) Codex demonstrably emits prose (not JSON) on this box, so it cannot
+> currently be a trusted approver and would *block* if placed in the gating
+> panel. **D2's probe-then-select / Codex-advisory therefore conflicts with the
+> literal H1 policy.** Resolve before the live gate by **operator choice**:
+> (a) repair Codex so it emits valid-JSON `approve` and satisfy the named quorum,
+> or (b) amend H1 rule 7 to "two JSON-eligible reviewers (Kimi + one of
+> Gemini/Codex)" with documented rationale. Do **not** silently route around a
+> named-provider policy.
 
 **Quorum is not restore-correctness.** An approving deliberation certifies the
 plan document is internally self-consistent and honest about blast radius / locks
@@ -219,28 +243,49 @@ operator gate is the safety check on the live parameters.**
 
 **Bound live deliberation (the actual gate — distinct from the WS-C rehearsal):**
 
-1. Generate the **live-target** restore plan: `restore-db` plan-only with
-   `--target signals.db`, the **operator-selected backup** (see step 3), and the
-   operator-selected `--min-row-count`. Capture the resulting `task_plan.json`
-   and its SHA-256.
+1. Generate the **execute-shaped** live-target plan — bind to the artifact the
+   real restore will actually produce, **not** a plan-only one. The restore plan
+   differs by mode: `restore_db.py:143` sets `mutation.allowed = (mode ==
+   "execute")`, so the plan-only and execute `task_plan.json` hashes **differ**;
+   binding the gate to a plan-only hash would be ceremonial. Instead run
+   `restore-db --execute --target signals.db <backup> --min-row-count …`
+   **without `--ack-risk`**: `base.py:478` returns `approval_required`
+   (exit 75) **before** any mutation (`execute()` at `:510`), while still writing
+   an **execute-mode** `task_plan.json` (`:315-322`, `mutation.allowed=true`).
+   Capture that `task_plan.json` and its SHA-256. *(Caveat: the backup and target
+   must not change between this bind run and the real execute, or the hashes
+   diverge — restore_db's plan-vs-execute drift checks at `:334,:356` enforce
+   this.)*
 2. Run the gating deliberation with `--panel <eligible JSON reviewers>` bound to
-   that exact plan file; then run `deliberation_passed` with `--plan-hash <that
-   SHA-256>`. The gate passes only on `approved` + no blockers + no dissent +
-   plan-hash match + age within the **24h freshness TTL**. Advisory Codex, if
-   used, runs as a **separate** invocation (never in the gating panel).
-3. If operator approval lags >24h after the bound deliberation, it goes stale —
+   that exact execute-shaped plan file; then run `deliberation_passed` with
+   `--plan-hash <that SHA-256>`. The gate passes only on `approved` + no blockers
+   + no dissent + plan-hash match + age within the **24h freshness TTL**.
+   Advisory Codex, if used, runs as a **separate** invocation (never in the
+   gating panel).
+3. Then run the real `restore-db --execute … --ack-risk RESTORE_DB` (step 5) —
+   its regenerated execute plan hashes identically (same mode, same unchanged
+   backup/target), so the bound approval remains valid.
+4. If operator approval lags >24h after the bound deliberation, it goes stale —
    **regenerate and re-run** before proceeding.
 
 Pre-conditions checklist:
 
 1. **Approving, plan-hash-bound deliberation** on the live-target plan (or a
    consciously accepted, documented `--allow-unbound` override per D1).
-2. **Backup selection is an operator decision via the DR audit.** The DR default
-   names `backups/signals-20260511-030832.db` as the leading 612/53 candidate
-   (compared read-only against `signals.backup-20260511T105827.db`,
-   `signals-20260404-072102.db`, etc.). **Do not assume the canary backup**
-   `backups/signals-20260529-190655.db` (SHA `01ced671…`) is the live-restore
-   source — it was the canary fixture, not the audited default.
+2. **Backup source of record (precedence corrected 2026-05-31).** The current
+   leading restore source is the **2026-05-29 Phase 0 sidecar-free / offsite
+   backup** `backups/signals-20260529-190655.db` (SHA
+   `01ced671a3c1a3800646edad42c2fa9ef2841f587d8255b4049a7c6e3fdd0a26`; 612 rows /
+   schema 53 / integrity ok; WAL-flattened; mirrored to Google Drive,
+   Drive-md5 == local). This is named as **the** restore source by the newer
+   recovery-sprint docs
+   (`docs/plans/2026-05-29-hermes-recovery-sprint/HANDOFF.md`,
+   `h1-policy-reconciliation.md`) and is **both** the canary source and the live
+   source. **Escape hatch:** the operator may deliberately reopen the May-13 DR
+   audit (`db-recovery-before-collection-ralplan-dr-20260513.md`, candidate
+   `signals-20260511-030832.db` et al.) — but that older candidate is **superseded
+   for source selection**; cite the May-13 doc for *audit method*, not as the
+   default source.
 3. **Watermark:** accepted 612/schema-53 recovery leaves
    `.omx/state/db_watermark.json` (currently `{signal_count: 612, schema_version:
    53, …2026-04-23}`) **unchanged**. Re-init **only** if the operator deliberately
@@ -249,18 +294,22 @@ Pre-conditions checklist:
 4. **Exclusivity gate:** `HarmonicKeepAlive` remains disabled (already done as
    containment) until the live restore + a one-shot collection + health pass.
    The restore script's **only hard guard is API-reachability**
-   (`scripts/restore_db.py` refuses if the API server is reachable; `--force`
-   overrides). The API is currently **down**, so restore is permitted **without
-   `--force`** — do **not** start the API before restoring, or you must pass
-   `--force`. (There is no `catastrophic_drop_detected`/`watermark_missing`
-   refusal in the restore path; those guards live on the read/health path, so the
-   current 4-row drop state does not block the forward restore.)
-5. **Restore invocation:** `--expected-schema-version 53`, an operator-selected
-   `--min-row-count` (≥ 612 for the named baseline; a fuller recovery requires an
-   explicit operator-selected count/source), sidecar-safe handling, rollback
-   snapshot path. The Hermes `restore-db` execute path wraps
+   (`scripts/restore_db.py:396` refuses if the API server is reachable). The API
+   is currently **down**, so restore is permitted — confirm it stays down
+   (`http://localhost:8000/api/v1/health` unreachable) and do **not** start it
+   before restoring. **`--force` is FORBIDDEN on the production `signals.db`
+   target** (per h1-policy-reconciliation.md): it risks corruption if a writer is
+   live, so **stop writers instead** of forcing. (There is no
+   `catastrophic_drop_detected`/`watermark_missing` refusal in the restore path;
+   those guards live on the read/health path, so the current 4-row drop state
+   does not block the forward restore.)
+5. **Restore invocation (per h1-policy-reconciliation.md gate rules):**
+   `--ack-risk RESTORE_DB --handle-sidecars --min-row-count 612
+   --expected-schema-version 53` against `--target signals.db` with the step-2
+   source backup. A fuller-than-612 recovery requires an explicit
+   operator-selected count/source. The Hermes `restore-db` execute path wraps
    `scripts.restore_db.restore_backup_with_lock_and_ledger` (lock + ledger +
-   pre-restore backup), consistent with the DR canonical `scripts/restore_db.py`.
+   pre-restore backup), consistent with the canonical `scripts/restore_db.py`.
 6. **Post-restore verification:** integrity ok, schema == 53, `COUNT(*) signals
    >= 612`, no unexpected sidecars, ledger evidence present.
 
@@ -280,6 +329,8 @@ Severity × Likelihood (1-5 each); score = S×L.
 | R3 | API reachable / accidental `--force` corrupts DB at restore | 4×2 | 8 — monitor | WS-D step 4: restore with API down, no `--force`. |
 | R5 | Gemini probe fails late → wasted cycles / forced override | 2×3 | 6 — monitor | WS-B step 1: probe Gemini first as go/no-go. |
 | R6 | Codex left in gating panel → guaranteed dissent/block | 3×2 | 6 — monitor | Advisory Codex runs as a separate invocation only. |
+| R7 | D2 (Codex-advisory) conflicts with H1 policy rule 7 ("Codex + Kimi quorum") | 4×3 | **12 — high priority** | Operator resolves before live gate: repair Codex to emit JSON, or amend H1 rule 7 with rationale. |
+| R8 | Live gate bound to plan-only hash (≠ execute hash) → ceremonial/`--allow-unbound` | 4×3 | **12 — high priority** | WS-D step 1: bind to execute-shaped (`--execute` without `--ack-risk`) plan. |
 
 Defused (verified non-issues): excluding `codex` from the gating panel does **not**
 violate any gate — `deliberation_passed` checks status/blockers/dissent/plan-hash/
@@ -304,6 +355,8 @@ age, not reviewer identity. The drop-state does not block the forward restore.
 | c | Gemini JSON reliability? | **Deferred to WS-B probe** (load-bearing; unproven). |
 | d | Canonical deliberation input artifact? | **Resolved: `task_plan.json`** (D4). |
 | e | Does the canary quorum authorize the live restore? | **Resolved: no** — `deliberation_passed` is plan-hash bound (§2.2); the live restore needs its own bound deliberation on the live-target plan (WS-D). |
+| f | Live restore backup source of record? | **Resolved: `backups/signals-20260529-190655.db`** (SHA `01ced671…`), per 2026-05-29 HANDOFF + H1 policy. May-13 candidate is superseded for source selection. |
+| g | Does "Codex advisory" satisfy H1 policy rule 7's "Codex + Kimi quorum"? | **Open — operator decision (R7):** repair Codex to emit JSON, or amend the policy with rationale. |
 
 ---
 
@@ -322,5 +375,10 @@ age, not reviewer identity. The drop-state does not block the forward restore.
 - State: `.omx/state/db_watermark.json` (612/53), live `signals.db` (4 rows /
   schema 26), canary backup `backups/signals-20260529-190655.db`
   (SHA `01ced671a3c1a3800646edad42c2fa9ef2841f587d8255b4049a7c6e3fdd0a26`).
-- DR plans: `.omx/plans/db-recovery-before-collection-ralplan-dr-20260513.md`,
+- Recovery docs (authoritative, 2026-05-29):
+  `docs/plans/2026-05-29-hermes-recovery-sprint/HANDOFF.md` (restore source,
+  hard preconditions), `…/h1-policy-reconciliation.md` (high-risk restore gate
+  rules, execute flags, "Codex + Kimi quorum").
+- DR plans (audit method / superseded source candidates):
+  `.omx/plans/db-recovery-before-collection-ralplan-dr-20260513.md`,
   `.omx/plans/corrected-operational-priorities-ralplan-dr-20260514.md`.
