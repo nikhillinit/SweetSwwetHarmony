@@ -66,6 +66,7 @@ def test_outbox_candidates_schema_matches_live_candidate_snapshot_keys(
 
     assert set(artifact) == set(properties) - {"error"}
     assert schema["required"] == [
+        "artifactVersion",
         "candidateCount",
         "candidateIds",
         "candidateIdHash",
@@ -96,6 +97,7 @@ def test_outbox_candidates_schema_tracks_live_shape_not_overlay_stubs() -> None:
     properties = schema["properties"]
 
     assert schema["additionalProperties"] is False
+    assert properties["artifactVersion"] == {"const": 1}
     assert properties["candidateCount"] == {"type": "integer", "minimum": 0}
     assert properties["candidateIds"]["items"] == {"type": "integer", "minimum": 1}
     assert properties["candidateIdHash"] == {"type": "string", "minLength": 1}

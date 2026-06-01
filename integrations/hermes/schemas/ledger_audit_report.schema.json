@@ -83,7 +83,8 @@
       "required": [
         "restore_sqlite",
         "governance_config",
-        "collector_promotion"
+        "collector_promotion",
+        "suppression_outbox"
       ],
       "properties": {
         "restore_sqlite": {
@@ -145,6 +146,29 @@
           "properties": {
             "subsystem": {"const": "collector_promotion"},
             "ownerTask": {"const": "collector-promote"},
+            "enabled": {"type": "boolean"},
+            "runsChecked": {"type": "integer", "minimum": 0},
+            "resourcesChecked": {"type": "integer", "minimum": 0},
+            "findings": {
+              "type": "array",
+              "items": {"$ref": "#/$defs/finding"}
+            }
+          },
+          "additionalProperties": false
+        },
+        "suppression_outbox": {
+          "type": "object",
+          "required": [
+            "subsystem",
+            "ownerTask",
+            "enabled",
+            "runsChecked",
+            "resourcesChecked",
+            "findings"
+          ],
+          "properties": {
+            "subsystem": {"const": "suppression_outbox"},
+            "ownerTask": {"const": "suppression-sync/outbox-purge"},
             "enabled": {"type": "boolean"},
             "runsChecked": {"type": "integer", "minimum": 0},
             "resourcesChecked": {"type": "integer", "minimum": 0},

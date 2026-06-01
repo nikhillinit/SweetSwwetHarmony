@@ -4,6 +4,7 @@
   "title": "Hermes Outbox Candidates Artifact",
   "type": "object",
   "required": [
+    "artifactVersion",
     "candidateCount",
     "candidateIds",
     "candidateIdHash",
@@ -11,6 +12,7 @@
     "rows"
   ],
   "properties": {
+    "artifactVersion": {"const": 1},
     "candidateCount": {"type": "integer", "minimum": 0},
     "candidateIds": {
       "type": "array",

@@ -19,6 +19,7 @@ from .base import (
 
 SUPPRESSION_DELETE_ACK = "SUPPRESSION_DELETE"
 SUPPRESSION_TABLE = "suppression_cache"
+SUPPRESSION_SYNC_ARTIFACT_VERSION = 1
 
 
 class SuppressionSyncTask(HermesTask):
@@ -163,6 +164,7 @@ class SuppressionSyncTask(HermesTask):
     def dry_run(self, context: TaskContext, plan: dict[str, Any]) -> dict[str, Any]:
         command = self._workflow_command(context, dry_run=True)
         result = run_command(command, cwd=context.root, timeout_seconds=300)
+        result["artifactVersion"] = SUPPRESSION_SYNC_ARTIFACT_VERSION
         context.write_json("suppression_sync_command.json", result)
         return {
             "dryRun": True,
@@ -187,10 +189,14 @@ class SuppressionSyncTask(HermesTask):
             outputs["preSyncSnapshotRef"] = str(snapshot.relative_to(context.run_dir))
             outputs["preSyncSnapshotSha256"] = sha256_file(snapshot)
 
-        context.write_json("pre_suppression_sync_state.json", _inspect_suppression_db(db_path))
+        context.write_json(
+            "pre_suppression_sync_state.json",
+            _suppression_state_artifact(db_path),
+        )
 
         command = self._workflow_command(context, dry_run=False)
         result = run_command(command, cwd=context.root, timeout_seconds=300)
+        result["artifactVersion"] = SUPPRESSION_SYNC_ARTIFACT_VERSION
         context.write_json("suppression_sync_command.json", result)
         outputs["command"] = command
         outputs["result"] = result
@@ -372,3 +378,9 @@ def _inspect_suppression_db(db_path: Path) -> dict[str, Any]:
             }
         )
     return evidence
+
+
+def _suppression_state_artifact(db_path: Path) -> dict[str, Any]:
+    state = _inspect_suppression_db(db_path)
+    state["artifactVersion"] = SUPPRESSION_SYNC_ARTIFACT_VERSION
+    return state
