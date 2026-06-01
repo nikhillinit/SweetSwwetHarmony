@@ -4,6 +4,7 @@
   "title": "Hermes Config Promote Report",
   "type": "object",
   "required": [
+    "artifactVersion",
     "generatedAt",
     "task",
     "runId",
@@ -16,6 +17,7 @@
     "policyReview"
   ],
   "properties": {
+    "artifactVersion": {"const": 1},
     "generatedAt": {"type": "string", "format": "date-time"},
     "task": {"const": "config-promote"},
     "runId": {"type": ["string", "null"], "minLength": 1},

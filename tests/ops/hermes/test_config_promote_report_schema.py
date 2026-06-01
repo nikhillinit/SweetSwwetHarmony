@@ -111,6 +111,7 @@ def test_config_promote_report_schema_matches_live_report_keys(
     assert report["diffArtifact"] == config_promote.CONFIG_DIFF_ARTIFACT
     assert set(report) == set(schema["properties"])
     assert schema["required"] == [
+        "artifactVersion",
         "generatedAt",
         "task",
         "runId",
@@ -123,6 +124,7 @@ def test_config_promote_report_schema_matches_live_report_keys(
         "policyReview",
     ]
     assert all(key in report for key in schema["required"])
+    assert report["artifactVersion"] == 1
 
     current_config = schema["properties"]["currentConfig"]
     proposed_config = schema["properties"]["proposedConfig"]
@@ -155,6 +157,7 @@ def test_config_promote_report_schema_tracks_live_shape_not_overlay_stubs() -> N
     assert "old_config_hash" not in properties
     assert "configPromotionTemplate" not in properties
     assert "repairPromptTemplate" not in properties
+    assert properties["artifactVersion"] == {"const": 1}
     assert properties["task"] == {"const": "config-promote"}
     assert properties["diffArtifact"] == {"const": config_promote.CONFIG_DIFF_ARTIFACT}
     assert "previousSnapshotRef" in properties

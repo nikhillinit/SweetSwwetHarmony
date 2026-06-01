@@ -80,7 +80,7 @@
     },
     "subsystems": {
       "type": "object",
-      "required": ["restore_sqlite"],
+      "required": ["restore_sqlite", "governance_config"],
       "properties": {
         "restore_sqlite": {
           "type": "object",
@@ -95,6 +95,29 @@
           "properties": {
             "subsystem": {"const": "restore_sqlite"},
             "ownerTask": {"const": "restore-db"},
+            "enabled": {"type": "boolean"},
+            "runsChecked": {"type": "integer", "minimum": 0},
+            "resourcesChecked": {"type": "integer", "minimum": 0},
+            "findings": {
+              "type": "array",
+              "items": {"$ref": "#/$defs/finding"}
+            }
+          },
+          "additionalProperties": false
+        },
+        "governance_config": {
+          "type": "object",
+          "required": [
+            "subsystem",
+            "ownerTask",
+            "enabled",
+            "runsChecked",
+            "resourcesChecked",
+            "findings"
+          ],
+          "properties": {
+            "subsystem": {"const": "governance_config"},
+            "ownerTask": {"const": "governance/config-promote"},
             "enabled": {"type": "boolean"},
             "runsChecked": {"type": "integer", "minimum": 0},
             "resourcesChecked": {"type": "integer", "minimum": 0},
