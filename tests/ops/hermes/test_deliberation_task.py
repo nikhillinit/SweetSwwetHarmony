@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from integrations.hermes.adapters import ExecutorResult
+from integrations.hermes.plan_contract import CURRENT_CONTRACT_VERSION
 from integrations.hermes.tasks.base import EXIT_GATE_FAILURE
 from integrations.hermes.tasks.deliberation import (
     _classify_text_response,
@@ -150,6 +151,7 @@ def test_malformed_non_empty_reviewer_content_blocks_approval() -> None:
     consensus = _synthesize([_approval("codex"), {"executor": "kimi", "success": True, **payload}])
     assert consensus["status"] == "blocked"
     assert consensus["blockers"] == ["kimi"]
+    assert consensus["quorum"]["malformedReviewers"] == ["kimi"]
 
 
 def test_fallback_text_classifier_never_approves() -> None:
@@ -181,6 +183,16 @@ def test_invalid_verdict_does_not_count_as_approval() -> None:
 def test_high_risk_deliberation_requires_two_valid_approvals() -> None:
     assert _synthesize([_approval("codex")])["status"] == "no_quorum"
     assert _synthesize([_approval("codex"), _approval("kimi")])["status"] == "approved"
+
+
+def test_untrusted_reviewer_identity_cannot_satisfy_high_risk_quorum() -> None:
+    consensus = _synthesize([_approval("codex"), _approval("claude")])
+
+    assert consensus["status"] == "no_quorum"
+    assert consensus["quorum"]["status"] == "insufficient_quorum"
+    assert consensus["quorum"]["required"] == 2
+    assert consensus["quorum"]["countedApprovals"] == ["codex"]
+    assert consensus["quorum"]["untrustedApprovals"] == ["claude"]
 
 
 def test_skip_is_neutral_for_approval_quorum() -> None:
@@ -233,7 +245,9 @@ def test_one_valid_approval_high_risk_dry_run_fails_no_quorum(
     assert result.outputs["consensus"]["status"] == "no_quorum"
     check = next(check for check in result.checks if check.name == "quorum_completed")
     assert check.passed is False
-    assert check.evidence == {"active": 1, "required": 2}
+    assert check.evidence["countedApprovals"] == ["codex"]
+    assert check.evidence["required"] == 2
+    assert check.evidence["status"] == "insufficient_quorum"
 
 
 def test_plan_only_writes_ledger_artifacts_and_stays_non_mutating(
@@ -300,6 +314,27 @@ def test_unknown_and_disabled_panel_providers_are_skipped_without_external_calls
     }
 
 
+def test_unknown_executor_skip_does_not_count_toward_quorum_in_dry_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _patch_reviewers(
+        monkeypatch,
+        {"codex": {"verdict": "approve", "confidence": 0.9, "concerns": []}},
+    )
+
+    result = run_registered_task(
+        _args(tmp_path, mode="dry-run", panel="missing,codex")
+    )
+
+    assert result.exit_code == EXIT_GATE_FAILURE
+    assert result.status == "dry_run_failed"
+    assert calls == ["codex"]
+    assert result.outputs["consensus"]["status"] == "no_quorum"
+    assert result.outputs["consensus"]["quorum"]["countedApprovals"] == ["codex"]
+    assert "missing" not in result.outputs["consensus"]["quorum"]["countedApprovals"]
+
+
 def test_dry_run_writes_deliberation_artifacts_under_temp_ledger(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -318,6 +353,20 @@ def test_dry_run_writes_deliberation_artifacts_under_temp_ledger(
     assert result.exit_code == 0
     assert result.status == "dry_run_passed"
     assert result.outputs["consensus"]["status"] == "approved"
+    assert result.outputs["contractVersion"] == CURRENT_CONTRACT_VERSION
+    assert result.outputs["reviewerPolicy"]["requiredQuorum"] == 2
+    assert result.outputs["reviewerPolicy"]["trustedReviewers"] == [
+        "codex",
+        "gemini",
+        "kimi",
+    ]
+    assert result.outputs["consensus"]["quorum"]["status"] == "satisfied"
+    assert result.outputs["consensus"]["quorum"]["countedApprovals"] == [
+        "codex",
+        "kimi",
+    ]
+    assert "policyPresent" not in result.outputs["consensus"]["quorum"]
+    assert "quorumEvidencePresent" not in result.outputs["consensus"]["quorum"]
     assert result.outputs["mutationCommitted"] is False
     assert (run_dir / "deliberation_record.json").exists()
     assert (run_dir / "deliberation.md").exists()
