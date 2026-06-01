@@ -4,6 +4,7 @@
   "title": "Hermes Deliberation Record",
   "type": "object",
   "required": [
+    "contractVersion",
     "deliberationId",
     "createdAt",
     "task",
@@ -13,11 +14,13 @@
     "artifactCommit",
     "input",
     "panel",
+    "reviewerPolicy",
     "synthesizer",
     "consensus",
     "freshnessTtlSeconds"
   ],
   "properties": {
+    "contractVersion": {"const": 2},
     "deliberationId": {"type": "string", "minLength": 1},
     "createdAt": {"type": "string", "minLength": 1},
     "task": {"const": "deliberate"},
@@ -84,6 +87,40 @@
         "additionalProperties": false
       }
     },
+    "reviewerPolicy": {
+      "type": "object",
+      "required": [
+        "policyVersion",
+        "task",
+        "riskLevel",
+        "trustedReviewers",
+        "requiredQuorum",
+        "approvalCriteria"
+      ],
+      "properties": {
+        "policyVersion": {"const": 1},
+        "task": {"const": "deliberate"},
+        "riskLevel": {"enum": ["low", "medium", "high", "critical"]},
+        "trustedReviewers": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string", "minLength": 1}
+        },
+        "requiredQuorum": {"type": "integer", "minimum": 1},
+        "approvalCriteria": {
+          "type": "object",
+          "required": ["verdict", "success", "parsed", "schema"],
+          "properties": {
+            "verdict": {"const": "approve"},
+            "success": {"const": true},
+            "parsed": {"const": true},
+            "schema": {"const": "structured_json_v1"}
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "synthesizer": {
       "type": "object",
       "required": ["executor", "strategy"],
@@ -99,6 +136,7 @@
         "status",
         "blockers",
         "dissent",
+        "quorum",
         "overrideAllowed",
         "overrideAckToken"
       ],
@@ -114,6 +152,63 @@
           "properties": {
             "present": {"type": "boolean"},
             "summary": {"type": "string"}
+          },
+          "additionalProperties": false
+        },
+        "quorum": {
+          "type": "object",
+          "required": [
+            "status",
+            "required",
+            "countedApprovals",
+            "trustedReviewers",
+            "untrustedApprovals",
+            "nonCompliantApprovals",
+            "malformedReviewers"
+          ],
+          "properties": {
+            "status": {
+              "enum": [
+                "satisfied",
+                "insufficient_quorum",
+                "malformed_reviewer_output",
+                "missing_policy",
+                "missing_quorum_evidence",
+                "quorum_evidence_mismatch"
+              ]
+            },
+            "required": {"type": "integer", "minimum": 0},
+            "countedApprovals": {
+              "type": "array",
+              "items": {"type": "string"}
+            },
+            "trustedReviewers": {
+              "type": "array",
+              "items": {"type": "string"}
+            },
+            "untrustedApprovals": {
+              "type": "array",
+              "items": {"type": "string"}
+            },
+            "nonCompliantApprovals": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["executor", "reasons"],
+                "properties": {
+                  "executor": {"type": "string"},
+                  "reasons": {
+                    "type": "array",
+                    "items": {"type": "string"}
+                  }
+                },
+                "additionalProperties": false
+              }
+            },
+            "malformedReviewers": {
+              "type": "array",
+              "items": {"type": "string"}
+            }
           },
           "additionalProperties": false
         },

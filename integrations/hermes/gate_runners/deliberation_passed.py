@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from integrations.hermes.config import PROJECT_ROOT
+from integrations.hermes.deliberation_policy import evaluate_record_reviewer_policy
 from integrations.hermes.gate_runners._common import emit, latest_existing, load_json
 
 
@@ -59,8 +60,17 @@ def main(argv: list[str] | None = None) -> int:
     consensus = _dict_value(record.get("consensus"))
     blockers = list(consensus.get("blockers") or [])
     dissent_present = _dissent_present(consensus.get("dissent"))
+    reviewer_policy = evaluate_record_reviewer_policy(record)
+    reviewer_policy_ok = reviewer_policy.get("status") == "satisfied"
     status_ok = consensus.get("status") == "approved"
-    ok = plan_hash_ok and age_ok and status_ok and not blockers and not dissent_present
+    ok = (
+        plan_hash_ok
+        and age_ok
+        and status_ok
+        and not blockers
+        and not dissent_present
+        and reviewer_policy_ok
+    )
 
     return emit(
         ok,
@@ -74,6 +84,7 @@ def main(argv: list[str] | None = None) -> int:
             "maxAgeSeconds": max_age_seconds,
             "freshnessSource": freshness_source,
             "consensus": consensus,
+            "reviewerPolicy": reviewer_policy,
         },
     )
 

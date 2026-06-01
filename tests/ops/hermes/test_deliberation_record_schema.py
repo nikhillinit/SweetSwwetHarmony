@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 import pytest
+from jsonschema import Draft202012Validator
 
 from integrations.hermes.adapters import ExecutorResult
 from integrations.hermes.config import PROJECT_ROOT
@@ -106,6 +107,7 @@ def test_deliberation_record_schema_matches_live_record_keys(
 
     assert set(record) == set(schema["properties"])
     assert schema["required"] == [
+        "contractVersion",
         "deliberationId",
         "createdAt",
         "task",
@@ -115,11 +117,23 @@ def test_deliberation_record_schema_matches_live_record_keys(
         "artifactCommit",
         "input",
         "panel",
+        "reviewerPolicy",
         "synthesizer",
         "consensus",
         "freshnessTtlSeconds",
     ]
     assert all(key in record for key in schema["required"])
+
+
+def test_deliberation_record_schema_validates_live_record(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    schema = _load_schema()
+    record = _live_deliberation_record(tmp_path, monkeypatch)
+
+    Draft202012Validator.check_schema(schema)
+    Draft202012Validator(schema).validate(record)
 
 
 def test_deliberation_record_schema_tracks_live_camel_case_shape() -> None:
@@ -129,12 +143,30 @@ def test_deliberation_record_schema_tracks_live_camel_case_shape() -> None:
     consensus = properties["consensus"]
 
     assert schema["additionalProperties"] is False
+    assert properties["contractVersion"]["const"] == 2
     assert "deliberation_id" not in properties
     assert properties["createdAt"]["type"] == "string"
     assert "input_plan_hash" not in properties
     assert "freshness_ttl_seconds" not in properties
+    assert properties["reviewerPolicy"]["required"] == [
+        "policyVersion",
+        "task",
+        "riskLevel",
+        "trustedReviewers",
+        "requiredQuorum",
+        "approvalCriteria",
+    ]
     assert panel_item["properties"]["parsed"]["type"] == "boolean"
     assert panel_item["properties"]["requiredChanges"]["type"] == "array"
     assert "required_changes" not in panel_item["properties"]
+    assert consensus["properties"]["quorum"]["required"] == [
+        "status",
+        "required",
+        "countedApprovals",
+        "trustedReviewers",
+        "untrustedApprovals",
+        "nonCompliantApprovals",
+        "malformedReviewers",
+    ]
     assert consensus["properties"]["overrideAllowed"]["type"] == "boolean"
     assert "no_quorum" in consensus["properties"]["status"]["enum"]
