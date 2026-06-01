@@ -4,6 +4,10 @@ import argparse
 import json
 from pathlib import Path
 
+from integrations.hermes.plan_contract import (
+    CURRENT_CONTRACT_VERSION,
+    canonical_plan_hash_from_plan,
+)
 from integrations.hermes.config import PROJECT_ROOT
 from integrations.hermes.tasks.registry import run_registered_task
 
@@ -45,17 +49,23 @@ def _ledger_audit_args(tmp_path: Path) -> argparse.Namespace:
     )
 
 
-def _live_run_record(tmp_path: Path) -> dict[str, object]:
+def _live_run_artifacts(
+    tmp_path: Path,
+) -> tuple[dict[str, object], dict[str, object]]:
     result = run_registered_task(_ledger_audit_args(tmp_path))
     run_dir = Path(result.run_dir or "")
-    return json.loads((run_dir / "run_record.json").read_text(encoding="utf-8"))
+    plan = json.loads((run_dir / "task_plan.json").read_text(encoding="utf-8"))
+    record = json.loads((run_dir / "run_record.json").read_text(encoding="utf-8"))
+    return plan, record
 
 
 def test_run_record_schema_matches_live_record_keys(tmp_path: Path) -> None:
     schema = _load_schema()
-    record = _live_run_record(tmp_path)
+    _plan, record = _live_run_artifacts(tmp_path)
 
     assert set(record) == set(schema["properties"])
+    assert "contract_version" in schema["properties"]
+    assert "contract_version" not in schema["required"]
     assert schema["required"] == [
         "run_id",
         "task",
@@ -74,6 +84,21 @@ def test_run_record_schema_matches_live_record_keys(tmp_path: Path) -> None:
         "plan_ref",
     ]
     assert all(key in record for key in schema["required"])
+
+
+def test_live_task_plan_records_current_contract_version_and_hash(
+    tmp_path: Path,
+) -> None:
+    plan, _record = _live_run_artifacts(tmp_path)
+
+    assert plan["contractVersion"] == CURRENT_CONTRACT_VERSION
+    assert plan["planHash"] == canonical_plan_hash_from_plan(plan)
+
+
+def test_live_run_record_records_current_contract_version(tmp_path: Path) -> None:
+    _plan, record = _live_run_artifacts(tmp_path)
+
+    assert record["contract_version"] == CURRENT_CONTRACT_VERSION
 
 
 def test_run_record_schema_uses_check_results_for_preflight() -> None:

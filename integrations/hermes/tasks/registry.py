@@ -34,7 +34,6 @@ class ContractCheckTask(HermesTask):
         plan = self._base_plan(context)
         plan.update(
             {
-                "contract_version": 1,
                 "preflight_gates": ["contract_loaded"],
                 "postflight_gates": [],
             }
