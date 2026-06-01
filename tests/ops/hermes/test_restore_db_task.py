@@ -9,6 +9,10 @@ from pathlib import Path
 
 import pytest
 
+from integrations.hermes.plan_contract import (
+    CURRENT_CONTRACT_VERSION,
+    canonical_plan_hash_from_plan,
+)
 from integrations.hermes.locks import HermesLock
 from integrations.hermes.tasks.base import (
     EXIT_ACK_REQUIRED,
@@ -203,6 +207,26 @@ def test_missing_backup_refuses_safely_and_emits_repair_prompt(tmp_path: Path) -
     assert (run_dir / "task_plan.json").exists()
     assert (run_dir / "run_record.json").exists()
     assert (run_dir / "repair_prompt.md").exists()
+
+
+def test_restore_plan_and_run_record_include_contract_version(
+    tmp_path: Path,
+) -> None:
+    backup = tmp_path / "backup.db"
+    target = tmp_path / "signals.db"
+    _write_db(backup, rows=4)
+    _write_db(target, rows=1)
+
+    result = run_registered_task(
+        _args(tmp_path, backup=backup, target=target, mode="plan-only")
+    )
+
+    run_dir = Path(result.run_dir or "")
+    plan = json.loads((run_dir / "task_plan.json").read_text(encoding="utf-8"))
+    record = json.loads((run_dir / "run_record.json").read_text(encoding="utf-8"))
+    assert plan["contractVersion"] == CURRENT_CONTRACT_VERSION
+    assert plan["planHash"] == canonical_plan_hash_from_plan(plan)
+    assert record["contract_version"] == CURRENT_CONTRACT_VERSION
 
 
 def test_execute_requires_restore_ack_before_mutating(tmp_path: Path) -> None:
