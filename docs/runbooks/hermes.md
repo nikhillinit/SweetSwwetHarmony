@@ -39,6 +39,25 @@ python -m ops.cli hermes run --execute --phase production --task "schema migrati
 python -m ops.cli hermes run --execute --phase production --task "schema migration" --codex --ack-risk I-ACK-RISK
 ```
 
+## Track A Hardening Strategy
+
+The post-PR235 enforcement roadmap is tracked at
+`docs/superpowers/specs/2026-06-01-hermes-track-a-post-pr235-hardening.md`.
+Use that document as the source of truth for H1-H5 definitions: canonical plan
+hash, contract versions, causal deliberation freshness, dry-run drift,
+ledger-audit v2, bypass lifecycle, and PR sequencing.
+
+Current implementation limits are intentional and should stay visible:
+
+- `deliberation_passed` checks plan hash, consensus status, blockers, dissent,
+  and TTL, but not trusted reviewer identity or intervening mutating runs yet.
+- `ledger-audit` checks index/run/artifact consistency, not subsystem resource
+  reconciliation yet.
+- `contract-check` is a base-contract smoke check, not the complete schema gate
+  for every task.
+- `incident` records incident lifecycle state; it does not authorize restore or
+  bypass decisions.
+
 ## Artifacts
 
 Hermes writes run artifacts under `ai-logs/hermes/runs/<run_id>/` and appends
