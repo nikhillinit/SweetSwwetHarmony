@@ -23,7 +23,11 @@ from typing import Any, ClassVar, Coroutine, Iterable, Literal, TypeVar
 
 from integrations.hermes.config import PROJECT_ROOT, RoutingConfig, load_config
 from integrations.hermes.ledger import HermesLedger, HermesRun
-from integrations.hermes.locks import HermesLock, HermesLockError
+from integrations.hermes.locks import (
+    HermesLock,
+    HermesLockError,
+    assert_canonical_lock_order,
+)
 from integrations.hermes.plan_contract import (
     CURRENT_CONTRACT_VERSION,
     attach_plan_contract,
@@ -212,6 +216,10 @@ class HermesTask:
         return ()
 
     def _base_plan(self, context: TaskContext) -> dict[str, Any]:
+        try:
+            assert_canonical_lock_order(self.required_locks, task_name=self.name)
+        except HermesLockError as exc:
+            raise ValueError(str(exc)) from exc
         return {
             "contractVersion": CURRENT_CONTRACT_VERSION,
             "task": self.name,
@@ -600,6 +608,7 @@ class HermesTask:
     def _acquire_locks(self, context: TaskContext) -> bool:
         if context.config is None or context.run is None:
             raise RuntimeError("task context has no lock configuration")
+        assert_canonical_lock_order(self.required_locks, task_name=self.name)
         for lock_name in self.required_locks:
             lock = HermesLock(
                 _task_lock_path(context.config, lock_name),
