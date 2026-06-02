@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from run_pipeline import create_parser, cmd_collect, cmd_health
+from run_pipeline import create_parser, cmd_collect, cmd_health, cmd_health_json_pure
 from discovery_engine.mcp_server import CollectorResult, CollectorStatus
 from utils.signal_health import HealthReport
 from workflows.pipeline import PipelineConfig
@@ -191,6 +191,12 @@ class TestHealthCommand:
         args = parser.parse_args(["health", "--timeout-seconds", "0.25"])
         assert args.health_timeout_seconds == 0.25
 
+    def test_health_json_pure_accepts_timeout_seconds_flag(self):
+        """Strict JSON health should expose the same bounded timeout control."""
+        parser = create_parser()
+        args = parser.parse_args(["health-json-pure", "--timeout-seconds", "0.25"])
+        assert args.health_timeout_seconds == 0.25
+
     @pytest.mark.asyncio
     async def test_cmd_health_initializes_pipeline_read_only(self):
         """Health diagnostics must use the pipeline read-only contract."""
@@ -326,6 +332,119 @@ class TestHealthCommand:
         assert exit_code == 1
         _assert_timeout_failure(output, "GitHub API")
         mock_pipeline.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("hung_check_name", "ok_check_name", "api_name"),
+        [
+            ("check_github_api", "check_sec_edgar_api", "github"),
+            ("check_sec_edgar_api", "check_github_api", "sec_edgar"),
+        ],
+    )
+    async def test_cmd_health_json_pure_times_out_hung_external_check(
+        self,
+        tmp_path,
+        capsys,
+        hung_check_name,
+        ok_check_name,
+        api_name,
+    ):
+        """A hung strict JSON external check should be bounded as report data."""
+        db_path = tmp_path / "signals.db"
+        _create_health_json_pure_probe_db(db_path)
+        args = SimpleNamespace(
+            db_path=str(db_path),
+            report=None,
+            allow_external_failures=False,
+            health_timeout_seconds=0.01,
+        )
+
+        with patch(f"run_pipeline.{hung_check_name}", AsyncMock(side_effect=_never_returns)):
+            with patch(f"run_pipeline.{ok_check_name}", AsyncMock(return_value=(True, "OK"))):
+                exit_code = await asyncio.wait_for(
+                    cmd_health_json_pure(args),
+                    timeout=1,
+                )
+
+        output = json.loads(capsys.readouterr().out)
+        timeout_check = _find_check({"checks": output["metrics"]["checks"]}, api_name)
+        assert exit_code == 1
+        assert output["ok"] is False
+        assert output["command"] == "health-json-pure"
+        assert any(api_name in error and "timed out" in error for error in output["errors"])
+        assert timeout_check["scope"] == "external"
+        assert timeout_check["status"] == "fail"
+        assert timeout_check["passed"] is False
+        assert "timed out" in timeout_check["message"]
+        assert output["metrics"]["overall_status"] == "UNHEALTHY"
+        assert output["metrics"]["integration_status"] == "UNHEALTHY"
+
+    @pytest.mark.asyncio
+    async def test_cmd_health_json_pure_timeout_can_be_external_warning(
+        self,
+        tmp_path,
+        capsys,
+    ):
+        """Allowed external timeout failures should degrade but keep ok=true."""
+        db_path = tmp_path / "signals.db"
+        _create_health_json_pure_probe_db(db_path)
+        args = SimpleNamespace(
+            db_path=str(db_path),
+            report=None,
+            allow_external_failures=True,
+            health_timeout_seconds=0.01,
+        )
+
+        with patch("run_pipeline.check_github_api", AsyncMock(side_effect=_never_returns)):
+            with patch("run_pipeline.check_sec_edgar_api", AsyncMock(return_value=(True, "OK"))):
+                exit_code = await asyncio.wait_for(
+                    cmd_health_json_pure(args),
+                    timeout=1,
+                )
+
+        output = json.loads(capsys.readouterr().out)
+        timeout_check = _find_check({"checks": output["metrics"]["checks"]}, "github")
+        assert exit_code == 0
+        assert output["ok"] is True
+        assert output["errors"] == []
+        assert any("github" in warning and "timed out" in warning for warning in output["warnings"])
+        assert timeout_check["status"] == "warn"
+        assert timeout_check["passed"] is True
+        assert output["metrics"]["overall_status"] == "DEGRADED"
+        assert output["metrics"]["integration_status"] == "DEGRADED"
+
+    @pytest.mark.asyncio
+    async def test_cmd_health_json_pure_timeout_report_matches_stdout(
+        self,
+        tmp_path,
+        capsys,
+    ):
+        """Timeout failures should write the same strict JSON report shape."""
+        db_path = tmp_path / "signals.db"
+        report_path = tmp_path / "health-report.json"
+        _create_health_json_pure_probe_db(db_path)
+        args = SimpleNamespace(
+            db_path=str(db_path),
+            report=str(report_path),
+            allow_external_failures=False,
+            health_timeout_seconds=0.01,
+        )
+
+        with patch("run_pipeline.check_github_api", AsyncMock(return_value=(True, "OK"))):
+            with patch("run_pipeline.check_sec_edgar_api", AsyncMock(side_effect=_never_returns)):
+                exit_code = await asyncio.wait_for(
+                    cmd_health_json_pure(args),
+                    timeout=1,
+                )
+
+        stdout_report = json.loads(capsys.readouterr().out)
+        file_report = json.loads(report_path.read_text())
+        assert exit_code == 1
+        assert stdout_report == file_report
+        assert file_report["ok"] is False
+        assert any("sec_edgar" in error and "timed out" in error for error in file_report["errors"])
+        timeout_check = _find_check({"checks": file_report["metrics"]["checks"]}, "sec_edgar")
+        assert timeout_check["status"] == "fail"
 
     @pytest.mark.asyncio
     async def test_cmd_health_json_times_out_hung_suppression_stats(self, capsys):
@@ -693,6 +812,18 @@ def _create_health_probe_db(path) -> None:
             "INSERT INTO suppression_cache (expires_at) VALUES (?)",
             ("2999-01-01T00:00:00+00:00",),
         )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _create_health_json_pure_probe_db(path) -> None:
+    """Create the minimal DB shape inspected by health-json-pure."""
+    conn = sqlite3.connect(str(path))
+    try:
+        conn.execute("CREATE TABLE signals (id INTEGER PRIMARY KEY)")
+        conn.execute("CREATE TABLE schema_migrations (version INTEGER)")
+        conn.execute("INSERT INTO schema_migrations (version) VALUES (1)")
         conn.commit()
     finally:
         conn.close()
