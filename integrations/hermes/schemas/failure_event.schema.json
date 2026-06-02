@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://sweetswwetharmony.local/hermes/failure_event.schema.json",
+  "title": "Hermes Run Failure Event",
+  "type": "object",
+  "required": [
+    "artifactVersion",
+    "eventType",
+    "createdAt",
+    "runId",
+    "mode",
+    "phase",
+    "task",
+    "failureType",
+    "exitCode",
+    "routingPlan",
+    "statePaths",
+    "artifacts",
+    "details",
+    "nextAction"
+  ],
+  "properties": {
+    "artifactVersion": {"const": 1},
+    "eventType": {"const": "hermes.run.failure"},
+    "createdAt": {"type": "string", "minLength": 1},
+    "runId": {"type": "string", "minLength": 1},
+    "mode": {
+      "type": "string",
+      "enum": ["dry-run", "preflight-only", "execute"]
+    },
+    "phase": {"type": "string", "minLength": 1},
+    "task": {"type": "string", "minLength": 1},
+    "failureType": {
+      "type": "string",
+      "enum": [
+        "preflight",
+        "postflight",
+        "lock-held",
+        "approval-required",
+        "executor"
+      ]
+    },
+    "exitCode": {"type": "integer"},
+    "routingPlan": {"type": "object"},
+    "statePaths": {
+      "type": "array",
+      "items": {"type": "string", "minLength": 1}
+    },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": {"type": "string", "minLength": 1}
+    },
+    "details": {"type": "object"},
+    "nextAction": {"type": "string", "minLength": 1}
+  },
+  "additionalProperties": false
+}

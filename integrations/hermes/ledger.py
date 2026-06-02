@@ -141,6 +141,41 @@ class HermesLedger:
         lines.extend(["```", "", "Next safe operator action:", next_action, ""])
         return self.write_text_artifact(run, "repair_prompt.md", "\n".join(lines))
 
+    def write_failure_event(
+        self,
+        run: HermesRun,
+        *,
+        failure_type: str,
+        mode: str,
+        exit_code: int,
+        routing_plan: dict[str, Any],
+        state_paths: list[Path],
+        next_action: str,
+        details: dict[str, Any] | None = None,
+        artifacts: dict[str, Path] | None = None,
+    ) -> Path:
+        artifact_refs = {
+            name: _relative_to_run_posix(run, path)
+            for name, path in (artifacts or {}).items()
+        }
+        payload = {
+            "artifactVersion": 1,
+            "eventType": "hermes.run.failure",
+            "createdAt": datetime.now(timezone.utc).isoformat(),
+            "runId": run.run_id,
+            "mode": mode,
+            "phase": routing_plan.get("phase"),
+            "task": routing_plan.get("task"),
+            "failureType": failure_type,
+            "exitCode": exit_code,
+            "routingPlan": routing_plan,
+            "statePaths": [_relative_to_run_posix(run, path) for path in state_paths],
+            "artifacts": artifact_refs,
+            "details": details or {},
+            "nextAction": next_action,
+        }
+        return self.write_json_artifact(run, "failure_event.json", payload)
+
     def append_index(self, entry: dict[str, Any]) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
         line = json.dumps(
@@ -198,3 +233,7 @@ def _relative_to_run(run: HermesRun, path: Path) -> str:
         return str(path.relative_to(run.run_dir))
     except ValueError:
         return str(path)
+
+
+def _relative_to_run_posix(run: HermesRun, path: Path) -> str:
+    return _relative_to_run(run, path).replace("\\", "/")
