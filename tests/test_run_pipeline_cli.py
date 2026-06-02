@@ -447,6 +447,81 @@ class TestHealthCommand:
         assert timeout_check["status"] == "fail"
 
     @pytest.mark.asyncio
+    async def test_cmd_health_json_pure_opens_db_probe_read_only(
+        self,
+        tmp_path,
+        capsys,
+    ):
+        """The strict JSON DB probe should open SQLite through a read-only URI."""
+        db_path = tmp_path / "signals.db"
+        _create_health_json_pure_probe_db(db_path)
+        args = SimpleNamespace(
+            db_path=str(db_path),
+            report=None,
+            allow_external_failures=False,
+            health_timeout_seconds=0.01,
+        )
+
+        real_connect = sqlite3.connect
+        connect_calls = []
+
+        def recording_connect(database, *connect_args, **connect_kwargs):
+            connect_calls.append((database, dict(connect_kwargs)))
+            return real_connect(database, *connect_args, **connect_kwargs)
+
+        with patch("sqlite3.connect", side_effect=recording_connect):
+            with patch("run_pipeline.check_github_api", AsyncMock(return_value=(True, "OK"))):
+                with patch("run_pipeline.check_sec_edgar_api", AsyncMock(return_value=(True, "OK"))):
+                    exit_code = await cmd_health_json_pure(args)
+
+        output = json.loads(capsys.readouterr().out)
+        db_probe_calls = [
+            (database, kwargs)
+            for database, kwargs in connect_calls
+            if "signals.db" in str(database)
+        ]
+        assert exit_code == 0
+        assert output["ok"] is True
+        assert db_probe_calls
+        database, kwargs = db_probe_calls[0]
+        assert str(database).startswith("file:")
+        assert "mode=ro" in str(database)
+        assert kwargs["uri"] is True
+
+    @pytest.mark.asyncio
+    async def test_cmd_health_json_pure_reads_probe_metrics_from_read_only_db(
+        self,
+        tmp_path,
+        capsys,
+    ):
+        """The read-only DB probe should still emit the existing metric shape."""
+        db_path = tmp_path / "signals.db"
+        report_path = tmp_path / "health-report.json"
+        _create_health_json_pure_probe_db(db_path, schema_version=7, signal_count=3)
+        args = SimpleNamespace(
+            db_path=str(db_path),
+            report=str(report_path),
+            allow_external_failures=False,
+            health_timeout_seconds=0.01,
+        )
+
+        with patch("run_pipeline.check_github_api", AsyncMock(return_value=(True, "OK"))):
+            with patch("run_pipeline.check_sec_edgar_api", AsyncMock(return_value=(True, "OK"))):
+                exit_code = await cmd_health_json_pure(args)
+
+        output = json.loads(capsys.readouterr().out)
+        file_report = json.loads(report_path.read_text())
+        database_check = _find_check({"checks": output["metrics"]["checks"]}, "Database")
+        schema_check = _find_check({"checks": output["metrics"]["checks"]}, "Schema Version")
+        assert exit_code == 0
+        assert output == file_report
+        assert output["ok"] is True
+        assert output["metrics"]["schema_version"] == 7
+        assert output["metrics"]["signal_count"] == 3
+        assert database_check["status"] == "pass"
+        assert schema_check["details"]["version"] == 7
+
+    @pytest.mark.asyncio
     async def test_cmd_health_json_times_out_hung_suppression_stats(self, capsys):
         """A hung suppression stats read should be bounded and fail the core check."""
         args = _health_args()
@@ -817,13 +892,23 @@ def _create_health_probe_db(path) -> None:
         conn.close()
 
 
-def _create_health_json_pure_probe_db(path) -> None:
+def _create_health_json_pure_probe_db(
+    path,
+    *,
+    schema_version: int = 1,
+    signal_count: int = 0,
+) -> None:
     """Create the minimal DB shape inspected by health-json-pure."""
     conn = sqlite3.connect(str(path))
     try:
         conn.execute("CREATE TABLE signals (id INTEGER PRIMARY KEY)")
         conn.execute("CREATE TABLE schema_migrations (version INTEGER)")
-        conn.execute("INSERT INTO schema_migrations (version) VALUES (1)")
+        conn.execute("INSERT INTO schema_migrations (version) VALUES (?)", (schema_version,))
+        if signal_count:
+            conn.executemany(
+                "INSERT INTO signals (id) VALUES (?)",
+                [(idx,) for idx in range(1, signal_count + 1)],
+            )
         conn.commit()
     finally:
         conn.close()
