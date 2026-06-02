@@ -4528,6 +4528,13 @@ Examples:
     add_db_path_args(health_json_parser)
     health_json_parser.add_argument("--report", type=str, default=None, help="Path to write JSON report")
     health_json_parser.add_argument("--allow-external-failures", action="store_true", help="Record external failures as warnings instead of errors")
+    health_json_parser.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=HEALTH_CHECK_TIMEOUT_SECONDS,
+        dest="health_timeout_seconds",
+        help=f"Maximum seconds for each awaited health phase (default: {HEALTH_CHECK_TIMEOUT_SECONDS:g})",
+    )
 
     # dns-phase2-guardrails
     dns_guard_parser = subparsers.add_parser(
@@ -7924,6 +7931,13 @@ async def cmd_health_json_pure(args):
     report_path = getattr(args, "report", None)
     allow_external = getattr(args, "allow_external_failures", False)
     allow_external = allow_external if isinstance(allow_external, bool) else False
+    timeout_arg = getattr(args, "health_timeout_seconds", HEALTH_CHECK_TIMEOUT_SECONDS)
+    try:
+        health_timeout_seconds = float(timeout_arg)
+    except (TypeError, ValueError):
+        health_timeout_seconds = HEALTH_CHECK_TIMEOUT_SECONDS
+    if health_timeout_seconds <= 0:
+        health_timeout_seconds = HEALTH_CHECK_TIMEOUT_SECONDS
 
     try:
         check_results: list[CheckResult] = []
@@ -7978,7 +7992,11 @@ async def cmd_health_json_pure(args):
             try:
                 check_fn = globals().get(check_fn_name)
                 if check_fn:
-                    ok, msg = await check_fn()
+                    ok, msg = await _await_health_phase(
+                        api_name,
+                        check_fn(),
+                        health_timeout_seconds,
+                    )
                     if ok:
                         check_results.append(CheckResult(api_name, CheckScope.EXTERNAL, CheckStatus.PASS, None))
                     else:
