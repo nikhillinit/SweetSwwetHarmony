@@ -100,6 +100,7 @@ def test_schema_template_surface_stays_narrow_after_gate_batch_schema() -> None:
         "config_promote_diff.schema.json",
         "config_promote_report.schema.json",
         "deliberation_record.schema.json",
+        "failure_event.schema.json",
         "gate_batch.schema.json",
         "gate_result.schema.json",
         "hermes_response_packet.schema.json",
