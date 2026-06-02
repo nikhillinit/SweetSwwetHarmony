@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -303,7 +304,8 @@ def _parse_reviewer_payload(result: ExecutorResult) -> dict[str, Any]:
     if not parsed_ok:
         parsed = _classify_text_response(content)
 
-    verdict = str(parsed.get("verdict", "skip")).lower()
+    required_changes = _required_changes(parsed)
+    verdict = _normalize_verdict(parsed.get("verdict", "skip"), required_changes)
     if verdict not in VALID_VERDICTS:
         verdict = "needs_changes"
 
@@ -312,7 +314,7 @@ def _parse_reviewer_payload(result: ExecutorResult) -> dict[str, Any]:
         "parsed": parsed_ok,
         "confidence": _float_value(parsed.get("confidence")),
         "concerns": _string_list(parsed.get("concerns")),
-        "requiredChanges": _string_list(parsed.get("required_changes")),
+        "requiredChanges": required_changes,
         "contentExcerpt": content[:1000],
     }
 
@@ -320,11 +322,48 @@ def _parse_reviewer_payload(result: ExecutorResult) -> dict[str, Any]:
 def _parse_json_object(content: str) -> tuple[dict[str, Any], bool]:
     if not content:
         return {}, False
-    try:
-        parsed = json.loads(content)
-    except json.JSONDecodeError:
-        return {}, False
-    return (parsed, True) if isinstance(parsed, dict) else ({}, False)
+    for candidate in _json_candidates(content):
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed, True
+    return {}, False
+
+
+def _json_candidates(content: str) -> list[str]:
+    candidates = [content]
+    candidates.extend(
+        match.group(1).strip()
+        for match in re.finditer(
+            r"```(?:json)?\s*([\s\S]*?)\s*```",
+            content,
+            flags=re.IGNORECASE,
+        )
+    )
+    return candidates
+
+
+def _normalize_verdict(value: Any, required_changes: list[str]) -> str:
+    verdict = str(value or "skip").strip().lower().replace("-", "_").replace(" ", "_")
+    if verdict in {"approve", "approved", "approved_with_concerns"}:
+        return "needs_changes" if required_changes else "approve"
+    if verdict in {"reject", "rejected"}:
+        return "block"
+    return verdict
+
+
+def _required_changes(parsed: dict[str, Any]) -> list[str]:
+    if "required_changes" in parsed:
+        changes = _string_list(parsed.get("required_changes"))
+    else:
+        changes = _string_list(parsed.get("requiredChanges"))
+    return [
+        change
+        for change in changes
+        if change.strip().lower() not in {"", "none", "n/a", "no", "no required changes"}
+    ]
 
 
 def _classify_text_response(content: str) -> dict[str, Any]:
