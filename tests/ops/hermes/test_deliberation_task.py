@@ -180,6 +180,82 @@ def test_invalid_verdict_does_not_count_as_approval() -> None:
     assert consensus["status"] == "blocked"
 
 
+def test_fenced_json_reviewer_payload_counts_as_parsed_approval() -> None:
+    payload = _parse_reviewer_payload(
+        _executor_result(
+            """```json
+{"verdict":"approve","confidence":0.91,"concerns":[],"required_changes":[]}
+```"""
+        )
+    )
+
+    assert payload["parsed"] is True
+    assert payload["verdict"] == "approve"
+
+
+def test_approved_with_concerns_without_required_changes_normalizes_to_approval() -> None:
+    payload = _parse_reviewer_payload(
+        _executor_result(
+            json.dumps(
+                {
+                    "verdict": "approved_with_concerns",
+                    "confidence": 0.86,
+                    "concerns": ["watch operator copy"],
+                    "required_changes": [],
+                }
+            )
+        )
+    )
+
+    assert payload["parsed"] is True
+    assert payload["verdict"] == "approve"
+    assert payload["concerns"] == ["watch operator copy"]
+    consensus = _synthesize([_approval("codex"), {"executor": "kimi", "success": True, **payload}])
+    assert consensus["status"] == "approved"
+
+
+def test_approved_with_none_required_changes_normalizes_to_approval() -> None:
+    payload = _parse_reviewer_payload(
+        _executor_result(
+            json.dumps(
+                {
+                    "verdict": "approved",
+                    "confidence": "high",
+                    "concerns": "sidecar gate should stay visible",
+                    "required_changes": "none",
+                }
+            )
+        )
+    )
+
+    assert payload["parsed"] is True
+    assert payload["verdict"] == "approve"
+    assert payload["requiredChanges"] == []
+    consensus = _synthesize([_approval("codex"), {"executor": "kimi", "success": True, **payload}])
+    assert consensus["status"] == "approved"
+
+
+def test_approved_with_concerns_with_required_changes_blocks_approval() -> None:
+    payload = _parse_reviewer_payload(
+        _executor_result(
+            json.dumps(
+                {
+                    "verdict": "approved_with_concerns",
+                    "confidence": 0.86,
+                    "concerns": ["missing rollback note"],
+                    "requiredChanges": ["add rollback note"],
+                }
+            )
+        )
+    )
+
+    assert payload["parsed"] is True
+    assert payload["verdict"] == "needs_changes"
+    assert payload["requiredChanges"] == ["add rollback note"]
+    consensus = _synthesize([_approval("codex"), {"executor": "kimi", "success": True, **payload}])
+    assert consensus["status"] == "blocked"
+
+
 def test_high_risk_deliberation_requires_two_valid_approvals() -> None:
     assert _synthesize([_approval("codex")])["status"] == "no_quorum"
     assert _synthesize([_approval("codex"), _approval("kimi")])["status"] == "approved"
