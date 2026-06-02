@@ -47,14 +47,20 @@ Use that document as the source of truth for H1-H5 definitions: canonical plan
 hash, contract versions, causal deliberation freshness, dry-run drift,
 ledger-audit v2, bypass lifecycle, and PR sequencing.
 
-Current implementation limits are intentional and should stay visible:
+Current post-PR260 implementation status:
 
+- Plan contracts carry `contractVersion` and canonical plan hashes.
 - `deliberation_passed` checks plan hash, consensus status, blockers, dissent,
-  and TTL, but not trusted reviewer identity or intervening mutating runs yet.
-- `ledger-audit` checks index/run/artifact consistency, not subsystem resource
-  reconciliation yet.
-- `contract-check` is a base-contract smoke check, not the complete schema gate
-  for every task.
+  trusted reviewer policy, recorded quorum evidence, restore readiness when
+  required, and TTL.
+- `ledger-audit` checks index/run/artifact consistency and v2 subsystem
+  reconciliation for restore/SQLite, governance/config, collector promotion,
+  suppression/outbox, and bypass lifecycle artifacts.
+- `ledger-audit` reports `operatorSummary` and supports the read-only
+  `rehearsals` scope for registered Hermes task contracts.
+- H5 adds typed `failure_event.json` artifacts, canonical task lock-order
+  assertions, and the `Hermes Ledger Audit` workflow for PR, nightly, and
+  manual runs.
 - `incident` records incident lifecycle state; it does not authorize restore or
   bypass decisions.
 
