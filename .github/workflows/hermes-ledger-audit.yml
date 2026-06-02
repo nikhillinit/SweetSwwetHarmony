@@ -1,0 +1,93 @@
+name: Hermes Ledger Audit
+
+on:
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "23 11 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hermes-ledger-audit-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  hermes-ledger-audit:
+    name: Hermes Ledger Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install Hermes audit dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Initialize local Hermes ledger scaffold
+        shell: bash
+        run: |
+          mkdir -p ai-logs/hermes/runs
+          : > ai-logs/hermes/index.jsonl
+          mkdir -p artifacts/hermes-ledger-audit
+
+      - name: Run Hermes ledger audit
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m ops.cli hermes task ledger-audit \
+            --dry-run \
+            --json \
+            --check all \
+            --finding-severity-threshold low \
+            | tee artifacts/hermes-ledger-audit/task-result.json
+
+      - name: Collect Hermes ledger audit reports
+        if: always()
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import shutil
+          from pathlib import Path
+
+          artifact_dir = Path("artifacts/hermes-ledger-audit")
+          result = json.loads((artifact_dir / "task-result.json").read_text())
+          run_dir = Path(result["runDir"])
+          required = (
+              "ledger_audit_report.json",
+              "ledger_audit_report.md",
+              "task_plan.json",
+              "run_record.json",
+          )
+          optional = ("repair_prompt.md",)
+          for name in required:
+              source = run_dir / name
+              if not source.exists():
+                  raise SystemExit(f"missing Hermes ledger audit artifact: {source}")
+              shutil.copy2(source, artifact_dir / name)
+          for name in optional:
+              source = run_dir / name
+              if source.exists():
+                  shutil.copy2(source, artifact_dir / name)
+          PY
+
+      - name: Upload Hermes ledger audit report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hermes-ledger-audit-report
+          path: artifacts/hermes-ledger-audit/
+          if-no-files-found: warn
