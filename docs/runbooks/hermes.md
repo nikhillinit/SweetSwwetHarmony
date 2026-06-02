@@ -83,6 +83,9 @@ The `Hermes Ledger Audit` GitHub workflow runs on pull requests, nightly
 schedule, and manual dispatch. It initializes an empty local Hermes ledger
 scaffold, runs `ledger-audit` in dry-run mode, and uploads the generated
 operator reports without invoking restore, canary, or Notion-facing paths.
+The audit report also supports a read-only `rehearsals` scope that records the
+registered Hermes task contract surface and fails closed on malformed static
+metadata such as non-canonical task lock declarations.
 
 ## Safety Rules
 

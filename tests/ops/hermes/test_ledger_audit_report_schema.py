@@ -36,7 +36,7 @@ def _config_path(tmp_path: Path) -> Path:
     return path
 
 
-def _args(tmp_path: Path) -> argparse.Namespace:
+def _args(tmp_path: Path, *, check: str = "index") -> argparse.Namespace:
     return argparse.Namespace(
         task_name="ledger-audit",
         config=str(_config_path(tmp_path)),
@@ -49,12 +49,16 @@ def _args(tmp_path: Path) -> argparse.Namespace:
         actor_type="operator",
         actor_id="test",
         json_output=False,
-        check="index",
+        check=check,
     )
 
 
-def _live_ledger_audit_report(tmp_path: Path) -> dict[str, object]:
-    result = run_registered_task(_args(tmp_path))
+def _live_ledger_audit_report(
+    tmp_path: Path,
+    *,
+    check: str = "index",
+) -> dict[str, object]:
+    result = run_registered_task(_args(tmp_path, check=check))
     run_dir = Path(result.run_dir or "")
     return json.loads((run_dir / "ledger_audit_report.json").read_text(encoding="utf-8"))
 
@@ -79,9 +83,64 @@ def test_ledger_audit_report_schema_matches_live_report_keys(tmp_path: Path) -> 
         "operatorSummary",
         "findings",
         "subsystems",
+        "rehearsals",
         "reportArtifacts",
     ]
     assert all(key in report for key in schema["required"])
+
+
+def test_ledger_audit_report_schema_validates_rehearsal_report(
+    tmp_path: Path,
+) -> None:
+    schema = _load_schema()
+    report = _live_ledger_audit_report(tmp_path, check="rehearsals")
+
+    Draft202012Validator(schema).validate(report)
+    assert report["checksRun"] == ["rehearsals"]
+    assert report["rehearsals"]["summary"]["rehearsedTasks"] > 0
+
+
+def test_ledger_audit_report_schema_accepts_failed_rehearsal_payload(
+    tmp_path: Path,
+) -> None:
+    schema = _load_schema()
+    report = _live_ledger_audit_report(tmp_path, check="rehearsals")
+    report["rehearsals"]["tasks"].append(
+        {
+            "task": "empty-modes",
+            "description": "Empty supported modes test task.",
+            "riskLevel": "not-a-risk",
+            "supportedModes": [],
+            "executeSupported": False,
+            "requiredLocks": [],
+            "ledgerBacked": False,
+            "mutatesExternalSystems": False,
+            "ackRiskRequired": False,
+            "ackRiskToken": None,
+            "status": "fail",
+        }
+    )
+    report["rehearsals"]["summary"]["registeredTasks"] += 1
+    report["rehearsals"]["summary"]["rehearsedTasks"] += 1
+    report["rehearsals"]["summary"]["failedTasks"] += 1
+    report["findings"].append(
+        {
+            "code": "task_contract_malformed",
+            "severity": "critical",
+            "subsystem": "cross_task_rehearsal",
+            "resourceId": "empty-modes.supported_modes",
+            "detail": "supported_modes must include at least one mode",
+            "remediationHint": "Fix the registered Hermes task contract metadata.",
+        }
+    )
+    report["rehearsals"]["findings"] = report["findings"]
+
+    Draft202012Validator(schema).validate(report)
+    failed = next(
+        task for task in report["rehearsals"]["tasks"] if task["task"] == "empty-modes"
+    )
+    assert failed["status"] == "fail"
+    assert failed["supportedModes"] == []
 
 
 def test_ledger_audit_report_schema_tracks_live_camel_case_shape() -> None:
@@ -90,6 +149,7 @@ def test_ledger_audit_report_schema_tracks_live_camel_case_shape() -> None:
     summary = properties["summary"]
     operator_summary = properties["operatorSummary"]
     subsystems = properties["subsystems"]
+    rehearsals = properties["rehearsals"]
     report_artifacts = properties["reportArtifacts"]
 
     assert schema["additionalProperties"] is False
@@ -99,10 +159,18 @@ def test_ledger_audit_report_schema_tracks_live_camel_case_shape() -> None:
     assert "drifts" not in properties
     assert "checksRun" in properties
     assert "subsystems" in properties
+    assert "rehearsals" in properties
+    assert properties["checksRun"]["items"]["enum"] == [
+        "index",
+        "runs",
+        "artifacts",
+        "rehearsals",
+    ]
     assert "checkedRunDirs" not in summary["properties"]
     assert "rawIndexRows" in summary["properties"]
     assert "uniqueRunDirsChecked" in summary["properties"]
     assert "validIndexEntries" in summary["properties"]
+    assert "rehearsedTasks" in summary["properties"]
     assert operator_summary["required"] == [
         "status",
         "severityThreshold",
@@ -172,4 +240,36 @@ def test_ledger_audit_report_schema_tracks_live_camel_case_shape() -> None:
         "revokedRecords",
         "findings",
     ]
+    assert rehearsals["required"] == [
+        "enabled",
+        "summary",
+        "tasks",
+        "findings",
+    ]
+    assert rehearsals["properties"]["summary"]["required"] == [
+        "registeredTasks",
+        "rehearsedTasks",
+        "executeCapableTasks",
+        "ledgerBackedTasks",
+        "failedTasks",
+    ]
+    assert rehearsals["properties"]["tasks"]["items"]["required"] == [
+        "task",
+        "description",
+        "riskLevel",
+        "supportedModes",
+        "executeSupported",
+        "requiredLocks",
+        "ledgerBacked",
+        "mutatesExternalSystems",
+        "ackRiskRequired",
+        "ackRiskToken",
+        "status",
+    ]
+    task_properties = rehearsals["properties"]["tasks"]["items"]["properties"]
+    assert task_properties["riskLevel"] == {"type": "string", "minLength": 1}
+    assert task_properties["supportedModes"] == {
+        "type": "array",
+        "items": {"type": "string", "minLength": 1},
+    }
     assert report_artifacts["required"] == ["json", "markdown"]
