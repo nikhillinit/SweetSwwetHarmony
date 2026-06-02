@@ -7952,7 +7952,8 @@ async def cmd_health_json_pure(args):
             check_results.append(CheckResult("Database", CheckScope.CORE, CheckStatus.FAIL, f"Database not found: {db_path}"))
         else:
             import sqlite3
-            conn = sqlite3.connect(db_path)
+            db_uri = f"file:{Path(db_path).resolve()}?mode=ro"
+            conn = sqlite3.connect(db_uri, uri=True, timeout=1)
             try:
                 result = conn.execute("PRAGMA integrity_check").fetchone()
                 if result[0] == "ok":
