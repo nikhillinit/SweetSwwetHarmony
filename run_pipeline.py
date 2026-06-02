@@ -766,6 +766,7 @@ async def cmd_health(args):
     checks: list[CheckResult] = []
     health_report_dict = None
     suppression_stats: dict = {}
+    pipeline_initialized = False
 
     try:
         # ------------------------------------------------------------------
@@ -775,7 +776,8 @@ async def cmd_health(args):
         if not output_json:
             print(f"[{check_num}/{total_checks}] Database connectivity...", end=" ", flush=True)
         try:
-            await pipeline.initialize()
+            await pipeline.initialize(read_only=True)
+            pipeline_initialized = True
             db_ok = bool(getattr(getattr(pipeline, "_store", None), "_db", None))
             if db_ok:
                 if not output_json:
@@ -886,7 +888,7 @@ async def cmd_health(args):
         if not output_json:
             print(f"[{check_num}/{total_checks}] Suppression cache...", end=" ", flush=True)
         try:
-            if getattr(getattr(pipeline, "_store", None), "_db", None):
+            if pipeline_initialized and getattr(getattr(pipeline, "_store", None), "_db", None):
                 stats = await pipeline.get_stats()
                 storage = stats.get("storage", {})
                 cache_entries = storage.get("active_suppression_entries", 0)
@@ -919,7 +921,7 @@ async def cmd_health(args):
         if not output_json:
             print(f"[{check_num}/{total_checks}] Signal health (last {lookback_days} days)...", end=" ", flush=True)
         try:
-            if getattr(getattr(pipeline, "_store", None), "_db", None):
+            if pipeline_initialized and getattr(getattr(pipeline, "_store", None), "_db", None):
                 monitor = SignalHealthMonitor(pipeline._store)
                 report = await monitor.generate_report(lookback_days=lookback_days)
 

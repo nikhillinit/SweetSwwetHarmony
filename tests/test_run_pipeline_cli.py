@@ -9,6 +9,7 @@ import pytest
 from run_pipeline import create_parser, cmd_collect, cmd_health
 from discovery_engine.mcp_server import CollectorResult, CollectorStatus
 from utils.signal_health import HealthReport
+from workflows.pipeline import PipelineConfig
 
 
 def _build_health_pipeline(
@@ -153,6 +154,84 @@ class TestHealthCommand:
         parser = create_parser()
         args = parser.parse_args(["health", "--db-path", "/custom/path.db"])
         assert args.db_path == "/custom/path.db"
+
+    @pytest.mark.asyncio
+    async def test_cmd_health_initializes_pipeline_read_only(self):
+        """Health diagnostics must use the pipeline read-only contract."""
+        args = MagicMock()
+        args.db_path = None
+
+        mock_pipeline = _build_health_pipeline()
+        mock_report = _build_health_report()
+
+        with patch("run_pipeline.DiscoveryPipeline", return_value=mock_pipeline):
+            with patch("run_pipeline.SignalHealthMonitor") as mock_monitor_cls:
+                mock_monitor = MagicMock()
+                mock_monitor.generate_report = AsyncMock(return_value=mock_report)
+                mock_monitor_cls.return_value = mock_monitor
+
+                with patch("run_pipeline.check_github_api", AsyncMock(return_value=(True, "OK"))):
+                    with patch("run_pipeline.check_sec_edgar_api", AsyncMock(return_value=(True, "OK"))):
+                        exit_code = await cmd_health(args)
+
+        mock_pipeline.initialize.assert_awaited_once_with(read_only=True)
+        assert exit_code == 0
+
+    @pytest.mark.asyncio
+    async def test_cmd_health_does_not_bootstrap_or_create_sidecars(self, tmp_path):
+        """Health should inspect an existing DB without migrations, WAL, or SHM sidecars."""
+        db_path = tmp_path / "signals.db"
+        _create_health_probe_db(db_path)
+        initial_tables = _sqlite_tables(db_path)
+        config = PipelineConfig(
+            db_path=str(db_path),
+            use_gating=False,
+            use_founder_scoring=False,
+            use_velocity_tracking=False,
+            use_thesis_filter=False,
+            use_competitor_detection=False,
+        )
+        args = SimpleNamespace(
+            db_path=str(db_path),
+            output_json=True,
+            verbose=False,
+            lookback_days=30,
+            core_only=True,
+            allow_external_failures=False,
+        )
+
+        with patch("run_pipeline.PipelineConfig.from_env", return_value=config):
+            exit_code = await cmd_health(args)
+
+        assert exit_code == 0
+        assert _sqlite_tables(db_path) == initial_tables
+        assert "schema_migrations" not in initial_tables
+        assert not db_path.with_name(db_path.name + "-wal").exists()
+        assert not db_path.with_name(db_path.name + "-shm").exists()
+
+    @pytest.mark.asyncio
+    async def test_cmd_health_does_not_retry_db_checks_after_init_failure(self):
+        """A partial DB init failure should not re-enter initialize or leak cleanup."""
+        args = SimpleNamespace(
+            db_path=None,
+            output_json=True,
+            verbose=False,
+            lookback_days=30,
+            core_only=True,
+            allow_external_failures=False,
+        )
+        mock_pipeline = _build_health_pipeline()
+        mock_pipeline.initialize = AsyncMock(side_effect=RuntimeError("init failed"))
+
+        with patch("run_pipeline.DiscoveryPipeline", return_value=mock_pipeline):
+            with patch("run_pipeline.SignalHealthMonitor") as mock_monitor_cls:
+                exit_code = await cmd_health(args)
+
+        mock_pipeline.initialize.assert_awaited_once_with(read_only=True)
+        mock_pipeline.get_stats.assert_not_awaited()
+        mock_monitor_cls.assert_not_called()
+        mock_pipeline.close.assert_awaited_once()
+        assert exit_code == 1
 
     @pytest.mark.asyncio
     async def test_cmd_health_checks_database_connectivity(self):
@@ -446,6 +525,54 @@ def _create_signal_count_db(path, count: int) -> None:
                 [(idx,) for idx in range(1, count + 1)],
             )
         conn.commit()
+    finally:
+        conn.close()
+
+
+def _create_health_probe_db(path) -> None:
+    """Create a minimal existing DB that health can inspect without bootstrapping."""
+    conn = sqlite3.connect(str(path))
+    try:
+        conn.execute(
+            """
+            CREATE TABLE signals (
+                id INTEGER PRIMARY KEY,
+                signal_type TEXT,
+                source_api TEXT,
+                canonical_key TEXT,
+                confidence REAL,
+                detected_at TEXT,
+                created_at TEXT
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE signal_processing (
+                signal_id INTEGER,
+                status TEXT
+            )
+            """
+        )
+        conn.execute("CREATE TABLE suppression_cache (expires_at TEXT)")
+        conn.execute(
+            "INSERT INTO suppression_cache (expires_at) VALUES (?)",
+            ("2999-01-01T00:00:00+00:00",),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _sqlite_tables(path) -> set[str]:
+    conn = sqlite3.connect(str(path))
+    try:
+        return {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            ).fetchall()
+        }
     finally:
         conn.close()
 
