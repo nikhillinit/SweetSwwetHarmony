@@ -79,6 +79,11 @@ When a command, gate, or executor repair path exists, Hermes also writes
 `repair_prompt.md` with state snapshot paths, gate artifact paths, routing plan,
 exit code, and the next safe operator action.
 
+The `Hermes Ledger Audit` GitHub workflow runs on pull requests, nightly
+schedule, and manual dispatch. It initializes an empty local Hermes ledger
+scaffold, runs `ledger-audit` in dry-run mode, and uploads the generated
+operator reports without invoking restore, canary, or Notion-facing paths.
+
 ## Safety Rules
 
 - Provider doctor is read-only and does not make network probes.
