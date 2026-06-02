@@ -74,9 +74,10 @@ Expected dry-run artifacts:
 - `state/S2_preflight.json`
 - `state/S3_postflight.json`
 
-Failure artifacts include `repair_prompt.md` with the failed command or
-executor, state snapshot paths, gate artifact paths, routing plan, exit code,
-and the next safe operator action.
+Failure artifacts include `failure_event.json` for typed operator/audit parsing.
+When a command, gate, or executor repair path exists, Hermes also writes
+`repair_prompt.md` with state snapshot paths, gate artifact paths, routing plan,
+exit code, and the next safe operator action.
 
 ## Safety Rules
 
