@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from integrations.hermes.locks import HermesLockError, assert_canonical_lock_order
+
 from .base import CheckResult, HermesTask, TaskContext, TaskMode, TaskResult
 from .ledger_audit_collector_promotion import (
     COLLECTOR_PROMOTION_SUBSYSTEM as _COLLECTOR_PROMOTION_SUBSYSTEM,
@@ -36,12 +38,14 @@ from .ledger_audit_suppression_outbox import (
 LEDGER_AUDIT_REPORT_JSON = "ledger_audit_report.json"
 LEDGER_AUDIT_REPORT_MD = "ledger_audit_report.md"
 
-_ALL_CHECKS = ("index", "runs", "artifacts")
+_ALL_CHECKS = ("index", "runs", "artifacts", "rehearsals")
 _FINDING_SEVERITIES = ("low", "medium", "high", "critical")
 _FINDING_SEVERITY_RANK = {
     severity: index for index, severity in enumerate(_FINDING_SEVERITIES)
 }
 _DEFAULT_FINDING_SEVERITY_THRESHOLD = "critical"
+_TASK_RISK_LEVELS = ("low", "medium", "high", "critical")
+_TASK_MODES = ("plan-only", "preflight-only", "dry-run", "execute")
 
 
 class LedgerAuditTask(HermesTask):
@@ -58,7 +62,10 @@ class LedgerAuditTask(HermesTask):
             "--check",
             default="all",
             type=_parse_check_arg,
-            help="Comma-separated ledger audit scopes: all,index,runs,artifacts",
+            help=(
+                "Comma-separated ledger audit scopes: "
+                "all,index,runs,artifacts,rehearsals"
+            ),
         )
         parser.add_argument(
             "--finding-severity-threshold",
@@ -181,6 +188,16 @@ class LedgerAuditTask(HermesTask):
                     audit["artifacts"],
                 )
             )
+        if "rehearsals" in checks:
+            findings = audit["rehearsals"]["findings"]
+            results.append(
+                CheckResult(
+                    "cross_task_rehearsal_contract_valid",
+                    not findings,
+                    f"task_contract_findings={len(findings)}",
+                    audit["rehearsals"],
+                )
+            )
         return results
 
     def dry_run(self, context: TaskContext, plan: dict[str, Any]) -> dict[str, Any]:
@@ -208,10 +225,14 @@ class LedgerAuditTask(HermesTask):
                 "uniqueRunDirsChecked": audit["runs"]["unique_run_dirs_checked"],
                 "missingRunDirs": len(audit["runs"]["missing_run_dirs"]),
                 "missingArtifacts": len(audit["artifacts"]["missing_artifacts"]),
+                "rehearsedTasks": audit["rehearsals"]["summary"][
+                    "rehearsedTasks"
+                ],
             },
             "operatorSummary": _operator_summary(findings, severity_threshold),
             "findings": findings,
             "subsystems": audit["subsystems"],
+            "rehearsals": audit["rehearsals"],
             "reportArtifacts": {
                 "json": LEDGER_AUDIT_REPORT_JSON,
                 "markdown": LEDGER_AUDIT_REPORT_MD,
@@ -423,6 +444,8 @@ def _preflight_gate_names(checks: tuple[str, ...]) -> list[str]:
         gates.append("ledger_run_dirs_present")
     if "artifacts" in checks:
         gates.append("ledger_artifact_refs_present")
+    if "rehearsals" in checks:
+        gates.append("cross_task_rehearsal_contract_valid")
     return gates
 
 
@@ -451,6 +474,7 @@ def _audit_ledger(
             enabled="artifacts" in checks
         ),
     }
+    rehearsals = _empty_rehearsals(enabled="rehearsals" in checks)
 
     for malformed in index["malformed_rows"]:
         findings.append(
@@ -515,13 +539,190 @@ def _audit_ledger(
         subsystems[_BYPASS_LIFECYCLE_SUBSYSTEM] = bypass_lifecycle_state
         findings.extend(bypass_lifecycle_state["findings"])
 
+    if "rehearsals" in checks:
+        rehearsals = _audit_task_rehearsals()
+        findings.extend(rehearsals["findings"])
+
     return {
         "root": root_state,
         "index": index,
         "runs": runs_state,
         "artifacts": artifacts_state,
         "subsystems": subsystems,
+        "rehearsals": rehearsals,
         "findings": findings,
+    }
+
+
+def _empty_rehearsals(*, enabled: bool) -> dict[str, Any]:
+    return {
+        "enabled": enabled,
+        "summary": {
+            "registeredTasks": 0,
+            "rehearsedTasks": 0,
+            "executeCapableTasks": 0,
+            "ledgerBackedTasks": 0,
+            "failedTasks": 0,
+        },
+        "tasks": [],
+        "findings": [],
+    }
+
+
+def _audit_task_rehearsals() -> dict[str, Any]:
+    from .registry import TASK_REGISTRY, registered_task_names
+
+    registered_names = registered_task_names()
+    tasks: list[dict[str, Any]] = []
+    findings: list[dict[str, Any]] = []
+    for task_name in registered_names:
+        task_type = TASK_REGISTRY[task_name]
+        task_findings = _task_rehearsal_findings(task_name, task_type)
+        status = "fail" if task_findings else "pass"
+        tasks.append(_task_rehearsal_entry(task_name, task_type, status=status))
+        findings.extend(task_findings)
+
+    return {
+        "enabled": True,
+        "summary": {
+            "registeredTasks": len(registered_names),
+            "rehearsedTasks": len(tasks),
+            "executeCapableTasks": sum(
+                1 for task in tasks if task["executeSupported"]
+            ),
+            "ledgerBackedTasks": sum(1 for task in tasks if task["ledgerBacked"]),
+            "failedTasks": sum(1 for task in tasks if task["status"] == "fail"),
+        },
+        "tasks": tasks,
+        "findings": findings,
+    }
+
+
+def _task_rehearsal_entry(
+    task_name: str,
+    task_type: type[HermesTask],
+    *,
+    status: str,
+) -> dict[str, Any]:
+    supported_modes, _ = _metadata_string_list(
+        getattr(task_type, "supported_modes", ()),
+        field_name="supported_modes",
+    )
+    required_locks, _ = _metadata_string_list(
+        getattr(task_type, "required_locks", ()),
+        field_name="required_locks",
+    )
+    ack_risk_token = getattr(task_type, "ack_risk_token", None)
+    return {
+        "task": task_name,
+        "description": str(getattr(task_type, "description", "")),
+        "riskLevel": str(getattr(task_type, "risk_level", "")),
+        "supportedModes": supported_modes,
+        "executeSupported": "execute" in supported_modes,
+        "requiredLocks": required_locks,
+        "ledgerBacked": bool(getattr(task_type, "ledger_backed", False)),
+        "mutatesExternalSystems": bool(
+            getattr(task_type, "mutates_external_systems", False)
+        ),
+        "ackRiskRequired": ack_risk_token is not None,
+        "ackRiskToken": ack_risk_token,
+        "status": status,
+    }
+
+
+def _task_rehearsal_findings(
+    task_name: str,
+    task_type: type[HermesTask],
+) -> list[dict[str, Any]]:
+    findings: list[dict[str, Any]] = []
+    required_locks, required_locks_error = _metadata_string_list(
+        getattr(task_type, "required_locks", ()),
+        field_name="required_locks",
+    )
+    if required_locks_error:
+        findings.append(
+            _task_contract_finding(
+                task_name,
+                "required_locks",
+                required_locks_error,
+            )
+        )
+    try:
+        assert_canonical_lock_order(tuple(required_locks), task_name=task_name)
+    except HermesLockError as exc:
+        findings.append(
+            _task_contract_finding(
+                task_name,
+                "required_locks",
+                str(exc),
+            )
+        )
+
+    risk_level = str(getattr(task_type, "risk_level", ""))
+    if risk_level not in _TASK_RISK_LEVELS:
+        findings.append(
+            _task_contract_finding(
+                task_name,
+                "risk_level",
+                f"unknown risk level {risk_level!r}",
+            )
+        )
+
+    supported_modes, supported_modes_error = _metadata_string_list(
+        getattr(task_type, "supported_modes", ()),
+        field_name="supported_modes",
+    )
+    if supported_modes_error:
+        findings.append(
+            _task_contract_finding(
+                task_name,
+                "supported_modes",
+                supported_modes_error,
+            )
+        )
+    if not supported_modes:
+        findings.append(
+            _task_contract_finding(
+                task_name,
+                "supported_modes",
+                "supported_modes must include at least one mode",
+            )
+        )
+    invalid_modes = [mode for mode in supported_modes if mode not in _TASK_MODES]
+    if invalid_modes:
+        findings.append(
+            _task_contract_finding(
+                task_name,
+                "supported_modes",
+                f"unknown mode(s): {', '.join(str(mode) for mode in invalid_modes)}",
+            )
+        )
+    return findings
+
+
+def _metadata_string_list(
+    value: object,
+    *,
+    field_name: str,
+) -> tuple[list[str], str | None]:
+    if isinstance(value, (tuple, list)):
+        return [str(item) for item in value], None
+    rendered = [] if value is None else [str(value)]
+    return rendered, f"{field_name} must be a list or tuple"
+
+
+def _task_contract_finding(
+    task_name: str,
+    field_name: str,
+    detail: str,
+) -> dict[str, Any]:
+    return {
+        "code": "task_contract_malformed",
+        "severity": "critical",
+        "subsystem": "cross_task_rehearsal",
+        "resourceId": f"{task_name}.{field_name}",
+        "detail": detail,
+        "remediationHint": "Fix the registered Hermes task contract metadata.",
     }
 
 
@@ -764,6 +965,7 @@ def _report_markdown(report: dict[str, Any]) -> str:
     findings = report.get("findings", [])
     operator_summary = report.get("operatorSummary", {})
     subsystems = report.get("subsystems", {})
+    rehearsals = report.get("rehearsals", {})
     lines = [
         "# Hermes Ledger Audit Report",
         "",
@@ -795,6 +997,19 @@ def _report_markdown(report: dict[str, Any]) -> str:
             )
         )
         lines.append(f"- Next action: {operator_summary.get('nextAction')}")
+        lines.append("")
+    if rehearsals:
+        summary = rehearsals.get("summary", {})
+        lines.append("## Cross-Task Rehearsal")
+        lines.append("")
+        lines.append(f"- Enabled: {rehearsals.get('enabled')}")
+        lines.append(f"- Registered tasks: {summary.get('registeredTasks', 0)}")
+        lines.append(f"- Rehearsed tasks: {summary.get('rehearsedTasks', 0)}")
+        lines.append(
+            f"- Execute-capable tasks: {summary.get('executeCapableTasks', 0)}"
+        )
+        lines.append(f"- Ledger-backed tasks: {summary.get('ledgerBackedTasks', 0)}")
+        lines.append(f"- Failed tasks: {summary.get('failedTasks', 0)}")
         lines.append("")
     if findings:
         lines.append("## Findings")

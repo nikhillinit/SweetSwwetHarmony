@@ -8,13 +8,17 @@ from typing import Any
 
 import pytest
 
-from integrations.hermes.tasks.base import EXIT_GATE_FAILURE, EXIT_INVALID
+from integrations.hermes.tasks.base import EXIT_GATE_FAILURE, EXIT_INVALID, HermesTask
 from integrations.hermes.tasks.ledger_audit import (
     LEDGER_AUDIT_REPORT_JSON,
     LEDGER_AUDIT_REPORT_MD,
     LedgerAuditTask,
 )
-from integrations.hermes.tasks.registry import run_registered_task
+from integrations.hermes.tasks.registry import (
+    TASK_REGISTRY,
+    registered_task_names,
+    run_registered_task,
+)
 
 from .conftest import minimal_config_dict
 
@@ -321,6 +325,178 @@ def test_dry_run_writes_operator_summary_for_clean_audit(tmp_path: Path) -> None
     assert "## Operator Summary" in markdown
     assert "- Status: pass" in markdown
     assert "- Next action: no_action_required" in markdown
+
+
+def test_dry_run_reports_cross_task_rehearsal_for_registered_tasks(
+    tmp_path: Path,
+) -> None:
+    result = run_registered_task(_args(tmp_path, mode="dry-run", check="rehearsals"))
+
+    assert result.exit_code == 0
+    assert result.status == "dry_run_passed"
+    assert result.outputs["checksRun"] == ["rehearsals"]
+    rehearsal = result.outputs["rehearsals"]
+    assert rehearsal["enabled"] is True
+    assert rehearsal["summary"]["registeredTasks"] == len(registered_task_names())
+    assert rehearsal["summary"]["rehearsedTasks"] == len(registered_task_names())
+    assert rehearsal["summary"]["failedTasks"] == 0
+    assert [task["task"] for task in rehearsal["tasks"]] == registered_task_names()
+
+    restore = next(task for task in rehearsal["tasks"] if task["task"] == "restore-db")
+    assert restore == {
+        "task": "restore-db",
+        "description": "Locked, hash-checked, ledger-backed SQLite restore wrapper.",
+        "riskLevel": "critical",
+        "supportedModes": ["plan-only", "preflight-only", "dry-run", "execute"],
+        "executeSupported": True,
+        "requiredLocks": ["signals.db"],
+        "ledgerBacked": True,
+        "mutatesExternalSystems": False,
+        "ackRiskRequired": True,
+        "ackRiskToken": "RESTORE_DB",
+        "status": "pass",
+    }
+    contract_check = next(
+        task for task in rehearsal["tasks"] if task["task"] == "contract-check"
+    )
+    assert contract_check["ledgerBacked"] is False
+    assert contract_check["executeSupported"] is False
+
+    report = json.loads(
+        (Path(result.run_dir or "") / LEDGER_AUDIT_REPORT_JSON).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert report["rehearsals"] == rehearsal
+    markdown = (Path(result.run_dir or "") / LEDGER_AUDIT_REPORT_MD).read_text(
+        encoding="utf-8"
+    )
+    assert "## Cross-Task Rehearsal" in markdown
+    assert "- Registered tasks: 11" in markdown
+    assert "- Failed tasks: 0" in markdown
+
+
+def test_dry_run_fails_closed_on_malformed_rehearsal_lock_order(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class BadLockOrderTask(HermesTask):
+        name = "bad-lock-order"
+        description = "Bad lock order test task."
+        required_locks = ("suppression-cache", "signals.db")
+
+    monkeypatch.setitem(TASK_REGISTRY, BadLockOrderTask.name, BadLockOrderTask)
+
+    result = run_registered_task(_args(tmp_path, mode="dry-run", check="rehearsals"))
+
+    assert result.exit_code == EXIT_GATE_FAILURE
+    assert result.status == "preflight_failed"
+    check = next(
+        check
+        for check in result.checks
+        if check.name == "cross_task_rehearsal_contract_valid"
+    )
+    assert check.passed is False
+    assert check.evidence["summary"]["failedTasks"] == 1
+    failed = next(
+        task for task in check.evidence["tasks"] if task["task"] == "bad-lock-order"
+    )
+    assert failed["status"] == "fail"
+    finding = next(
+        finding
+        for finding in check.evidence["findings"]
+        if finding["code"] == "task_contract_malformed"
+    )
+    assert finding["severity"] == "critical"
+    assert finding["subsystem"] == "cross_task_rehearsal"
+    assert finding["resourceId"] == "bad-lock-order.required_locks"
+    assert (Path(result.run_dir or "") / "repair_prompt.md").exists()
+
+
+def test_preflight_fails_closed_on_malformed_rehearsal_lock_order(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class BadLockOrderTask(HermesTask):
+        name = "bad-lock-order"
+        description = "Bad lock order test task."
+        required_locks = ("suppression-cache", "signals.db")
+
+    monkeypatch.setitem(TASK_REGISTRY, BadLockOrderTask.name, BadLockOrderTask)
+
+    result = run_registered_task(
+        _args(tmp_path, mode="preflight-only", check="rehearsals")
+    )
+
+    assert result.exit_code == EXIT_GATE_FAILURE
+    assert result.status == "preflight_failed"
+    check = next(
+        check
+        for check in result.checks
+        if check.name == "cross_task_rehearsal_contract_valid"
+    )
+    assert check.passed is False
+    assert check.evidence["summary"]["failedTasks"] == 1
+    assert check.evidence["findings"][0]["resourceId"] == (
+        "bad-lock-order.required_locks"
+    )
+    assert (Path(result.run_dir or "") / "repair_prompt.md").exists()
+
+
+@pytest.mark.parametrize(
+    ("task_name", "supported_modes", "expected_detail"),
+    [
+        (
+            "empty-modes",
+            (),
+            "supported_modes must include at least one mode",
+        ),
+        (
+            "scalar-modes",
+            123,
+            "supported_modes must be a list or tuple",
+        ),
+    ],
+)
+def test_dry_run_fails_closed_on_malformed_rehearsal_supported_modes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    task_name: str,
+    supported_modes: object,
+    expected_detail: str,
+) -> None:
+    modes_value = supported_modes
+
+    class BadSupportedModesTask(HermesTask):
+        name = task_name
+        description = "Bad supported modes test task."
+        supported_modes = modes_value
+
+    monkeypatch.setitem(TASK_REGISTRY, BadSupportedModesTask.name, BadSupportedModesTask)
+
+    result = run_registered_task(_args(tmp_path, mode="dry-run", check="rehearsals"))
+
+    assert result.exit_code == EXIT_GATE_FAILURE
+    assert result.status == "preflight_failed"
+    check = next(
+        check
+        for check in result.checks
+        if check.name == "cross_task_rehearsal_contract_valid"
+    )
+    assert check.passed is False
+    failed = next(
+        task
+        for task in check.evidence["tasks"]
+        if task["task"] == task_name
+    )
+    assert failed["status"] == "fail"
+    finding = next(
+        finding
+        for finding in check.evidence["findings"]
+        if finding["resourceId"] == f"{task_name}.supported_modes"
+    )
+    assert finding["code"] == "task_contract_malformed"
+    assert expected_detail in finding["detail"]
 
 
 def test_dry_run_summary_distinguishes_raw_index_rows_from_unique_run_dirs(

@@ -38,6 +38,7 @@
     "operatorSummary",
     "findings",
     "subsystems",
+    "rehearsals",
     "reportArtifacts"
   ],
   "properties": {
@@ -50,7 +51,7 @@
     "ledgerIndex": {"type": "string", "minLength": 1},
     "checksRun": {
       "type": "array",
-      "items": {"enum": ["index", "runs", "artifacts"]},
+      "items": {"enum": ["index", "runs", "artifacts", "rehearsals"]},
       "minItems": 1
     },
     "summary": {
@@ -62,7 +63,8 @@
         "rawIndexRows",
         "uniqueRunDirsChecked",
         "missingRunDirs",
-        "missingArtifacts"
+        "missingArtifacts",
+        "rehearsedTasks"
       ],
       "properties": {
         "indexLines": {"type": "integer", "minimum": 0},
@@ -71,7 +73,8 @@
         "rawIndexRows": {"type": "integer", "minimum": 0},
         "uniqueRunDirsChecked": {"type": "integer", "minimum": 0},
         "missingRunDirs": {"type": "integer", "minimum": 0},
-        "missingArtifacts": {"type": "integer", "minimum": 0}
+        "missingArtifacts": {"type": "integer", "minimum": 0},
+        "rehearsedTasks": {"type": "integer", "minimum": 0}
       },
       "additionalProperties": false
     },
@@ -252,6 +255,80 @@
             }
           },
           "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "rehearsals": {
+      "type": "object",
+      "required": [
+        "enabled",
+        "summary",
+        "tasks",
+        "findings"
+      ],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "summary": {
+          "type": "object",
+          "required": [
+            "registeredTasks",
+            "rehearsedTasks",
+            "executeCapableTasks",
+            "ledgerBackedTasks",
+            "failedTasks"
+          ],
+          "properties": {
+            "registeredTasks": {"type": "integer", "minimum": 0},
+            "rehearsedTasks": {"type": "integer", "minimum": 0},
+            "executeCapableTasks": {"type": "integer", "minimum": 0},
+            "ledgerBackedTasks": {"type": "integer", "minimum": 0},
+            "failedTasks": {"type": "integer", "minimum": 0}
+          },
+          "additionalProperties": false
+        },
+        "tasks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "task",
+              "description",
+              "riskLevel",
+              "supportedModes",
+              "executeSupported",
+              "requiredLocks",
+              "ledgerBacked",
+              "mutatesExternalSystems",
+              "ackRiskRequired",
+              "ackRiskToken",
+              "status"
+            ],
+            "properties": {
+              "task": {"type": "string", "minLength": 1},
+              "description": {"type": "string"},
+              "riskLevel": {"type": "string", "minLength": 1},
+              "supportedModes": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1}
+              },
+              "executeSupported": {"type": "boolean"},
+              "requiredLocks": {
+                "type": "array",
+                "items": {"type": "string", "minLength": 1}
+              },
+              "ledgerBacked": {"type": "boolean"},
+              "mutatesExternalSystems": {"type": "boolean"},
+              "ackRiskRequired": {"type": "boolean"},
+              "ackRiskToken": {"type": ["string", "null"]},
+              "status": {"enum": ["pass", "fail"]}
+            },
+            "additionalProperties": false
+          }
+        },
+        "findings": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/finding"}
         }
       },
       "additionalProperties": false
