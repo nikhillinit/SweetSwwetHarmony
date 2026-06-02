@@ -40,6 +40,10 @@ import logging
 import os
 import shutil
 import subprocess
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - Python < 3.11 fallback
+    tomllib = None  # type: ignore[assignment]
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
@@ -85,10 +89,66 @@ class ForensicPhase(str, Enum):
 
 
 # Default model configuration
-# Model ID must match OpenAI's naming: gpt-5.3-codex (not gpt5-3)
-# See: https://platform.openai.com/docs/models/gpt-5.3-codex
-DEFAULT_MODEL = "gpt-5.3-codex"
+DEFAULT_MODEL = "gpt-5.5"
 DEFAULT_REASONING_LEVEL = ReasoningLevel.HIGH
+
+
+def resolve_default_model() -> str:
+    """Resolve the Codex model using the CLI's own configuration precedence."""
+
+    env_model = os.environ.get("CODEX_MODEL", "").strip()
+    if env_model:
+        return env_model
+
+    config_model = _codex_config_model()
+    if config_model:
+        return config_model
+
+    return DEFAULT_MODEL
+
+
+def _codex_config_model() -> str | None:
+    config_path = _codex_config_path()
+    if not config_path.exists():
+        return None
+    try:
+        raw = config_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+
+    if tomllib is not None:
+        try:
+            value = tomllib.loads(raw).get("model")
+        except ValueError:
+            value = None
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+
+    return _top_level_model_from_toml_text(raw)
+
+
+def _codex_config_path() -> Path:
+    codex_home = os.environ.get("CODEX_HOME", "").strip()
+    if codex_home:
+        return Path(codex_home) / "config.toml"
+    return Path.home() / ".codex" / "config.toml"
+
+
+def _top_level_model_from_toml_text(raw: str) -> str | None:
+    for line in raw.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped.startswith("["):
+            return None
+        if not stripped.startswith("model"):
+            continue
+        key, _, value = stripped.partition("=")
+        if key.strip() != "model":
+            continue
+        model = value.strip().strip('"').strip("'")
+        return model or None
+    return None
 
 
 @dataclass
@@ -139,7 +199,7 @@ class CodexCLI:
         sandbox_mode: SandboxMode = SandboxMode.READ_ONLY,
         approval_mode: ApprovalMode = ApprovalMode.SUGGEST,
         timeout_seconds: int = 300,
-        model: str = DEFAULT_MODEL,
+        model: str | None = None,
         reasoning_level: ReasoningLevel = DEFAULT_REASONING_LEVEL,
     ):
         """
@@ -149,13 +209,13 @@ class CodexCLI:
             sandbox_mode: Sandbox isolation level (default: read-only)
             approval_mode: Action approval mode (default: suggest only)
             timeout_seconds: Max execution time (default: 5 minutes)
-            model: Model to use (default: gpt-5.3-codex)
+            model: Model to use (default: CODEX_MODEL, Codex config, then gpt-5.5)
             reasoning_level: Reasoning effort level (default: high)
         """
         self.sandbox_mode = sandbox_mode
         self.approval_mode = approval_mode
         self.timeout_seconds = timeout_seconds
-        self.model = model
+        self.model = model or resolve_default_model()
         self.reasoning_level = reasoning_level
         self._codex_path: Optional[str] = None
 
@@ -796,8 +856,11 @@ def main():
     parser = argparse.ArgumentParser(description="Codex CLI Wrapper")
     parser.add_argument(
         "--model",
-        default=DEFAULT_MODEL,
-        help=f"Model to use (default: {DEFAULT_MODEL})"
+        default=None,
+        help=(
+            "Model to use (default: CODEX_MODEL, Codex config model, "
+            f"then {DEFAULT_MODEL})"
+        ),
     )
     parser.add_argument(
         "--reasoning",
@@ -808,7 +871,7 @@ def main():
     subparsers = parser.add_subparsers(dest="command", help="Commands")
 
     # Check command
-    check_parser = subparsers.add_parser("check", help="Check Codex installation")
+    subparsers.add_parser("check", help="Check Codex installation")
 
     # Exec command
     exec_parser = subparsers.add_parser("exec", help="Execute a prompt")
@@ -821,7 +884,7 @@ def main():
     review_parser.add_argument("--focus", help="Focus areas (comma-separated)")
 
     # Config command - show current configuration
-    config_parser = subparsers.add_parser("config", help="Show current configuration")
+    subparsers.add_parser("config", help="Show current configuration")
 
     args = parser.parse_args()
 
