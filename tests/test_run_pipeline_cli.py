@@ -1,4 +1,5 @@
 """Tests for run_pipeline.py CLI flags."""
+import asyncio
 import json
 import sqlite3
 from types import SimpleNamespace
@@ -40,6 +41,35 @@ def _build_health_report(*, status="HEALTHY", total_signals=None):
     if total_signals is not None:
         report.total_signals = total_signals
     return report
+
+
+async def _never_returns(*_args, **_kwargs):
+    await asyncio.Event().wait()
+
+
+def _find_check(output, name):
+    return next(check for check in output["checks"] if check["name"] == name)
+
+
+def _health_args(**overrides):
+    defaults = {
+        "db_path": None,
+        "output_json": True,
+        "verbose": False,
+        "lookback_days": 30,
+        "core_only": True,
+        "allow_external_failures": False,
+        "health_timeout_seconds": 0.01,
+    }
+    defaults.update(overrides)
+    return SimpleNamespace(**defaults)
+
+
+def _assert_timeout_failure(output, check_name):
+    check = _find_check(output, check_name)
+    assert output["overall_status"] == "UNHEALTHY"
+    assert check["status"] == "fail"
+    assert "timed out" in check["message"].lower()
 
 
 class TestCLIFlags:
@@ -155,6 +185,12 @@ class TestHealthCommand:
         args = parser.parse_args(["health", "--db-path", "/custom/path.db"])
         assert args.db_path == "/custom/path.db"
 
+    def test_health_command_accepts_timeout_seconds_flag(self):
+        """Health command should accept a bounded phase timeout."""
+        parser = create_parser()
+        args = parser.parse_args(["health", "--timeout-seconds", "0.25"])
+        assert args.health_timeout_seconds == 0.25
+
     @pytest.mark.asyncio
     async def test_cmd_health_initializes_pipeline_read_only(self):
         """Health diagnostics must use the pipeline read-only contract."""
@@ -232,6 +268,104 @@ class TestHealthCommand:
         mock_monitor_cls.assert_not_called()
         mock_pipeline.close.assert_awaited_once()
         assert exit_code == 1
+
+    @pytest.mark.asyncio
+    async def test_cmd_health_json_times_out_hung_pipeline_init_and_closes(self, capsys):
+        """A hung init phase should return failure JSON and still attempt cleanup."""
+        args = _health_args()
+        mock_pipeline = _build_health_pipeline()
+        mock_pipeline.initialize = AsyncMock(side_effect=_never_returns)
+
+        with patch("run_pipeline.DiscoveryPipeline", return_value=mock_pipeline):
+            exit_code = await asyncio.wait_for(cmd_health(args), timeout=1)
+
+        output = json.loads(capsys.readouterr().out)
+        assert exit_code == 1
+        _assert_timeout_failure(output, "Database")
+        mock_pipeline.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_cmd_health_bounds_hung_pipeline_close(self, capsys):
+        """Cleanup should be attempted without letting close hang the command."""
+        args = _health_args()
+        mock_pipeline = _build_health_pipeline()
+        mock_pipeline.close = AsyncMock(side_effect=_never_returns)
+        mock_report = _build_health_report()
+
+        with patch("run_pipeline.DiscoveryPipeline", return_value=mock_pipeline):
+            with patch("run_pipeline.SignalHealthMonitor") as mock_monitor_cls:
+                mock_monitor = MagicMock()
+                mock_monitor.generate_report = AsyncMock(return_value=mock_report)
+                mock_monitor_cls.return_value = mock_monitor
+
+                exit_code = await asyncio.wait_for(cmd_health(args), timeout=1)
+
+        output = json.loads(capsys.readouterr().out)
+        assert exit_code == 0
+        assert output["overall_status"] == "HEALTHY"
+        mock_pipeline.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_cmd_health_json_times_out_hung_external_check(self, capsys):
+        """A hung external check should be bounded and rendered as failure JSON."""
+        args = _health_args(core_only=False)
+        mock_pipeline = _build_health_pipeline()
+        mock_report = _build_health_report()
+
+        with patch("run_pipeline.DiscoveryPipeline", return_value=mock_pipeline):
+            with patch("run_pipeline.SignalHealthMonitor") as mock_monitor_cls:
+                mock_monitor = MagicMock()
+                mock_monitor.generate_report = AsyncMock(return_value=mock_report)
+                mock_monitor_cls.return_value = mock_monitor
+
+                with patch("run_pipeline.check_github_api", AsyncMock(side_effect=_never_returns)):
+                    with patch("run_pipeline.check_sec_edgar_api", AsyncMock(return_value=(True, "OK"))):
+                        exit_code = await asyncio.wait_for(cmd_health(args), timeout=1)
+
+        output = json.loads(capsys.readouterr().out)
+        assert exit_code == 1
+        _assert_timeout_failure(output, "GitHub API")
+        mock_pipeline.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_cmd_health_json_times_out_hung_suppression_stats(self, capsys):
+        """A hung suppression stats read should be bounded and fail the core check."""
+        args = _health_args()
+        mock_pipeline = _build_health_pipeline()
+        mock_pipeline.get_stats = AsyncMock(side_effect=_never_returns)
+        mock_report = _build_health_report()
+
+        with patch("run_pipeline.DiscoveryPipeline", return_value=mock_pipeline):
+            with patch("run_pipeline.SignalHealthMonitor") as mock_monitor_cls:
+                mock_monitor = MagicMock()
+                mock_monitor.generate_report = AsyncMock(return_value=mock_report)
+                mock_monitor_cls.return_value = mock_monitor
+
+                exit_code = await asyncio.wait_for(cmd_health(args), timeout=1)
+
+        output = json.loads(capsys.readouterr().out)
+        assert exit_code == 1
+        _assert_timeout_failure(output, "Suppression Cache")
+        mock_pipeline.close.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_cmd_health_json_times_out_hung_signal_health(self, capsys):
+        """A hung signal health report should be bounded and fail the core check."""
+        args = _health_args()
+        mock_pipeline = _build_health_pipeline()
+
+        with patch("run_pipeline.DiscoveryPipeline", return_value=mock_pipeline):
+            with patch("run_pipeline.SignalHealthMonitor") as mock_monitor_cls:
+                mock_monitor = MagicMock()
+                mock_monitor.generate_report = AsyncMock(side_effect=_never_returns)
+                mock_monitor_cls.return_value = mock_monitor
+
+                exit_code = await asyncio.wait_for(cmd_health(args), timeout=1)
+
+        output = json.loads(capsys.readouterr().out)
+        assert exit_code == 1
+        _assert_timeout_failure(output, "Signal Health")
+        mock_pipeline.close.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_cmd_health_checks_database_connectivity(self):

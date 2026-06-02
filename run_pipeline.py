@@ -132,6 +132,20 @@ except ImportError:
 
 
 _DB_GUARD_BLOCK_EXIT_CODE = 2
+HEALTH_CHECK_TIMEOUT_SECONDS = 30.0
+
+
+class _HealthPhaseTimeout(RuntimeError):
+    pass
+
+
+async def _await_health_phase(name: str, awaitable, timeout_seconds: float):
+    try:
+        return await asyncio.wait_for(awaitable, timeout=timeout_seconds)
+    except asyncio.TimeoutError as exc:
+        raise _HealthPhaseTimeout(
+            f"{name} timed out after {timeout_seconds:g} seconds"
+        ) from exc
 
 
 # =============================================================================
@@ -744,11 +758,25 @@ async def cmd_health(args):
         except Exception:
             return default
 
+    def _float_arg(name: str, default: float) -> float:
+        val = getattr(args, name, default)
+        if not isinstance(val, (int, float, str)) or isinstance(val, bool):
+            return default
+        try:
+            parsed = float(val)
+        except (TypeError, ValueError):
+            return default
+        return parsed if parsed > 0 else default
+
     output_json = _bool_arg("output_json", False)
     verbose = _bool_arg("verbose", False)
     lookback_days = _int_arg("lookback_days", 30)
     core_only = _bool_arg("core_only", False)
     allow_external_failures = _bool_arg("allow_external_failures", False)
+    health_timeout_seconds = _float_arg(
+        "health_timeout_seconds",
+        HEALTH_CHECK_TIMEOUT_SECONDS,
+    )
 
     total_checks = 5  # DB, Config, APIs, Suppression, Signal Health
     check_num = 0
@@ -776,7 +804,11 @@ async def cmd_health(args):
         if not output_json:
             print(f"[{check_num}/{total_checks}] Database connectivity...", end=" ", flush=True)
         try:
-            await pipeline.initialize(read_only=True)
+            await _await_health_phase(
+                "Database connectivity",
+                pipeline.initialize(read_only=True),
+                health_timeout_seconds,
+            )
             pipeline_initialized = True
             db_ok = bool(getattr(getattr(pipeline, "_store", None), "_db", None))
             if db_ok:
@@ -836,7 +868,11 @@ async def cmd_health(args):
                 return
 
             try:
-                ok, msg = await fn()
+                ok, msg = await _await_health_phase(
+                    name,
+                    fn(),
+                    health_timeout_seconds,
+                )
             except Exception as e:
                 ok, msg = False, str(e)
 
@@ -889,7 +925,11 @@ async def cmd_health(args):
             print(f"[{check_num}/{total_checks}] Suppression cache...", end=" ", flush=True)
         try:
             if pipeline_initialized and getattr(getattr(pipeline, "_store", None), "_db", None):
-                stats = await pipeline.get_stats()
+                stats = await _await_health_phase(
+                    "Suppression cache",
+                    pipeline.get_stats(),
+                    health_timeout_seconds,
+                )
                 storage = stats.get("storage", {})
                 cache_entries = storage.get("active_suppression_entries", 0)
                 suppression_stats = {
@@ -909,6 +949,10 @@ async def cmd_health(args):
                 if not output_json:
                     print(f"{STATUS_SKIP} (no database)")
                 checks.append(CheckResult("Suppression Cache", CheckScope.CORE, CheckStatus.SKIP, "Database unavailable"))
+        except _HealthPhaseTimeout as e:
+            if not output_json:
+                print(f"{STATUS_FAIL} ({e})")
+            checks.append(CheckResult("Suppression Cache", CheckScope.CORE, CheckStatus.FAIL, str(e)))
         except Exception as e:
             if not output_json:
                 print(f"{STATUS_WARN} ({e})")
@@ -923,7 +967,11 @@ async def cmd_health(args):
         try:
             if pipeline_initialized and getattr(getattr(pipeline, "_store", None), "_db", None):
                 monitor = SignalHealthMonitor(pipeline._store)
-                report = await monitor.generate_report(lookback_days=lookback_days)
+                report = await _await_health_phase(
+                    "Signal health",
+                    monitor.generate_report(lookback_days=lookback_days),
+                    health_timeout_seconds,
+                )
 
                 if not output_json:
                     status_sym = STATUS_OK if report.overall_status == "HEALTHY" else STATUS_WARN if report.overall_status == "DEGRADED" else STATUS_FAIL
@@ -945,6 +993,10 @@ async def cmd_health(args):
                 if not output_json:
                     print(f"{STATUS_SKIP} (no database)")
                 checks.append(CheckResult("Signal Health", CheckScope.CORE, CheckStatus.SKIP, "Database unavailable"))
+        except _HealthPhaseTimeout as e:
+            if not output_json:
+                print(f"{STATUS_FAIL} ({e})")
+            checks.append(CheckResult("Signal Health", CheckScope.CORE, CheckStatus.FAIL, str(e)))
         except Exception as e:
             if not output_json:
                 print(f"{STATUS_WARN} ({e})")
@@ -1022,7 +1074,11 @@ async def cmd_health(args):
         return 1
     finally:
         try:
-            await pipeline.close()
+            await _await_health_phase(
+                "Pipeline close",
+                pipeline.close(),
+                health_timeout_seconds,
+            )
         except Exception:
             pass
 
@@ -2780,6 +2836,13 @@ Environment variables:
         "--verbose",
         action="store_true",
         help="Show detailed signal health report",
+    )
+    health_parser.add_argument(
+        "--timeout-seconds",
+        type=float,
+        default=HEALTH_CHECK_TIMEOUT_SECONDS,
+        dest="health_timeout_seconds",
+        help=f"Maximum seconds for each awaited health phase (default: {HEALTH_CHECK_TIMEOUT_SECONDS:g})",
     )
 
     # Health semantics flags
