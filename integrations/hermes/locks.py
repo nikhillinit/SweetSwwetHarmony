@@ -13,6 +13,47 @@ class HermesLockError(Exception):
     """Raised when the Hermes advisory lock cannot be acquired."""
 
 
+_CANONICAL_LOCK_ORDER = (
+    "signals.db",
+    "hermes-config",
+    "governance",
+    "collector-promotion",
+    "incident-response",
+    "notion-outbox",
+    "shadow-entity-evaluator",
+    "suppression-cache",
+)
+_LOCK_ORDER_RANK = {
+    lock_name: index for index, lock_name in enumerate(_CANONICAL_LOCK_ORDER)
+}
+
+
+def canonical_lock_order(lock_names: tuple[str, ...]) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            lock_names,
+            key=lambda lock_name: (
+                _LOCK_ORDER_RANK.get(lock_name, len(_CANONICAL_LOCK_ORDER)),
+                lock_name,
+            ),
+        )
+    )
+
+
+def assert_canonical_lock_order(
+    lock_names: tuple[str, ...],
+    *,
+    task_name: str,
+) -> None:
+    expected = canonical_lock_order(lock_names)
+    if lock_names == expected:
+        return
+    raise HermesLockError(
+        f"{task_name} required_locks must follow canonical lock order: "
+        f"{', '.join(expected)}; got {', '.join(lock_names)}"
+    )
+
+
 class HermesLock:
     DEFAULT_TTL_SECONDS = 3600
 

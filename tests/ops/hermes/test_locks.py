@@ -7,7 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from integrations.hermes.locks import HermesLock, HermesLockError
+from integrations.hermes.locks import (
+    HermesLock,
+    HermesLockError,
+    assert_canonical_lock_order,
+    canonical_lock_order,
+)
 
 
 def test_lock_acquire_writes_metadata_and_release_removes_file(tmp_path: Path) -> None:
@@ -157,3 +162,22 @@ def test_malformed_lock_is_not_reclaimed_without_force_unlock(tmp_path: Path) ->
     lock = HermesLock(lock_path)
     assert lock.acquire(timeout_seconds=0) is True
     lock.release()
+
+
+def test_canonical_lock_order_places_shared_resources_before_task_locks() -> None:
+    assert canonical_lock_order(("suppression-cache", "signals.db")) == (
+        "signals.db",
+        "suppression-cache",
+    )
+    assert canonical_lock_order(("notion-outbox", "signals.db")) == (
+        "signals.db",
+        "notion-outbox",
+    )
+
+
+def test_lock_order_assertion_rejects_non_canonical_declarations() -> None:
+    with pytest.raises(HermesLockError, match="canonical lock order"):
+        assert_canonical_lock_order(
+            ("suppression-cache", "signals.db"),
+            task_name="bad-task",
+        )

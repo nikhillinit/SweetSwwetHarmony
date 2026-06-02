@@ -3,8 +3,16 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+import pytest
+
+from integrations.hermes.locks import assert_canonical_lock_order
 from integrations.hermes.plan_contract import CURRENT_CONTRACT_VERSION
-from integrations.hermes.tasks.registry import registered_task_names, run_registered_task
+from integrations.hermes.tasks.base import HermesTask
+from integrations.hermes.tasks.registry import (
+    TASK_REGISTRY,
+    registered_task_names,
+    run_registered_task,
+)
 
 
 def _args(**overrides: object) -> argparse.Namespace:
@@ -33,6 +41,22 @@ def test_pr11_registered_tasks_add_config_promote_after_collector_promote() -> N
         "shadow-validate",
         "suppression-sync",
     ]
+
+
+def test_registered_task_lock_declarations_follow_canonical_order() -> None:
+    for task_name, task_type in TASK_REGISTRY.items():
+        assert_canonical_lock_order(task_type.required_locks, task_name=task_name)
+
+
+def test_base_plan_rejects_non_canonical_lock_declarations() -> None:
+    class BadLockOrderTask(HermesTask):
+        name = "bad-lock-order"
+        required_locks = ("suppression-cache", "signals.db")
+
+    with pytest.raises(ValueError, match="canonical lock order"):
+        BadLockOrderTask().plan(
+            BadLockOrderTask().build_context(_args(), mode="plan-only")
+        )
 
 
 def test_plan_only_registered_task_is_non_mutating() -> None:
