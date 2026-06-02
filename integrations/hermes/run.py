@@ -19,6 +19,12 @@ EXIT_LEDGER_FAILURE = 7
 EXIT_HIGH_RISK_ACK_REQUIRED = 75
 EXIT_INVALID = 2
 RISK_ACK = "I-ACK-RISK"
+LOCK_HELD_NEXT_ACTION = (
+    "Wait for the current Hermes lock holder or force-unlock only after operator review."
+)
+HIGH_RISK_ACK_NEXT_ACTION = (
+    "Rerun execute only with the exact high-risk acknowledgement after operator review."
+)
 
 
 @dataclass(frozen=True)
@@ -100,6 +106,7 @@ async def run_hermes(
     preflight = await run_gates(config.gates.preflight, phase="preflight", run_dir=run.run_dir)
     ledger.write_state(run, "S2_preflight", preflight.to_dict())
     if not preflight.success:
+        next_action = "Fix the failing preflight gate and rerun Hermes."
         _write_gate_repair_prompt(
             ledger,
             run,
@@ -107,7 +114,18 @@ async def run_hermes(
             preflight,
             failure_type="preflight",
             state_paths=_state_paths(run),
-            next_action="Fix the failing preflight gate and rerun Hermes.",
+            next_action=next_action,
+        )
+        _write_failure_event(
+            ledger,
+            run,
+            plan,
+            mode,
+            failure_type="preflight",
+            exit_code=EXIT_GATE_FAILURE,
+            details=_gate_failure_details(preflight),
+            artifacts=_gate_artifacts(run, preflight),
+            next_action=next_action,
         )
         write_summary(ledger, run, plan, mode, preflight, None, EXIT_GATE_FAILURE)
         return HermesRunResult(
@@ -134,6 +152,7 @@ async def run_hermes(
     ledger.write_state(run, "S3_postflight", postflight.to_dict())
     exit_code = EXIT_OK if postflight.success else EXIT_GATE_FAILURE
     if not postflight.success:
+        next_action = "Fix the failing postflight gate and rerun Hermes."
         _write_gate_repair_prompt(
             ledger,
             run,
@@ -141,7 +160,18 @@ async def run_hermes(
             postflight,
             failure_type="postflight",
             state_paths=_state_paths(run),
-            next_action="Fix the failing postflight gate and rerun Hermes.",
+            next_action=next_action,
+        )
+        _write_failure_event(
+            ledger,
+            run,
+            plan,
+            mode,
+            failure_type="postflight",
+            exit_code=exit_code,
+            details=_gate_failure_details(postflight),
+            artifacts=_gate_artifacts(run, postflight),
+            next_action=next_action,
         )
     write_summary(ledger, run, plan, mode, preflight, postflight, exit_code)
 
@@ -171,7 +201,18 @@ async def _execute_with_gates(
         run_id=run.run_id,
     )
     if not lock.acquire(timeout_seconds=0):
-        ledger.write_state(run, "S2_lock_held", {"holder": lock.get_holder_info()})
+        holder = lock.get_holder_info()
+        ledger.write_state(run, "S2_lock_held", {"holder": holder})
+        _write_failure_event(
+            ledger,
+            run,
+            plan,
+            mode,
+            failure_type="lock-held",
+            exit_code=EXIT_LOCK_HELD,
+            details={"holder": holder},
+            next_action=LOCK_HELD_NEXT_ACTION,
+        )
         write_summary(ledger, run, plan, mode, None, None, EXIT_LOCK_HELD)
         return HermesRunResult(
             mode=mode,
@@ -189,6 +230,7 @@ async def _execute_with_gates(
         )
         ledger.write_state(run, "S2_preflight", preflight.to_dict())
         if not preflight.success:
+            next_action = "Fix the failing preflight gate before executing a provider."
             _write_gate_repair_prompt(
                 ledger,
                 run,
@@ -196,7 +238,18 @@ async def _execute_with_gates(
                 preflight,
                 failure_type="preflight",
                 state_paths=_state_paths(run),
-                next_action="Fix the failing preflight gate before executing a provider.",
+                next_action=next_action,
+            )
+            _write_failure_event(
+                ledger,
+                run,
+                plan,
+                mode,
+                failure_type="preflight",
+                exit_code=EXIT_GATE_FAILURE,
+                details=_gate_failure_details(preflight),
+                artifacts=_gate_artifacts(run, preflight),
+                next_action=next_action,
             )
             write_summary(ledger, run, plan, mode, preflight, None, EXIT_GATE_FAILURE)
             return HermesRunResult(
@@ -209,14 +262,25 @@ async def _execute_with_gates(
             )
 
         if plan.risk == "high" and ack_risk != RISK_ACK:
+            approval_details = {
+                "risk": plan.risk,
+                "requiredAck": RISK_ACK,
+                "providedAck": ack_risk,
+            }
             ledger.write_state(
                 run,
                 "S3_approval_required",
-                {
-                    "risk": plan.risk,
-                    "requiredAck": RISK_ACK,
-                    "providedAck": ack_risk,
-                },
+                approval_details,
+            )
+            _write_failure_event(
+                ledger,
+                run,
+                plan,
+                mode,
+                failure_type="approval-required",
+                exit_code=EXIT_HIGH_RISK_ACK_REQUIRED,
+                details=approval_details,
+                next_action=HIGH_RISK_ACK_NEXT_ACTION,
             )
             write_summary(
                 ledger,
@@ -242,6 +306,10 @@ async def _execute_with_gates(
         ledger.write_state(run, "S3_execution", execution.to_dict())
         if not execution.success:
             exit_code = execution.exit_code or 1
+            next_action = (
+                "Inspect the executor failure state, fix the cause, and rerun "
+                "with the same routing plan."
+            )
             ledger.write_repair_prompt(
                 run,
                 failure_type="executor",
@@ -250,7 +318,20 @@ async def _execute_with_gates(
                 exit_code=exit_code,
                 routing_plan=plan.to_dict(),
                 state_paths=_state_paths(run),
-                next_action="Inspect the executor failure state, fix the cause, and rerun with the same routing plan.",
+                next_action=next_action,
+            )
+            _write_failure_event(
+                ledger,
+                run,
+                plan,
+                mode,
+                failure_type="executor",
+                exit_code=exit_code,
+                details={
+                    "executor": execution.executor,
+                    "error": execution.error,
+                },
+                next_action=next_action,
             )
             write_summary(ledger, run, plan, mode, preflight, None, exit_code)
             return HermesRunResult(
@@ -271,6 +352,9 @@ async def _execute_with_gates(
         ledger.write_state(run, "S4_postflight", postflight.to_dict())
         exit_code = EXIT_OK if postflight.success else EXIT_GATE_FAILURE
         if not postflight.success:
+            next_action = (
+                "Fix the failing postflight gate and review executor output before retrying."
+            )
             _write_gate_repair_prompt(
                 ledger,
                 run,
@@ -278,7 +362,18 @@ async def _execute_with_gates(
                 postflight,
                 failure_type="postflight",
                 state_paths=_state_paths(run),
-                next_action="Fix the failing postflight gate and review executor output before retrying.",
+                next_action=next_action,
+            )
+            _write_failure_event(
+                ledger,
+                run,
+                plan,
+                mode,
+                failure_type="postflight",
+                exit_code=exit_code,
+                details=_gate_failure_details(postflight),
+                artifacts=_gate_artifacts(run, postflight),
+                next_action=next_action,
             )
         write_summary(ledger, run, plan, mode, preflight, postflight, exit_code)
         return HermesRunResult(
@@ -384,6 +479,43 @@ def _write_gate_repair_prompt(
         stderr_path=None,
         next_action=next_action,
     )
+
+
+def _write_failure_event(
+    ledger: HermesLedger,
+    run: HermesRun,
+    plan: RoutingPlan,
+    mode: str,
+    *,
+    failure_type: str,
+    exit_code: int,
+    next_action: str,
+    details: dict[str, Any] | None = None,
+    artifacts: dict[str, Path] | None = None,
+) -> Path:
+    return ledger.write_failure_event(
+        run,
+        failure_type=failure_type,
+        mode=mode,
+        exit_code=exit_code,
+        routing_plan=plan.to_dict(),
+        state_paths=_state_paths(run),
+        next_action=next_action,
+        details=details,
+        artifacts=artifacts,
+    )
+
+
+def _gate_failure_details(batch: GateBatch) -> dict[str, Any]:
+    failed = next((result for result in batch.results if not result.success), None)
+    gate = {"phase": batch.phase}
+    if failed is not None:
+        gate.update(failed.to_dict())
+    return {"gate": gate}
+
+
+def _gate_artifacts(run: HermesRun, batch: GateBatch) -> dict[str, Path]:
+    return {"gateBatch": run.run_dir / "gates" / f"{batch.phase}.json"}
 
 
 def _state_paths(run: HermesRun) -> list[Path]:
