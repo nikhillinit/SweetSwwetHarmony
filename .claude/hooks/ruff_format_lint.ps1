@@ -5,8 +5,8 @@
 # reformat churn on legacy files the first time they're touched.
 #
 # Modes (env HARMONIC_RUFF_MODE):
-#   fix (default)      -- apply `ruff format` + `ruff check --fix` to the edited file.
-#   advisory           -- report what ruff WOULD change/flag; never edits, never blocks.
+#   advisory (default) -- report what ruff WOULD change/flag; never edits, never blocks.
+#   fix                -- apply `ruff format` + `ruff check --fix` to the edited file.
 #
 # Escalation (env HARMONIC_RUFF_BLOCK=1):
 #   In advisory mode, surface findings as a blocking PostToolUse error (exit 2) that
@@ -30,7 +30,7 @@ if (-not (Test-Path $file)) { exit 0 }
 
 if (-not (Get-Command ruff -ErrorAction SilentlyContinue)) { exit 0 }  # ruff absent -> no-op
 
-$mode  = if ($env:HARMONIC_RUFF_MODE) { $env:HARMONIC_RUFF_MODE.ToLowerInvariant() } else { 'fix' }
+$mode  = if ($env:HARMONIC_RUFF_MODE) { $env:HARMONIC_RUFF_MODE.ToLowerInvariant() } else { 'advisory' }
 $block = ($env:HARMONIC_RUFF_BLOCK -eq '1')
 
 if ($mode -eq 'fix') {
