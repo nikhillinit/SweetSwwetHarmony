@@ -1,0 +1,9 @@
+# Development-only dependencies (not required at runtime).
+# Install with:  pip install -r requirements-dev.txt
+
+# Formatter + linter. Used by the PostToolUse 'ruff_format_lint' Claude Code hook
+# (.claude/hooks/ruff_format_lint.ps1) and available for manual runs:
+#   ruff check .          # lint
+#   ruff format .         # format
+# Config lives in pyproject.toml under [tool.ruff].
+ruff>=0.15,<0.16
