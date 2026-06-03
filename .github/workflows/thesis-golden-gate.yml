@@ -1,0 +1,83 @@
+# .github/workflows/thesis-golden-gate.yml
+name: Thesis Golden Set Gate
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  thesis-gate:
+    name: Thesis Golden Set Gate
+    runs-on: ubuntu-latest
+    env:
+      MANIFEST: tests/fixtures/thesis_llm_golden_set.manifest.json
+      DECISION: artifacts/thesis_diagnostics/eval-mode.json
+      GATE_OUT: artifacts/thesis_diagnostics/pr-gate.json
+      GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyyaml
+
+      - name: Hermes provider doctor (read-only preflight)
+        run: python -m ops.cli hermes providers doctor --json || true
+
+      - name: Detect thesis-sensitive changes
+        id: detect
+        run: |
+          CHANGED=$(git diff --name-only --diff-filter=ACMR origin/${{ github.base_ref }}...HEAD || true)
+          SENSITIVE=$(python scripts/ci/detect_thesis_sensitive_changes.py --changed-files "$CHANGED")
+          echo "sensitive=$SENSITIVE" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve eval mode (auditable)
+        run: python scripts/ci/resolve_thesis_eval_mode.py --out "$DECISION"
+
+      - name: Read current PR labels (live GitHub state)
+        id: labels
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          LABELS=$(gh api "repos/${GITHUB_REPOSITORY}/issues/${{ github.event.number }}/labels" --jq '[.[].name] | join(",")' || echo "")
+          echo "labels=$LABELS" >> "$GITHUB_OUTPUT"
+
+      - name: Run live eval (gold path, key present)
+        if: ${{ env.GOOGLE_API_KEY != '' && steps.detect.outputs.sensitive == 'true' }}
+        run: |
+          python -m scripts.run_thesis_llm_eval_gate \
+            --dataset tests/fixtures/thesis_llm_golden_set.jsonl \
+            --output "$GATE_OUT" \
+            --rebaseline-output artifacts/thesis_diagnostics/pr-rebaseline.json \
+            --baseline-summary artifacts/thesis_diagnostics/candidate_v3.summary.json
+
+      - name: Enforce gate
+        run: |
+          GATE_ARG=""
+          if [ -f "$GATE_OUT" ]; then GATE_ARG="--gate-output $GATE_OUT"; fi
+          python scripts/ci/check_thesis_gate_artifact.py \
+            --decision "$DECISION" \
+            --manifest "$MANIFEST" \
+            --sensitive "${{ steps.detect.outputs.sensitive }}" \
+            --labels "${{ steps.labels.outputs.labels }}" \
+            $GATE_ARG
+
+      - name: Upload gate artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: thesis-golden-gate
+          path: artifacts/thesis_diagnostics/
+          if-no-files-found: warn
