@@ -71,3 +71,18 @@ def test_live_eval_above_floor_passes(tmp_path):
                     encoding="utf-8")
     check_gate(decision_path=decision, manifest_path=_manifest(tmp_path),
                gate_output_path=gate, sensitive=True, labels=[], min_accuracy=0.9)
+
+
+def test_non_sensitive_gold_without_gate_output_passes(tmp_path):
+    decision = tmp_path / "d.json"
+    decision.write_text(json.dumps({"mode": "gold"}), encoding="utf-8")
+    # Non-thesis PR: the workflow produces no gate output; it must still pass.
+    check_gate(decision_path=decision, manifest_path=_manifest(tmp_path),
+               gate_output_path=None, sensitive=False, labels=[], min_accuracy=0.9)
+
+
+def test_non_sensitive_hermes_without_gate_output_passes(tmp_path):
+    decision = tmp_path / "d.json"
+    decision.write_text(json.dumps({"mode": "hermes"}), encoding="utf-8")
+    check_gate(decision_path=decision, manifest_path=_manifest(tmp_path),
+               gate_output_path=None, sensitive=False, labels=[], min_accuracy=0.9)

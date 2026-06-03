@@ -31,13 +31,18 @@ def check_gate(
     decision = _load(decision_path)
     mode = decision.get("mode")
 
+    # A non-thesis PR has no thesis code to verify; pass cheaply regardless of
+    # resolver mode (the workflow produces no gate output for non-sensitive PRs).
+    if not sensitive:
+        return
+
     if mode == "structural":
-        if sensitive and STRUCTURAL_OVERRIDE_LABEL not in labels:
+        if STRUCTURAL_OVERRIDE_LABEL not in labels:
             raise GateError(
                 "Thesis-sensitive change with structural-only eval (no API key, "
                 f"no execute-capable Hermes executor). Apply '{STRUCTURAL_OVERRIDE_LABEL}' "
                 "after a maintainer-dispatched live eval, or provide an executor/key.")
-        return  # non-sensitive, or approved: structural checks suffice
+        return  # approved: structural checks suffice
 
     # Live eval (gold or hermes): require gate output, fingerprint, accuracy floor.
     if gate_output_path is None:
