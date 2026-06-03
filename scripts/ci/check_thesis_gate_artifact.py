@@ -44,14 +44,23 @@ def check_gate(
                 "after a maintainer-dispatched live eval, or provide an executor/key.")
         return  # approved: structural checks suffice
 
-    # Live eval (gold or hermes): require gate output, fingerprint, accuracy floor.
+    # Live eval (gold or hermes): require gate output, then enforce the producer's
+    # own decision, fingerprint match, and accuracy floor. The live-eval producer
+    # (run_thesis_llm_eval_gate / build_eval_gate_artifact) emits benchmark_fingerprint,
+    # llm_accuracy, and decision; accept those or the generic dataset_fingerprint/accuracy.
     if gate_output_path is None:
         raise GateError(f"mode={mode} requires a gate output artifact.")
     gate = _load(gate_output_path)
     manifest = _load(manifest_path)
-    if gate.get("dataset_fingerprint") != manifest.get("dataset_fingerprint"):
+    if gate.get("decision") == "no_go":
+        reasons = gate.get("blocked_reasons") or "eval gate blocked execution"
+        raise GateError(f"eval decision=no_go: {reasons}.")
+    gate_fingerprint = gate.get("dataset_fingerprint") or gate.get("benchmark_fingerprint")
+    if gate_fingerprint != manifest.get("dataset_fingerprint"):
         raise GateError("dataset_fingerprint mismatch between gate output and manifest.")
     accuracy = gate.get("accuracy")
+    if accuracy is None:
+        accuracy = gate.get("llm_accuracy")
     if accuracy is None or accuracy < min_accuracy:
         raise GateError(f"accuracy {accuracy} below floor {min_accuracy}.")
 

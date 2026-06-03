@@ -86,3 +86,38 @@ def test_non_sensitive_hermes_without_gate_output_passes(tmp_path):
     decision.write_text(json.dumps({"mode": "hermes"}), encoding="utf-8")
     check_gate(decision_path=decision, manifest_path=_manifest(tmp_path),
                gate_output_path=None, sensitive=False, labels=[], min_accuracy=0.9)
+
+
+def test_real_producer_keys_above_floor_passes(tmp_path):
+    # The real eval artifact uses benchmark_fingerprint + llm_accuracy + decision.
+    decision = tmp_path / "d.json"
+    decision.write_text(json.dumps({"mode": "gold"}), encoding="utf-8")
+    gate = tmp_path / "gate.json"
+    gate.write_text(json.dumps({"decision": "go", "benchmark_fingerprint": MANIFEST_FP,
+                                "llm_accuracy": 0.95}), encoding="utf-8")
+    check_gate(decision_path=decision, manifest_path=_manifest(tmp_path),
+               gate_output_path=gate, sensitive=True, labels=[], min_accuracy=0.9)
+
+
+def test_real_producer_no_go_decision_blocks(tmp_path):
+    decision = tmp_path / "d.json"
+    decision.write_text(json.dumps({"mode": "gold"}), encoding="utf-8")
+    gate = tmp_path / "gate.json"
+    gate.write_text(json.dumps({"decision": "no_go", "benchmark_fingerprint": MANIFEST_FP,
+                                "llm_accuracy": None,
+                                "blocked_reasons": ["LLM accuracy 50.0% is below the 90% gate."]}),
+                    encoding="utf-8")
+    with pytest.raises(GateError, match="no_go"):
+        check_gate(decision_path=decision, manifest_path=_manifest(tmp_path),
+                   gate_output_path=gate, sensitive=True, labels=[], min_accuracy=0.9)
+
+
+def test_real_producer_benchmark_fingerprint_mismatch_fails(tmp_path):
+    decision = tmp_path / "d.json"
+    decision.write_text(json.dumps({"mode": "gold"}), encoding="utf-8")
+    gate = tmp_path / "gate.json"
+    gate.write_text(json.dumps({"decision": "go", "benchmark_fingerprint": "deadbeef",
+                                "llm_accuracy": 1.0}), encoding="utf-8")
+    with pytest.raises(GateError, match="fingerprint"):
+        check_gate(decision_path=decision, manifest_path=_manifest(tmp_path),
+                   gate_output_path=gate, sensitive=True, labels=[], min_accuracy=0.9)
