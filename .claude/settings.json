@@ -1,6 +1,17 @@
 {
-  "_comment": "Project-level hooks for Harmonic Discovery Engine. All hooks are gated on branch=prep/red-team-hybrid-prep inside the script bodies, so they no-op on other branches. Run /hooks in Claude Code to verify they are loaded.",
+  "_comment": "Project-level hooks for Harmonic Discovery Engine. ALWAYS-ON: PreToolUse 'guard_signals_db' asks before any tool call that could overwrite/delete the live signals.db; UserPromptSubmit 'inject_context' injects branch + canonical-plan + ownership rules each turn; PostToolUse 'ruff_format_lint' runs ruff on .py edits (auto-format + --fix by default -- set HARMONIC_RUFF_MODE=advisory for report-only, HARMONIC_RUFF_BLOCK=1 to make advisory findings blocking). PARKED (scripts still on disk, intentionally unregistered): postedit_protected_paths.ps1 + stop_verify.ps1 enforced the EXPIRED 2026-04-19 Step 4B regret window on the prep/red-team-hybrid-prep branch; firing them on main would re-impose the R19-lifted freeze. For a current freeze use gstack /freeze + /guard. Run /hooks to verify what is loaded.",
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|PowerShell|Write|mcp__filesystem__write_file|mcp__filesystem__edit_file|mcp__filesystem__move_file",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"C:\\dev\\Harmonic\\.claude\\hooks\\guard_signals_db.ps1\""
+          }
+        ]
+      }
+    ],
     "UserPromptSubmit": [
       {
         "matcher": "",
@@ -14,22 +25,11 @@
     ],
     "PostToolUse": [
       {
-        "matcher": "Edit|Write|Bash",
+        "matcher": "Edit|Write",
         "hooks": [
           {
             "type": "command",
-            "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"C:\\dev\\Harmonic\\.claude\\hooks\\postedit_protected_paths.ps1\""
-          }
-        ]
-      }
-    ],
-    "Stop": [
-      {
-        "matcher": "",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"C:\\dev\\Harmonic\\.claude\\hooks\\stop_verify.ps1\""
+            "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"C:\\dev\\Harmonic\\.claude\\hooks\\ruff_format_lint.ps1\""
           }
         ]
       }
