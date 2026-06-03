@@ -1,4 +1,7 @@
-from scripts.ci.detect_thesis_sensitive_changes import is_sensitive, THESIS_SENSITIVE_PATTERNS
+from scripts.ci.detect_thesis_sensitive_changes import (
+    THESIS_SENSITIVE_PATTERNS,
+    is_sensitive,
+)
 
 
 def test_thesis_filter_path_is_sensitive():

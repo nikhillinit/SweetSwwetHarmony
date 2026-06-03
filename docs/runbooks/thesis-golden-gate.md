@@ -13,7 +13,7 @@ not touch thesis-sensitive paths.
 | Mode | When | Effect |
 |------|------|--------|
 | `gold` | `GOOGLE_API_KEY` or `GEMINI_API_KEY` present | Run the real classifier (live eval). |
-| `hermes` | No API key, but `hermes route --json` yields an executor with `supportsExecute: true` | Live eval can be routed to that executor (execution graduation is deferred; see Hermes commands). |
+| `hermes` | No API key, but `hermes route --json` yields an executor with `supportsExecute: true` | Run the registered Hermes `thesis-eval` task through the selected CLI-backed executor and produce the same gate artifact as the gold path. |
 | `structural` | No API key and no execute-capable Hermes executor | Live eval is BLOCKED; only structural checks run. |
 
 The resolver always exits 0 - it only resolves. Enforcement lives in
@@ -33,6 +33,25 @@ The resolver always exits 0 - it only resolves. Enforcement lives in
 
 Thesis-sensitive paths are defined by `THESIS_SENSITIVE_PATTERNS` in
 `scripts/ci/detect_thesis_sensitive_changes.py`.
+
+## Running Hermes mode locally
+
+Hermes mode is keyless with respect to Google/Gemini API keys, but it still
+requires an authenticated local CLI executor selected by Hermes routing. The
+task sends target-free golden-set rows to the executor, validates strict JSON
+predictions, computes metrics locally, and writes the standard gate artifacts:
+
+```powershell
+python -m ops.cli hermes task thesis-eval --execute --json `
+  --dataset tests/fixtures/thesis_llm_golden_set.jsonl `
+  --manifest tests/fixtures/thesis_llm_golden_set.manifest.json `
+  --output artifacts/thesis_diagnostics/pr-gate.json `
+  --rebaseline-output artifacts/thesis_diagnostics/pr-rebaseline.json `
+  --baseline-summary artifacts/thesis_diagnostics/candidate_v3.summary.json
+```
+
+The workflow passes `--executor` from `resolve_thesis_eval_mode.py` so the
+evaluating CLI matches the auditable resolver decision.
 
 ## Clearing a structural block (maintainer)
 
@@ -60,6 +79,7 @@ When CI reports a structural-only eval on a thesis-sensitive PR:
 
 - Preflight (read-only, no network): `python -m ops.cli hermes providers doctor --json`
 - Routing decision: `python -m ops.cli hermes route --json --phase production --task "thesis golden-set eval"`
+- Keyless live eval: `python -m ops.cli hermes task thesis-eval --execute --json --dataset tests/fixtures/thesis_llm_golden_set.jsonl --manifest tests/fixtures/thesis_llm_golden_set.manifest.json --output artifacts/thesis_diagnostics/pr-gate.json --rebaseline-output artifacts/thesis_diagnostics/pr-rebaseline.json`
 - Advisory deliberation cross-check (v1, never blocks):
   `python scripts/ci/thesis_deliberation_check.py --out <path>`, which invokes
   `python -m ops.cli hermes task deliberate --task-text ... --panel codex,kimi --rounds 2 --synthesizer codex`

@@ -7,6 +7,7 @@ related_prs: []
 related_files:
   - tests/fixtures/thesis_llm_golden_set.manifest.json
   - artifacts/thesis_diagnostics/candidate_v3.summary.json
+  - integrations/hermes/tasks/thesis_eval.py
   - scripts/ci/check_thesis_gate_artifact.py
   - .github/workflows/thesis-golden-gate.yml
 ---
@@ -23,6 +24,19 @@ Source: `tests/fixtures/thesis_llm_golden_set.manifest.json`
 
 This fingerprint is what `check_thesis_gate_artifact.py` compares the live-eval
 gate output against.
+
+## Live eval producers
+
+The gate accepts one artifact contract from two producers:
+
+- Gold/API-key mode: `python -m scripts.run_thesis_llm_eval_gate`
+- Keyless Hermes mode: `python -m ops.cli hermes task thesis-eval --execute --json`
+
+Both producers must write `artifacts/thesis_diagnostics/pr-gate.json` with the
+current benchmark fingerprint, a producer-owned `decision`, and `llm_accuracy`
+that meets the workflow floor. Hermes mode is distinct from the API-key path:
+it uses an authenticated CLI-backed Hermes executor, sends target-free rows to
+that executor, and computes accuracy locally from strict JSON predictions.
 
 ## Baseline summary artifact
 

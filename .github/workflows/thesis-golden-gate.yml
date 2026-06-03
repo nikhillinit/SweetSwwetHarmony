@@ -18,6 +18,7 @@ jobs:
       DECISION: artifacts/thesis_diagnostics/eval-mode.json
       GATE_OUT: artifacts/thesis_diagnostics/pr-gate.json
       GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -43,7 +44,19 @@ jobs:
           echo "sensitive=$SENSITIVE" >> "$GITHUB_OUTPUT"
 
       - name: Resolve eval mode (auditable)
-        run: python scripts/ci/resolve_thesis_eval_mode.py --out "$DECISION"
+        id: resolve
+        run: |
+          python scripts/ci/resolve_thesis_eval_mode.py --out "$DECISION"
+          python - <<'PY'
+          import json
+          import os
+
+          with open(os.environ["DECISION"], encoding="utf-8") as handle:
+              decision = json.load(handle)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              print(f"mode={decision.get('mode') or ''}", file=output)
+              print(f"executor={decision.get('executor') or ''}", file=output)
+          PY
 
       - name: Read current PR labels (live GitHub state)
         id: labels
@@ -55,7 +68,7 @@ jobs:
           echo "labels=$LABELS" >> "$GITHUB_OUTPUT"
 
       - name: Run live eval (gold path, key present)
-        if: ${{ env.GOOGLE_API_KEY != '' && steps.detect.outputs.sensitive == 'true' }}
+        if: ${{ steps.detect.outputs.sensitive == 'true' && steps.resolve.outputs.mode == 'gold' }}
         run: |
           python -m scripts.run_thesis_llm_eval_gate \
             --dataset tests/fixtures/thesis_llm_golden_set.jsonl \
@@ -63,7 +76,27 @@ jobs:
             --rebaseline-output artifacts/thesis_diagnostics/pr-rebaseline.json \
             --baseline-summary artifacts/thesis_diagnostics/candidate_v3.summary.json
 
+      - name: Run live eval (Hermes CLI path, keyless)
+        if: ${{ steps.detect.outputs.sensitive == 'true' && steps.resolve.outputs.mode == 'hermes' }}
+        env:
+          HERMES_EXECUTOR: ${{ steps.resolve.outputs.executor }}
+        run: |
+          python -m ops.cli hermes task thesis-eval --execute --json \
+            --dataset tests/fixtures/thesis_llm_golden_set.jsonl \
+            --manifest "$MANIFEST" \
+            --output "$GATE_OUT" \
+            --rebaseline-output artifacts/thesis_diagnostics/pr-rebaseline.json \
+            --baseline-summary artifacts/thesis_diagnostics/candidate_v3.summary.json \
+            --executor "$HERMES_EXECUTOR"
+
+      - name: Advisory Hermes deliberation cross-check
+        if: ${{ always() && steps.detect.outputs.sensitive == 'true' }}
+        continue-on-error: true
+        run: python scripts/ci/thesis_deliberation_check.py --out artifacts/thesis_diagnostics/deliberation-check.json
+
       - name: Enforce gate
+        env:
+          PR_LABELS: ${{ steps.labels.outputs.labels }}
         run: |
           GATE_ARG=""
           if [ -f "$GATE_OUT" ]; then GATE_ARG="--gate-output $GATE_OUT"; fi
@@ -71,7 +104,7 @@ jobs:
             --decision "$DECISION" \
             --manifest "$MANIFEST" \
             --sensitive "${{ steps.detect.outputs.sensitive }}" \
-            --labels "${{ steps.labels.outputs.labels }}" \
+            --labels "$PR_LABELS" \
             $GATE_ARG
 
       - name: Upload gate artifacts
