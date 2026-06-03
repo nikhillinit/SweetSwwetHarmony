@@ -40,6 +40,7 @@ def test_pr11_registered_tasks_add_config_promote_after_collector_promote() -> N
         "restore-db",
         "shadow-validate",
         "suppression-sync",
+        "thesis-eval",
     ]
 
 
