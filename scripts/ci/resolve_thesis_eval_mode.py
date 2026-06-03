@@ -48,13 +48,44 @@ def route_executor(runner=subprocess.run) -> dict:
         return {}
 
 
-def decide(env: dict[str, str], plan: dict) -> dict:
+def provider_doctor(runner=subprocess.run) -> dict:
+    """Return parsed provider doctor evidence, or {} when unavailable."""
+    try:
+        proc = runner(
+            [sys.executable, "-m", "ops.cli", "hermes", "providers", "doctor", "--json"],
+            capture_output=True, text=True, timeout=60,
+        )
+    except Exception:
+        return {}
+    if not (proc.stdout or "").strip():
+        return {}
+    try:
+        parsed = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _doctor_provider_success(doctor: dict | None, executor: str) -> bool:
+    if doctor is None:
+        return True
+    provider = (doctor.get("providers") or {}).get(executor)
+    return bool(provider and provider.get("success"))
+
+
+def decide(env: dict[str, str], plan: dict, doctor: dict | None = None) -> dict:
     if resolve_api_key(env):
         return {"mode": "gold", "executor": None,
                 "reason": "LLM API key present; running real classifier."}
     executor = plan.get("recommendedExecutor")
     meta = (plan.get("executorMetadata") or {}).get(executor or "", {})
     if executor and meta.get("supportsExecute"):
+        if not _doctor_provider_success(doctor, executor):
+            return {"mode": "structural", "executor": None,
+                    "routedExecutor": executor,
+                    "reason": (f"No API key; Hermes routes to execute-capable '{executor}', "
+                               "but provider doctor is not green. Live eval BLOCKED "
+                               "until a CLI executor is available or a key is provided.")}
         return {"mode": "hermes", "executor": executor,
                 "phase": plan.get("phase"), "risk": plan.get("risk"),
                 "reason": f"No API key; Hermes routes to execute-capable '{executor}'."}
@@ -68,7 +99,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--out", type=Path, required=True,
                         help="Path to write the decision JSON.")
     args = parser.parse_args(argv)
-    decision = decide(dict(os.environ), route_executor())
+    decision = decide(dict(os.environ), route_executor(), doctor=provider_doctor())
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(decision, indent=2), encoding="utf-8")
     print(json.dumps(decision))
