@@ -66,11 +66,26 @@ def provider_doctor(runner=subprocess.run) -> dict:
     return parsed if isinstance(parsed, dict) else {}
 
 
-def _doctor_provider_success(doctor: dict | None, executor: str) -> bool:
+def _doctor_provider_unready_reasons(doctor: dict | None, executor: str) -> list[str]:
     if doctor is None:
-        return True
+        return []
     provider = (doctor.get("providers") or {}).get(executor)
-    return bool(provider and provider.get("success"))
+    if not isinstance(provider, dict):
+        return [f"provider doctor has no entry for {executor!r}"]
+
+    failed_checks = []
+    for check in provider.get("checks") or []:
+        if not isinstance(check, dict) or check.get("ok") is not False:
+            continue
+        name = str(check.get("name") or "check")
+        detail = str(check.get("detail") or "failed")
+        failed_checks.append(f"{name}: {detail}")
+
+    if failed_checks:
+        return failed_checks
+    if not provider.get("success"):
+        return ["provider success=false"]
+    return []
 
 
 def decide(env: dict[str, str], plan: dict, doctor: dict | None = None) -> dict:
@@ -80,11 +95,14 @@ def decide(env: dict[str, str], plan: dict, doctor: dict | None = None) -> dict:
     executor = plan.get("recommendedExecutor")
     meta = (plan.get("executorMetadata") or {}).get(executor or "", {})
     if executor and meta.get("supportsExecute"):
-        if not _doctor_provider_success(doctor, executor):
+        unready_reasons = _doctor_provider_unready_reasons(doctor, executor)
+        if unready_reasons:
             return {"mode": "structural", "executor": None,
                     "routedExecutor": executor,
+                    "providerDoctorFailures": unready_reasons,
                     "reason": (f"No API key; Hermes routes to execute-capable '{executor}', "
-                               "but provider doctor is not green. Live eval BLOCKED "
+                               "but provider doctor is not green for that executor. "
+                               "Live eval BLOCKED "
                                "until a CLI executor is available or a key is provided.")}
         return {"mode": "hermes", "executor": executor,
                 "phase": plan.get("phase"), "risk": plan.get("risk"),

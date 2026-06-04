@@ -61,6 +61,35 @@ def test_structural_mode_when_routed_executor_doctor_is_not_green():
     assert "provider doctor is not green" in d["reason"]
 
 
+def test_structural_mode_when_optional_executor_binary_check_fails():
+    plan = {
+        "recommendedExecutor": "kimi",
+        "executorMetadata": {"kimi": {"enabled": True, "supportsExecute": True}},
+    }
+    doctor = {
+        "providers": {
+            "kimi": {
+                "success": True,
+                "checks": [
+                    {
+                        "name": "binary",
+                        "ok": False,
+                        "required": False,
+                        "detail": "kimi-cli not found on PATH",
+                    }
+                ],
+            }
+        }
+    }
+
+    d = decide({}, plan=plan, doctor=doctor)
+
+    assert d["mode"] == "structural"
+    assert d["executor"] is None
+    assert d["routedExecutor"] == "kimi"
+    assert d["providerDoctorFailures"] == ["binary: kimi-cli not found on PATH"]
+
+
 def test_structural_mode_when_executor_cannot_execute():
     plan = {
         "recommendedExecutor": "gemini",
