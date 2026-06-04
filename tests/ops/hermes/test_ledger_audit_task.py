@@ -372,7 +372,7 @@ def test_dry_run_reports_cross_task_rehearsal_for_registered_tasks(
         encoding="utf-8"
     )
     assert "## Cross-Task Rehearsal" in markdown
-    assert "- Registered tasks: 11" in markdown
+    assert f"- Registered tasks: {len(registered_task_names())}" in markdown
     assert "- Failed tasks: 0" in markdown
 
 

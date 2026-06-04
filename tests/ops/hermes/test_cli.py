@@ -147,6 +147,18 @@ def test_hermes_task_parser_has_no_duplicate_option_strings() -> None:
                 "--reason",
             },
         ),
+        (
+            "thesis-eval",
+            {
+                "--dataset",
+                "--manifest",
+                "--output",
+                "--rebaseline-output",
+                "--baseline-summary",
+                "--min-accuracy",
+                "--executor",
+            },
+        ),
     ],
 )
 def test_hermes_task_parser_exposes_expected_task_flags(
@@ -469,6 +481,48 @@ def test_register_hermes_commands_adds_config_promote_task_parser() -> None:
     assert args.task_name == "config-promote"
     assert args.proposed == "proposed-model-routing.json"
     assert args.policy_evidence == ["ticket-123"]
+    assert callable(args.func)
+
+
+def test_register_hermes_commands_adds_thesis_eval_task_parser() -> None:
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+
+    register_hermes_commands(subparsers)
+    args = parser.parse_args(
+        [
+            "hermes",
+            "task",
+            "thesis-eval",
+            "--execute",
+            "--json",
+            "--dataset",
+            "tests/fixtures/thesis_llm_golden_set.jsonl",
+            "--manifest",
+            "tests/fixtures/thesis_llm_golden_set.manifest.json",
+            "--output",
+            "artifacts/thesis_diagnostics/pr-gate.json",
+            "--rebaseline-output",
+            "artifacts/thesis_diagnostics/pr-rebaseline.json",
+            "--baseline-summary",
+            "artifacts/thesis_diagnostics/candidate_v3.summary.json",
+            "--min-accuracy",
+            "0.95",
+            "--executor",
+            "codex",
+        ]
+    )
+
+    assert args.command == "hermes"
+    assert args.hermes_cmd == "task"
+    assert args.task_name == "thesis-eval"
+    assert args.dataset == "tests/fixtures/thesis_llm_golden_set.jsonl"
+    assert args.manifest == "tests/fixtures/thesis_llm_golden_set.manifest.json"
+    assert args.output == "artifacts/thesis_diagnostics/pr-gate.json"
+    assert args.rebaseline_output == "artifacts/thesis_diagnostics/pr-rebaseline.json"
+    assert args.baseline_summary == "artifacts/thesis_diagnostics/candidate_v3.summary.json"
+    assert args.min_accuracy == 0.95
+    assert args.executor == "codex"
     assert callable(args.func)
 
 
