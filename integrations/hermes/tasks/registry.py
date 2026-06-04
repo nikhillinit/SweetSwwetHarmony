@@ -20,6 +20,7 @@ from .outbox_purge import OutboxPurgeTask
 from .restore_db import RestoreDbTask
 from .shadow_validate import ShadowValidateTask
 from .suppression_sync import SuppressionSyncTask
+from .thesis_eval import ThesisEvalTask
 
 
 class ContractCheckTask(HermesTask):
@@ -73,6 +74,7 @@ _TASKS: dict[str, type[HermesTask]] = {
     RestoreDbTask.name: RestoreDbTask,
     ShadowValidateTask.name: ShadowValidateTask,
     SuppressionSyncTask.name: SuppressionSyncTask,
+    ThesisEvalTask.name: ThesisEvalTask,
 }
 
 TASK_REGISTRY = _TASKS
@@ -159,6 +161,7 @@ def add_task_arguments(parser: argparse.ArgumentParser) -> None:
     ConfigPromoteTask.add_arguments(parser)
     OutboxPurgeTask.add_arguments(parser)
     LedgerAuditTask.add_arguments(parser)
+    ThesisEvalTask.add_arguments(parser)
 
 
 def mode_from_args(args: argparse.Namespace) -> TaskMode:
