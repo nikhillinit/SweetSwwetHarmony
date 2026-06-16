@@ -40,7 +40,7 @@ flow_spec = FlowSpec(
                 # Google models (free tier available)
                 "google/gemini-1.5-flash",
                 "google/gemini-1.5-pro",
-                "google/gemini-2.0-flash",
+                "google/gemini-3.5-flash",
 
                 # OpenAI models
                 "openai/gpt-4o-mini",
@@ -94,7 +94,7 @@ gemini_sweep = FlowSpec(
             model=[
                 "google/gemini-1.5-flash",
                 "google/gemini-1.5-pro",
-                "google/gemini-2.0-flash",
+                "google/gemini-3.5-flash",
             ],
             config=configs_matrix(
                 temperature=[0.0, 0.2, 0.5],
@@ -139,7 +139,7 @@ solver_comparison = FlowSpec(
             "tests/evaluation/thesis_eval:thesis_verbose_cot",
         ],
         model=models_matrix(
-            model=["google/gemini-2.0-flash"],
+            model=["google/gemini-3.5-flash"],
             config=configs_matrix(
                 temperature=[0.0],
             ),

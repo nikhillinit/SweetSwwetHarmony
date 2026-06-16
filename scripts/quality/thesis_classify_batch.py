@@ -12,6 +12,7 @@ import json
 from ops.quality.db import quality_conn
 from ops.quality.thesis import batch_classify_missing_thesis
 from utils.db_path_helper import resolve_db_path_env
+from utils.thesis_llm_model import DEFAULT_THESIS_LLM_MODEL, THESIS_LLM_MODEL_ENV
 
 
 def main() -> None:
@@ -19,7 +20,8 @@ def main() -> None:
     ap.add_argument("--db", default=resolve_db_path_env())
     ap.add_argument("--days", type=int, default=30)
     ap.add_argument("--limit", type=int, default=200)
-    ap.add_argument("--model", default="gemini-2.0-flash")
+    model_help = f"Defaults to ${THESIS_LLM_MODEL_ENV} or {DEFAULT_THESIS_LLM_MODEL}"
+    ap.add_argument("--model", default=None, help=model_help)
     ap.add_argument("--prompt-version", default="quality-ops-v1")
     ap.add_argument("--stop-on-error", action="store_true", default=False)
     args = ap.parse_args()
