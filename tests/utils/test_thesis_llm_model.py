@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from consumer.thesis_filter.llm_classifier import LLMClassifier
+from consumer.thesis_filter.llm_classifier import LLMClassifier, _ThesisClassifierResponse
 from utils.thesis_evaluator import LLMEvaluator, ThesisEvaluator
 from utils.thesis_llm_model import DEFAULT_THESIS_LLM_MODEL, THESIS_LLM_MODEL_ENV
 
@@ -48,3 +48,9 @@ def test_evaluator_explicit_model_wins_over_env(monkeypatch):
 
     assert evaluator.model == "gemini-explicit"
     assert orchestrator.llm_evaluator.model == "gemini-explicit"
+
+
+def test_thesis_response_schema_is_gemini_developer_api_compatible():
+    schema = _ThesisClassifierResponse.model_json_schema()
+
+    assert "additionalProperties" not in schema

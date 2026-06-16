@@ -202,7 +202,7 @@ class ClassificationStatus(str, Enum):
 class _ThesisClassifierResponse(BaseModel):
     """Internal schema for provider responses before dataclass adaptation."""
 
-    model_config = ConfigDict(extra="allow", str_strip_whitespace=True)
+    model_config = ConfigDict(extra="ignore", str_strip_whitespace=True)
 
     thesis_match: bool = False
     thesis_fit_score: float = 0.0
