@@ -165,8 +165,9 @@ class TestPipelineShadowLogging:
             raw_data={"stars": 500},
         )
 
-        # Process the signal (dry run to avoid Notion calls)
-        await pipeline.process_pending(dry_run=True)
+        # Process with a writable temp DB. Calling the stage directly avoids
+        # Notion outbox draining while still exercising persisted shadow logs.
+        await pipeline._process_signals_stage(dry_run=False)
 
         # Check shadow logs were written
         logs = await pipeline._store.get_shadow_logs()
@@ -283,8 +284,8 @@ class TestPipelineBoilerplateDefense:
             },
         )
 
-        # Process the signal (dry run)
-        await pipeline.process_pending(dry_run=True)
+        # Process with a writable temp DB so shadow diagnostics are persisted.
+        await pipeline._process_signals_stage(dry_run=False)
 
         # Check shadow logs for boilerplate_defense
         logs = await pipeline._store.get_shadow_logs(feature_name="boilerplate_defense")
@@ -329,8 +330,8 @@ class TestPipelineBoilerplateDefense:
             },
         )
 
-        # Process the signal (dry run)
-        await pipeline.process_pending(dry_run=True)
+        # Process with a writable temp DB so shadow diagnostics are persisted.
+        await pipeline._process_signals_stage(dry_run=False)
 
         # Check shadow logs
         logs = await pipeline._store.get_shadow_logs(feature_name="boilerplate_defense")
@@ -375,8 +376,8 @@ class TestPipelineBoilerplateDefense:
             },
         )
 
-        # Process the signal (dry run)
-        await pipeline.process_pending(dry_run=True)
+        # Process with a writable temp DB so shadow diagnostics are persisted.
+        await pipeline._process_signals_stage(dry_run=False)
 
         # Check shadow logs
         logs = await pipeline._store.get_shadow_logs(feature_name="boilerplate_defense")
@@ -424,8 +425,9 @@ class TestPipelineBoilerplateDefense:
                 },
             )
 
-            # Process the signal (dry run)
-            await pipeline.process_pending(dry_run=True)
+            # Process with a writable temp DB; the feature is off so no
+            # boilerplate shadow diagnostics should be persisted.
+            await pipeline._process_signals_stage(dry_run=False)
 
             # Check shadow logs - should be empty for boilerplate_defense
             logs = await pipeline._store.get_shadow_logs(feature_name="boilerplate_defense")
@@ -464,8 +466,8 @@ class TestPipelineThesisMatchShadow:
             raw_data={"description": "Healthy meal kit delivery startup"},
         )
 
-        # Process the signal (dry run)
-        await pipeline.process_pending(dry_run=True)
+        # Process with a writable temp DB so shadow diagnostics are persisted.
+        await pipeline._process_signals_stage(dry_run=False)
 
         # Check shadow logs for thesis_match
         logs = await pipeline._store.get_shadow_logs(feature_name="thesis_match")
@@ -522,8 +524,8 @@ class TestPipelineThesisMatchShadow:
                 raw_data={"description": "Enterprise food delivery platform"},
             )
 
-            # Process the signal (dry run)
-            await pipeline.process_pending(dry_run=True)
+            # Process with a writable temp DB so shadow diagnostics are persisted.
+            await pipeline._process_signals_stage(dry_run=False)
 
             # Check shadow logs for thesis_match
             logs = await pipeline._store.get_shadow_logs(feature_name="thesis_match")
