@@ -161,9 +161,20 @@ Two corrections vs. the original strategy drove this ordering:
      repo working tree. *(Resolution order verified: `DISCOVERY_DB_PATH` > `SIGNAL_DB_PATH` >
      `signals.db`.)* Add a **tracked seed/empty fixture** for any job that legitimately expects a
      repo-relative DB so CI still runs.
+     **DONE 2026-06-16:** untrack landed (PR #272); the central fail-fast resolver
+     `storage.db_paths.resolve_canonical_db_path()` landed (PR #273) and is now wired into the
+     production openers — `workflows/pipeline.py` `PipelineConfig.from_env()` and
+     `ops/scheduler.py` quality-classify/quality-patterns. CI/dev fixtures are sanctioned via
+     `HARMONIC_ALLOW_IN_TREE_DB=true` (session default in `conftest.py`) instead of a committed
+     seed DB; the guard fails closed on the bare `signals.db` default in-tree.
   4. **Repoint the Daily Pipeline** (`discovery-pipeline.yml`) to the out-of-tree path or pause
      it until the canonical DB is established (it currently restores from artifact and writes
      in-tree).
+     **DONE 2026-06-16:** repointed to `$RUNNER_TEMP/signals.db` (out-of-tree). A `$GITHUB_ENV`
+     step sets `DISCOVERY_DB_PATH` once for every job; restore/validate/finalize operate on the
+     temp path; artifacts are staged from `$RUNNER_TEMP/artifact-out` so `signals.db` never lands
+     in the workspace. The #193 paired-restore + integrity gate and `.omx/state/db_watermark.json`
+     handling are preserved; pinned by `tests/ci/test_discovery_pipeline_workflow.py`.
   5. **Enforce a single sanctioned mutation path:** make `scripts/restore_db.py` (already emits
      sha256/mtime/integrity manifests, makes a pre-restore backup, validates `schema_version`,
      and refuses while the API server is reachable) the **only** way to replace the canonical DB;
