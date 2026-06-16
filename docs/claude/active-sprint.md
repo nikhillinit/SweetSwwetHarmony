@@ -8,7 +8,13 @@ completion state.
 
 ## Current State
 
-- `main` matches `origin/main` at `ae5c573`; the primary `C:\dev\Harmonic`
+- Refreshed 2026-06-16 to `origin/main` at `275cded` (merge of PR #271,
+  thesis-golden-gate-hardening). Since the 2026-06-02 `ae5c573` rebuild, merged:
+  PR #269 (thesis golden gate), PR #270 (thesis-eval Hermes CLI gate), and
+  PR #271 (golden-gate fail-closed hardening + included-router inventory). The
+  live Hermes task registry now also includes **`thesis-eval`** (registered
+  `ThesisEvalTask`) beyond the 2026-06-02 list.
+- `main` matches `origin/main` at `275cded`; the primary `C:\dev\Harmonic`
   checkout remains dirty with local state and keepalive artifacts, so inspect
   `git status --short --branch` before editing and prefer fresh
   `.worktrees/...` lanes for new work.
@@ -72,7 +78,7 @@ repo evidence shows a concrete defect or the user requests a new narrow slice.
 - `registered_task_names()` is pinned in `tests/ops/hermes/test_task_registry.py`.
 - The live tasks are `collector-promote`, `config-promote`, `contract-check`,
   `deliberate`, `governance`, `incident`, `ledger-audit`, `outbox-purge`,
-  `restore-db`, `shadow-validate`, and `suppression-sync`.
+  `restore-db`, `shadow-validate`, `suppression-sync`, and `thesis-eval`.
 - `python -m ops.cli hermes providers doctor --json` returns `"success": true`.
   `codex`, `claude`, `gemini`, and `kimi` are enabled with binaries found;
   `antigravity` is disabled, non-required, and not on `PATH`.
