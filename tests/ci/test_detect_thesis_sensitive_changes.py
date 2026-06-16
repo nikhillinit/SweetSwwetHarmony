@@ -12,6 +12,14 @@ def test_golden_set_fixture_is_sensitive():
     assert is_sensitive(["tests/fixtures/thesis_llm_golden_set.jsonl"]) is True
 
 
+def test_hermes_thesis_task_path_is_sensitive():
+    assert is_sensitive(["integrations/hermes/tasks/thesis_eval.py"]) is True
+
+
+def test_non_thesis_hermes_task_path_is_not_sensitive():
+    assert is_sensitive(["integrations/hermes/tasks/deliberation.py"]) is False
+
+
 def test_unrelated_path_is_not_sensitive():
     assert is_sensitive(["dashboard/app.py", "README.md"]) is False
 

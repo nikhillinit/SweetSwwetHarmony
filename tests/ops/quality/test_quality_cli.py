@@ -9,6 +9,7 @@ import sys
 import pytest
 
 from ops.quality_cli import register_quality_commands, _default_db_path
+from utils.thesis_llm_model import DEFAULT_THESIS_LLM_MODEL
 
 
 def _make_parser():
@@ -195,15 +196,25 @@ class TestThesisClassifyArgsParsing:
         args = parser.parse_args([
             "quality", "--db", "test.db",
             "thesis-classify", "42",
-            "--model", "gemini-2.0-flash",
+            "--model", "gemini-3.5-flash",
             "--prompt-version", "quality-ops-v1",
         ])
 
         assert args.command == "quality"
         assert args.quality_cmd == "thesis-classify"
         assert args.signal_id == 42
-        assert args.model == "gemini-2.0-flash"
+        assert args.model == "gemini-3.5-flash"
         assert args.prompt_version == "quality-ops-v1"
+
+    def test_thesis_classify_model_defaults_to_resolver_sentinel(self):
+        parser = _make_parser()
+        args = parser.parse_args([
+            "quality", "--db", "test.db",
+            "thesis-classify", "42",
+        ])
+
+        assert args.model is None
+        assert DEFAULT_THESIS_LLM_MODEL == "gemini-3.5-flash"
 
 
 class TestThesisRefreshLatestArgsParsing:
@@ -215,14 +226,14 @@ class TestThesisRefreshLatestArgsParsing:
             "quality", "--db", "test.db",
             "thesis-refresh-latest",
             "--limit", "25",
-            "--model", "gemini-2.0-flash",
+            "--model", "gemini-3.5-flash",
             "--prompt-version", "v1.6.0",
         ])
 
         assert args.command == "quality"
         assert args.quality_cmd == "thesis-refresh-latest"
         assert args.limit == 25
-        assert args.model == "gemini-2.0-flash"
+        assert args.model == "gemini-3.5-flash"
         assert args.prompt_version == "v1.6.0"
 
 

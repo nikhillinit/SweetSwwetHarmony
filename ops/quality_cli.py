@@ -39,6 +39,7 @@ from ops.quality.proposals import (
     review_proposal,
     expire_stale_proposals,
 )
+from utils.thesis_llm_model import DEFAULT_THESIS_LLM_MODEL, THESIS_LLM_MODEL_ENV
 
 
 def _default_db_path() -> str:
@@ -117,7 +118,8 @@ def register_quality_commands(subparsers: argparse._SubParsersAction) -> None:
     # -------------------------------------------------------------- thesis-classify
     p_tc = q.add_parser("thesis-classify", help="Run keyword + LLM thesis classification for a signal")
     p_tc.add_argument("signal_id", type=int)
-    p_tc.add_argument("--model", default="gemini-2.0-flash")
+    model_help = f"Defaults to ${THESIS_LLM_MODEL_ENV} or {DEFAULT_THESIS_LLM_MODEL}"
+    p_tc.add_argument("--model", default=None, help=model_help)
     p_tc.add_argument("--prompt-version", default="quality-ops-v1")
     p_tc.set_defaults(func=_cmd_thesis_classify)
 
@@ -125,7 +127,7 @@ def register_quality_commands(subparsers: argparse._SubParsersAction) -> None:
     p_tcb = q.add_parser("thesis-classify-batch", help="Batch classify recent signals missing thesis_classifications")
     p_tcb.add_argument("--days", type=int, default=30)
     p_tcb.add_argument("--limit", type=int, default=200)
-    p_tcb.add_argument("--model", default="gemini-2.0-flash")
+    p_tcb.add_argument("--model", default=None, help=model_help)
     p_tcb.add_argument("--prompt-version", default="quality-ops-v1")
     p_tcb.add_argument("--stop-on-error", action="store_true", default=False)
     p_tcb.set_defaults(func=_cmd_thesis_classify_batch)
@@ -136,7 +138,7 @@ def register_quality_commands(subparsers: argparse._SubParsersAction) -> None:
         help="Append fresh thesis rows for the fixed 90-day created_at cohort whose latest row is missing model or prompt_version",
     )
     p_trl.add_argument("--limit", type=int, default=200)
-    p_trl.add_argument("--model", default="gemini-2.0-flash")
+    p_trl.add_argument("--model", default=None, help=model_help)
     p_trl.add_argument("--prompt-version", default="quality-ops-v1")
     p_trl.add_argument("--stop-on-error", action="store_true", default=False)
     p_trl.set_defaults(func=_cmd_thesis_refresh_latest)
@@ -211,7 +213,7 @@ def register_quality_commands(subparsers: argparse._SubParsersAction) -> None:
     p_rd = loop_subs.add_parser("rerun-diagnostic", help="Recompute the frozen router-diagnostic summary contract")
     p_rd.add_argument("--days", type=int, default=90, choices=[90])
     p_rd.add_argument("--out-dir", required=True)
-    p_rd.add_argument("--model", default="gemini-2.0-flash")
+    p_rd.add_argument("--model", default=None, help=model_help)
     p_rd.add_argument("--prompt-version", default="quality-ops-v1")
     p_rd.set_defaults(func=_cmd_learning_loop_rerun_diagnostic)
 

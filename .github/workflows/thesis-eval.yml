@@ -8,12 +8,12 @@ on:
       model:
         description: 'Model to evaluate'
         required: false
-        default: 'google/gemini-1.5-flash'
+        default: 'google/gemini-3.5-flash'
         type: choice
         options:
           - google/gemini-1.5-flash
           - google/gemini-1.5-pro
-          - google/gemini-2.0-flash
+          - google/gemini-3.5-flash
           - openai/gpt-4o-mini
           - openai/gpt-4o
       solver:
@@ -68,7 +68,7 @@ jobs:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          MODEL="${{ github.event.inputs.model || 'google/gemini-1.5-flash' }}"
+          MODEL="${{ github.event.inputs.model || 'google/gemini-3.5-flash' }}"
           SOLVER="${{ github.event.inputs.solver || 'thesis_with_cot' }}"
           echo "Running evaluation with model=$MODEL, solver=$SOLVER"
           inspect eval tests/evaluation/thesis_eval.py:$SOLVER \
@@ -81,7 +81,7 @@ jobs:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
-          MODEL="${{ github.event.inputs.model || 'google/gemini-1.5-flash' }}"
+          MODEL="${{ github.event.inputs.model || 'google/gemini-3.5-flash' }}"
           echo "Running evaluation with sample data, model=$MODEL"
           inspect eval tests/evaluation/thesis_eval.py:thesis_sample_data \
             --model "$MODEL" \
@@ -136,7 +136,7 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Metric | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| Model | ${{ github.event.inputs.model || 'google/gemini-1.5-flash' }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Model | ${{ github.event.inputs.model || 'google/gemini-3.5-flash' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Solver | ${{ github.event.inputs.solver || 'thesis_with_cot' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Accuracy | ${{ steps.parse-results.outputs.accuracy }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Threshold | ${{ env.ACCURACY_THRESHOLD }} |" >> $GITHUB_STEP_SUMMARY

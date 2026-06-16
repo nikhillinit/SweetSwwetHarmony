@@ -4,8 +4,7 @@ import csv
 import inspect
 from enum import Enum
 from pathlib import Path
-
-from fastapi.routing import APIRoute
+from typing import Any, Iterable, Iterator
 
 from api.main import app
 
@@ -56,16 +55,54 @@ def _route_key(row: dict[str, str]) -> tuple[str, str]:
     return row["method"], row["path"]
 
 
-def _api_v1_routes_by_key() -> dict[tuple[str, str], APIRoute]:
-    routes: dict[tuple[str, str], APIRoute] = {}
+def _join_route_paths(prefix: str, path: str) -> str:
+    if not prefix:
+        return path
+    if not path or path == "/":
+        return prefix
+    return f"{prefix.rstrip('/')}/{path.lstrip('/')}"
+
+
+def _iter_inventory_route_items(
+    routes: Iterable[object],
+    prefix: str = "",
+) -> Iterator[tuple[str, Any]]:
+    for route in routes:
+        include_context = getattr(route, "include_context", None)
+        original_router = getattr(route, "original_router", None)
+        original_routes = getattr(original_router, "routes", None)
+
+        if include_context is not None and original_routes is not None:
+            include_prefix = getattr(include_context, "prefix", "")
+            yield from _iter_inventory_route_items(
+                original_routes,
+                _join_route_paths(prefix, include_prefix),
+            )
+            continue
+
+        path = getattr(route, "path", None)
+        if isinstance(path, str):
+            yield _join_route_paths(prefix, path), route
+
+
+def _is_inventory_route(route: object) -> bool:
+    return (
+        hasattr(route, "methods")
+        and hasattr(route, "endpoint")
+        and hasattr(route, "dependant")
+    )
+
+
+def _api_v1_routes_by_key() -> dict[tuple[str, str], Any]:
+    routes: dict[tuple[str, str], Any] = {}
     duplicates: list[tuple[str, str]] = []
 
-    for route in app.routes:
-        if not isinstance(route, APIRoute) or not _is_api_v1_path(route.path):
+    for path, route in _iter_inventory_route_items(app.routes):
+        if not _is_api_v1_path(path) or not _is_inventory_route(route):
             continue
 
         for method in sorted(route.methods & ROUTE_METHODS):
-            key = (method, route.path)
+            key = (method, path)
             if key in routes:
                 duplicates.append(key)
             routes[key] = route
@@ -84,7 +121,7 @@ def _dependency_closure_values(call: object) -> list[object]:
     return values
 
 
-def _current_auth_marker(route: APIRoute) -> str:
+def _current_auth_marker(route: Any) -> str:
     unclassified_dependencies: list[str] = []
 
     for dependency in route.dependant.dependencies:
@@ -125,7 +162,7 @@ def _current_auth_marker(route: APIRoute) -> str:
     return "none"
 
 
-def _has_body_actor_authority(route: APIRoute) -> bool:
+def _has_body_actor_authority(route: Any) -> bool:
     for parameter in inspect.signature(route.endpoint).parameters.values():
         annotation = parameter.annotation
         field_names: set[str] = set()
@@ -162,6 +199,30 @@ def test_route_policy_inventory_covers_registered_api_v1_routes() -> None:
         "Stale entries:\n"
         + _format_keys(stale_inventory_entries)
     )
+
+
+def test_route_policy_inventory_walks_included_router_items() -> None:
+    class RouteLike:
+        path = "/auth/me"
+        methods = {"GET"}
+        endpoint = lambda: None
+        dependant = object()
+
+    class RouterLike:
+        routes = [RouteLike()]
+
+    class IncludeContextLike:
+        prefix = "/api/v1"
+
+    class IncludedRouterLike:
+        include_context = IncludeContextLike()
+        original_router = RouterLike()
+
+    items = list(_iter_inventory_route_items([IncludedRouterLike()]))
+
+    assert [(path, route.path) for path, route in items] == [
+        ("/api/v1/auth/me", "/auth/me")
+    ]
 
 
 def test_route_policy_inventory_entries_are_explicit() -> None:

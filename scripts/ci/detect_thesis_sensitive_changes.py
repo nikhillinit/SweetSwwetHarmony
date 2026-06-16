@@ -8,6 +8,7 @@ THESIS_SENSITIVE_PATTERNS = [
     "consumer/thesis_filter/*",
     "consumer/thesis_filter/**",
     "utils/thesis_*.py",
+    "integrations/hermes/tasks/*thesis*.py",
     "scripts/*thesis*.py",
     "scripts/ci/*thesis*.py",
     "tests/fixtures/thesis_llm_golden_set*",
