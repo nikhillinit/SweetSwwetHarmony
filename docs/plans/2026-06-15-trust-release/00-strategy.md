@@ -11,6 +11,27 @@ executed by this commit.
 
 ---
 
+> **Execution update — 2026-06-16 (verified against live `main` @ `275cded`):**
+> - **PR #271 is MERGED** (`origin/main` = `275cded`). P0-0's gate re-run/merge step is **done**;
+>   P0-2 is now *verify-landed + refresh sprint*, not *merge*.
+> - **The dry-run immutability harness already landed in PR #188** (`5c67b91`):
+>   `tests/support/db_snapshot.py` + `tests/integration/test_process_dry_run_readonly.py` exist and
+>   cover the entity-resolution / founder-store / `claim_facts` / `shadow_entity_resolution` lanes.
+>   P0-3 is now *verify coverage + close/re-scope #187*, not *build* (the "expect RED" first command
+>   is superseded).
+> - **P0-1 de-track is DONE** — branch `hardening/signals-db-detrack`, commit `34cf6b4`. Live
+>   precision on #149: the **working tree** held the recovered **612-row** DB (`sha256 ab1ca9c8…`,
+>   9.76 MB) while the **committed HEAD blob was the 4-row** file (`sha256 447c1359…`, 1,466,368 B),
+>   and an `assume-unchanged` index bit masked the divergence so `git status` read **clean**. The
+>   612-row recovery was therefore *already complete*; W0 only protects it. **The clobber hazard
+>   persists on `main` (and the Daily Pipeline) until `34cf6b4` merges.**
+> - **`active-sprint.md` refreshed** to `275cded` (adds `thesis-eval` to the registry list).
+>
+> The phased detail below is preserved as the strategy of record; treat the P0-2 "merge", P0-3
+> "build"/"expect RED", and Appendix A "PR #271 open" wording as **superseded by this update**.
+
+---
+
 ## 0. Quick-start for the implementer
 
 Execute top-to-bottom; respect the **Prereq** column. Sizes: S ≤ 0.5d, M ≈ 1–2d, L ≈ 3–5d.
@@ -58,7 +79,7 @@ velocity. So this release hardens the loops before expanding them.
 
 ```
 P0-0 Restore eval capability (Gemini paid tier)   ── DONE 2026-06-16
-   └─▶ P0-2 Merge gate-hardening PR #271            (re-run gate → green → merge)
+   └─▶ P0-2 Gate-hardening PR #271                  ── MERGED 275cded (verify + refresh sprint)
 P0-1 DB out of tree + chain-of-custody + recovery   (highest-severity durability fix, #149)
    └─▶ P0-3 Prove process --dry-run immutability     (adopt approved .omx plan, #187)
             └─▶ P1 (F6 / freshness / source tuning / required checks)
@@ -313,8 +334,12 @@ registry, provider doctor). `active-sprint.md` never drifts more than one merged
 ## Appendix B — Root-cause analyses
 
 ### #149 — DB reverted/truncated
-The committed `signals.db` is byte-identical (`sha256 447c1359…940e`, 1466368 B, 4 rows) to the
-known truncated file **and is git-tracked** (`git ls-files signals.db` returns it). Two
+The committed `signals.db` was byte-identical (`sha256 447c1359…940e`, 1466368 B, 4 rows) to the
+known truncated file **and was git-tracked**. *(Update 2026-06-16: de-tracked in W0, commit
+`34cf6b4`. Live precision — the working tree held the recovered **612-row** DB (`sha256
+ab1ca9c8…`) while the committed blob was the 4-row file, and an `assume-unchanged` index bit
+masked the divergence so `git status` read clean. The 612-row recovery was already complete; W0
+protects it. The hazard persists on `main` + the Daily Pipeline until `34cf6b4` merges.)* Two
 propagation vectors explain the incident; both are closed by P0-1:
 1. **Primary — git restore of a tracked truncated DB.** `git checkout`/clone/reset rewrites
    `signals.db` with the committed truncated bytes and stamps a *fresh* mtime — matching the
