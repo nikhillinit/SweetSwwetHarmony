@@ -21,6 +21,7 @@ from ops.quality.thesis import (
     store_thesis_classification,
 )
 from tests.ops.quality.conftest import _insert_signal, _utc_iso
+from utils.thesis_llm_model import THESIS_LLM_MODEL_ENV
 
 
 def _store_classification_for_signal(
@@ -88,7 +89,7 @@ class TestStoreThesisClassification:
             rationale="Consumer health app with strong thesis fit",
             key_signals=["health", "consumer", "app"],
             prompt_version="quality-ops-v1",
-            model="gemini-2.0-flash",
+            model="gemini-3.5-flash",
             input_tokens=200,
             output_tokens=80,
             latency_ms=450,
@@ -137,7 +138,7 @@ class TestStoreThesisClassification:
             rationale="API failure",
             key_signals=[],
             prompt_version="quality-ops-v1",
-            model="gemini-2.0-flash",
+            model="gemini-3.5-flash",
             input_tokens=0,
             output_tokens=0,
             latency_ms=450,
@@ -833,6 +834,63 @@ class TestClassifySignalLlmWiring:
         assert row is not None
         assert row["category"] == "consumer_marketplace"
         assert row["classification_status"] == "success"
+
+        conn.close()
+
+    def test_classify_signal_llm_uses_env_model_when_unspecified(self, quality_db, monkeypatch):
+        db_path, _store = quality_db
+        conn = sqlite3.connect(db_path)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON;")
+        monkeypatch.setenv(THESIS_LLM_MODEL_ENV, "gemini-env-model")
+
+        sid = _insert_signal(
+            conn,
+            source_api="github",
+            canonical_key="domain:env-model-test.com",
+            company_name="Env Model Test",
+            raw_data=json.dumps({"description": "Consumer marketplace for travelers."}),
+            detected_at=_utc_iso(1),
+        )
+
+        captured = {}
+
+        class FakeClassifier:
+            def __init__(self, model: str):
+                captured["model"] = model
+
+            def classify_sync(self, signal_data):
+                return types.SimpleNamespace(
+                    thesis_match=True,
+                    thesis_fit_score=0.82,
+                    category="consumer_marketplace",
+                    stage_estimate="Seed",
+                    confidence="high",
+                    rationale="Consumer marketplace fit",
+                    key_signals=["marketplace", "travelers"],
+                    classification_status="success",
+                )
+
+        fake_module = types.SimpleNamespace(LLMClassifier=FakeClassifier)
+        original_module = sys.modules.get("consumer.thesis_filter.llm_classifier")
+        sys.modules["consumer.thesis_filter.llm_classifier"] = fake_module
+        try:
+            result = classify_signal_llm(conn, signal_id=sid)
+        finally:
+            if original_module is None:
+                sys.modules.pop("consumer.thesis_filter.llm_classifier", None)
+            else:
+                sys.modules["consumer.thesis_filter.llm_classifier"] = original_module
+
+        assert captured["model"] == "gemini-env-model"
+        assert result.model == "gemini-env-model"
+
+        row = conn.execute(
+            "SELECT model FROM thesis_classifications WHERE signal_id = ?",
+            (sid,),
+        ).fetchone()
+        assert row is not None
+        assert row["model"] == "gemini-env-model"
 
         conn.close()
 

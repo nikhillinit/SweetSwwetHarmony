@@ -20,6 +20,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from utils.thesis_llm_model import resolve_thesis_llm_model
 from utils.thesis_matcher import ThesisMatcher
 from ops.quality.db import utc_now_iso
 
@@ -293,7 +294,7 @@ def _classify_signal_llm_impl(
     conn: sqlite3.Connection,
     *,
     signal_id: int,
-    model: str = "gemini-2.0-flash",
+    model: Optional[str] = None,
     prompt_version: str = "quality-ops-v1",
     classified_at: Optional[str] = None,
     commit: bool = True,
@@ -315,6 +316,7 @@ def _classify_signal_llm_impl(
             raw_payload = {}
     if not isinstance(raw_payload, dict):
         raw_payload = {}
+    effective_model = resolve_thesis_llm_model(model)
 
     # Keyword match (fast, deterministic)
     matcher = ThesisMatcher()
@@ -333,7 +335,7 @@ def _classify_signal_llm_impl(
             "LLM classification requires google-genai. Install with: pip install google-genai"
         ) from e
 
-    classifier = LLMClassifier(model=model)
+    classifier = LLMClassifier(model=effective_model)
 
     start = time.time()
     classification = classifier.classify_sync(
@@ -363,7 +365,7 @@ def _classify_signal_llm_impl(
         rationale=str(classification.rationale or ""),
         key_signals=list(classification.key_signals or []),
         prompt_version=prompt_version,
-        model=model,
+        model=effective_model,
         input_tokens=None,
         output_tokens=None,
         latency_ms=latency_ms,
@@ -385,7 +387,7 @@ def _classify_signal_llm_impl(
         confidence=str(classification.confidence or ""),
         latency_ms=latency_ms,
         classified_at=classified_at,
-        model=model,
+        model=effective_model,
         prompt_version=prompt_version,
         classification_status=str(classification.classification_status or "success"),
     ), classification_id
@@ -395,7 +397,7 @@ def classify_signal_llm(
     conn: sqlite3.Connection,
     *,
     signal_id: int,
-    model: str = "gemini-2.0-flash",
+    model: Optional[str] = None,
     prompt_version: str = "quality-ops-v1",
 ) -> ThesisRunResult:
     result, _ = _classify_signal_llm_impl(
@@ -547,7 +549,7 @@ def batch_classify_missing_thesis(
     *,
     days: int = 30,
     limit: int = 200,
-    model: str = "gemini-2.0-flash",
+    model: Optional[str] = None,
     prompt_version: str = "quality-ops-v1",
     stop_on_error: bool = False,
 ) -> Dict[str, Any]:
@@ -602,7 +604,7 @@ def batch_refresh_latest_missing_provenance(
     conn: sqlite3.Connection,
     *,
     limit: int = 200,
-    model: str = "gemini-2.0-flash",
+    model: Optional[str] = None,
     prompt_version: str = "quality-ops-v1",
     stop_on_error: bool = False,
 ) -> Dict[str, Any]:
@@ -657,7 +659,7 @@ def refresh_signal_ids_missing_provenance(
     conn: sqlite3.Connection,
     *,
     signal_ids: Iterable[int],
-    model: str = "gemini-2.0-flash",
+    model: Optional[str] = None,
     prompt_version: str = "quality-ops-v1",
     stop_on_error: bool = False,
 ) -> Dict[str, Any]:

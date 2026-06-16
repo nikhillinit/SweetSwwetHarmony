@@ -495,7 +495,7 @@ class TestLearningLoopWorkflow:
             db_path=db_path,
             days=30,
             out_dir=str(out_dir),
-            model="gemini-2.0-flash",
+            model="gemini-3.5-flash",
             prompt_version="quality-ops-v1",
         )
         with pytest.raises(ValueError, match="90-day parity window"):
@@ -524,7 +524,7 @@ class TestLearningLoopWorkflow:
             db_path=db_path,
             days=90,
             out_dir=str(out_dir),
-            model="gemini-2.0-flash",
+            model="gemini-3.5-flash",
             prompt_version="quality-ops-v1",
         )
         with patch("ops.quality_cli.refresh_signal_ids_missing_provenance", return_value={"attempted": 1, "succeeded": 0, "failed": 1, "results": [], "errors": [{"signal_id": sid_tp, "error": "boom"}]}):
@@ -568,7 +568,7 @@ class TestLearningLoopWorkflow:
             db_path=db_path,
             days=90,
             out_dir=str(out_dir),
-            model="gemini-2.0-flash",
+            model="gemini-3.5-flash",
             prompt_version="quality-ops-v1",
         )
         _cmd_learning_loop_rerun_diagnostic(args)
@@ -594,7 +594,7 @@ class TestLearningLoopWorkflow:
             db_path=db_path,
             days=90,
             out_dir=str(out_dir),
-            model="gemini-2.0-flash",
+            model="gemini-3.5-flash",
             prompt_version="quality-ops-v1",
         )
         _cmd_learning_loop_rerun_diagnostic(args)
@@ -622,7 +622,7 @@ class TestLearningLoopWorkflow:
             db_path=db_path,
             days=90,
             out_dir=str(out_dir),
-            model="gemini-2.0-flash",
+            model="gemini-3.5-flash",
             prompt_version="quality-ops-v1",
         )
         with patch("ops.quality_cli.refresh_signal_ids_missing_provenance", return_value={"attempted": 1, "succeeded": 0, "failed": 1, "results": [], "errors": [{"signal_id": sid_fp, "error": "boom"}]}):

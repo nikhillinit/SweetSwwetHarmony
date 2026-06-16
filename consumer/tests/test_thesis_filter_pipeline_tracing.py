@@ -84,7 +84,7 @@ class TestThesisFilterPipelineTracing:
             rationale="Strong consumer meal kit fit.",
             key_signals=["meal kit", "consumer"],
             prompt_version="v1.6.0",
-            model="gemini-2.0-flash",
+            model="gemini-3.5-flash",
             classification_status="success",
         )
 
@@ -106,7 +106,7 @@ class TestThesisFilterPipelineTracing:
         assert span.attributes["llm_stage_ran"] is True
         assert span.attributes["result_type"] == "llm_auto"
         assert span.attributes["classification_status"] == "success"
-        assert span.attributes["llm_model"] == "gemini-2.0-flash"
+        assert span.attributes["llm_model"] == "gemini-3.5-flash"
         assert span.attributes["llm_prompt_version"] == "v1.6.0"
 
     def test_lazy_classifier_reuses_pipeline_tracer(self):
