@@ -102,3 +102,39 @@ class TestPipelineConfigValidation:
             os.environ.pop("USER_EMAIL", None)
             with pytest.raises(ValueError, match="USER_EMAIL.*required"):
                 PipelineConfig.from_env()
+
+
+class TestPipelineConfigDbPathGuard:
+    """from_env() routes db_path through the #149 in-tree fail-fast guard."""
+
+    def test_from_env_fails_closed_on_in_tree_default(self, monkeypatch):
+        """The bare "signals.db" default resolves in-tree (the incident path) and
+        must fail closed once from_env() is wired through resolve_canonical_db_path()."""
+        from storage.db_paths import REPO_ROOT, InTreeDatabaseError
+
+        monkeypatch.delenv("DISCOVERY_DB_PATH", raising=False)
+        monkeypatch.delenv("SIGNAL_DB_PATH", raising=False)
+        monkeypatch.delenv("HARMONIC_ALLOW_IN_TREE_DB", raising=False)
+        monkeypatch.chdir(REPO_ROOT)
+        with pytest.raises(InTreeDatabaseError):
+            PipelineConfig.from_env()
+
+    def test_from_env_succeeds_with_out_of_tree_path(self, monkeypatch, tmp_path):
+        """An out-of-tree DISCOVERY_DB_PATH resolves cleanly to the absolute path."""
+        target = tmp_path / "signals.db"
+        monkeypatch.setenv("DISCOVERY_DB_PATH", str(target))
+        monkeypatch.delenv("SIGNAL_DB_PATH", raising=False)
+        monkeypatch.delenv("HARMONIC_ALLOW_IN_TREE_DB", raising=False)
+        config = PipelineConfig.from_env()
+        assert config.db_path == str(target.resolve())
+
+    def test_from_env_in_tree_allowed_with_flag(self, monkeypatch):
+        """HARMONIC_ALLOW_IN_TREE_DB lets fixtures keep an in-tree DB (absolute path)."""
+        from storage.db_paths import REPO_ROOT
+
+        monkeypatch.delenv("DISCOVERY_DB_PATH", raising=False)
+        monkeypatch.delenv("SIGNAL_DB_PATH", raising=False)
+        monkeypatch.setenv("HARMONIC_ALLOW_IN_TREE_DB", "true")
+        monkeypatch.chdir(REPO_ROOT)
+        config = PipelineConfig.from_env()
+        assert config.db_path == str((REPO_ROOT / "signals.db").resolve())

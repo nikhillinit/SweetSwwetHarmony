@@ -20,6 +20,7 @@ from typing import List, Optional
 from croniter import croniter
 
 from ops.storage import OpsStorage
+from storage.db_paths import resolve_canonical_db_path
 from utils.git_utils import get_git_info, DETACHED
 
 logger = logging.getLogger(__name__)
@@ -604,8 +605,8 @@ class PipelineScheduler:
         try:
             from ops.quality.thesis import batch_classify_recent
 
-            # Get signals DB path
-            db_path = os.getenv("DISCOVERY_DB_PATH", "signals.db")
+            # Get signals DB path (#149 guard: fail closed on in-tree resolution)
+            db_path = str(resolve_canonical_db_path())
 
             # Classify in chunks to prevent lock contention
             classified = batch_classify_recent(
@@ -629,11 +630,10 @@ class PipelineScheduler:
         logger.info(f"Starting find-patterns (run_id={run_id})")
 
         try:
-            import os
             from ops.quality.patterns import detect_patterns_wrapper
 
-            # Get signals DB path
-            db_path = os.getenv("DISCOVERY_DB_PATH", "signals.db")
+            # Get signals DB path (#149 guard: fail closed on in-tree resolution)
+            db_path = str(resolve_canonical_db_path())
 
             # Detect patterns over last 30 days
             patterns = detect_patterns_wrapper(db_path, days=30)

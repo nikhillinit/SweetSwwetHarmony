@@ -40,9 +40,30 @@ def test_daily_pipeline_does_not_bootstrap_or_recreate_state() -> None:
 def test_daily_pipeline_validates_restored_state_before_running() -> None:
     workflow = _workflow()
 
-    assert 'sqlite3 signals.db "PRAGMA integrity_check;" | grep -q "^ok$"' in workflow
+    assert 'sqlite3 "$DISCOVERY_DB_PATH" "PRAGMA integrity_check;" | grep -q "^ok$"' in workflow
     assert "Restored signals.db failed integrity check" in workflow
     assert "python -m json.tool .omx/state/db_watermark.json >/dev/null" in workflow
+
+
+def test_daily_pipeline_operates_database_out_of_tree() -> None:
+    """#149: the canonical DB must operate outside the git working tree.
+
+    The pipeline resolves DISCOVERY_DB_PATH to $RUNNER_TEMP and never writes
+    signals.db into the checked-out workspace (which the in-tree guard in
+    storage/db_paths.py also rejects).
+    """
+    workflow = _workflow()
+
+    # Canonical path resolved out-of-tree, set once for every later step.
+    assert 'echo "DISCOVERY_DB_PATH=$RUNNER_TEMP/signals.db" >> "$GITHUB_ENV"' in workflow
+    # Restore lands the DB out-of-tree, not at the workspace root.
+    assert 'mv artifact-tmp/signals.db "$DISCOVERY_DB_PATH"' in workflow
+    assert "mv artifact-tmp/signals.db signals.db" not in workflow
+    # No step pins the in-tree default any more.
+    assert "DISCOVERY_DB_PATH: signals.db" not in workflow
+    # Finalization stages artifact contents out-of-tree before upload.
+    assert 'STAGING="$RUNNER_TEMP/artifact-out"' in workflow
+    assert "${{ runner.temp }}/artifact-out/signals.db" in workflow
 
 
 def test_daily_pipeline_artifact_uploads_are_fail_closed() -> None:
