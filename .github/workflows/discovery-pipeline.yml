@@ -53,6 +53,14 @@ jobs:
           pip install httpx aiosqlite pydantic numpy aiohttp
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
+      - name: Resolve out-of-tree database path
+        run: |
+          # #149: operate the canonical signals DB outside the git working tree so
+          # a checkout/restore can never clobber it, and the in-tree guard
+          # (storage/db_paths.py) is satisfied. Set once here; every later step
+          # (including ones without an explicit env:) inherits it via $GITHUB_ENV.
+          echo "DISCOVERY_DB_PATH=$RUNNER_TEMP/signals.db" >> "$GITHUB_ENV"
+
       - name: Restore persistent database state
         id: restore-state
         env:
@@ -67,7 +75,7 @@ jobs:
           if gh run download --name signals-db-latest -D ./artifact-tmp 2>/dev/null; then
             echo "downloaded=true" >> "$GITHUB_OUTPUT"
             if [ -f artifact-tmp/signals.db ]; then
-              mv artifact-tmp/signals.db signals.db
+              mv artifact-tmp/signals.db "$DISCOVERY_DB_PATH"
               echo "restored_db=true" >> "$GITHUB_OUTPUT"
               echo "Restored signals.db from artifact"
             fi
@@ -85,7 +93,6 @@ jobs:
       - name: Validate restored database state
         id: validate-restore
         env:
-          DISCOVERY_DB_PATH: signals.db
           RESTORED_DB: ${{ steps.restore-state.outputs.restored_db }}
           RESTORED_WATERMARK: ${{ steps.restore-state.outputs.restored_watermark }}
         run: |
@@ -98,13 +105,13 @@ jobs:
             exit 1
           fi
 
-          if [ ! -f signals.db ] || [ ! -f .omx/state/db_watermark.json ]; then
+          if [ ! -f "$DISCOVERY_DB_PATH" ] || [ ! -f .omx/state/db_watermark.json ]; then
             echo "::error::Restored database state is incomplete after artifact unpack"
             exit 1
           fi
 
           echo "Validating database integrity..."
-          if ! sqlite3 signals.db "PRAGMA integrity_check;" | grep -q "^ok$"; then
+          if ! sqlite3 "$DISCOVERY_DB_PATH" "PRAGMA integrity_check;" | grep -q "^ok$"; then
             echo "::error::Restored signals.db failed integrity check"
             exit 1
           fi
@@ -117,8 +124,6 @@ jobs:
 
       - name: Sync portfolio companies
         if: ${{ github.event.inputs.skip_monitoring != 'true' }}
-        env:
-          DISCOVERY_DB_PATH: signals.db
         run: |
           echo "Syncing portfolio companies..."
           python run_pipeline.py monitor sync-portfolio || echo "Portfolio sync completed with warnings"
@@ -127,7 +132,6 @@ jobs:
         if: ${{ github.event.inputs.skip_monitoring != 'true' }}
         env:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-          DISCOVERY_DB_PATH: signals.db
         run: |
           echo "Running portfolio monitoring..."
           python run_pipeline.py monitor run --only-portfolio --limit 100 --no-embeddings || true
@@ -136,7 +140,6 @@ jobs:
         if: ${{ github.event.inputs.skip_monitoring != 'true' }}
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          DISCOVERY_DB_PATH: signals.db
         run: |
           echo "Dispatching monitoring alerts..."
           python run_pipeline.py monitor dispatch \
@@ -148,7 +151,6 @@ jobs:
         env:
           NOTION_API_KEY: ${{ secrets.NOTION_API_KEY }}
           NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
-          DISCOVERY_DB_PATH: signals.db
         run: |
           echo "Syncing suppression cache..."
           python run_pipeline.py sync || echo "Suppression sync completed with warnings"
@@ -162,7 +164,6 @@ jobs:
           COMPANIES_HOUSE_API_KEY: ${{ secrets.COMPANIES_HOUSE_API_KEY }}
           PH_API_KEY: ${{ secrets.PH_API_KEY }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-          DISCOVERY_DB_PATH: signals.db
         run: |
           COLLECTORS="${{ github.event.inputs.collectors || env.DEFAULT_COLLECTORS }}"
           DRY_RUN="${{ github.event.inputs.dry_run || 'false' }}"
@@ -191,19 +192,29 @@ jobs:
             echo "Restore gate was not accepted; skipping artifact publication"
             exit 0
           fi
-          if [ -f signals.db ]; then
-            if [ -f signals.db-wal ]; then
+          if [ -f "$DISCOVERY_DB_PATH" ]; then
+            if [ -f "$DISCOVERY_DB_PATH-wal" ]; then
               echo "Checkpointing WAL..."
-              sqlite3 signals.db "PRAGMA wal_checkpoint(TRUNCATE);" || true
+              sqlite3 "$DISCOVERY_DB_PATH" "PRAGMA wal_checkpoint(TRUNCATE);" || true
             fi
             echo "Final integrity check..."
-            sqlite3 signals.db "PRAGMA integrity_check;" | grep -q "^ok$"
+            sqlite3 "$DISCOVERY_DB_PATH" "PRAGMA integrity_check;" | grep -q "^ok$"
             if [ ! -f .omx/state/db_watermark.json ]; then
               echo "::error::DB guard watermark missing at finalization"
               exit 1
             fi
             python -m json.tool .omx/state/db_watermark.json >/dev/null
-            ls -lh signals.db*
+            # Stage artifact contents out-of-tree so signals.db never lands in the
+            # workspace; preserve the layout the restore step expects
+            # (signals.db + .omx/state/db_watermark.json at the artifact root).
+            STAGING="$RUNNER_TEMP/artifact-out"
+            rm -rf "$STAGING"
+            mkdir -p "$STAGING/.omx/state"
+            cp "$DISCOVERY_DB_PATH" "$STAGING/signals.db"
+            [ -f "$DISCOVERY_DB_PATH-wal" ] && cp "$DISCOVERY_DB_PATH-wal" "$STAGING/signals.db-wal" || true
+            [ -f "$DISCOVERY_DB_PATH-shm" ] && cp "$DISCOVERY_DB_PATH-shm" "$STAGING/signals.db-shm" || true
+            cp .omx/state/db_watermark.json "$STAGING/.omx/state/db_watermark.json"
+            ls -lh "$STAGING"/signals.db*
             echo "publish_artifacts=true" >> "$GITHUB_OUTPUT"
           else
             echo "::error::No database file to finalize"
@@ -216,10 +227,10 @@ jobs:
         with:
           name: signals-db-latest
           path: |
-            signals.db
-            signals.db-wal
-            signals.db-shm
-            .omx/state/db_watermark.json
+            ${{ runner.temp }}/artifact-out/signals.db
+            ${{ runner.temp }}/artifact-out/signals.db-wal
+            ${{ runner.temp }}/artifact-out/signals.db-shm
+            ${{ runner.temp }}/artifact-out/.omx/state/db_watermark.json
           retention-days: 30
           if-no-files-found: warn
           include-hidden-files: true
@@ -230,8 +241,8 @@ jobs:
         with:
           name: signals-db-${{ github.run_number }}
           path: |
-            signals.db
-            .omx/state/db_watermark.json
+            ${{ runner.temp }}/artifact-out/signals.db
+            ${{ runner.temp }}/artifact-out/.omx/state/db_watermark.json
           retention-days: 7
           include-hidden-files: true
 

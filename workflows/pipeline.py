@@ -47,6 +47,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 import httpx
 
 # Storage
+from storage.db_paths import resolve_canonical_db_path
 from storage.signal_store import SignalStore, StoredSignal
 from utils.signal_consolidator import SignalConsolidator, ConsolidatedSignal
 from utils.enrichment_boost import EnrichmentBoostCalculator, EnrichmentConfig
@@ -250,7 +251,10 @@ class PipelineConfig:
     def from_env(cls) -> PipelineConfig:
         """Load configuration from environment variables"""
         return cls(
-            db_path=os.getenv("DISCOVERY_DB_PATH", "signals.db"),
+            # #149 guard: fail closed if the canonical DB resolves in-tree
+            # (DISCOVERY_DB_PATH > SIGNAL_DB_PATH > "signals.db"). Set
+            # HARMONIC_ALLOW_IN_TREE_DB=true for fixtures/dev scratch DBs.
+            db_path=str(resolve_canonical_db_path()),
             asset_store_path=os.getenv("ASSET_STORE_PATH", "assets.db"),
             notion_api_key=os.getenv("NOTION_API_KEY"),
             notion_database_id=os.getenv("NOTION_DATABASE_ID"),
