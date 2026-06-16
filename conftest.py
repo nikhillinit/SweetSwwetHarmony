@@ -7,7 +7,18 @@ Configures:
 - Test environment setup
 """
 
+import os
+
 import pytest
+
+# #149 durability guard: storage.db_paths.resolve_canonical_db_path() fails closed
+# when the canonical signals DB resolves inside the repo working tree. The test
+# suite legitimately uses in-tree scratch/fixture DBs (tmp_path or "signals.db"),
+# so default the allow-flag ON for the whole session. setdefault respects an
+# explicit override (e.g. a test or CI job that wants to exercise fail-closed),
+# and tests asserting the guard fires monkeypatch.delenv() it. Set in os.environ
+# so subprocesses spawned with the inherited environment see it too.
+os.environ.setdefault("HARMONIC_ALLOW_IN_TREE_DB", "true")
 
 
 def pytest_configure(config):
