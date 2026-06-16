@@ -124,11 +124,11 @@ class TestThesisFilterResult:
         result = ThesisFilterResult(
             routing=RoutingDecision.QUALIFIED,
             keyword_score=0.6,
-            llm_model="gemini-2.0-flash",
+            llm_model="gemini-3.5-flash",
             llm_prompt_version="v1.6.0",
         )
         d = result.to_dict()
-        assert d["llm_model"] == "gemini-2.0-flash"
+        assert d["llm_model"] == "gemini-3.5-flash"
         assert d["llm_prompt_version"] == "v1.6.0"
 
     # Phase B: Test new fields
@@ -462,7 +462,7 @@ class TestThesisFilterWithMockedLLM:
             thesis_fit_score=0.85,
             category="consumer_cpg",
             rationale="Strong consumer CPG fit",
-            model="gemini-2.0-flash",
+            model="gemini-3.5-flash",
             prompt_version="v1.6.0",
             primary_end_user="individual_consumer",
             paying_customer="individual_consumer",
@@ -477,7 +477,7 @@ class TestThesisFilterWithMockedLLM:
         assert result.llm_primary_end_user == "individual_consumer"
         assert result.llm_paying_customer == "individual_consumer"
         assert result.llm_sells_to_or_operates_in == "operates_in_industry_for_consumers"
-        assert result.llm_model == "gemini-2.0-flash"
+        assert result.llm_model == "gemini-3.5-flash"
         assert result.llm_prompt_version == "v1.6.0"
         assert result.llm_skipped is False
 

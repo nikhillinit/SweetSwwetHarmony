@@ -57,7 +57,7 @@ python -m ops.cli quality --db signals.db learning-loop apply-labels `
 ```powershell
 python -m ops.cli quality --db signals.db thesis-refresh-latest `
   --limit 200 `
-  --model gemini-2.0-flash `
+  --model gemini-3.5-flash `
   --prompt-version quality-ops-v1
 ```
 

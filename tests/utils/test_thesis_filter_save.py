@@ -128,7 +128,7 @@ class TestSaveClassificationRoundTrip:
     async def test_save_classification_uses_llm_provenance_when_present(self, store, signal_id):
         """save_classification() should default model/prompt_version from the classification result."""
         classification = _make_classification(
-            llm_model="gemini-2.0-flash",
+            llm_model="gemini-3.5-flash",
             llm_prompt_version="v1.6.0",
         )
 
@@ -141,7 +141,7 @@ class TestSaveClassificationRoundTrip:
 
         row = await store.get_thesis_classification("domain:acme.ai")
         assert row is not None
-        assert row["model"] == "gemini-2.0-flash"
+        assert row["model"] == "gemini-3.5-flash"
         assert row["prompt_version"] == "v1.6.0"
 
     @pytest.mark.asyncio
@@ -364,7 +364,7 @@ class TestSaveClassificationTracing:
     async def test_save_classification_records_persist_span(self, store, signal_id):
         tracer = MemoryThesisTracer()
         classification = _make_classification(
-            llm_model="gemini-2.0-flash",
+            llm_model="gemini-3.5-flash",
             llm_prompt_version="v1.6.0",
             llm_classification_status="success",
         )
@@ -384,7 +384,7 @@ class TestSaveClassificationTracing:
         assert span.attributes["canonical_key"] == "domain:acme.ai"
         assert span.attributes["routing"] == "qualified"
         assert span.attributes["llm_prompt_version"] == "v1.6.0"
-        assert span.attributes["llm_model"] == "gemini-2.0-flash"
+        assert span.attributes["llm_model"] == "gemini-3.5-flash"
         assert span.attributes["row_id"] > 0
         assert span.errors == []
 
