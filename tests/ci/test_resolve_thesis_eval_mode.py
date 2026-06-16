@@ -19,9 +19,28 @@ def test_hermes_mode_when_executor_supports_execute():
         "risk": "low",
         "executorMetadata": {"codex": {"enabled": True, "supportsExecute": True}},
     }
-    d = decide({}, plan=plan)
+    doctor = {"providers": {"codex": {"success": True}}}
+
+    d = decide({}, plan=plan, doctor=doctor)
+
     assert d["mode"] == "hermes"
     assert d["executor"] == "codex"
+
+
+def test_structural_mode_when_provider_doctor_evidence_is_missing():
+    plan = {
+        "recommendedExecutor": "codex",
+        "phase": "production",
+        "risk": "low",
+        "executorMetadata": {"codex": {"enabled": True, "supportsExecute": True}},
+    }
+
+    d = decide({}, plan=plan, doctor=None)
+
+    assert d["mode"] == "structural"
+    assert d["executor"] is None
+    assert d["routedExecutor"] == "codex"
+    assert d["providerDoctorFailures"] == ["provider doctor evidence is missing"]
 
 
 def test_hermes_mode_requires_green_provider_doctor_when_supplied():

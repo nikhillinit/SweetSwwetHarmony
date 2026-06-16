@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from utils.thesis_benchmark import load_evaluation_dataset
+from utils.thesis_llm_model import resolve_thesis_llm_model
 from utils.thesis_matcher import ThesisMatcher, ThesisFit
 
 logger = logging.getLogger(__name__)
@@ -343,13 +344,13 @@ class LLMEvaluator:
 
     def __init__(
         self,
-        model: str = "gemini-2.0-flash",
+        model: Optional[str] = None,
         api_key: Optional[str] = None,
         system_prompt: Optional[str] = None,
         prompt_version: Optional[str] = None,
         temperature: Optional[float] = None,
     ):
-        self.model = model
+        self.model = resolve_thesis_llm_model(model)
         self.api_key = api_key
         self.system_prompt = system_prompt
         self.prompt_version = prompt_version
@@ -678,7 +679,7 @@ class ThesisEvaluator:
 
     def __init__(
         self,
-        llm_model: str = "gemini-2.0-flash",
+        llm_model: Optional[str] = None,
         llm_api_key: Optional[str] = None,
         llm_system_prompt: Optional[str] = None,
         llm_prompt_version: Optional[str] = None,

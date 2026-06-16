@@ -170,7 +170,7 @@ def _create_thesis_provenance_db(path: Path) -> None:
             [
                 (1, "LLM rationale", None, None),
                 (2, "", None, None),
-                (3, "already done", "active-v1", "gemini-2.0-flash"),
+                (3, "already done", "active-v1", "gemini-3.5-flash"),
             ],
         )
         conn.commit()

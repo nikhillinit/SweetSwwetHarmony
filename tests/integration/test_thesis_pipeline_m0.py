@@ -50,7 +50,7 @@ def _make_thesis_result(routing: RoutingDecision) -> ThesisFilterResult:
         llm_score=0.3,
         llm_category="consumer_cpg",
         llm_rationale="test rationale",
-        llm_model="gemini-2.0-flash",
+        llm_model="gemini-3.5-flash",
         llm_prompt_version="v1.6.0",
         confidence_adjustment=0.05,
         intent_phrases_matched=["healthy food"],
@@ -256,7 +256,7 @@ class TestThesisPipelineM0:
                     llm_score=0.20,
                     llm_category="excluded",
                     llm_rationale="test reject",
-                    llm_model="gemini-2.0-flash",
+                    llm_model="gemini-3.5-flash",
                     llm_prompt_version="v1.6.0",
                     confidence_adjustment=-0.05,
                 )
@@ -293,7 +293,7 @@ class TestThesisPipelineM0:
 
             classification = await pipeline._store.get_thesis_classification(signal.canonical_key)
             assert classification is not None
-            assert classification["model"] == "gemini-2.0-flash"
+            assert classification["model"] == "gemini-3.5-flash"
             assert classification["prompt_version"] == "v1.6.0"
 
             logs = await pipeline._store.get_shadow_logs(
@@ -360,7 +360,7 @@ class TestThesisPipelineM0:
                     llm_score=0.15,
                     llm_category="excluded",
                     llm_rationale="test reject active",
-                    llm_model="gemini-2.0-flash",
+                    llm_model="gemini-3.5-flash",
                     llm_prompt_version="v1.6.0",
                     confidence_adjustment=-0.05,
                 )
@@ -398,7 +398,7 @@ class TestThesisPipelineM0:
 
             cls = await pipeline._store.get_thesis_classification(signal.canonical_key)
             assert cls is not None
-            assert cls["model"] == "gemini-2.0-flash"
+            assert cls["model"] == "gemini-3.5-flash"
             assert cls["prompt_version"] == "v1.6.0"
 
             logs = await pipeline._store.get_shadow_logs(
@@ -465,7 +465,7 @@ class TestThesisPipelineM0:
                     llm_score=0.25,
                     llm_category="consumer_health_tech",
                     llm_rationale="test held active",
-                    llm_model="gemini-2.0-flash",
+                    llm_model="gemini-3.5-flash",
                     llm_prompt_version="v1.6.0",
                     confidence_adjustment=-0.05,
                 )
@@ -482,7 +482,7 @@ class TestThesisPipelineM0:
             assert result["decision"] == PushDecision.HOLD
             cls = await pipeline._store.get_thesis_classification(signal.canonical_key)
             assert cls is not None
-            assert cls["model"] == "gemini-2.0-flash"
+            assert cls["model"] == "gemini-3.5-flash"
             assert cls["prompt_version"] == "v1.6.0"
             pipeline._store.update_signal_status.assert_awaited_once()
         finally:
@@ -539,7 +539,7 @@ class TestThesisPipelineM0:
                     llm_score=0.82,
                     llm_category="consumer_cpg",
                     llm_rationale="test qualified",
-                    llm_model="gemini-2.0-flash",
+                    llm_model="gemini-3.5-flash",
                     llm_prompt_version="v1.6.0",
                     confidence_adjustment=0.05,
                 )
@@ -574,7 +574,7 @@ class TestThesisPipelineM0:
 
             cls = await pipeline._store.get_thesis_classification(signal.canonical_key)
             assert cls is not None
-            assert cls["model"] == "gemini-2.0-flash"
+            assert cls["model"] == "gemini-3.5-flash"
             assert cls["prompt_version"] == "v1.6.0"
         finally:
             await pipeline.close()

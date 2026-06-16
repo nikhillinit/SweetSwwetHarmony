@@ -68,7 +68,7 @@ def provider_doctor(runner=subprocess.run) -> dict:
 
 def _doctor_provider_unready_reasons(doctor: dict | None, executor: str) -> list[str]:
     if doctor is None:
-        return []
+        return ["provider doctor evidence is missing"]
     provider = (doctor.get("providers") or {}).get(executor)
     if not isinstance(provider, dict):
         return [f"provider doctor has no entry for {executor!r}"]
