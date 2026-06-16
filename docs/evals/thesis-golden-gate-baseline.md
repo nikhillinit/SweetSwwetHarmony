@@ -48,7 +48,7 @@ classifier v1.6.0, 2026-04-03)
 - benchmark_sample_count: 40
 - benchmark_fingerprint: a767ff5d484324493ebabeb0bee0968b6653f9ae5dc9c26c61619ca30e24fa13
 
-## Step 6.1 re-validation (F6) - PENDING maintainer dispatch
+## Step 6.1 re-validation (F6) - COMPLETE 2026-06-16
 
 candidate_v3 is NOT a turnkey baseline for the current gate. It was scored
 against the 2026-04-03.v1 40-sample benchmark (fingerprint a767ff5d...), whereas
@@ -75,7 +75,22 @@ python scripts/thesis_diagnostic_runner.py `
 Record here whether drift versus candidate_v3 is within tolerance. If it is not,
 file a re-baseline (see Promotion) rather than trusting candidate_v3.
 
-Status: PENDING (re-validation not yet run).
+Status: COMPLETE — re-validated 2026-06-16 via the Hermes `thesis-eval` task
+(`python -m ops.cli hermes task thesis-eval --execute --executor gemini`), the
+orchestrated equivalent of the maintainer command above.
+
+Result (2026-06-16, live Gemini, 64-sample set, fingerprint
+`536e081d4ceec265a27cf037f7bb33ae88831895554bf8ebdbc29bf578d392fc`):
+- LLM (Gemini) accuracy: **0.9375** (60/64) — meets the 0.9 floor; gate decision **`go`**.
+- Keyword-baseline accuracy: 0.359375; accuracy delta +0.578125.
+- Gate artifact: `artifacts/thesis_diagnostics/pr-gate.json`.
+- Hermes ledger run: `ai-logs/hermes/runs/hermes_20260616_093959_6b5b0482/`.
+
+This is a re-validation pass (the gate now has current eval data), **not** a
+baseline promotion; candidate_v3 remains the recorded baseline summary unless
+promoted via the flow below. Note the executor was the gemini **CLI** wrapper
+(`model: gemini-cli`); a promotion-grade run should additionally confirm parity
+with `scripts/thesis_diagnostic_runner.py` (direct Gemini API).
 
 ## Accuracy floor
 
