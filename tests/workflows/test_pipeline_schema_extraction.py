@@ -167,7 +167,7 @@ class TestProcessCompanySchemaExtraction:
         mock_gate.evaluate.return_value.decision = PushDecision.REJECT
         pipeline._gate = mock_gate
 
-        result = await pipeline._process_company([mock_stored_signal], dry_run=True)
+        result = await pipeline._process_company([mock_stored_signal], dry_run=False)
 
         mock_store.has_active_schema.assert_called_once_with("comp-123")
         mock_extractor.extract.assert_called_once()
