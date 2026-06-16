@@ -118,7 +118,7 @@ async def test_signal_with_thesis_fit_score_uses_it():
         await db.execute(
             """INSERT INTO thesis_classifications
                (signal_id, thesis_fit_score, keyword_score, category, model, classified_at)
-               VALUES (2, 0.85, 0.60, 'consumer_cpg', 'gemini-2.0-flash', '2026-01-01')"""
+               VALUES (2, 0.85, 0.60, 'consumer_cpg', 'gemini-3.5-flash', '2026-01-01')"""
         )
         await db.commit()
 
@@ -232,12 +232,12 @@ async def test_mixed_golden_set_pass_rate():
         await db.execute(
             """INSERT INTO thesis_classifications
                (signal_id, thesis_fit_score, keyword_score, model, classified_at)
-               VALUES (20, 0.80, 0.50, 'gemini-2.0-flash', '2026-01-01')"""
+               VALUES (20, 0.80, 0.50, 'gemini-3.5-flash', '2026-01-01')"""
         )
         await db.execute(
             """INSERT INTO thesis_classifications
                (signal_id, thesis_fit_score, keyword_score, model, classified_at)
-               VALUES (21, 0.70, 0.45, 'gemini-2.0-flash', '2026-01-01')"""
+               VALUES (21, 0.70, 0.45, 'gemini-3.5-flash', '2026-01-01')"""
         )
         # FP keyword-only classifications
         await db.execute(

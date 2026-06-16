@@ -92,7 +92,7 @@ class TestThesisClassificationStorage:
             rationale="Meal kit delivery startup",
             key_signals=["meal kit", "d2c"],
             prompt_version="v1.2.0",
-            model="gemini-2.0-flash",
+            model="gemini-3.5-flash",
         )
         assert result > 0  # Returns the inserted row ID
 
@@ -180,7 +180,7 @@ class TestThesisClassificationStorage:
             rationale="Fitness app for consumers",
             key_signals=["fitness", "wellness", "d2c"],
             prompt_version="v1.3.0",
-            model="gemini-2.0-flash",
+            model="gemini-3.5-flash",
             input_tokens=150,
             output_tokens=75,
             latency_ms=450,
@@ -208,7 +208,7 @@ class TestThesisClassificationStorage:
         assert result["rationale"] == "Fitness app for consumers"
         assert result["key_signals"] == ["fitness", "wellness", "d2c"]
         assert result["prompt_version"] == "v1.3.0"
-        assert result["model"] == "gemini-2.0-flash"
+        assert result["model"] == "gemini-3.5-flash"
         assert result["input_tokens"] == 150
         assert result["output_tokens"] == 75
         assert result["latency_ms"] == 450

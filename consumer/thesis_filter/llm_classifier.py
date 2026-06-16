@@ -38,6 +38,7 @@ from telemetry.thesis_tracing import (
     summarize_text_payload,
 )
 from utils.circuit_breaker import CircuitBreaker, CircuitOpenError
+from utils.thesis_llm_model import resolve_thesis_llm_model
 
 logger = logging.getLogger(__name__)
 
@@ -494,7 +495,7 @@ class LLMClassifier:
 
     def __init__(
         self,
-        model: str = "gemini-2.0-flash",
+        model: Optional[str] = None,
         api_key: Optional[str] = None,
         temperature: float = 0.2,
         max_tokens: int = 800,
@@ -509,7 +510,7 @@ class LLMClassifier:
         Initialize Gemini classifier.
 
         Args:
-            model: Gemini model (gemini-2.0-flash recommended)
+            model: Gemini model (defaults to THESIS_LLM_MODEL or gemini-3.5-flash)
             api_key: Google API key (defaults to GOOGLE_API_KEY or GEMINI_API_KEY)
             temperature: Sampling temperature (lower = more deterministic)
             max_tokens: Max response tokens
@@ -519,7 +520,7 @@ class LLMClassifier:
             rate_limiter: Rate limiter (defaults to 15 RPM, 1500 RPD)
             circuit_breaker: Circuit breaker (defaults to 5 failures, 600s timeout)
         """
-        self.model_name = model
+        self.model_name = resolve_thesis_llm_model(model)
         self.api_key = api_key or os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
         self.temperature = temperature
         self.max_tokens = max_tokens
@@ -997,7 +998,7 @@ Respond with JSON classification only."""
         """
         Estimate cost for classifying N signals.
 
-        Gemini 2.0 Flash on AI Studio: FREE (1500 RPM, 1M tokens/day)
+        Gemini Flash on AI Studio: FREE (1500 RPM, 1M tokens/day)
 
         Returns:
             0.0 (free tier)

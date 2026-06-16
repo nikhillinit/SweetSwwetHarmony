@@ -75,7 +75,7 @@ async def sandbox_db(tmp_path: Path) -> dict[str, Any]:
             thesis_fit_score=0.8,
             category="consumer",
             rationale="LLM fit",
-            model="gemini-2.0-flash",
+            model="gemini-3.5-flash",
         )
     finally:
         await store.close()
@@ -152,7 +152,7 @@ class TestEvaluateActivationSandbox:
                         0.83,
                         "consumer",
                         "scratch proof",
-                        "gemini-2.0-flash",
+                        "gemini-3.5-flash",
                         now,
                     ),
                 )
