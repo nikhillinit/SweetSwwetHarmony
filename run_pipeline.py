@@ -439,11 +439,29 @@ async def cmd_full(args):
         def _on_progress(phase: int, total: int, msg: str):
             print_phase(phase, total, msg)
 
-        stats = await pipeline.run_full_pipeline(
-            collectors=collectors,
-            dry_run=args.dry_run,
-            progress_callback=_on_progress,
-        )
+        progress_ui = None
+        progress_callback = _on_progress
+        if getattr(args, "progress", False):
+            from visualization.terminal_progress import PipelineProgress
+            from rich.live import Live
+            progress_ui = PipelineProgress()
+
+            def progress_callback(phase: int, total: int, msg: str):
+                progress_ui.add_summary(f"[bold]Stage {phase}/{total}:[/bold] {msg}")
+
+        if progress_ui:
+            with Live(progress_ui.progress, refresh_per_second=10):
+                stats = await pipeline.run_full_pipeline(
+                    collectors=collectors,
+                    dry_run=args.dry_run,
+                    progress_callback=progress_callback,
+                )
+        else:
+            stats = await pipeline.run_full_pipeline(
+                collectors=collectors,
+                dry_run=args.dry_run,
+                progress_callback=progress_callback,
+            )
 
         # Print results with top-line verdict
         print()
@@ -2697,6 +2715,12 @@ Environment variables:
         action="store_true",
         help="Save raw snapshots to SourceAssetStore",
     )
+    full_parser.add_argument(
+        "--progress",
+        action="store_true",
+        default=False,
+        help="Show real-time terminal progress bars (rich). Does not write metrics in dry-run.",
+    )
 
     # Collect command
     collect_parser = subparsers.add_parser(
@@ -2739,6 +2763,12 @@ Environment variables:
         "--use-asset-store",
         action="store_true",
         help="Save raw snapshots to SourceAssetStore",
+    )
+    collect_parser.add_argument(
+        "--progress",
+        action="store_true",
+        default=False,
+        help="Show real-time terminal progress bars (rich). Does not write metrics in dry-run.",
     )
 
     # Process command
