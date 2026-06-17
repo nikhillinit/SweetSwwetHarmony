@@ -3,7 +3,7 @@
 
 ---
 
-## ðŸ“– OVERVIEW
+## 📖 OVERVIEW
 
 This guide shows you **exactly** how to execute the integrated ops layer procedure with minimal manual intervention.
 
@@ -13,7 +13,7 @@ This guide shows you **exactly** how to execute the integrated ops layer procedu
 
 ---
 
-## ðŸš€ QUICK START
+## 🚀 QUICK START
 
 ### Step 1: Open the Procedure
 Open `INTEGRATED_OPS_LAYER_PROCEDURE.md` in your preferred editor or markdown viewer.
@@ -43,12 +43,12 @@ The procedure document will guide you through each phase. At each checkpoint:
 
 ---
 
-## ðŸŽ¯ CHECKPOINT PATTERN
+## 🎯 CHECKPOINT PATTERN
 
 Every checkpoint follows this pattern:
 
 ```
-â¸ï¸  WORKFLOW PAUSED - USER ACTION REQUIRED
+⏸️  WORKFLOW PAUSED - USER ACTION REQUIRED
 
 [Description of what was just completed]
 
@@ -64,7 +64,7 @@ Type your choice:
 
 ---
 
-## ðŸ”„ HOW AUTOMATION WORKS
+## 🔄 HOW AUTOMATION WORKS
 
 ### What Happens Automatically
 
@@ -87,7 +87,7 @@ When you approve a step, the procedure will:
 
 You must actively participate when you see:
 
-1. **â¸ï¸  WORKFLOW PAUSED**
+1. **⏸️  WORKFLOW PAUSED**
    - Always requires your input
    - Type one of the provided options
 
@@ -101,7 +101,7 @@ You must actively participate when you see:
 
 ---
 
-## ðŸ“‹ PHASE-BY-PHASE BREAKDOWN
+## 📋 PHASE-BY-PHASE BREAKDOWN
 
 ### Phase 0: Foundation (Est. 2 hours)
 **Automation:** 75%  
@@ -170,7 +170,7 @@ python -m ops.cli run-extraction --limit 3 --db "$env:DISCOVERY_DB_PATH"
 
 ---
 
-## ðŸ› ï¸ TROUBLESHOOTING COMMON ISSUES
+## 🛠️ TROUBLESHOOTING COMMON ISSUES
 
 ### Issue: "FTS5 not available"
 **Solution:**
@@ -209,7 +209,7 @@ sqlite3 signals.db "PRAGMA journal_mode=WAL;"
 
 ---
 
-## ðŸ“Š PROGRESS TRACKING
+## 📊 PROGRESS TRACKING
 
 Use this checklist to track your progress:
 
@@ -244,7 +244,7 @@ Phase 5: Production Deployment
 
 ---
 
-## âš¡ COMMAND REFERENCE
+## ⚡ COMMAND REFERENCE
 
 ### Most Frequently Used Commands
 
@@ -270,7 +270,7 @@ python ops/monitor.py
 
 ---
 
-## ðŸŽ“ BEST PRACTICES
+## 🎓 BEST PRACTICES
 
 ### 1. Review Before Approving
 - **Always** read the automated output before typing `[CONTINUE]`
@@ -297,7 +297,7 @@ Copy-Item signals.db "signals.db.backup_phase_N"
 
 ---
 
-## ðŸš¨ EMERGENCY PROCEDURES
+## 🚨 EMERGENCY PROCEDURES
 
 ### If Something Goes Wrong
 
@@ -337,26 +337,26 @@ sqlite3 signals.db "SELECT * FROM system_health ORDER BY timestamp DESC LIMIT 20
 
 ---
 
-## âœ… SUCCESS CRITERIA
+## ✅ SUCCESS CRITERIA
 
 You'll know the procedure completed successfully when:
 
-1. âœ… All phases marked complete in checklist
-2. âœ… No failing tests in `pytest tests/ops/`
-3. âœ… `python -m ops.cli stats` shows healthy metrics
-4. âœ… Production extraction runs complete successfully
-5. âœ… All 14 checkpoints approved
+1. ✅ All phases marked complete in checklist
+2. ✅ No failing tests in `pytest tests/ops/`
+3. ✅ `python -m ops.cli stats` shows healthy metrics
+4. ✅ Production extraction runs complete successfully
+5. ✅ All 14 checkpoints approved
 
 ---
 
-## ðŸŽ¯ FINAL CHECKLIST
+## 🎯 FINAL CHECKLIST
 
 Before marking complete, verify:
 
 ```bash
 # 1. Bootstrap works
 python -m ops.bootstrap --db "$env:DISCOVERY_DB_PATH"
-# Expected: "âœ… OK: DB ready at signals.db"
+# Expected: "✅ OK: DB ready at signals.db"
 
 # 2. All tests pass
 pytest tests/ops/ -v --tb=short
@@ -377,7 +377,7 @@ python ops/monitor.py &
 
 ---
 
-## ðŸ“ž GETTING HELP
+## 📞 GETTING HELP
 
 If you encounter issues:
 
@@ -389,15 +389,15 @@ If you encounter issues:
 
 ---
 
-## ðŸŽ‰ COMPLETION
+## 🎉 COMPLETION
 
 When you reach the final checkpoint and type `[DONE]`:
 
 **Your ops layer is now:**
-- âœ… Self-healing (automatic collector repairs)
-- âœ… Intelligent (learning from past decisions)
-- âœ… Observable (comprehensive monitoring)
-- âœ… Production-ready (tested and deployed)
+- ✅ Self-healing (automatic collector repairs)
+- ✅ Intelligent (learning from past decisions)
+- ✅ Observable (comprehensive monitoring)
+- ✅ Production-ready (tested and deployed)
 
 **Next steps:**
 1. Set up scheduled jobs (cron/Task Scheduler)
@@ -405,5 +405,4 @@ When you reach the final checkpoint and type `[DONE]`:
 3. Review and approve pending memory facts
 4. Configure alerting for system_health degradation
 
-Congratulations! ðŸŽŠ
-
+Congratulations! 🎊
