@@ -35,6 +35,8 @@ from typing import List, Optional
 
 import aiosqlite
 
+from utils.db_path_helper import resolve_db_path_env
+
 logger = logging.getLogger(__name__)
 
 
@@ -102,14 +104,14 @@ class SaaSEnrichmentStore:
     - Indexed by entity_id for efficient lookups
     """
 
-    def __init__(self, db_path: str = "signals.db"):
+    def __init__(self, db_path: str | None = None):
         """
         Initialize SaaS enrichment store.
 
         Args:
             db_path: Path to SQLite database file. Use ":memory:" for testing.
         """
-        self.db_path = db_path
+        self.db_path = resolve_db_path_env(db_path)
         self._db: Optional[aiosqlite.Connection] = None
 
     async def initialize(self) -> None:

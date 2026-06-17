@@ -13,6 +13,7 @@ from .base import (
     TaskContext,
     TaskFailure,
     copy_snapshot,
+    resolve_task_db_path,
     run_command,
     sha256_file,
 )
@@ -32,7 +33,7 @@ class SuppressionSyncTask(HermesTask):
 
     @classmethod
     def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
-        parser.add_argument("--db-path", default="signals.db")
+        parser.add_argument("--db-path", default=None)
         parser.add_argument("--ttl-days", type=int, default=7)
         cleanup_group = parser.add_mutually_exclusive_group()
         cleanup_group.add_argument(
@@ -253,7 +254,7 @@ class SuppressionSyncTask(HermesTask):
         ]
 
     def _db_path(self, context: TaskContext) -> Path:
-        return context.resolve(getattr(context.args, "db_path", None)) or context.root / "signals.db"
+        return resolve_task_db_path(context, getattr(context.args, "db_path", None))
 
     def _workflow_command(self, context: TaskContext, *, dry_run: bool) -> list[str]:
         delete_stale = _effective_delete_stale(context.args)

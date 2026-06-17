@@ -605,7 +605,7 @@ async def store_canary_run(
 # CLI ENTRY POINT (Wave 2)
 # =============================================================================
 
-async def _cli_run(db_path: str, store_results: bool = False) -> None:
+async def _cli_run(db_path: str | None, store_results: bool = False) -> None:
     """CLI: run canary check and optionally store results."""
     from storage.signal_store import SignalStore
 
@@ -643,7 +643,7 @@ async def _cli_run(db_path: str, store_results: bool = False) -> None:
         await store.close()
 
 
-async def _cli_status(db_path: str) -> None:
+async def _cli_status(db_path: str | None) -> None:
     """CLI: show latest canary status."""
     from storage.signal_store import SignalStore
 
@@ -670,7 +670,7 @@ async def _cli_status(db_path: str) -> None:
         await store.close()
 
 
-async def _cli_history(db_path: str, limit: int = 10) -> None:
+async def _cli_history(db_path: str | None, limit: int = 10) -> None:
     """CLI: show canary run history."""
     from storage.signal_store import SignalStore
 
@@ -712,7 +712,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(description="Canary Checker CLI")
     parser.add_argument("command", choices=["run", "status", "history"])
-    parser.add_argument("--db", default="signals.db", help="Database path")
+    parser.add_argument("--db", default=None, help="Database path")
     parser.add_argument("--store-results", action="store_true", help="Store results to DB")
     parser.add_argument("--limit", type=int, default=10, help="History limit")
 

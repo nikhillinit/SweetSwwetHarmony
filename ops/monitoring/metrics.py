@@ -261,12 +261,17 @@ class OpsMetricsCollector:
         - disagreement_rate: % of classifications with disagreement
         """
         try:
-            import os
             import sqlite3
             from pathlib import Path
 
+            from storage.db_paths import InTreeDatabaseError, resolve_canonical_db_path
+
             # Get signals DB path
-            signals_db = os.getenv("DISCOVERY_DB_PATH", "signals.db")
+            try:
+                signals_db = resolve_canonical_db_path()
+            except InTreeDatabaseError as exc:
+                logger.warning("Signals DB path rejected: %s", exc)
+                return {}
             if not Path(signals_db).exists():
                 logger.warning(f"Signals DB not found: {signals_db}")
                 return {}

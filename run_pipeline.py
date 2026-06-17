@@ -228,10 +228,7 @@ def _guard_db_path(args: argparse.Namespace) -> Optional[str]:
     mode = _db_guard_mode(args)
     if mode is None:
         return None
-    try:
-        return resolve_db_path(args)
-    except Exception:
-        return getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH") or "signals.db"
+    return resolve_db_path(args)
 
 
 def _read_current_signal_count(db_path: str) -> tuple[Optional[int], Optional[str]]:
@@ -1234,7 +1231,7 @@ async def cmd_embeddings(args):
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
-    db_path = getattr(args, "db_path", "signals.db")
+    db_path = resolve_db_path(args)
     force = getattr(args, "force", False)
     limit = getattr(args, "limit", None)
 
@@ -2086,7 +2083,7 @@ async def cmd_eval_run(args):
 
     eval_type = getattr(args, "type", "keyword")
     dataset_path = getattr(args, "dataset", "datasets/thesis_sample.jsonl")
-    db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+    db_path = resolve_db_path(args)
     save_results = getattr(args, "save", True)
 
     print(BANNER_SEP)
@@ -2204,7 +2201,7 @@ async def cmd_eval_results(args):
     """Show historical thesis evaluation results."""
     from storage.signal_store import SignalStore
 
-    db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+    db_path = resolve_db_path(args)
     limit = getattr(args, "limit", 10)
     eval_type = getattr(args, "type", None)
 
@@ -2261,7 +2258,7 @@ async def cmd_eval_results(args):
 
 async def cmd_shadow_status(args) -> int:
     """Show shadow feature flag state and data volumes."""
-    db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+    db_path = resolve_db_path(args)
     days = getattr(args, "days", 7)
     json_output = getattr(args, "json_output", False)
 
@@ -2402,7 +2399,7 @@ async def cmd_shadow_status(args) -> int:
 
 async def cmd_activation_check(args) -> int:
     """Check activation readiness for the given step."""
-    db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+    db_path = resolve_db_path(args)
     store = SignalStore(db_path=db_path)
     try:
         await store.initialize()
@@ -2441,7 +2438,7 @@ async def cmd_activation_check(args) -> int:
 
 async def cmd_phase_g_check(args) -> int:
     """Check Phase G entity resolution readiness."""
-    db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+    db_path = resolve_db_path(args)
     store = SignalStore(db_path=db_path)
     try:
         await store.initialize()
@@ -2473,7 +2470,7 @@ async def cmd_phase_g_check(args) -> int:
 
 async def cmd_entity_merge_preview(args) -> int:
     """Preview pending entity merges without applying them."""
-    db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+    db_path = resolve_db_path(args)
     limit = getattr(args, "limit", 10)
     json_output = getattr(args, "json_output", False)
 
@@ -2593,7 +2590,7 @@ async def cmd_entity_merge_preview(args) -> int:
 
 async def cmd_entity_audit(args) -> int:
     """Audit recent entity migrations and integrity."""
-    db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+    db_path = resolve_db_path(args)
     days = getattr(args, "days", 7)
     json_output = getattr(args, "json_output", False)
 
@@ -3016,8 +3013,8 @@ Environment variables:
     embeddings_parser.add_argument(
         "--db-path",
         type=str,
-        default="signals.db",
-        help="Path to SQLite database (default: signals.db)",
+        default=None,
+        help="Path to SQLite database (default: canonical DISCOVERY_DB_PATH)",
     )
     embeddings_parser.add_argument(
         "--force",
@@ -3298,7 +3295,7 @@ Examples:
     import_parser.add_argument(
         "--db-path",
         type=str,
-        default=os.getenv("DISCOVERY_DB_PATH", "signals.db"),
+        default=None,
         help="Path to signals database",
     )
 
@@ -3343,7 +3340,7 @@ Examples:
     corroborate_parser.add_argument(
         "--db-path",
         type=str,
-        default=os.getenv("DISCOVERY_DB_PATH", "signals.db"),
+        default=None,
         help="Path to signals database",
     )
 
@@ -3388,7 +3385,7 @@ Examples:
     goldset_list_parser.add_argument(
         "--db-path",
         type=str,
-        default=os.getenv("DISCOVERY_DB_PATH", "signals.db"),
+        default=None,
         help="Path to signals database",
     )
 
@@ -3397,7 +3394,7 @@ Examples:
     goldset_stats_parser.add_argument(
         "--db-path",
         type=str,
-        default=os.getenv("DISCOVERY_DB_PATH", "signals.db"),
+        default=None,
         help="Path to signals database",
     )
 
@@ -3419,7 +3416,7 @@ Examples:
     goldset_export_parser.add_argument(
         "--db-path",
         type=str,
-        default=os.getenv("DISCOVERY_DB_PATH", "signals.db"),
+        default=None,
         help="Path to signals database",
     )
 
@@ -3433,7 +3430,7 @@ Examples:
     goldset_import_parser.add_argument(
         "--db-path",
         type=str,
-        default=os.getenv("DISCOVERY_DB_PATH", "signals.db"),
+        default=None,
         help="Path to signals database",
     )
 
@@ -3482,7 +3479,7 @@ Examples:
     evaluate_parser.add_argument(
         "--db-path",
         type=str,
-        default=os.getenv("DISCOVERY_DB_PATH", "signals.db"),
+        default=None,
         help="Path to signals database",
     )
 
@@ -3531,7 +3528,7 @@ Examples:
     monitor_add_parser.add_argument(
         "--db-path",
         type=str,
-        default=os.getenv("DISCOVERY_DB_PATH", "signals.db"),
+        default=None,
         help="Path to signals database",
     )
 
@@ -3551,7 +3548,7 @@ Examples:
     monitor_run_parser.add_argument(
         "--db-path",
         type=str,
-        default=os.getenv("DISCOVERY_DB_PATH", "signals.db"),
+        default=None,
         help="Path to signals database",
     )
     monitor_run_parser.add_argument(
@@ -3576,7 +3573,7 @@ Examples:
     monitor_status_parser.add_argument(
         "--db-path",
         type=str,
-        default=os.getenv("DISCOVERY_DB_PATH", "signals.db"),
+        default=None,
         help="Path to signals database",
     )
 
@@ -3591,7 +3588,7 @@ Examples:
     monitor_list_parser.add_argument(
         "--db-path",
         type=str,
-        default=os.getenv("DISCOVERY_DB_PATH", "signals.db"),
+        default=None,
         help="Path to signals database",
     )
 
@@ -3609,7 +3606,7 @@ Examples:
     monitor_sync_parser.add_argument(
         "--db-path",
         type=str,
-        default=os.getenv("DISCOVERY_DB_PATH", "signals.db"),
+        default=None,
         help="Path to signals database",
     )
     monitor_sync_parser.add_argument(
@@ -3636,7 +3633,7 @@ Examples:
     monitor_dispatch_parser.add_argument(
         "--db-path",
         type=str,
-        default=os.getenv("DISCOVERY_DB_PATH", "signals.db"),
+        default=None,
         help="Path to signals database",
     )
     monitor_dispatch_parser.add_argument(
@@ -3679,7 +3676,7 @@ Examples:
     outbox_drain_parser.add_argument(
         "--db-path",
         type=str,
-        default=os.getenv("DISCOVERY_DB_PATH", "signals.db"),
+        default=None,
         help="Path to signals database",
     )
 
@@ -3737,7 +3734,7 @@ Examples:
     shadow_backfill_parser.add_argument(
         "--db-path",
         type=str,
-        default=os.getenv("DISCOVERY_DB_PATH", "signals.db"),
+        default=None,
         help="Path to signals database",
     )
 
@@ -3900,7 +3897,7 @@ Examples:
     eval_run_parser.add_argument(
         "--db-path",
         type=str,
-        default=os.getenv("DISCOVERY_DB_PATH", "signals.db"),
+        default=None,
         help="Path to signals database",
     )
     eval_run_parser.add_argument(
@@ -3931,7 +3928,7 @@ Examples:
     eval_results_parser.add_argument(
         "--db-path",
         type=str,
-        default=os.getenv("DISCOVERY_DB_PATH", "signals.db"),
+        default=None,
         help="Path to signals database",
     )
 
@@ -5773,7 +5770,7 @@ async def cmd_triage_list(args):
 
     Phase 0, Task 0.11: Lets operators quickly scan signals needing review.
     """
-    db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+    db_path = resolve_db_path(args)
     store = SignalStore(db_path)
     await store.initialize()
 
@@ -5918,7 +5915,7 @@ async def _triage_action(args, action_type: str, new_status=None):
     """
     from datetime import datetime, timezone
 
-    db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+    db_path = resolve_db_path(args)
     store = SignalStore(db_path)
     await store.initialize()
 
@@ -6012,7 +6009,7 @@ async def cmd_triage_ach(args):
     Wave 1, Phase B: Builds deterministic ACH matrix, stores result,
     and prints formatted output (hypothesis scores, bull/bear, differentiators).
     """
-    db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+    db_path = resolve_db_path(args)
     store = SignalStore(db_path)
     await store.initialize()
 
@@ -6090,7 +6087,7 @@ async def cmd_triage_detail(args):
     Phase 3, Task 3.10: Displays case-law precedents, exemplar matches,
     and veto status for a single signal.
     """
-    db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+    db_path = resolve_db_path(args)
     store = SignalStore(db_path)
     await store.initialize()
 
@@ -6259,7 +6256,7 @@ async def cmd_export_queue(args):
     import csv
     from datetime import datetime, timedelta, timezone
 
-    db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+    db_path = resolve_db_path(args)
     schema_version = getattr(args, "schema", "v1") or "v1"
     store = SignalStore(db_path)
     await store.initialize()
@@ -6505,7 +6502,7 @@ async def cmd_push(args):
             print(f"ERROR: {e}")
             sys.exit(1)
 
-    db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+    db_path = resolve_db_path(args)
     store = SignalStore(db_path)
     await store.initialize()
 
@@ -6730,7 +6727,7 @@ async def cmd_ground_truth(args):
 
 async def cmd_publish_create(args):
     """Create a batch from approved reviews."""
-    db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+    db_path = resolve_db_path(args)
     store = SignalStore(db_path=db_path)
     await store.initialize()
 
@@ -6752,7 +6749,7 @@ async def cmd_publish_create(args):
 
 async def cmd_publish_preview(args):
     """Preview batch contents."""
-    db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+    db_path = resolve_db_path(args)
     store = SignalStore(db_path=db_path)
     await store.initialize()
 
@@ -6787,7 +6784,7 @@ async def cmd_publish_preview(args):
 
 async def cmd_publish_commit(args):
     """Commit a batch to Notion."""
-    db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+    db_path = resolve_db_path(args)
     store = SignalStore(db_path=db_path)
     await store.initialize()
 
@@ -6853,7 +6850,7 @@ async def cmd_publish_commit(args):
 
 async def cmd_publish_abort(args):
     """Abort a draft batch."""
-    db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+    db_path = resolve_db_path(args)
     store = SignalStore(db_path=db_path)
     await store.initialize()
 
@@ -6871,7 +6868,7 @@ async def cmd_publish_abort(args):
 
 async def cmd_publish_list(args):
     """List recent batches."""
-    db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+    db_path = resolve_db_path(args)
     store = SignalStore(db_path=db_path)
     await store.initialize()
 
@@ -6908,7 +6905,7 @@ async def cmd_hunter_generate(args):
     from intelligence.query_generator import generate_queries
     from storage.hunter_result_store import get_active_negative_keywords
 
-    db_path = getattr(args, "db_path", None) or os.environ.get("DISCOVERY_DB_PATH", "signals.db")
+    db_path = resolve_db_path(args)
     store = SignalStore(db_path)
     await store.initialize()
     try:
@@ -7109,7 +7106,7 @@ async def cmd_hunter_run(args):
     from storage.hunter_result_store import get_active_negative_keywords
     from workflows.active_hunter import execute_hunter_run
 
-    db_path = getattr(args, "db_path", None) or os.environ.get("DISCOVERY_DB_PATH", "signals.db")
+    db_path = resolve_db_path(args)
     store = SignalStore(db_path)
     await store.initialize()
     try:
@@ -7148,7 +7145,7 @@ async def cmd_hunter_status(args):
     from storage.signal_store import SignalStore
     from workflows.run_manager import list_runs, RunType
 
-    db_path = getattr(args, "db_path", None) or os.environ.get("DISCOVERY_DB_PATH", "signals.db")
+    db_path = resolve_db_path(args)
     store = SignalStore(db_path)
     await store.initialize()
     try:
@@ -7167,7 +7164,7 @@ async def cmd_hunter_review(args):
     from storage.signal_store import SignalStore
     from storage.hunter_result_store import get_results_for_run
 
-    db_path = getattr(args, "db_path", None) or os.environ.get("DISCOVERY_DB_PATH", "signals.db")
+    db_path = resolve_db_path(args)
     store = SignalStore(db_path)
     await store.initialize()
     try:
@@ -7200,7 +7197,7 @@ async def cmd_hunter_feedback(args):
     from storage.signal_store import SignalStore
     from storage.hunter_result_store import update_result_status
 
-    db_path = getattr(args, "db_path", None) or os.environ.get("DISCOVERY_DB_PATH", "signals.db")
+    db_path = resolve_db_path(args)
     store = SignalStore(db_path)
     await store.initialize()
     try:
@@ -7219,7 +7216,7 @@ async def cmd_hunter_promote(args):
     from storage.signal_store import SignalStore
     from workflows.hunter_promotion import promote_hunter_result
 
-    db_path = getattr(args, "db_path", None) or os.environ.get("DISCOVERY_DB_PATH", "signals.db")
+    db_path = resolve_db_path(args)
     store = SignalStore(db_path)
     await store.initialize()
     try:
@@ -7239,7 +7236,7 @@ async def cmd_hunter_budget(args):
     from storage.signal_store import SignalStore
     from storage.hunter_result_store import get_budget_summary
 
-    db_path = getattr(args, "db_path", None) or os.environ.get("DISCOVERY_DB_PATH", "signals.db")
+    db_path = resolve_db_path(args)
     budget_date = getattr(args, "date", None) or datetime.now(timezone.utc).strftime("%Y-%m-%d")
     store = SignalStore(db_path)
     await store.initialize()
@@ -7267,7 +7264,7 @@ async def cmd_drift_check(args):
     import sqlite3
     from monitoring.spc_monitor import SPCMonitor, VALID_SPC_METRICS
 
-    db_path = getattr(args, "db_path", None) or os.environ.get("DISCOVERY_DB_PATH", "signals.db")
+    db_path = resolve_db_path(args)
     monitor = SPCMonitor()
     metrics_to_check = getattr(args, "metrics", None) or list(VALID_SPC_METRICS)
 
@@ -7314,7 +7311,7 @@ async def cmd_drift_aggregate(args):
 
     assert_write_enabled(WriteFeature.DRIFT_MONITORING)
 
-    db_path = getattr(args, "db_path", None) or os.environ.get("DISCOVERY_DB_PATH", "signals.db")
+    db_path = resolve_db_path(args)
     days = getattr(args, "days", 90)
     sync_conn = _sqlite3.connect(str(db_path), timeout=5)
     try:
@@ -7329,7 +7326,7 @@ async def cmd_drift_alerts(args):
     """List drift alerts."""
     from storage.signal_store import SignalStore
 
-    db_path = getattr(args, "db_path", None) or os.environ.get("DISCOVERY_DB_PATH", "signals.db")
+    db_path = resolve_db_path(args)
     store = SignalStore(db_path)
     await store.initialize()
     try:
@@ -7368,7 +7365,7 @@ async def cmd_drift_ack(args):
 
     assert_write_enabled(WriteFeature.DRIFT_MONITORING)
 
-    db_path = getattr(args, "db_path", None) or os.environ.get("DISCOVERY_DB_PATH", "signals.db")
+    db_path = resolve_db_path(args)
     store = SignalStore(db_path)
     await store.initialize()
     try:
@@ -7389,7 +7386,7 @@ async def cmd_drift_snooze(args):
 
     assert_write_enabled(WriteFeature.DRIFT_MONITORING)
 
-    db_path = getattr(args, "db_path", None) or os.environ.get("DISCOVERY_DB_PATH", "signals.db")
+    db_path = resolve_db_path(args)
     store = SignalStore(db_path)
     await store.initialize()
     try:
@@ -7411,7 +7408,7 @@ async def cmd_drift_resolve(args):
 
     assert_write_enabled(WriteFeature.DRIFT_MONITORING)
 
-    db_path = getattr(args, "db_path", None) or os.environ.get("DISCOVERY_DB_PATH", "signals.db")
+    db_path = resolve_db_path(args)
     store = SignalStore(db_path)
     await store.initialize()
     try:
@@ -7429,7 +7426,7 @@ async def cmd_drift_recommend(args):
     from storage.signal_store import SignalStore
     from monitoring.drift_recommendations import generate_recommendations
 
-    db_path = getattr(args, "db_path", None) or os.environ.get("DISCOVERY_DB_PATH", "signals.db")
+    db_path = resolve_db_path(args)
     days = getattr(args, "days", 7)
     store = SignalStore(db_path)
     await store.initialize()
@@ -7453,7 +7450,7 @@ async def cmd_drift_gc(args):
 
     assert_write_enabled(WriteFeature.DRIFT_MONITORING)
 
-    db_path = getattr(args, "db_path", None) or os.environ.get("DISCOVERY_DB_PATH", "signals.db")
+    db_path = resolve_db_path(args)
     metrics_days = getattr(args, "metrics_days", 365)
     alerts_days = getattr(args, "alerts_days", 180)
     store = SignalStore(db_path)
@@ -7480,7 +7477,7 @@ async def cmd_drift_export_metrics(args):
     import json as json_mod
     from storage.signal_store import SignalStore
 
-    db_path = getattr(args, "db_path", None) or os.environ.get("DISCOVERY_DB_PATH", "signals.db")
+    db_path = resolve_db_path(args)
     days = getattr(args, "days", 365)
     fmt = getattr(args, "format", "csv")
     out_path = getattr(args, "out", None)
@@ -8312,7 +8309,7 @@ async def main():
             await cmd_embeddings(args)
         elif args.command == "pipeline":
             # Handle pipeline subcommands
-            db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+            db_path = resolve_db_path(args)
             if args.pipeline_cmd == "status":
                 await cmd_pipeline_status(db_path=db_path)
             elif args.pipeline_cmd == "qualified":
@@ -8553,7 +8550,7 @@ async def main():
         elif args.command == "dns-phase2-guardrails":
             exit_code = await cmd_dns_phase2_guardrails(args)
         elif args.command == "init-watermark":
-            db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+            db_path = resolve_db_path(args)
             try:
                 count, error = db_guard.read_current_signal_count(db_path)
                 if error:
@@ -8569,7 +8566,7 @@ async def main():
                 print(f"ERROR: Could not initialize watermark: {exc}", file=sys.stderr)
                 sys.exit(1)
         elif args.command == "sqlite-durability-check":
-            db_path = getattr(args, "db_path", None) or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+            db_path = resolve_db_path(args)
             ok, evidence = db_guard.sqlite_durability_check(
                 db_path,
                 min_signals=getattr(args, "min_signals", 1),

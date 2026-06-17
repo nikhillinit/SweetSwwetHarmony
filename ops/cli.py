@@ -1429,7 +1429,7 @@ Tip:
         """,
     )
 
-    parser.add_argument("--db", default="signals.db", help="Database path")
+    parser.add_argument("--db", default=None, help="Database path")
 
     subparsers = parser.add_subparsers(dest="command", help="Command")
     subparsers.required = True

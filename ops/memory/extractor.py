@@ -42,7 +42,7 @@ Example: {"facts": [{"type": "constraint", "content": "Avoid hardware with <20% 
 
 
 class MemoryExtractor:
-    def __init__(self, db_path: str = "signals.db"):
+    def __init__(self, db_path: str | None = None):
         self.storage = OpsStorage(db_path)
 
         self.api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")

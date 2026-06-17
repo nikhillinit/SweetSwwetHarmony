@@ -46,7 +46,7 @@ _TOKEN_RE = re.compile(r"[a-z0-9_]+(?:&[a-z0-9_]+)*")
 
 
 class LLMClassifierV2:
-    def __init__(self, db_path: str = "signals.db", model_name: Optional[str] = None):
+    def __init__(self, db_path: str | None = None, model_name: Optional[str] = None):
         self.model_name = model_name or os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
         self.storage = OpsStorage(db_path)
         self.api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
