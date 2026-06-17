@@ -53,8 +53,13 @@ class TestCmdPipelinePushNotionWiring:
     """cmd_pipeline_push must call NotionPusher.process_single_prospect, not print a stub."""
 
     @pytest.mark.asyncio
-    async def test_confirms_calls_process_single_prospect(self, monkeypatch, tmp_path):
-        """pipeline push --confirm must invoke process_single_prospect for each qualified signal."""
+    async def test_confirms_calls_process_prospect_with_qualified_signals(self, monkeypatch, tmp_path):
+        """pipeline push --confirm must call _process_prospect with only qualified signals.
+
+        Uses _process_prospect (not process_single_prospect) so that the push is
+        scoped to the pre-loaded qualified signals rather than reloading all signals
+        for the canonical key (which could include pending/held/rejected rows).
+        """
         db = tmp_path / "test.db"
         monkeypatch.setenv("DISCOVERY_DB_PATH", str(db))
         monkeypatch.setenv("HARMONIC_ALLOW_IN_TREE_DB", "true")
@@ -87,7 +92,7 @@ class TestCmdPipelinePushNotionWiring:
         mock_result.decision.value = "source"
         mock_result.confidence = 0.8
 
-        with patch("workflows.notion_pusher.NotionPusher.process_single_prospect",
+        with patch("workflows.notion_pusher.NotionPusher._process_prospect",
                    new_callable=AsyncMock, return_value=mock_result) as mock_push:
             from run_pipeline import cmd_pipeline_push
             await cmd_pipeline_push(confirm=True)
@@ -128,7 +133,7 @@ class TestCmdPipelinePushNotionWiring:
         mock_result.decision.value = "source"
         mock_result.confidence = 0.8
 
-        with patch("workflows.notion_pusher.NotionPusher.process_single_prospect",
+        with patch("workflows.notion_pusher.NotionPusher._process_prospect",
                    new_callable=AsyncMock, return_value=mock_result):
             from run_pipeline import cmd_pipeline_push
             await cmd_pipeline_push(confirm=True)

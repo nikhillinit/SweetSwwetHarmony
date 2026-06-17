@@ -1768,7 +1768,7 @@ async def cmd_pipeline_push(
 
         from connectors.notion_connector_v2 import NotionConnector
         from verification.verification_gate_v2 import VerificationGate
-        from workflows.notion_pusher import NotionPusher
+        from workflows.notion_pusher import AggregatedProspect, NotionPusher
 
         connector = NotionConnector(
             api_key=notion_api_key,
@@ -1796,8 +1796,16 @@ async def cmd_pipeline_push(
             company_name = sigs[0].company_name or "Unknown"
             print(f"  Pushing: {company_name} ({canonical_key}) ...")
             try:
-                result = await pusher.process_single_prospect(
-                    canonical_key, intent=DeliveryIntent.MANUAL_PUSH,
+                # Use _process_prospect with the pre-loaded qualified signals rather than
+                # process_single_prospect(), which would reload ALL signals for the key
+                # (including pending/held/rejected) and mark them all pushed on success.
+                prospect = AggregatedProspect(
+                    canonical_key=canonical_key,
+                    company_name=company_name,
+                    signals=sigs,
+                )
+                result = await pusher._process_prospect(
+                    prospect, intent=DeliveryIntent.MANUAL_PUSH,
                 )
                 if result.error:
                     print(f"    [ERROR] {result.error}")
