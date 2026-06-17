@@ -52,8 +52,13 @@ related_files:
 ## Tuning actions taken
 
 - [x] Added `--source-api` filter to `quality stats` CLI (P1-3-B)
-- [ ] No tuning rules changed — this is the measurement-only baseline
-- [ ] `hacker_news` suppression or LLM-only routing is a candidate for P1-4+ based on 98.69% FP
+- [ ] No tuning rules changed — this is the measurement-only baseline (2026-06-17 first pass)
+- [x] Source-specific confidence floor added: `hacker_news` minimum raised from 0.40 → 0.70
+  Rationale: 98.69% FP over 153 decided signals; 0 post-LLM signals in restored 612-row corpus
+  (no data after 2026-03-25 backup date). Conservative floor until post-LLM data accumulates.
+  Implemented: 2026-06-17 in `workflows/pipeline.py` (`_SOURCE_MIN_CONFIDENCE` dict,
+  `_get_min_confidence()` helper, pre-gate check in `_process_company`).
+  Commit: 3e7e8c8
 
 ## Golden set additions
 
