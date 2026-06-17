@@ -1,8 +1,9 @@
-"""Tests for cmd_pipeline_push DB path guarding (Track 3 of milestone roadmap)."""
+"""Tests for cmd_pipeline_push DB path guarding (Track 3) and NotionPusher wiring (Track 4)."""
 
 import asyncio
 import pytest
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 
 
 class TestCmdPipelinePushDbPath:
@@ -46,3 +47,93 @@ class TestCmdPipelinePushDbPath:
             assert not isinstance(e, InTreeDatabaseError), (
                 f"Should not raise InTreeDatabaseError for out-of-tree path, got: {e}"
             )
+
+
+class TestCmdPipelinePushNotionWiring:
+    """cmd_pipeline_push must call NotionPusher.process_single_prospect, not print a stub."""
+
+    @pytest.mark.asyncio
+    async def test_confirms_calls_process_single_prospect(self, monkeypatch, tmp_path):
+        """pipeline push --confirm must invoke process_single_prospect for each qualified signal."""
+        db = tmp_path / "test.db"
+        monkeypatch.setenv("DISCOVERY_DB_PATH", str(db))
+        monkeypatch.setenv("HARMONIC_ALLOW_IN_TREE_DB", "true")
+        monkeypatch.setenv("NOTION_API_KEY", "secret_test")
+        monkeypatch.setenv("NOTION_DATABASE_ID", "db_test")
+
+        # Seed a qualified signal
+        from storage.signal_store import SignalStore
+        store = SignalStore(str(db))
+        await store.initialize()
+        await store.save_signal(
+            signal_type="trending_repo",
+            source_api="github",
+            canonical_key="domain:test.ai",
+            company_name="Test AI",
+            confidence=0.8,
+            raw_data={"repo": "test/repo"},
+        )
+        # Mark it qualified (save_signal creates a 'pending' record)
+        await store._db.execute(
+            "UPDATE signal_processing SET status = 'qualified' WHERE signal_id IN "
+            "(SELECT id FROM signals WHERE canonical_key = 'domain:test.ai')"
+        )
+        await store._db.commit()
+        await store.close()
+
+        mock_result = MagicMock()
+        mock_result.error = None
+        mock_result.decision = MagicMock()
+        mock_result.decision.value = "source"
+        mock_result.confidence = 0.8
+
+        with patch("workflows.notion_pusher.NotionPusher.process_single_prospect",
+                   new_callable=AsyncMock, return_value=mock_result) as mock_push:
+            from run_pipeline import cmd_pipeline_push
+            await cmd_pipeline_push(confirm=True)
+
+        mock_push.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_stub_text_not_printed(self, monkeypatch, tmp_path, capsys):
+        """The old stub text '(Push integration with NotionPusher pending)' must not appear."""
+        db = tmp_path / "test.db"
+        monkeypatch.setenv("DISCOVERY_DB_PATH", str(db))
+        monkeypatch.setenv("HARMONIC_ALLOW_IN_TREE_DB", "true")
+        monkeypatch.setenv("NOTION_API_KEY", "secret_test")
+        monkeypatch.setenv("NOTION_DATABASE_ID", "db_test")
+
+        # Seed a qualified signal
+        from storage.signal_store import SignalStore
+        store = SignalStore(str(db))
+        await store.initialize()
+        await store.save_signal(
+            signal_type="trending_repo",
+            source_api="github",
+            canonical_key="domain:stub-check.ai",
+            company_name="Stub Check",
+            confidence=0.8,
+            raw_data={"repo": "test/repo"},
+        )
+        await store._db.execute(
+            "UPDATE signal_processing SET status = 'qualified' WHERE signal_id IN "
+            "(SELECT id FROM signals WHERE canonical_key = 'domain:stub-check.ai')"
+        )
+        await store._db.commit()
+        await store.close()
+
+        mock_result = MagicMock()
+        mock_result.error = None
+        mock_result.decision = MagicMock()
+        mock_result.decision.value = "source"
+        mock_result.confidence = 0.8
+
+        with patch("workflows.notion_pusher.NotionPusher.process_single_prospect",
+                   new_callable=AsyncMock, return_value=mock_result):
+            from run_pipeline import cmd_pipeline_push
+            await cmd_pipeline_push(confirm=True)
+
+        captured = capsys.readouterr()
+        assert "NotionPusher pending" not in captured.out, (
+            "Stub text should not appear after Track 4 implementation"
+        )

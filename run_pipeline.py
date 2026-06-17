@@ -1748,9 +1748,73 @@ async def cmd_pipeline_push(
                 print(f"  ... and {len(signals) - 10} more")
             return
 
-        # Actual push would integrate with NotionPusher
-        print(f"\nPushing {len(signals)} signals to Notion...")
-        print("(Push integration with NotionPusher pending)")
+        # Check delivery policy (matches cmd_push guard at line ~6430)
+        from workflows.delivery_policy import (
+            assert_notion_write_allowed,
+            DeliveryIntent,
+            DeliveryPolicyError,
+        )
+        try:
+            assert_notion_write_allowed(DeliveryIntent.MANUAL_PUSH)
+        except DeliveryPolicyError as e:
+            print(f"ERROR: Delivery policy blocked push: {e}")
+            sys.exit(1)
+
+        notion_api_key = os.environ.get("NOTION_API_KEY")
+        notion_db_id = os.environ.get("NOTION_DATABASE_ID")
+        if not notion_api_key or not notion_db_id:
+            print("ERROR: NOTION_API_KEY and NOTION_DATABASE_ID must be set")
+            sys.exit(1)
+
+        from connectors.notion_connector_v2 import NotionConnector
+        from verification.verification_gate_v2 import VerificationGate
+        from workflows.notion_pusher import NotionPusher
+
+        connector = NotionConnector(
+            api_key=notion_api_key,
+            database_id=notion_db_id,
+        )
+        pusher = NotionPusher(
+            signal_store=store,
+            notion_connector=connector,
+            verification_gate=VerificationGate(
+                strict_mode=False,
+                auto_push_status="Source",
+                needs_review_status="Tracking",
+            ),
+            dry_run=dry_run,
+        )
+
+        # Group by canonical key (same pattern as cmd_push at line ~6458)
+        grouped: dict[str, list] = {}
+        for sig in signals:
+            grouped.setdefault(sig.canonical_key, []).append(sig)
+
+        push_results = {"pushed": 0, "rejected": 0, "error": 0}
+        print(f"\nPushing {len(grouped)} prospect(s) to Notion...")
+        for canonical_key, sigs in grouped.items():
+            company_name = sigs[0].company_name or "Unknown"
+            print(f"  Pushing: {company_name} ({canonical_key}) ...")
+            try:
+                result = await pusher.process_single_prospect(
+                    canonical_key, intent=DeliveryIntent.MANUAL_PUSH,
+                )
+                if result.error:
+                    print(f"    [ERROR] {result.error}")
+                    push_results["error"] += len(sigs)
+                elif result.decision.value == "reject":
+                    print(f"    [REJECTED] confidence={result.confidence:.2f}")
+                    push_results["rejected"] += len(sigs)
+                else:
+                    print(f"    [PUSHED] decision={result.decision.value} "
+                          f"confidence={result.confidence:.2f}")
+                    push_results["pushed"] += len(sigs)
+            except Exception as e:
+                print(f"    [ERROR] {e}")
+                push_results["error"] += len(sigs)
+
+        print(f"\nPush complete -- pushed: {push_results['pushed']}, "
+              f"rejected: {push_results['rejected']}, errors: {push_results['error']}")
 
     finally:
         await store.close()
