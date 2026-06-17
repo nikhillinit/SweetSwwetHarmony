@@ -1,4 +1,4 @@
-# INTEGRATED OPS LAYER IMPLEMENTATION PROCEDURE
+﻿# INTEGRATED OPS LAYER IMPLEMENTATION PROCEDURE
 ## Fully Automated Workflow with Explicit User Checkpoints
 
 **Document Version:** 1.0  
@@ -7,7 +7,7 @@
 
 ---
 
-## 🎯 EXECUTIVE SUMMARY
+## ðŸŽ¯ EXECUTIVE SUMMARY
 
 This procedure integrates:
 1. **Self-Healing Infrastructure** - Automated collector maintenance and browser pool management
@@ -18,6 +18,19 @@ This procedure integrates:
 **Prerequisites:** Python 3.11+, SQLite with FTS5, Windows 10/11, GEMINI_API_KEY
 
 ---
+
+## ⚠ DB PATH REQUIREMENT
+
+Do NOT run ops commands against `signals.db` in the repo root.
+`storage/db_paths.py` raises `InTreeDatabaseError`. Always set:
+```powershell
+$env:DISCOVERY_DB_PATH = “$env:USERPROFILE\harmonic-data\signals.db”
+```
+For scratch/dev work only:
+```powershell
+$env:HARMONIC_ALLOW_IN_TREE_DB = “true”
+$env:DISCOVERY_DB_PATH = “$env:TEMP\scratch-signals.db”
+```
 
 ## 📋 PRE-FLIGHT CHECKLIST
 
@@ -71,15 +84,15 @@ bash_tool: |
   try:
       conn = sqlite3.connect(':memory:')
       conn.execute('CREATE VIRTUAL TABLE t USING fts5(content)')
-      print('FTS5: ✅ Available')
+      print('FTS5: âœ… Available')
   except:
-      print('FTS5: ❌ NOT AVAILABLE')
+      print('FTS5: âŒ NOT AVAILABLE')
       sys.exit(1)
   
   # Check database location
   db_path = Path('signals.db')
   if db_path.exists():
-      print(f'Database: ✅ Found at {db_path.absolute()}')
+      print(f'Database: âœ… Found at {db_path.absolute()}')
       
       # Check WAL mode
       conn = sqlite3.connect(str(db_path))
@@ -87,15 +100,15 @@ bash_tool: |
       mode = cursor.fetchone()[0]
       print(f'Journal Mode: {mode}')
       if mode.lower() != 'wal':
-          print('⚠️  WARNING: WAL mode not enabled. This may cause lock issues.')
+          print('âš ï¸  WARNING: WAL mode not enabled. This may cause lock issues.')
   else:
-      print('Database: ⚠️  Not found at root. Will be created.')
+      print('Database: âš ï¸  Not found at root. Will be created.')
   "
 ```
 
 **CHECKPOINT 0.1A - ENVIRONMENT VERIFICATION**
 ```
-⏸️  WORKFLOW PAUSED - USER ACTION REQUIRED
+â¸ï¸  WORKFLOW PAUSED - USER ACTION REQUIRED
 
 Review the output above. Do you want to:
 1. [CONTINUE] - Environment meets requirements
@@ -130,7 +143,7 @@ str_replace_or_create_file:
     Run basic environment checks and initialize the SQLite database.
     
     Usage:
-        python -m ops.bootstrap --db signals.db
+        python -m ops.bootstrap --db "$env:DISCOVERY_DB_PATH"
     
     This module is intentionally dependency-light and Windows-friendly.
     """
@@ -242,7 +255,7 @@ str_replace_or_create_file:
             print(f"[BOOTSTRAP] DB init failed: {e}", file=sys.stderr)
             return 1
     
-        print(f"[BOOTSTRAP] ✅ OK: DB ready at {args.db}")
+        print(f"[BOOTSTRAP] âœ… OK: DB ready at {args.db}")
         print("[BOOTSTRAP] Next steps:")
         print(f"  python -m ops.cli stats --db {args.db}")
         print(f"  python -m ops.cli run-extraction --db {args.db}")
@@ -257,16 +270,16 @@ str_replace_or_create_file:
 **AUTO-EXECUTE:**
 ```bash
 # Test bootstrap script
-python -m ops.bootstrap --db signals.db --skip-youtube
+python -m ops.bootstrap --db "$env:DISCOVERY_DB_PATH" --skip-youtube
 ```
 
 **CHECKPOINT 0.2A - BOOTSTRAP VERIFICATION**
 ```
-⏸️  WORKFLOW PAUSED - USER ACTION REQUIRED
+â¸ï¸  WORKFLOW PAUSED - USER ACTION REQUIRED
 
 Bootstrap script execution completed. Review output above.
 
-Expected: "✅ OK: DB ready at signals.db"
+Expected: "âœ… OK: DB ready at signals.db"
 
 Do you want to:
 1. [CONTINUE] - Bootstrap succeeded
@@ -380,7 +393,7 @@ pytest tests/ops/test_integration_baseline.py -v --tb=short
 
 **CHECKPOINT 0.3A - BASELINE TESTS**
 ```
-⏸️  WORKFLOW PAUSED - USER ACTION REQUIRED
+â¸ï¸  WORKFLOW PAUSED - USER ACTION REQUIRED
 
 Baseline tests executed. Review results above.
 
@@ -574,7 +587,7 @@ create_file:
 
 **CHECKPOINT 1.1A - INCIDENT MODULE**
 ```
-⏸️  WORKFLOW PAUSED - USER ACTION REQUIRED
+â¸ï¸  WORKFLOW PAUSED - USER ACTION REQUIRED
 
 Incident management module created at ops/maintenance/incident.py
 
@@ -757,7 +770,7 @@ create_file:
 
 **CHECKPOINT 1.2A - CLAUDE CLI WRAPPER**
 ```
-⏸️  WORKFLOW PAUSED - USER ACTION REQUIRED
+â¸ï¸  WORKFLOW PAUSED - USER ACTION REQUIRED
 
 Claude Code CLI wrapper created. This enables automated repair sessions.
 
@@ -773,7 +786,7 @@ Do you want to:
 Type your choice:
 ```
 
-**AWAIT USER INPUT:** If "INSTALL" → provide installation instructions and pause. If "SKIP-AUTOMATION" → skip to Phase 2. Only "CONTINUE" proceeds.
+**AWAIT USER INPUT:** If "INSTALL" â†’ provide installation instructions and pause. If "SKIP-AUTOMATION" â†’ skip to Phase 2. Only "CONTINUE" proceeds.
 
 ---
 
@@ -787,7 +800,7 @@ Type your choice:
 
 **CHECKPOINT 1.3A - REPAIR AGENT**
 ```
-⏸️  WORKFLOW PAUSED - USER ACTION REQUIRED
+â¸ï¸  WORKFLOW PAUSED - USER ACTION REQUIRED
 
 Repair agent implementation complete. This orchestrates:
 - Incident loading
@@ -827,7 +840,7 @@ Type your choice:
 
 **CHECKPOINT 3.1A - CLI COMMANDS**
 ```
-⏸️  WORKFLOW PAUSED - USER ACTION REQUIRED
+â¸ï¸  WORKFLOW PAUSED - USER ACTION REQUIRED
 
 CLI extended with new commands:
 - ops.cli maint list-incidents
@@ -838,7 +851,7 @@ CLI extended with new commands:
 Test commands:
 ```bash
 python -m ops.cli maint list-incidents
-python -m ops.cli stats --db signals.db
+python -m ops.cli stats --db "$env:DISCOVERY_DB_PATH"
 ```
 
 Do you want to:
@@ -871,7 +884,7 @@ pytest tests/ops/test_e2e_integration.py -v -s
 
 **CHECKPOINT 4.1A - E2E TEST RESULTS**
 ```
-⏸️  WORKFLOW PAUSED - USER ACTION REQUIRED
+â¸ï¸  WORKFLOW PAUSED - USER ACTION REQUIRED
 
 End-to-end integration tests completed.
 
@@ -897,14 +910,14 @@ Type your choice:
 **AUTO-EXECUTE VERIFICATION:**
 ```bash
 # Automated pre-flight checks
-python -m ops.bootstrap --db signals.db
-python -m ops.cli stats --db signals.db
+python -m ops.bootstrap --db "$env:DISCOVERY_DB_PATH"
+python -m ops.cli stats --db "$env:DISCOVERY_DB_PATH"
 pytest tests/ops/ -v --cov=ops
 ```
 
 **CHECKPOINT 5.1A - DEPLOYMENT READINESS**
 ```
-⏸️  WORKFLOW PAUSED - CRITICAL USER DECISION
+â¸ï¸  WORKFLOW PAUSED - CRITICAL USER DECISION
 
 All automated checks complete. Review results above.
 
@@ -939,18 +952,18 @@ Copy-Item signals.db signals.db.backup_$(Get-Date -Format "yyyyMMdd_HHmmss")
 pip install -r requirements.txt
 
 # 4. Run bootstrap
-python -m ops.bootstrap --db signals.db
+python -m ops.bootstrap --db "$env:DISCOVERY_DB_PATH"
 
 # 5. Initial extraction (small batch)
-python -m ops.cli run-extraction --limit 3 --db signals.db
+python -m ops.cli run-extraction --limit 3 --db "$env:DISCOVERY_DB_PATH"
 
 # 6. Verify stats
-python -m ops.cli stats --db signals.db
+python -m ops.cli stats --db "$env:DISCOVERY_DB_PATH"
 ```
 
 **CHECKPOINT 5.2A - DEPLOYMENT VERIFICATION**
 ```
-⏸️  WORKFLOW PAUSED - USER CONFIRMATION
+â¸ï¸  WORKFLOW PAUSED - USER CONFIRMATION
 
 Have you successfully executed all deployment commands above?
 
@@ -971,35 +984,35 @@ Type your choice:
 Auto-generated summary of what was accomplished:
 
 ```
-✅ Phase 0: Foundation & Verification
-  ✅ Environment audit passed
-  ✅ Bootstrap script created and tested
-  ✅ Baseline tests passing
+âœ… Phase 0: Foundation & Verification
+  âœ… Environment audit passed
+  âœ… Bootstrap script created and tested
+  âœ… Baseline tests passing
 
-✅ Phase 1: Self-Healing Infrastructure  
-  ✅ Incident management module
-  ✅ Claude Code CLI wrapper
-  ✅ Repair agent implementation
-  ✅ Docker orchestration
+âœ… Phase 1: Self-Healing Infrastructure  
+  âœ… Incident management module
+  âœ… Claude Code CLI wrapper
+  âœ… Repair agent implementation
+  âœ… Docker orchestration
 
-✅ Phase 2: Memory & Intelligence
-  ✅ Memory extractor
-  ✅ Classification engine
-  ✅ FTS5 search integration
+âœ… Phase 2: Memory & Intelligence
+  âœ… Memory extractor
+  âœ… Classification engine
+  âœ… FTS5 search integration
 
-✅ Phase 3: CLI Integration
-  ✅ Maintenance commands
-  ✅ Docker commands
-  ✅ Audit logging
+âœ… Phase 3: CLI Integration
+  âœ… Maintenance commands
+  âœ… Docker commands
+  âœ… Audit logging
 
-✅ Phase 4: Integration Testing
-  ✅ E2E tests passing
-  ✅ Performance benchmarks met
+âœ… Phase 4: Integration Testing
+  âœ… E2E tests passing
+  âœ… Performance benchmarks met
 
-✅ Phase 5: Production Deployment
-  ✅ Backups created
-  ✅ Production deployment verified
-  ✅ Monitoring enabled
+âœ… Phase 5: Production Deployment
+  âœ… Backups created
+  âœ… Production deployment verified
+  âœ… Monitoring enabled
 ```
 
 ---
@@ -1017,7 +1030,7 @@ python ops/monitor.py &
 
 **FINAL CHECKPOINT - PROCEDURE COMPLETE**
 ```
-🎉 WORKFLOW COMPLETE
+ðŸŽ‰ WORKFLOW COMPLETE
 
 All phases successfully executed. Your ops layer is now:
 - Self-healing (automatic collector repairs)
@@ -1056,4 +1069,5 @@ Type [DONE] to close this session.
 
 **Pause Points:** 14 explicit checkpoints where user approval is required
 **Automation Level:** 75% overall (varies by phase)
+
 

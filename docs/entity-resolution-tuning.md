@@ -129,7 +129,8 @@ from storage.signal_store import SignalStore
 import asyncio
 
 async def export():
-    store = SignalStore('signals.db')
+    from storage.db_paths import resolve_canonical_db_path
+    store = SignalStore(str(resolve_canonical_db_path()))
     await store.initialize()
     cursor = await store._db.execute('SELECT * FROM entity_aliases')
     rows = await cursor.fetchall()

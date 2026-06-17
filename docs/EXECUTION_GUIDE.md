@@ -1,9 +1,9 @@
-# EXECUTION GUIDE: Ops Layer Integration
+﻿# EXECUTION GUIDE: Ops Layer Integration
 ## How to Run the Automated Procedure
 
 ---
 
-## 📖 OVERVIEW
+## ðŸ“– OVERVIEW
 
 This guide shows you **exactly** how to execute the integrated ops layer procedure with minimal manual intervention.
 
@@ -13,7 +13,7 @@ This guide shows you **exactly** how to execute the integrated ops layer procedu
 
 ---
 
-## 🚀 QUICK START
+## ðŸš€ QUICK START
 
 ### Step 1: Open the Procedure
 Open `INTEGRATED_OPS_LAYER_PROCEDURE.md` in your preferred editor or markdown viewer.
@@ -43,12 +43,12 @@ The procedure document will guide you through each phase. At each checkpoint:
 
 ---
 
-## 🎯 CHECKPOINT PATTERN
+## ðŸŽ¯ CHECKPOINT PATTERN
 
 Every checkpoint follows this pattern:
 
 ```
-⏸️  WORKFLOW PAUSED - USER ACTION REQUIRED
+â¸ï¸  WORKFLOW PAUSED - USER ACTION REQUIRED
 
 [Description of what was just completed]
 
@@ -64,7 +64,7 @@ Type your choice:
 
 ---
 
-## 🔄 HOW AUTOMATION WORKS
+## ðŸ”„ HOW AUTOMATION WORKS
 
 ### What Happens Automatically
 
@@ -87,7 +87,7 @@ When you approve a step, the procedure will:
 
 You must actively participate when you see:
 
-1. **⏸️  WORKFLOW PAUSED**
+1. **â¸ï¸  WORKFLOW PAUSED**
    - Always requires your input
    - Type one of the provided options
 
@@ -101,7 +101,7 @@ You must actively participate when you see:
 
 ---
 
-## 📋 PHASE-BY-PHASE BREAKDOWN
+## ðŸ“‹ PHASE-BY-PHASE BREAKDOWN
 
 ### Phase 0: Foundation (Est. 2 hours)
 **Automation:** 75%  
@@ -143,7 +143,7 @@ You must actively participate when you see:
 **Key Commands to Test:**
 ```bash
 python -m ops.cli maint list-incidents
-python -m ops.cli stats --db signals.db
+python -m ops.cli stats --db "$env:DISCOVERY_DB_PATH"
 ```
 
 ### Phase 4: Testing (Est. 2 hours)
@@ -164,13 +164,13 @@ python -m ops.cli stats --db signals.db
 Copy-Item signals.db signals.db.backup_$(Get-Date -Format "yyyyMMdd_HHmmss")
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-python -m ops.bootstrap --db signals.db
-python -m ops.cli run-extraction --limit 3 --db signals.db
+python -m ops.bootstrap --db "$env:DISCOVERY_DB_PATH"
+python -m ops.cli run-extraction --limit 3 --db "$env:DISCOVERY_DB_PATH"
 ```
 
 ---
 
-## 🛠️ TROUBLESHOOTING COMMON ISSUES
+## ðŸ› ï¸ TROUBLESHOOTING COMMON ISSUES
 
 ### Issue: "FTS5 not available"
 **Solution:**
@@ -209,7 +209,7 @@ sqlite3 signals.db "PRAGMA journal_mode=WAL;"
 
 ---
 
-## 📊 PROGRESS TRACKING
+## ðŸ“Š PROGRESS TRACKING
 
 Use this checklist to track your progress:
 
@@ -244,25 +244,25 @@ Phase 5: Production Deployment
 
 ---
 
-## ⚡ COMMAND REFERENCE
+## âš¡ COMMAND REFERENCE
 
 ### Most Frequently Used Commands
 
 ```bash
 # Bootstrap
-python -m ops.bootstrap --db signals.db
+python -m ops.bootstrap --db "$env:DISCOVERY_DB_PATH"
 
 # Run tests
 pytest tests/ops/ -v
 
 # CLI stats
-python -m ops.cli stats --db signals.db
+python -m ops.cli stats --db "$env:DISCOVERY_DB_PATH"
 
 # List incidents
 python -m ops.cli maint list-incidents
 
 # Extraction
-python -m ops.cli run-extraction --limit 5 --db signals.db
+python -m ops.cli run-extraction --limit 5 --db "$env:DISCOVERY_DB_PATH"
 
 # Health check
 python ops/monitor.py
@@ -270,7 +270,7 @@ python ops/monitor.py
 
 ---
 
-## 🎓 BEST PRACTICES
+## ðŸŽ“ BEST PRACTICES
 
 ### 1. Review Before Approving
 - **Always** read the automated output before typing `[CONTINUE]`
@@ -297,7 +297,7 @@ Copy-Item signals.db "signals.db.backup_phase_N"
 
 ---
 
-## 🚨 EMERGENCY PROCEDURES
+## ðŸš¨ EMERGENCY PROCEDURES
 
 ### If Something Goes Wrong
 
@@ -324,7 +324,7 @@ pytest tests/core/ -v
 4. **Review Logs**
 ```bash
 # Check ops logs
-python -m ops.cli stats --db signals.db
+python -m ops.cli stats --db "$env:DISCOVERY_DB_PATH"
 
 # Check system health
 sqlite3 signals.db "SELECT * FROM system_health ORDER BY timestamp DESC LIMIT 20;"
@@ -337,37 +337,37 @@ sqlite3 signals.db "SELECT * FROM system_health ORDER BY timestamp DESC LIMIT 20
 
 ---
 
-## ✅ SUCCESS CRITERIA
+## âœ… SUCCESS CRITERIA
 
 You'll know the procedure completed successfully when:
 
-1. ✅ All phases marked complete in checklist
-2. ✅ No failing tests in `pytest tests/ops/`
-3. ✅ `python -m ops.cli stats` shows healthy metrics
-4. ✅ Production extraction runs complete successfully
-5. ✅ All 14 checkpoints approved
+1. âœ… All phases marked complete in checklist
+2. âœ… No failing tests in `pytest tests/ops/`
+3. âœ… `python -m ops.cli stats` shows healthy metrics
+4. âœ… Production extraction runs complete successfully
+5. âœ… All 14 checkpoints approved
 
 ---
 
-## 🎯 FINAL CHECKLIST
+## ðŸŽ¯ FINAL CHECKLIST
 
 Before marking complete, verify:
 
 ```bash
 # 1. Bootstrap works
-python -m ops.bootstrap --db signals.db
-# Expected: "✅ OK: DB ready at signals.db"
+python -m ops.bootstrap --db "$env:DISCOVERY_DB_PATH"
+# Expected: "âœ… OK: DB ready at signals.db"
 
 # 2. All tests pass
 pytest tests/ops/ -v --tb=short
 # Expected: All PASSED
 
 # 3. CLI works
-python -m ops.cli stats --db signals.db
+python -m ops.cli stats --db "$env:DISCOVERY_DB_PATH"
 # Expected: Statistics displayed
 
 # 4. Extraction works
-python -m ops.cli run-extraction --limit 1 --db signals.db
+python -m ops.cli run-extraction --limit 1 --db "$env:DISCOVERY_DB_PATH"
 # Expected: "Facts created: 0+" (depends on data)
 
 # 5. Monitoring works
@@ -377,7 +377,7 @@ python ops/monitor.py &
 
 ---
 
-## 📞 GETTING HELP
+## ðŸ“ž GETTING HELP
 
 If you encounter issues:
 
@@ -389,15 +389,15 @@ If you encounter issues:
 
 ---
 
-## 🎉 COMPLETION
+## ðŸŽ‰ COMPLETION
 
 When you reach the final checkpoint and type `[DONE]`:
 
 **Your ops layer is now:**
-- ✅ Self-healing (automatic collector repairs)
-- ✅ Intelligent (learning from past decisions)
-- ✅ Observable (comprehensive monitoring)
-- ✅ Production-ready (tested and deployed)
+- âœ… Self-healing (automatic collector repairs)
+- âœ… Intelligent (learning from past decisions)
+- âœ… Observable (comprehensive monitoring)
+- âœ… Production-ready (tested and deployed)
 
 **Next steps:**
 1. Set up scheduled jobs (cron/Task Scheduler)
@@ -405,4 +405,5 @@ When you reach the final checkpoint and type `[DONE]`:
 3. Review and approve pending memory facts
 4. Configure alerting for system_health degradation
 
-Congratulations! 🎊
+Congratulations! ðŸŽŠ
+
