@@ -33,6 +33,33 @@ logger = logging.getLogger(__name__)
 DEFAULT_API_URL = "http://localhost:8000/api/v1/health"
 PRE_RESTORE_PREFIX = "pre-restore-"
 LOCK_TIMEOUT_SECONDS = 5
+MAINTENANCE_LOCK_TIMEOUT_SECONDS = 180  # restore can take 30-120s; 5s default is insufficient
+
+
+def restore_with_integrity_check(backup: Path, target: Path) -> None:
+    """Copy backup to target only after PRAGMA integrity_check passes on the backup.
+
+    If the integrity check fails the target is left untouched (rollback-safe).
+    Raises RestoreError (or sqlite3.DatabaseError) on corrupt backup.
+    """
+    backup = Path(backup)
+    target = Path(target)
+    try:
+        con = sqlite3.connect(f"file:{backup}?mode=ro", uri=True)
+        row = con.execute("PRAGMA integrity_check").fetchone()
+        con.close()
+    except Exception as exc:
+        raise RestoreError(
+            f"integrity check could not open backup {backup}: {exc}",
+            integrity_check="open_failed",
+        ) from exc
+    if row is None or row[0] != "ok":
+        result = row[0] if row else "no_result"
+        raise RestoreError(
+            f"integrity check returned '{result}' on backup {backup} — restore aborted",
+            integrity_check=result,
+        )
+    shutil.copy2(backup, target)
 
 
 @dataclass(frozen=True)
