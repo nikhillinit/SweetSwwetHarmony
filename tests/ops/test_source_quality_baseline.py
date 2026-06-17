@@ -21,10 +21,10 @@ def make_quality_db(tmp_path: Path) -> str:
     # and hacker_news stays below threshold (decided=1) — but we lower
     # min_labeled=1 in tests so both sources appear.
     signals_rows = ",\n".join(
-        f"({i}, 'github', 'domain:gh-{i}.test', 'GH {i}', 0.8, '2026-05-01T00:00:00')"
+        f"({i}, 'github', 'domain:gh-{i}.test', 'GH {i}', 0.8, datetime('now', '-30 days'))"
         for i in range(1, 13)  # 12 github rows
     )
-    hn_row = "(13, 'hacker_news', 'domain:hn-a.test', 'HN A', 0.6, '2026-05-01T00:00:00')"
+    hn_row = "(13, 'hacker_news', 'domain:hn-a.test', 'HN A', 0.6, datetime('now', '-29 days'))"
     all_signals = signals_rows + ",\n" + hn_row
 
     sp_rows = ",".join(f"({i},{i},'processed')" for i in range(1, 14))
