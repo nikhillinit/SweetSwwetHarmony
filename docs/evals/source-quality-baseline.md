@@ -1,3 +1,15 @@
+---
+type: eval_update
+status: active
+owner: codex
+created_at: 2026-06-17
+related_prs:
+  - 279
+related_files:
+  - ops/quality_cli.py
+  - tests/ops/test_source_quality_baseline.py
+---
+
 # Source-Specific Quality Baseline
 
 **Date:** 2026-06-17
