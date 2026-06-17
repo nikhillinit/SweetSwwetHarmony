@@ -89,6 +89,7 @@ jobs:
 
       - name: Run local durability check
         env:
+          HARMONIC_ALLOW_IN_TREE_DB: "true"
           STRICT_CONFIG_VALIDATION: "false"
         run: |
           python run_pipeline.py sqlite-durability-check \
