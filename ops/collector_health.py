@@ -37,8 +37,35 @@ from ops.collector_config import (
 )
 from ops.collector_heartbeat import load_collector_state
 
-REPORT_SCHEMA_VERSION = 1
+REPORT_SCHEMA_VERSION = 2
 DEFAULT_LOOKBACK_DAYS = 90
+
+VALID_STATUSES = {
+    "success",
+    "partial_success",
+    "dry_run",
+    "stale",
+    "failing",
+    "disabled_missing_key",
+    "blocked_access",
+    "fresh_empty_expected",
+    "api_shape_changed",
+}
+
+
+from dataclasses import dataclass as _dataclass
+
+
+@_dataclass
+class CollectorHealthReport:
+    collector: str
+    status: str
+    detail: str = ""
+    schema_version: int = REPORT_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        if self.status not in VALID_STATUSES:
+            raise ValueError(f"unknown status {self.status!r}; valid: {VALID_STATUSES}")
 DEFAULT_DB_PATH = "signals.db"
 
 # Collectors whose ``source_api`` value(s) in the signals table differ from the
