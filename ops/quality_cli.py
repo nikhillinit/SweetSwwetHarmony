@@ -64,6 +64,12 @@ def register_quality_commands(subparsers: argparse._SubParsersAction) -> None:
     p_stats = q.add_parser("stats", help="Show quality stats over a time window")
     p_stats.add_argument("--days", type=int, default=30)
     p_stats.add_argument("--min-labeled", type=int, default=10)
+    p_stats.add_argument(
+        "--source-api",
+        dest="source_api",
+        default=None,
+        help="Filter stats to a single source (e.g. github, hacker_news)",
+    )
     p_stats.set_defaults(func=_cmd_stats)
 
     # -------------------------------------------------------- sync-status-events
@@ -245,6 +251,10 @@ def _cmd_stats(args: argparse.Namespace) -> None:
     with quality_conn(args.db_path) as conn:
         overall = get_overall_stats(conn, days=args.days)
         by_src = get_stats_by_source_api(conn, days=args.days, min_labeled=args.min_labeled)
+
+        source_filter = getattr(args, "source_api", None)
+        if source_filter:
+            by_src = [s for s in by_src if s.source_api == source_filter]
 
         print(json.dumps({"overall": overall}, indent=2))
         print("")
