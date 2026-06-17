@@ -80,3 +80,44 @@ def test_progress_writes_no_database(tmp_path):
     assert db_before == db_after, (
         "PipelineProgress wrote a DB file — must be pure in-memory"
     )
+
+
+def test_progress_flag_in_dry_run_does_not_mutate_db(tmp_path, monkeypatch):
+    """--progress with --dry-run must not cause an argparse 'unrecognized arguments' error."""
+    import subprocess
+    import sys
+    import os
+    from pathlib import Path
+
+    db = tmp_path / "signals_progress_test.db"
+    env = os.environ.copy()
+    env["HARMONIC_ALLOW_IN_TREE_DB"] = "true"
+    env["DISCOVERY_DB_PATH"] = str(db)
+
+    result = subprocess.run(
+        [sys.executable, "run_pipeline.py", "full", "--dry-run", "--progress",
+         "--collectors", "github"],
+        capture_output=True, timeout=30, env=env,
+        cwd=str(Path(__file__).resolve().parents[2]),
+    )
+    stderr_text = result.stderr.decode(errors="replace")
+    # --progress flag must not cause the CLI to crash with an argparse flag-not-found error.
+    # Note: exit code 2 is also used by the DB guard; distinguish by stderr content.
+    is_argparse_error = (
+        result.returncode == 2
+        and ("unrecognized arguments" in stderr_text or "error: argument" in stderr_text)
+    )
+    assert not is_argparse_error, (
+        f"CLI crashed with argparse 'unrecognized arguments' error. stderr: {stderr_text[:500]}"
+    )
+    # If DB was created, verify no signal rows were written
+    if db.exists():
+        import sqlite3
+        con = sqlite3.connect(str(db))
+        try:
+            count = con.execute("SELECT COUNT(*) FROM signals").fetchone()[0]
+            assert count == 0, f"--progress --dry-run wrote {count} signal rows"
+        except sqlite3.OperationalError:
+            pass  # table doesn't exist — also fine
+        finally:
+            con.close()
