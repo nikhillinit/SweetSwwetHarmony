@@ -1,0 +1,6 @@
+{
+  "shas": [
+    "447c1359918da1a2f4abf31867d3e21bd1b5f855ad9e5336ea5b9c3c98c5940e"
+  ],
+  "_comment": "Known-bad DB SHA fingerprints. Add new entries when a corruption event is confirmed. The first entry is the 4-row truncated DB from the 2026-05-05T22:33Z incident (issue #149)."
+}
