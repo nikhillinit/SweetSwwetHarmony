@@ -63,10 +63,19 @@ def test_process_github_does_not_mutate_hacker_news_pending(seeded_db):
             use_entities=False,
         )
         pipeline = DiscoveryPipeline(config=config)
-        await pipeline.initialize()
+        # Let process_pending initialize the pipeline (it calls initialize(read_only=dry_run)
+        # internally); calling initialize() here first would switch to read-only on the second
+        # call inside process_pending, which is confusing and unnecessary.
+        try:
+            # Run process for github only; dry_run=True keeps signals in 'pending' state
+            stats = await pipeline.process_pending(dry_run=True, source_api="github")
 
-        # Run process for github only
-        await pipeline.process_pending(dry_run=True, source_api="github")
+            # Verify the targeted source was actually found and processed (not a vacuous pass)
+            assert stats.get("processed", 0) >= 1, (
+                f"Expected at least 1 github signal to be processed, got stats={stats}"
+            )
+        finally:
+            await pipeline.close()
 
         # Verify hacker_news signal is still pending (not touched)
         store = SignalStore(db_path=seeded_db)
@@ -92,14 +101,24 @@ def test_process_hacker_news_does_not_touch_github(seeded_db):
             use_entities=False,
         )
         pipeline = DiscoveryPipeline(config=config)
-        await pipeline.initialize()
-        await pipeline.process_pending(dry_run=True, source_api="hacker_news")
+        try:
+            # dry_run=True keeps signals in 'pending' state
+            stats = await pipeline.process_pending(dry_run=True, source_api="hacker_news")
+
+            # Verify the targeted source was actually found and processed (not a vacuous pass)
+            assert stats.get("processed", 0) >= 1, (
+                f"Expected at least 1 hacker_news signal to be processed, got stats={stats}"
+            )
+        finally:
+            await pipeline.close()
 
         store = SignalStore(db_path=seeded_db)
         await store.initialize()
         gh_pending = await store.get_pending_signals(source_api="github")
         await store.close()
-        assert len(gh_pending) == 1
+        assert len(gh_pending) == 1, (
+            f"Expected 1 github pending signal after hacker_news-only process, got {len(gh_pending)}"
+        )
         assert gh_pending[0].source_api == "github"
 
     asyncio.run(_run())
