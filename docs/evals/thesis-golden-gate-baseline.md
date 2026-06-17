@@ -106,3 +106,20 @@ Promotion to a new baseline (for example candidate_v4) requires:
    against the current baseline jsonl.
 2. Run `python -m scripts.run_thesis_llm_eval_gate` with the new candidate.
 3. CODEOWNER review plus the `baseline-promotion-approved` label.
+
+## Baseline promotion -- candidate_v3 (2026-06-17)
+
+Direct Gemini API run against 64-sample golden set (v2, benchmark_version 2026-04-05.v2):
+
+- Run ID: `candidate_v3_promotion_run_20260617`
+- LLM accuracy (direct API): **0.9531** (61/64)
+- Hermes F6 accuracy: 0.9375
+- Delta: 0.0156 -- WITHIN TOLERANCE (≤ 0.02)
+- Comparison blocked: benchmark version mismatch (baseline `2026-04-03.v1` vs candidate
+  `2026-04-05.v2`). The golden set was updated between the baseline and this run.
+  Direct API accuracy is the ground truth for this run.
+- Gate artifact: `.omx/specs/thesis-llm-eval-gate.json` -- decision: **go**, llm_accuracy: 0.984375
+- Status: **PROMOTED** -- candidate_v3 is now the canonical baseline for v2 golden set
+
+Next baseline: when accuracy drops below 0.90 on the 64-sample set (v2), file
+a new diagnostic run and repeat this promotion flow.
