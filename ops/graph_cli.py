@@ -13,21 +13,21 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import os
 import sys
 from pathlib import Path
 from typing import Any, Dict, List
 
+from utils.db_path_helper import resolve_db_path_env
 
-def _default_db_path() -> str:
-    return os.getenv("DISCOVERY_DB_PATH", "signals.db")
+def _resolved_db_path(args: argparse.Namespace) -> str:
+    return resolve_db_path_env(getattr(args, "db_path", None))
 
 
 def register_graph_commands(subparsers: argparse._SubParsersAction) -> None:
     """Register knowledge graph CLI subcommands."""
     p = subparsers.add_parser("graph", help="Knowledge Graph operations")
     p.add_argument(
-        "--db", dest="db_path", default=_default_db_path(),
+        "--db", dest="db_path", default=None,
         help="Path to signals SQLite DB",
     )
     q = p.add_subparsers(dest="graph_cmd")
@@ -100,7 +100,7 @@ def _cmd_build(args: argparse.Namespace) -> None:
         from storage.kg_builder import KGArchitectureBuilder
         from storage.signal_store import SignalStore
 
-        store = SignalStore(args.db_path)
+        store = SignalStore(_resolved_db_path(args))
         await store.initialize()
         try:
             repo_root = Path(args.repo_root).resolve() if getattr(args, "repo_root", None) else None
@@ -150,7 +150,7 @@ def _cmd_build(args: argparse.Namespace) -> None:
 def _cmd_stats(args: argparse.Namespace) -> None:
     """Display graph statistics."""
     async def _run():
-        store, conn = await _open_kg_store(args.db_path)
+        store, conn = await _open_kg_store(_resolved_db_path(args))
         try:
             stats = await store.get_stats()
             if getattr(args, "json_output", False):
@@ -196,7 +196,7 @@ def _cmd_stats(args: argparse.Namespace) -> None:
 def _cmd_validate(args: argparse.Namespace) -> None:
     """Run named validation checks."""
     async def _run():
-        store, conn = await _open_kg_store(args.db_path)
+        store, conn = await _open_kg_store(_resolved_db_path(args))
         try:
             results = await store.validate(
                 fail_fast=getattr(args, "fail_fast", False),
@@ -228,7 +228,7 @@ def _cmd_validate(args: argparse.Namespace) -> None:
 def _cmd_runs(args: argparse.Namespace) -> None:
     """List recent KG runs."""
     async def _run():
-        store, conn = await _open_kg_store(args.db_path)
+        store, conn = await _open_kg_store(_resolved_db_path(args))
         try:
             runs = await store.list_runs(limit=args.limit)
             if getattr(args, "json_output", False):

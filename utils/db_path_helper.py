@@ -3,49 +3,54 @@
 Registers --db-path (normative) and --db (deprecated alias) on an
 argparse parser.  resolve_db_path() returns the final path with
 priority: --db-path > --db (+ stderr warning) > DISCOVERY_DB_PATH env
-> SIGNAL_DB_PATH env > "signals.db".
+> SIGNAL_DB_PATH env > guarded canonical "signals.db".
 
 For non-CLI code (SignalStore, MCP server, API), use resolve_db_path_env()
-which skips the argparse layer.
+which skips the argparse layer but still applies the canonical in-tree guard.
 """
 
 from __future__ import annotations
 
 import hashlib
-import os
 import sys
 from argparse import ArgumentParser, Namespace
 from pathlib import Path
 from typing import Union
 
+from storage.db_paths import guard_db_path, resolve_canonical_db_path
 
-_DEFAULT_DB = "signals.db"
+
+_SQLITE_MEMORY_DB = ":memory:"
+
+
+def _resolve_explicit_db_path(explicit: Union[str, Path]) -> str:
+    """Resolve and guard an explicitly supplied SQLite DB path."""
+    raw = str(explicit)
+    if raw == _SQLITE_MEMORY_DB:
+        return raw
+    return str(guard_db_path(Path(raw).expanduser().resolve()))
 
 
 def resolve_db_path_env(explicit: Union[str, Path, None] = None) -> str:
-    """Resolve database path from explicit value, env vars, or default.
+    """Resolve database path from explicit value, env vars, or guarded default.
 
     Priority:
-      1. explicit argument (if not None)
+      1. explicit argument (if not None), guarded unless ":memory:"
       2. DISCOVERY_DB_PATH env var
       3. SIGNAL_DB_PATH env var (legacy, for MCP server compat)
-      4. "signals.db"
+      4. guarded canonical "signals.db"
 
     Returns:
         Resolved path as a string.
     """
     if explicit is not None:
-        return str(explicit)
-    return (
-        os.environ.get("DISCOVERY_DB_PATH")
-        or os.environ.get("SIGNAL_DB_PATH")
-        or _DEFAULT_DB
-    )
+        return _resolve_explicit_db_path(explicit)
+    return str(resolve_canonical_db_path())
 
 
 def get_production_db_path() -> Path:
     """Return the resolved production DB path as an absolute path."""
-    return Path(resolve_db_path_env()).resolve()
+    return resolve_canonical_db_path()
 
 
 def is_production_db_path(candidate: Union[str, Path, None]) -> bool:
@@ -84,11 +89,11 @@ def resolve_db_path(args: Namespace) -> str:
     """Resolve the database path from args / env / default.
 
     Priority: --db-path > --db (deprecated, emits warning) >
-    DISCOVERY_DB_PATH env > SIGNAL_DB_PATH env > "signals.db".
+    DISCOVERY_DB_PATH env > SIGNAL_DB_PATH env > guarded canonical "signals.db".
     """
     db_path = getattr(args, "db_path", None)
     if db_path:
-        return db_path
+        return _resolve_explicit_db_path(db_path)
 
     db_deprecated = getattr(args, "db_deprecated", None)
     if db_deprecated:
@@ -97,6 +102,6 @@ def resolve_db_path(args: Namespace) -> str:
             "release. Use --db-path instead.",
             file=sys.stderr,
         )
-        return db_deprecated
+        return _resolve_explicit_db_path(db_deprecated)
 
     return resolve_db_path_env()

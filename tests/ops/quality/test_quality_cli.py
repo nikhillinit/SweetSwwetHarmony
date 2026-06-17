@@ -8,7 +8,7 @@ import sys
 
 import pytest
 
-from ops.quality_cli import register_quality_commands, _default_db_path
+from ops.quality_cli import _resolved_db_path, register_quality_commands
 from utils.thesis_llm_model import DEFAULT_THESIS_LLM_MODEL
 
 
@@ -237,18 +237,22 @@ class TestThesisRefreshLatestArgsParsing:
         assert args.prompt_version == "v1.6.0"
 
 
-class TestDefaultDbPath:
-    """Tests for _default_db_path."""
+class TestResolvedDbPath:
+    """Tests for quality CLI DB path resolution."""
 
-    def test_default_db_path(self, monkeypatch):
-        """_default_db_path returns 'signals.db' when env var is not set."""
-        monkeypatch.delenv("DISCOVERY_DB_PATH", raising=False)
-        assert _default_db_path() == "signals.db"
+    def test_parse_default_db_path_is_unset(self):
+        """The parser should not bake in repo-root signals.db before runtime."""
+        parser = _make_parser()
+        args = parser.parse_args(["quality", "stats"])
+        assert args.db_path is None
 
-    def test_default_db_path_env_override(self, monkeypatch):
-        """_default_db_path returns the DISCOVERY_DB_PATH env var value when set."""
-        monkeypatch.setenv("DISCOVERY_DB_PATH", "/custom/path/mydb.db")
-        assert _default_db_path() == "/custom/path/mydb.db"
+    def test_resolved_db_path_env_override(self, monkeypatch, tmp_path):
+        """Runtime resolution honors DISCOVERY_DB_PATH."""
+        target = tmp_path / "mydb.db"
+        monkeypatch.setenv("DISCOVERY_DB_PATH", str(target))
+        parser = _make_parser()
+        args = parser.parse_args(["quality", "stats"])
+        assert _resolved_db_path(args) == str(target.resolve())
 
 
 class TestBackfillSnapshotArgsParsing:

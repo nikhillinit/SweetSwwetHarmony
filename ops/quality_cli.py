@@ -39,16 +39,17 @@ from ops.quality.proposals import (
     review_proposal,
     expire_stale_proposals,
 )
+from utils.db_path_helper import resolve_db_path_env
 from utils.thesis_llm_model import DEFAULT_THESIS_LLM_MODEL, THESIS_LLM_MODEL_ENV
 
 
-def _default_db_path() -> str:
-    return os.getenv("DISCOVERY_DB_PATH", "signals.db")
+def _resolved_db_path(args: argparse.Namespace) -> str:
+    return resolve_db_path_env(getattr(args, "db_path", None))
 
 
 def register_quality_commands(subparsers: argparse._SubParsersAction) -> None:
     p = subparsers.add_parser("quality", help="Quality ops (labels, stats, patterns, tuning)")
-    p.add_argument("--db", dest="db_path", default=_default_db_path(), help="Path to signals SQLite DB")
+    p.add_argument("--db", dest="db_path", default=None, help="Path to signals SQLite DB")
     q = p.add_subparsers(dest="quality_cmd")
 
     # --------------------------------------------------------------------- label
@@ -235,7 +236,7 @@ def register_quality_commands(subparsers: argparse._SubParsersAction) -> None:
 def _cmd_label(args: argparse.Namespace) -> None:
     if args.label == "ADJ" and not args.reason:
         print("Warning: ADJ labels benefit from a --reason explaining why (e.g. 'consumer hardware, interesting')")
-    with quality_conn(args.db_path) as conn:
+    with quality_conn(_resolved_db_path(args)) as conn:
         feedback_id, upsert = label_signal_manual(
             conn,
             signal_id=args.signal_id,
@@ -248,7 +249,7 @@ def _cmd_label(args: argparse.Namespace) -> None:
 
 
 def _cmd_stats(args: argparse.Namespace) -> None:
-    with quality_conn(args.db_path) as conn:
+    with quality_conn(_resolved_db_path(args)) as conn:
         overall = get_overall_stats(conn, days=args.days)
         by_src = get_stats_by_source_api(conn, days=args.days, min_labeled=args.min_labeled)
 
@@ -264,11 +265,11 @@ def _cmd_stats(args: argparse.Namespace) -> None:
 
 
 def _cmd_sync_status_events(args: argparse.Namespace) -> None:
-    with quality_conn(args.db_path) as conn:
+    with quality_conn(_resolved_db_path(args)) as conn:
         stats = asyncio.run(
             sync_and_capture_status_events(
                 conn,
-                db_path=args.db_path,
+                db_path=_resolved_db_path(args),
                 baseline_new_keys=bool(args.baseline_new_keys),
             )
         )
@@ -276,7 +277,7 @@ def _cmd_sync_status_events(args: argparse.Namespace) -> None:
 
 
 def _cmd_backfill_outcomes(args: argparse.Namespace) -> None:
-    with quality_conn(args.db_path) as conn:
+    with quality_conn(_resolved_db_path(args)) as conn:
         stats = backfill_outcomes_from_events(
             conn,
             days_to_count=args.days_to_count,
@@ -300,7 +301,7 @@ def _cmd_backfill_snapshot(args: argparse.Namespace) -> None:
             "Sourced": "TP",
             "Source": "TP",
         }
-    with quality_conn(args.db_path) as conn:
+    with quality_conn(_resolved_db_path(args)) as conn:
         labeled = backfill_from_snapshot_status(
             conn,
             mapping=mapping,
@@ -311,7 +312,7 @@ def _cmd_backfill_snapshot(args: argparse.Namespace) -> None:
 
 
 def _cmd_export(args: argparse.Namespace) -> None:
-    with quality_conn(args.db_path) as conn:
+    with quality_conn(_resolved_db_path(args)) as conn:
         out_path = Path(args.out)
         if args.format == "csv":
             n = export_dataset_csv(conn, out_path=out_path, days=args.days)
@@ -321,7 +322,7 @@ def _cmd_export(args: argparse.Namespace) -> None:
 
 
 def _cmd_find_patterns(args: argparse.Namespace) -> None:
-    with quality_conn(args.db_path) as conn:
+    with quality_conn(_resolved_db_path(args)) as conn:
         cfg = PatternConfig(days=args.days, min_count=args.min_count, fp_rate_threshold=args.fp_rate_threshold)
         pats = detect_patterns(conn, config=cfg)
         out_path = Path(args.out)
@@ -343,13 +344,13 @@ def _cmd_apply_tuning(args: argparse.Namespace) -> None:
 
 
 def _cmd_thesis_classify(args: argparse.Namespace) -> None:
-    with quality_conn(args.db_path) as conn:
+    with quality_conn(_resolved_db_path(args)) as conn:
         r = classify_signal_llm(conn, signal_id=args.signal_id, model=args.model, prompt_version=args.prompt_version)
         print(json.dumps(r.__dict__, indent=2))
 
 
 def _cmd_thesis_classify_batch(args: argparse.Namespace) -> None:
-    with quality_conn(args.db_path) as conn:
+    with quality_conn(_resolved_db_path(args)) as conn:
         summary = batch_classify_missing_thesis(
             conn,
             days=args.days,
@@ -362,7 +363,7 @@ def _cmd_thesis_classify_batch(args: argparse.Namespace) -> None:
 
 
 def _cmd_thesis_refresh_latest(args: argparse.Namespace) -> None:
-    with quality_conn(args.db_path) as conn:
+    with quality_conn(_resolved_db_path(args)) as conn:
         summary = batch_refresh_latest_missing_provenance(
             conn,
             limit=args.limit,
@@ -374,7 +375,7 @@ def _cmd_thesis_refresh_latest(args: argparse.Namespace) -> None:
 
 
 def _cmd_thesis_disagreement_report(args: argparse.Namespace) -> None:
-    with quality_conn(args.db_path) as conn:
+    with quality_conn(_resolved_db_path(args)) as conn:
         report = generate_disagreement_report(
             conn,
             days=args.days,
@@ -388,7 +389,7 @@ def _cmd_thesis_disagreement_report(args: argparse.Namespace) -> None:
 
 
 def _cmd_key_suggestions(args: argparse.Namespace) -> None:
-    with quality_conn(args.db_path) as conn:
+    with quality_conn(_resolved_db_path(args)) as conn:
         suggestions = suggest_key_strengthening(
             conn,
             min_signals=args.min_signals,
@@ -406,13 +407,13 @@ def _cmd_key_suggestions(args: argparse.Namespace) -> None:
 def _cmd_propose_patterns(args: argparse.Namespace) -> None:
     patterns_doc = json.loads(Path(args.patterns).read_text(encoding="utf-8"))
     patterns = patterns_doc.get("patterns", []) if isinstance(patterns_doc, dict) else []
-    with quality_conn(args.db_path) as conn:
+    with quality_conn(_resolved_db_path(args)) as conn:
         created = propose_from_patterns(conn, patterns, proposed_by=args.proposed_by)
         print(json.dumps({"proposed": created, "total_patterns": len(patterns)}, indent=2))
 
 
 def _cmd_list_proposals(args: argparse.Namespace) -> None:
-    with quality_conn(args.db_path) as conn:
+    with quality_conn(_resolved_db_path(args)) as conn:
         proposals = list_proposals(conn, status=args.status, limit=args.limit)
         for p in proposals:
             status_badge = {"proposed": "?", "approved": "+", "rejected": "-", "expired": "~", "applied": "*"}.get(p.status, " ")
@@ -421,7 +422,7 @@ def _cmd_list_proposals(args: argparse.Namespace) -> None:
 
 
 def _cmd_review_proposal(args: argparse.Namespace) -> None:
-    with quality_conn(args.db_path) as conn:
+    with quality_conn(_resolved_db_path(args)) as conn:
         ok = review_proposal(conn, args.proposal_id, args.action, args.reviewed_by, args.notes)
         if ok:
             print(json.dumps({"proposal_id": args.proposal_id, "new_status": args.action}, indent=2))
@@ -430,19 +431,19 @@ def _cmd_review_proposal(args: argparse.Namespace) -> None:
 
 
 def _cmd_expire_proposals(args: argparse.Namespace) -> None:
-    with quality_conn(args.db_path) as conn:
+    with quality_conn(_resolved_db_path(args)) as conn:
         expired = expire_stale_proposals(conn)
         print(json.dumps({"expired": expired}, indent=2))
 
 
 def _cmd_enrich(args: argparse.Namespace) -> None:
-    with quality_conn(args.db_path) as conn:
+    with quality_conn(_resolved_db_path(args)) as conn:
         results = enrich_signals_best_effort(conn, signal_ids=list(map(int, args.signal_ids)))
         print(json.dumps({"results": results}, indent=2))
 
 
 def _cmd_adj_review(args: argparse.Namespace) -> None:
-    with quality_conn(args.db_path) as conn:
+    with quality_conn(_resolved_db_path(args)) as conn:
         candidates = list_adj_review_candidates(conn, days=args.days, limit=args.limit)
 
         if args.out_format == "json":
@@ -625,11 +626,11 @@ def _resolve_gp_runner() -> str:
 
 
 def _cmd_learning_loop_review_set(args: argparse.Namespace) -> None:
-    with quality_conn(args.db_path) as conn:
+    with quality_conn(_resolved_db_path(args)) as conn:
         disagreements = list_disagreement_candidates(conn, days=args.days, limit=args.limit)
         adjs = list_adj_review_candidates(conn, days=args.adj_days, limit=args.limit)
         payload = _build_review_set_payload(
-            db_path=args.db_path,
+            db_path=_resolved_db_path(args),
             disagreement_candidates=disagreements,
             adj_candidates=adjs,
             window_days=max(args.days, args.adj_days),
@@ -663,7 +664,7 @@ def _cmd_learning_loop_apply_labels(args: argparse.Namespace) -> None:
 
     applied: List[Dict[str, Any]] = []
     errors: List[Dict[str, Any]] = []
-    with quality_conn(args.db_path) as conn:
+    with quality_conn(_resolved_db_path(args)) as conn:
         for item in payload["items"]:
             try:
                 feedback_id, upsert = label_signal_manual(
@@ -797,7 +798,7 @@ def _noncomputable_diagnostic_summary(
 
 
 def _cmd_learning_loop_rerun_diagnostic(args: argparse.Namespace) -> None:
-    with quality_conn(args.db_path) as conn:
+    with quality_conn(_resolved_db_path(args)) as conn:
         if args.days != 90:
             raise ValueError("rerun-diagnostic is locked to the approved 90-day parity window")
         missing_ids = iter_signal_ids_missing_latest_thesis_for_detected_window(conn, days=args.days, limit=None)
@@ -806,7 +807,7 @@ def _cmd_learning_loop_rerun_diagnostic(args: argparse.Namespace) -> None:
         if refresh_ids:
             if len(refresh_ids) > 200:
                 summary = _noncomputable_diagnostic_summary(
-                    db_path=args.db_path,
+                    db_path=_resolved_db_path(args),
                     days=args.days,
                     quality_stats=get_overall_stats(conn, days=args.days),
                     reason="missing or stale latest thesis provenance exceeds the bounded refresh set for a parity-safe rerun",
@@ -822,7 +823,7 @@ def _cmd_learning_loop_rerun_diagnostic(args: argparse.Namespace) -> None:
                     )
                 except Exception as exc:
                     summary = _noncomputable_diagnostic_summary(
-                        db_path=args.db_path,
+                        db_path=_resolved_db_path(args),
                         days=args.days,
                         quality_stats=get_overall_stats(conn, days=args.days),
                         reason=f"stale latest thesis provenance present and refresh failed: {exc}",
@@ -840,15 +841,15 @@ def _cmd_learning_loop_rerun_diagnostic(args: argparse.Namespace) -> None:
                     )
                     if refresh["failed"] > 0 or remaining_stale or remaining_missing:
                         summary = _noncomputable_diagnostic_summary(
-                            db_path=args.db_path,
+                            db_path=_resolved_db_path(args),
                             days=args.days,
                             quality_stats=get_overall_stats(conn, days=args.days),
                             reason="missing or stale latest thesis provenance remained after bounded refresh; rerun failed closed",
                         )
                     else:
-                        summary = build_router_diagnostic_summary(conn, db_path=args.db_path, days=args.days)
+                        summary = build_router_diagnostic_summary(conn, db_path=_resolved_db_path(args), days=args.days)
         else:
-            summary = build_router_diagnostic_summary(conn, db_path=args.db_path, days=args.days)
+            summary = build_router_diagnostic_summary(conn, db_path=_resolved_db_path(args), days=args.days)
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
@@ -860,7 +861,7 @@ def _cmd_explain_score(args: argparse.Namespace) -> None:
     import re
 
     identifier = args.identifier
-    with quality_conn(args.db_path) as conn:
+    with quality_conn(_resolved_db_path(args)) as conn:
         canonical_key = None
         company_id = None
         resolution_note = None

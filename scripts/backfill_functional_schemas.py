@@ -23,7 +23,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from storage.signal_store import SignalStore
 from consumer.functional_extractor import FunctionalExtractor, FunctionalSchema
-from utils.db_path_helper import resolve_db_path_env
 
 logging.basicConfig(
     level=logging.INFO,
@@ -70,7 +69,7 @@ async def find_signals_without_schemas(store: SignalStore, limit: int) -> list:
 
 
 async def backfill(
-    db_path: str = "signals.db",
+    db_path: str | None = None,
     limit: int = 50,
     dry_run: bool = True,
 ) -> dict:
@@ -194,8 +193,8 @@ def main():
         description="Backfill functional schemas for existing signals."
     )
     parser.add_argument(
-        "--db", default=resolve_db_path_env(),
-        help="Path to signals database (default: signals.db)",
+        "--db", default=None,
+        help="Path to signals database (default: canonical DISCOVERY_DB_PATH)",
     )
     parser.add_argument(
         "--limit", type=int, default=50,

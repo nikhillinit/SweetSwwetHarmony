@@ -8,7 +8,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from .base import CheckResult, HermesTask, TaskContext, TaskFailure
+from .base import CheckResult, HermesTask, TaskContext, TaskFailure, resolve_task_db_path
 
 OUTBOX_PURGE_ACK = "OUTBOX_PURGE"
 OUTBOX_TABLE = "notion_outbox"
@@ -328,7 +328,7 @@ class OutboxPurgeTask(HermesTask):
 
 
 def _db_path(context: TaskContext) -> Path:
-    return context.resolve(getattr(context.args, "db_path", None)) or context.root / "signals.db"
+    return resolve_task_db_path(context, getattr(context.args, "db_path", None))
 
 
 def _criteria(context: TaskContext) -> dict[str, Any]:

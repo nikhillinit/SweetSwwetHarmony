@@ -38,6 +38,7 @@ from enum import Enum
 import aiosqlite
 
 from storage.signal_store import ReadOnlyStoreError
+from utils.db_path_helper import resolve_db_path_env
 
 logger = logging.getLogger(__name__)
 
@@ -433,7 +434,7 @@ class FounderStore:
 
     def __init__(
         self,
-        db_path: str | Path = "signals.db",
+        db_path: str | Path | None = None,
         read_only: bool = False,
     ):
         """
@@ -443,7 +444,7 @@ class FounderStore:
             db_path: Path to SQLite database file (shared with SignalStore)
             read_only: Open with SQLite query-only mode and skip migrations.
         """
-        self.db_path = Path(db_path)
+        self.db_path = Path(resolve_db_path_env(db_path))
         self.read_only = read_only
         self._db: Optional[aiosqlite.Connection] = None
         self._lock = asyncio.Lock()
@@ -993,7 +994,7 @@ class FounderStore:
 
 @asynccontextmanager
 async def founder_store(
-    db_path: str | Path = "signals.db",
+    db_path: str | Path | None = None,
 ) -> AsyncIterator[FounderStore]:
     """Context manager for FounderStore."""
     store = FounderStore(db_path)

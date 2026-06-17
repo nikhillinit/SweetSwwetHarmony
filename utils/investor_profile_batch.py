@@ -575,7 +575,7 @@ class InvestorProfileBatch:
 # STANDALONE RUNNER
 # =============================================================================
 
-async def run_batch_job(db_path: str = "signals.db") -> BatchResult:
+async def run_batch_job(db_path: str | None = None) -> BatchResult:
     """
     Run the batch job standalone.
 
@@ -607,8 +607,8 @@ def main():
     )
     parser.add_argument(
         "--db-path",
-        default="signals.db",
-        help="Path to signals database (default: signals.db)",
+        default=None,
+        help="Path to signals database (default: canonical DISCOVERY_DB_PATH)",
     )
     parser.add_argument(
         "--verbose", "-v",

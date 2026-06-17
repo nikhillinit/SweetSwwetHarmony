@@ -86,7 +86,7 @@ class ExitPredictorBatch:
         return updated
 
 
-async def run_batch_job(db_path: str = "signals.db") -> int:
+async def run_batch_job(db_path: str | None = None) -> int:
     """
     Run the batch job standalone.
 
@@ -116,6 +116,6 @@ if __name__ == "__main__":
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     )
 
-    db_path = sys.argv[1] if len(sys.argv) > 1 else "signals.db"
+    db_path = sys.argv[1] if len(sys.argv) > 1 else None
     updated = asyncio.run(run_batch_job(db_path))
     print(f"Updated {updated} predictions")

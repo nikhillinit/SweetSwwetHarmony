@@ -391,7 +391,7 @@ def _check_api_health() -> dict[str, Any]:
 
 
 def run_preflight(
-    db_path: str | Path = "signals.db",
+    db_path: str | Path | None = None,
     mode: str = "quick",
     backup_dir: str | Path = "backups",
 ) -> dict[str, Any]:
@@ -405,7 +405,7 @@ def run_preflight(
     Returns:
         Dict with checks list and overall verdict.
     """
-    db_path = Path(db_path)
+    db_path = Path(resolve_db_path_env(db_path))
     backup_dir = Path(backup_dir)
     checks: list[dict[str, Any]] = []
 
@@ -457,7 +457,7 @@ def run_preflight(
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Pre-flight checklist for production activation")
-    parser.add_argument("--db", default=resolve_db_path_env(), help="Database path")
+    parser.add_argument("--db", default=None, help="Database path")
     parser.add_argument("--json", action="store_true", help="Output JSON report")
     parser.add_argument("--mode", choices=["quick", "full"], default="quick",
                         help="Check mode: quick (default, ~5s) or full (includes smoke suite)")

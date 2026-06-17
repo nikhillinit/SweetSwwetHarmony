@@ -30,7 +30,7 @@ _DEFAULT_TOKEN_BUDGET = 2000
 class BriefingGenerator:
     def __init__(
         self,
-        db_path: str = "signals.db",
+        db_path: str | None = None,
         output_dir: str = "ops/artifacts",
         similarity_threshold: Optional[float] = None,
     ):

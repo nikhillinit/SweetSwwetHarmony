@@ -11,6 +11,7 @@ from .base import (
     HermesTask,
     TaskContext,
     TaskFailure,
+    resolve_task_db_path,
     run_async_blocking,
 )
 
@@ -317,7 +318,7 @@ def _result_id(context: TaskContext) -> int | None:
 
 
 def _db_path(context: TaskContext) -> Path:
-    return context.resolve(getattr(context.args, "db_path", None)) or context.root / "signals.db"
+    return resolve_task_db_path(context, getattr(context.args, "db_path", None))
 
 
 def _collector_state_path(context: TaskContext) -> Path:

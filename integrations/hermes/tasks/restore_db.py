@@ -10,6 +10,7 @@ from .base import (
     TaskContext,
     TaskFailure,
     copy_snapshot,
+    resolve_task_db_path,
     sha256_file,
     sqlite_count,
     sqlite_integrity,
@@ -36,7 +37,7 @@ class RestoreDbTask(HermesTask):
     @classmethod
     def add_arguments(cls, parser: argparse.ArgumentParser) -> None:
         parser.add_argument("--backup", required=True)
-        parser.add_argument("--target", default="signals.db")
+        parser.add_argument("--target", default=None)
         parser.add_argument("--allow-target-create", action="store_true")
         parser.add_argument("--handle-sidecars", action="store_true")
         parser.add_argument("--force", action="store_true")
@@ -505,7 +506,7 @@ class RestoreDbTask(HermesTask):
         return checks
 
     def _target(self, context: TaskContext) -> Path:
-        return context.resolve(getattr(context.args, "target", None)) or context.root / "signals.db"
+        return resolve_task_db_path(context, getattr(context.args, "target", None))
 
 
 def _sidecars(db_path: Path) -> tuple[Path, Path]:

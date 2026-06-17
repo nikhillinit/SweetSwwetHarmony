@@ -71,7 +71,7 @@ def _check_windows_long_paths() -> None:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Ops bootstrap (Windows-first)")
-    ap.add_argument("--db", default="signals.db", help="SQLite database path")
+    ap.add_argument("--db", default=None, help="SQLite database path")
     args = ap.parse_args()
 
     _load_dotenv_if_available()
@@ -129,7 +129,7 @@ def main() -> int:
         print(f"[BOOTSTRAP] DB init failed: {e}", file=sys.stderr)
         return 1
 
-    print(f"[BOOTSTRAP] OK: DB ready at {args.db}")
+    print(f"[BOOTSTRAP] OK: DB ready at {storage.db_path}")
     return 0
 
 
