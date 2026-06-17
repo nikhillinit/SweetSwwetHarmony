@@ -140,39 +140,52 @@ def classify(
     threshold: timedelta,
     now: datetime,
     min_created_at: datetime | None = None,
+    fresh_empty: tuple[str, ...] = (),
 ) -> list[dict[str, Any]]:
     """
     Build per-collector status records.
 
     Each record has:
-        source_api:    collector name
-        category:      "operational" | "informational"
-        last_created:  ISO string or None
-        age_hours:     float or None
-        status:        "FRESH" | "STALE" | "MISSING" | "UNKNOWN"
-        required_after: ISO string when min_created_at is enforced
-        stale_reason:  failure reason when operational status is not fresh
+        source_api:         collector name
+        category:           "operational" | "informational"
+        last_nonempty_ingest: ISO string of last row insert, or None
+        last_created:       alias for last_nonempty_ingest (backwards compat)
+        age_hours:          float or None
+        status:             "FRESH" | "STALE" | "MISSING" | "UNKNOWN"
+                            | "fresh_empty_expected"
+        required_after:     ISO string when min_created_at is enforced
+        stale_reason:       failure reason when operational status is not fresh
+
+    fresh_empty: collectors that legitimately produce zero rows on quiet days
+        (e.g. quota-constrained API collectors). A STALE or MISSING status for
+        these collectors is reported as "fresh_empty_expected" and does not
+        contribute to verdict failures.
     """
     all_collectors = set(freshness.keys()) | set(operational)
     records: list[dict[str, Any]] = []
 
     for source_api in sorted(all_collectors):
         is_operational = source_api in operational
+        is_fresh_empty = source_api in fresh_empty
         category = "operational" if is_operational else "informational"
         last_created = freshness.get(source_api)
 
         if last_created is None:
-            status = "MISSING" if is_operational else "UNKNOWN"
+            if is_operational and is_fresh_empty:
+                status = "fresh_empty_expected"
+            else:
+                status = "MISSING" if is_operational else "UNKNOWN"
             record: dict[str, Any] = {
                 "source_api": source_api,
                 "category": category,
+                "last_nonempty_ingest": None,
                 "last_created": None,
                 "age_hours": None,
                 "status": status,
             }
             if is_operational and min_created_at is not None:
                 record["required_after"] = min_created_at.isoformat()
-            if is_operational:
+            if is_operational and status not in ("fresh_empty_expected",):
                 record["stale_reason"] = "missing"
             records.append(record)
             continue
@@ -187,15 +200,20 @@ def classify(
             if min_created_at is not None and last_created <= min_created_at:
                 status = "STALE"
                 stale_reason = "no_post_run_rows"
+            if status == "STALE" and is_fresh_empty:
+                status = "fresh_empty_expected"
+                stale_reason = None
         else:
             # Informational collectors always report UNKNOWN for the gate;
             # we still surface the age so operators can eyeball them.
             status = "UNKNOWN"
 
+        last_ts = last_created.isoformat()
         record = {
             "source_api": source_api,
             "category": category,
-            "last_created": last_created.isoformat(),
+            "last_nonempty_ingest": last_ts,
+            "last_created": last_ts,
             "age_hours": round(age_hours, 2),
             "status": status,
         }
@@ -217,6 +235,8 @@ def verdict(records: list[dict[str, Any]]) -> tuple[int, list[str]]:
     for rec in records:
         if rec["category"] != "operational":
             continue
+        if rec["status"] == "fresh_empty_expected":
+            continue  # legitimately empty; not a gate failure
         if rec["status"] == "STALE":
             if rec.get("stale_reason") == "no_post_run_rows":
                 failures.append(
@@ -351,10 +371,25 @@ def main(argv: list[str] | None = None) -> int:
             "keepalive proof"
         ),
     )
+    parser.add_argument(
+        "--fresh-empty-expected",
+        default="",
+        help=(
+            "comma-separated list of operational collectors that legitimately "
+            "produce zero rows on quiet days (e.g. quota-constrained APIs like "
+            "news_api). STALE/MISSING for these collectors is reported as "
+            "'fresh_empty_expected' and does not fail the gate."
+        ),
+    )
     args = parser.parse_args(argv)
 
     operational = tuple(
         name.strip() for name in args.operational.split(",") if name.strip()
+    )
+    fresh_empty = tuple(
+        name.strip()
+        for name in args.fresh_empty_expected.split(",")
+        if name.strip()
     )
     threshold = timedelta(hours=args.threshold_hours)
     now = datetime.now(tz=timezone.utc)
@@ -381,6 +416,7 @@ def main(argv: list[str] | None = None) -> int:
         threshold,
         now,
         min_created_at=min_created_at,
+        fresh_empty=fresh_empty,
     )
     exit_code, failures = verdict(records)
 

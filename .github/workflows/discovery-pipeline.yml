@@ -122,6 +122,15 @@ jobs:
           echo "restore_accepted=true" >> "$GITHUB_OUTPUT"
           echo "Database state restore accepted"
 
+      - name: Anomaly check on restored database
+        if: ${{ steps.validate-restore.outputs.restore_accepted == 'true' }}
+        run: |
+          python scripts/db_anomaly.py "$DISCOVERY_DB_PATH" \
+            --known-bad-shas scripts/known_bad_shas.json \
+            --watermark .omx/state/db_watermark.json \
+            --output "$RUNNER_TEMP/anomaly_manifest.json"
+          echo "Anomaly check passed"
+
       - name: Sync portfolio companies
         if: ${{ github.event.inputs.skip_monitoring != 'true' }}
         run: |
