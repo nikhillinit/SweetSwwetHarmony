@@ -37,6 +37,11 @@ jobs:
   run-pipeline:
     name: Run Pipeline
     runs-on: ubuntu-latest
+    env:
+      SQLITE_BACKUP_BUCKET: ${{ secrets.SQLITE_BACKUP_BUCKET }}   # empty string when unset — safe
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: ${{ secrets.AWS_REGION || vars.AWS_REGION || 'us-east-1' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -52,6 +57,18 @@ jobs:
           python -m pip install --upgrade pip
           pip install httpx aiosqlite pydantic numpy aiohttp
           if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Install Litestream
+        if: env.SQLITE_BACKUP_BUCKET != ''
+        shell: bash
+        run: |
+          LITESTREAM_VERSION=0.5.2
+          curl -sSfL \
+            "https://github.com/benbjohnson/litestream/releases/download/v${LITESTREAM_VERSION}/litestream-${LITESTREAM_VERSION}-linux-x86_64.tar.gz" \
+            -o /tmp/litestream.tar.gz
+          tar -xzf /tmp/litestream.tar.gz -C /tmp
+          sudo install /tmp/litestream /usr/local/bin/litestream
+          litestream version
 
       - name: Resolve out-of-tree database path
         run: |
@@ -254,6 +271,29 @@ jobs:
             ${{ runner.temp }}/artifact-out/.omx/state/db_watermark.json
           retention-days: 7
           include-hidden-files: true
+
+      - name: Replicate database to S3 via Litestream
+        if: >-
+          success() &&
+          env.SQLITE_BACKUP_BUCKET != ''
+        continue-on-error: true
+        shell: bash
+        run: |
+          DB_PATH="$DISCOVERY_DB_PATH"
+          REPLICA_URL="s3://${SQLITE_BACKUP_BUCKET}/sweetswwetharmony/litestream/signals.db/"
+
+          echo "Replicating $DB_PATH to $REPLICA_URL"
+
+          # Checkpoint WAL before replication
+          if [ -f "${DB_PATH}-wal" ]; then
+            sqlite3 "$DB_PATH" "PRAGMA wal_checkpoint(TRUNCATE);" || true
+          fi
+
+          # One-shot replication: replicate -exec runs the binary, syncs, then exits cleanly
+          litestream replicate -exec "echo replicated" \
+            "$DB_PATH" "$REPLICA_URL" 2>&1 | tail -20
+
+          echo "Litestream replication complete"
 
   notify-on-failure:
     name: Notify on Failure
