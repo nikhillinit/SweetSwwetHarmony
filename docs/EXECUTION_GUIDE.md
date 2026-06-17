@@ -1,4 +1,4 @@
-# EXECUTION GUIDE: Ops Layer Integration
+﻿# EXECUTION GUIDE: Ops Layer Integration
 ## How to Run the Automated Procedure
 
 ---
@@ -143,7 +143,7 @@ You must actively participate when you see:
 **Key Commands to Test:**
 ```bash
 python -m ops.cli maint list-incidents
-python -m ops.cli stats --db signals.db
+python -m ops.cli stats --db "$env:DISCOVERY_DB_PATH"
 ```
 
 ### Phase 4: Testing (Est. 2 hours)
@@ -164,8 +164,8 @@ python -m ops.cli stats --db signals.db
 Copy-Item signals.db signals.db.backup_$(Get-Date -Format "yyyyMMdd_HHmmss")
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-python -m ops.bootstrap --db signals.db
-python -m ops.cli run-extraction --limit 3 --db signals.db
+python -m ops.bootstrap --db "$env:DISCOVERY_DB_PATH"
+python -m ops.cli run-extraction --limit 3 --db "$env:DISCOVERY_DB_PATH"
 ```
 
 ---
@@ -250,19 +250,19 @@ Phase 5: Production Deployment
 
 ```bash
 # Bootstrap
-python -m ops.bootstrap --db signals.db
+python -m ops.bootstrap --db "$env:DISCOVERY_DB_PATH"
 
 # Run tests
 pytest tests/ops/ -v
 
 # CLI stats
-python -m ops.cli stats --db signals.db
+python -m ops.cli stats --db "$env:DISCOVERY_DB_PATH"
 
 # List incidents
 python -m ops.cli maint list-incidents
 
 # Extraction
-python -m ops.cli run-extraction --limit 5 --db signals.db
+python -m ops.cli run-extraction --limit 5 --db "$env:DISCOVERY_DB_PATH"
 
 # Health check
 python ops/monitor.py
@@ -324,7 +324,7 @@ pytest tests/core/ -v
 4. **Review Logs**
 ```bash
 # Check ops logs
-python -m ops.cli stats --db signals.db
+python -m ops.cli stats --db "$env:DISCOVERY_DB_PATH"
 
 # Check system health
 sqlite3 signals.db "SELECT * FROM system_health ORDER BY timestamp DESC LIMIT 20;"
@@ -355,7 +355,7 @@ Before marking complete, verify:
 
 ```bash
 # 1. Bootstrap works
-python -m ops.bootstrap --db signals.db
+python -m ops.bootstrap --db "$env:DISCOVERY_DB_PATH"
 # Expected: "✅ OK: DB ready at signals.db"
 
 # 2. All tests pass
@@ -363,11 +363,11 @@ pytest tests/ops/ -v --tb=short
 # Expected: All PASSED
 
 # 3. CLI works
-python -m ops.cli stats --db signals.db
+python -m ops.cli stats --db "$env:DISCOVERY_DB_PATH"
 # Expected: Statistics displayed
 
 # 4. Extraction works
-python -m ops.cli run-extraction --limit 1 --db signals.db
+python -m ops.cli run-extraction --limit 1 --db "$env:DISCOVERY_DB_PATH"
 # Expected: "Facts created: 0+" (depends on data)
 
 # 5. Monitoring works

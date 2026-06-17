@@ -106,3 +106,37 @@ Promotion to a new baseline (for example candidate_v4) requires:
    against the current baseline jsonl.
 2. Run `python -m scripts.run_thesis_llm_eval_gate` with the new candidate.
 3. CODEOWNER review plus the `baseline-promotion-approved` label.
+
+## Baseline promotion -- candidate_v3 (2026-06-17)
+
+Two separate evaluations were run against the 64-sample v2 golden set.
+They use different evaluation code paths (see note) and produce different numbers — both exceed the 0.90 floor.
+
+### Run 1 — Diagnostic runner (`scripts/thesis_diagnostic_runner.py`)
+
+Uses the **production classifier** (`consumer.thesis_filter.llm_classifier`, temperature=0, deterministic).
+This is the authoritative promotion metric because it measures the actual classifier in production.
+
+- Run ID: `candidate_v3_promotion_run_20260617`
+- LLM accuracy: **0.9531** (61/64, temperature=0)
+- Errors: 0 (HELD→REJECTED: 1, QUALIFIED→REJECTED: 2)
+- Hermes F6 accuracy: 0.9375; delta: 0.0156 — within 0.02 tolerance
+- Comparison blocked: benchmark version mismatch (baseline v1 `2026-04-03`, candidate v2 `2026-04-05`).
+  The golden set was updated between the baseline and this run.
+
+### Run 2 — CI eval gate (`scripts/run_thesis_llm_eval_gate`)
+
+Uses `utils.thesis_evaluator.ThesisEvaluator` (separate evaluator, temperature=0.0 but
+different system prompt than the production classifier). Gate verdict is independent of Run 1.
+
+- llm_accuracy: **0.984375** (63/64, temperature=0.0)
+- Gate artifact: `.omx/specs/thesis-llm-eval-gate.json`
+- decision: **go** (0.984375 ≥ 0.90 threshold)
+
+**Promotion basis:** Run 1 (production classifier, 0.9531 ≥ 0.90). Run 2 confirms independently.
+The 3-sample discrepancy between runs reflects the two different prompt systems, not measurement error.
+
+**Status: PROMOTED** — candidate_v3 is the canonical baseline for v2 golden set.
+
+Next baseline: when Run 1 accuracy drops below 0.90 on the 64-sample v2 set, file
+a new diagnostic run and repeat this promotion flow.

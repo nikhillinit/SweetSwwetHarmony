@@ -1,4 +1,4 @@
-# INTEGRATED OPS LAYER IMPLEMENTATION PROCEDURE
+﻿# INTEGRATED OPS LAYER IMPLEMENTATION PROCEDURE
 ## Fully Automated Workflow with Explicit User Checkpoints
 
 **Document Version:** 1.0  
@@ -18,6 +18,19 @@ This procedure integrates:
 **Prerequisites:** Python 3.11+, SQLite with FTS5, Windows 10/11, GEMINI_API_KEY
 
 ---
+
+## ⚠ DB PATH REQUIREMENT
+
+Do NOT run ops commands against `signals.db` in the repo root.
+`storage/db_paths.py` raises `InTreeDatabaseError`. Always set:
+```powershell
+$env:DISCOVERY_DB_PATH = "$env:USERPROFILE\harmonic-data\signals.db"
+```
+For scratch/dev work only:
+```powershell
+$env:HARMONIC_ALLOW_IN_TREE_DB = "true"
+$env:DISCOVERY_DB_PATH = "$env:TEMP\scratch-signals.db"
+```
 
 ## 📋 PRE-FLIGHT CHECKLIST
 
@@ -130,7 +143,7 @@ str_replace_or_create_file:
     Run basic environment checks and initialize the SQLite database.
     
     Usage:
-        python -m ops.bootstrap --db signals.db
+        python -m ops.bootstrap --db "$env:DISCOVERY_DB_PATH"
     
     This module is intentionally dependency-light and Windows-friendly.
     """
@@ -257,7 +270,7 @@ str_replace_or_create_file:
 **AUTO-EXECUTE:**
 ```bash
 # Test bootstrap script
-python -m ops.bootstrap --db signals.db --skip-youtube
+python -m ops.bootstrap --db "$env:DISCOVERY_DB_PATH" --skip-youtube
 ```
 
 **CHECKPOINT 0.2A - BOOTSTRAP VERIFICATION**
@@ -838,7 +851,7 @@ CLI extended with new commands:
 Test commands:
 ```bash
 python -m ops.cli maint list-incidents
-python -m ops.cli stats --db signals.db
+python -m ops.cli stats --db "$env:DISCOVERY_DB_PATH"
 ```
 
 Do you want to:
@@ -897,8 +910,8 @@ Type your choice:
 **AUTO-EXECUTE VERIFICATION:**
 ```bash
 # Automated pre-flight checks
-python -m ops.bootstrap --db signals.db
-python -m ops.cli stats --db signals.db
+python -m ops.bootstrap --db "$env:DISCOVERY_DB_PATH"
+python -m ops.cli stats --db "$env:DISCOVERY_DB_PATH"
 pytest tests/ops/ -v --cov=ops
 ```
 
@@ -939,13 +952,13 @@ Copy-Item signals.db signals.db.backup_$(Get-Date -Format "yyyyMMdd_HHmmss")
 pip install -r requirements.txt
 
 # 4. Run bootstrap
-python -m ops.bootstrap --db signals.db
+python -m ops.bootstrap --db "$env:DISCOVERY_DB_PATH"
 
 # 5. Initial extraction (small batch)
-python -m ops.cli run-extraction --limit 3 --db signals.db
+python -m ops.cli run-extraction --limit 3 --db "$env:DISCOVERY_DB_PATH"
 
 # 6. Verify stats
-python -m ops.cli stats --db signals.db
+python -m ops.cli stats --db "$env:DISCOVERY_DB_PATH"
 ```
 
 **CHECKPOINT 5.2A - DEPLOYMENT VERIFICATION**
@@ -976,7 +989,7 @@ Auto-generated summary of what was accomplished:
   ✅ Bootstrap script created and tested
   ✅ Baseline tests passing
 
-✅ Phase 1: Self-Healing Infrastructure  
+✅ Phase 1: Self-Healing Infrastructure
   ✅ Incident management module
   ✅ Claude Code CLI wrapper
   ✅ Repair agent implementation

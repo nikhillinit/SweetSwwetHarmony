@@ -1,20 +1,21 @@
 {
-  "ambiguous_slice_accuracy": 1.0,
+  "ambiguous_slice_accuracy": 0.9773,
   "benchmark_fingerprint": "536e081d4ceec265a27cf037f7bb33ae88831895554bf8ebdbc29bf578d392fc",
   "benchmark_id": "thesis_llm_golden_set",
   "benchmark_manifest_path": "tests\\fixtures\\thesis_llm_golden_set.manifest.json",
   "benchmark_version": "2026-04-05.v2",
   "clear_control_miss_count": 0,
   "justification": [
-    "Expanded benchmark still scores near-perfectly across the ambiguous slice."
+    "Default bias is to keep 0.90 unless the expanded benchmark clearly justifies a change."
   ],
   "keyword_accuracy": 0.359375,
-  "overall_llm_accuracy": 1.0,
+  "llm_attempted_sample_count": 64,
+  "overall_llm_accuracy": 0.984375,
   "per_class_metrics": {
     "HELD": {
-      "f1": 1.0,
+      "f1": 0.9412,
       "precision": 1.0,
-      "recall": 1.0,
+      "recall": 0.8889,
       "support": 9
     },
     "QUALIFIED": {
@@ -24,8 +25,8 @@
       "support": 32
     },
     "REJECTED": {
-      "f1": 1.0,
-      "precision": 1.0,
+      "f1": 0.9787,
+      "precision": 0.9583,
       "recall": 1.0,
       "support": 23
     }
@@ -52,7 +53,7 @@
       "support": 6
     },
     "employer_sponsored": {
-      "accuracy": 1.0,
+      "accuracy": 0.8571,
       "support": 7
     },
     "gig_economy": {
@@ -65,8 +66,8 @@
     }
   },
   "post_expansion_sample_count": 64,
-  "pre_expansion_sample_count": 40,
-  "recommendation": "raise_threshold",
+  "pre_expansion_sample_count": null,
+  "recommendation": "keep_0_90",
   "scenario_counts": {
     "ad_supported": 7,
     "b2b_in_disguise": 11,
