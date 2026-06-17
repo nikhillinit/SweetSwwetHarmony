@@ -710,3 +710,45 @@ async def test_batch_commit_passes_override_hold():
         intent=DeliveryIntent.BATCH_PUSH,
         override_hold=True,
     )
+
+
+# =============================================================================
+# Track 2: Per-source confidence floor (hacker_news minimum = 0.70)
+# =============================================================================
+
+class TestSourceConfidenceFloor:
+    """Verify per-source confidence floor constants and lookup."""
+
+    def test_hacker_news_floor_is_0_70(self):
+        """HN minimum confidence should be 0.70 (not the default 0.40)."""
+        from workflows.pipeline import _get_min_confidence
+        assert _get_min_confidence("hacker_news") == 0.70
+
+    def test_default_floor_is_0_40(self):
+        """Non-override sources fall back to the 0.40 MEDIUM_CONFIDENCE_THRESHOLD."""
+        from workflows.pipeline import _get_min_confidence
+        assert _get_min_confidence("github") == 0.40
+        assert _get_min_confidence("sec_edgar") == 0.40
+        assert _get_min_confidence("rss_feeds") == 0.40
+
+    def test_source_min_confidence_dict_exists(self):
+        """_SOURCE_MIN_CONFIDENCE dict must exist and contain hacker_news."""
+        from workflows.pipeline import _SOURCE_MIN_CONFIDENCE
+        assert "hacker_news" in _SOURCE_MIN_CONFIDENCE
+        assert _SOURCE_MIN_CONFIDENCE["hacker_news"] == 0.70
+
+    def test_hn_at_055_is_below_floor(self):
+        """Confidence 0.55 for HN is below the 0.70 floor (would normally go to Tracking)."""
+        from workflows.pipeline import _get_min_confidence
+        hn_signal_confidence = 0.55
+        assert hn_signal_confidence < _get_min_confidence("hacker_news"), (
+            "HN signal at 0.55 should be below the 0.70 source floor and held"
+        )
+
+    def test_hn_at_075_is_above_floor(self):
+        """Confidence 0.75 for HN is above the 0.70 floor and should route normally."""
+        from workflows.pipeline import _get_min_confidence
+        hn_signal_confidence = 0.75
+        assert hn_signal_confidence >= _get_min_confidence("hacker_news"), (
+            "HN signal at 0.75 should be above the 0.70 source floor"
+        )

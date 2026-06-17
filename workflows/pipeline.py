@@ -122,6 +122,21 @@ logger = logging.getLogger(__name__)
 # ContextVar for per-collector HTTP request attribution in asyncio.gather()
 _current_collector: ContextVar[str] = ContextVar("current_collector", default="unknown")
 
+# Source-specific minimum confidence overrides.
+# hacker_news: 98.69% FP over 153-signal baseline → require high-confidence signal only.
+_SOURCE_MIN_CONFIDENCE: dict[str, float] = {
+    "hacker_news": 0.70,
+}
+
+
+def _get_min_confidence(source_api: str) -> float:
+    """Return the minimum routing confidence for a given source API.
+
+    Falls back to the VerificationGate MEDIUM_CONFIDENCE_THRESHOLD (0.40)
+    for sources not listed in _SOURCE_MIN_CONFIDENCE.
+    """
+    return _SOURCE_MIN_CONFIDENCE.get(source_api, 0.40)
+
 
 # =============================================================================
 # CONFIGURATION
@@ -2570,6 +2585,37 @@ class DiscoveryPipeline:
                 logger.warning(f"SignalProcessor gating failed (non-fatal): {e}")
                 gating_error = str(e)
                 # Continue with normal flow - gating is optional
+
+        # Per-source confidence floor: hold single-source groups from high-FP sources
+        # that don't reach the source-specific minimum confidence.
+        # Only fires when ALL signals in the group share the same high-FP source_api.
+        if all(sig.source_api in _SOURCE_MIN_CONFIDENCE for sig in signals):
+            dominant_source = signals[0].source_api
+            min_conf = _SOURCE_MIN_CONFIDENCE[dominant_source]
+            max_conf = max(s.confidence for s in signals)
+            if max_conf < min_conf:
+                logger.info(
+                    "source_floor_hold canonical_key=%s source=%s max_confidence=%.2f floor=%.2f",
+                    canonical_key, dominant_source, max_conf, min_conf,
+                )
+                if not dry_run:
+                    await self._store.update_signal_status(
+                        canonical_key,
+                        "held",
+                        error_message=(
+                            f"Source floor hold: {dominant_source} "
+                            f"max_confidence={max_conf:.2f} < floor={min_conf:.2f}"
+                        ),
+                    )
+                return {
+                    "decision": PushDecision.HOLD,
+                    "reason": (
+                        f"Source floor hold: {dominant_source} "
+                        f"max_confidence={max_conf:.2f} < floor={min_conf:.2f}"
+                    ),
+                    "gating_applied": False,
+                    "enrichment_boost": enrichment_boost,
+                }
 
         # Convert to Signal objects for verification gate
         gate_signals = [self._stored_to_signal(sig) for sig in signals]

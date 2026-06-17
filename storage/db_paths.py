@@ -61,3 +61,28 @@ def resolve_canonical_db_path() -> Path:
             f"HARMONIC_ALLOW_IN_TREE_DB=true for fixtures/scratch DBs."
         )
     return path
+
+
+def guard_db_path(path: Path) -> Path:
+    """Apply the in-tree safety check to any already-resolved path.
+
+    Use this when a path was supplied explicitly (not via environment variables)
+    but still needs the same safety guarantees as ``resolve_canonical_db_path``.
+
+    Args:
+        path: An already-resolved absolute :class:`~pathlib.Path`.
+
+    Returns:
+        The same path if it passes the check.
+
+    Raises:
+        InTreeDatabaseError: if the path is inside the repo working tree and
+            ``HARMONIC_ALLOW_IN_TREE_DB`` is not truthy.
+    """
+    if not _allow_in_tree() and _is_in_tree(path):
+        raise InTreeDatabaseError(
+            f"Explicit DB path resolves inside the repo working tree: {path}. "
+            f"Set DISCOVERY_DB_PATH to a location outside {REPO_ROOT}, or set "
+            f"HARMONIC_ALLOW_IN_TREE_DB=true for fixtures/scratch DBs."
+        )
+    return path

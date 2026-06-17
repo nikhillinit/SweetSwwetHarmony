@@ -1713,13 +1713,18 @@ async def cmd_pipeline_qualified(
 
 
 async def cmd_pipeline_push(
-    db_path: str = "signals.db",
+    db_path: Optional[str] = None,
     confirm: bool = False,
     dry_run: bool = False,
     signal_id: Optional[int] = None,
 ) -> None:
     """Push qualified signals to Notion."""
-    store = SignalStore(db_path)
+    from storage.db_paths import resolve_canonical_db_path, guard_db_path
+    if db_path is None:
+        resolved = resolve_canonical_db_path()
+    else:
+        resolved = guard_db_path(Path(db_path).resolve())
+    store = SignalStore(str(resolved))
     await store.initialize()
 
     try:
