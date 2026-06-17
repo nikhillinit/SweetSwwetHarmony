@@ -1,0 +1,47 @@
+# .github/workflows/process-dry-run-canary.yml
+name: Dry-Run Immutability Canary
+
+on:
+  pull_request:
+    paths:
+      - "workflows/pipeline.py"
+      - "workflows/run_manager.py"
+      - "storage/**"
+
+concurrency:
+  group: dry-run-canary-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dry-run-canary:
+    name: Dry-Run Immutability Canary
+    runs-on: ubuntu-latest
+    env:
+      HARMONIC_ALLOW_IN_TREE_DB: "true"
+      DELIVERY_MODE: staging_only
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run dry-run immutability baseline lane
+        run: |
+          python -m pytest tests/integration/test_process_dry_run_readonly.py \
+            -k "baseline" \
+            --tb=short -q
+
+      - name: Upload snapshot artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dry-run-canary-snapshots
+          path: /tmp/dry_run_readonly_*
+          if-no-files-found: ignore
