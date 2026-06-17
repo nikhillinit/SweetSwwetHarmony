@@ -214,3 +214,40 @@ class TestPrecedenceIntegration:
         from storage.signal_store import SignalStore
         store = SignalStore()
         assert str(store.db_path) == test_db
+
+
+# =============================================================================
+# Track 3: guard_db_path() helper
+# =============================================================================
+
+class TestGuardDbPath:
+    """guard_db_path() applies the in-tree safety check to any resolved path."""
+
+    def test_out_of_tree_path_passes(self, tmp_path, monkeypatch):
+        """Path outside the repo root is returned unchanged."""
+        monkeypatch.delenv("HARMONIC_ALLOW_IN_TREE_DB", raising=False)
+        out_of_tree = tmp_path / "signals.db"
+
+        from storage.db_paths import guard_db_path
+        result = guard_db_path(out_of_tree)
+        assert result == out_of_tree
+
+    def test_in_tree_path_raises(self, monkeypatch):
+        """Path inside the repo root raises InTreeDatabaseError."""
+        monkeypatch.delenv("HARMONIC_ALLOW_IN_TREE_DB", raising=False)
+        from pathlib import Path
+        from storage.db_paths import guard_db_path, InTreeDatabaseError, REPO_ROOT
+        in_tree = REPO_ROOT / "signals.db"
+
+        with pytest.raises(InTreeDatabaseError):
+            guard_db_path(in_tree)
+
+    def test_in_tree_allowed_when_env_set(self, monkeypatch):
+        """HARMONIC_ALLOW_IN_TREE_DB=true bypasses the guard."""
+        monkeypatch.setenv("HARMONIC_ALLOW_IN_TREE_DB", "true")
+        from pathlib import Path
+        from storage.db_paths import guard_db_path, REPO_ROOT
+        in_tree = REPO_ROOT / "signals.db"
+
+        result = guard_db_path(in_tree)
+        assert result == in_tree
