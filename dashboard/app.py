@@ -59,6 +59,7 @@ from dashboard.views.ops_health import render_ops_health_page
 from dashboard.views.scheduler import render_scheduler_page
 from dashboard.views.cost_analysis import render_cost_analysis_page
 from dashboard.views.drift_monitoring import render_drift_monitoring_page
+from dashboard.views.signal_flow import render_signal_flow_page
 
 # =============================================================================
 # CONFIG
@@ -2135,15 +2136,16 @@ def main():
             "Ops Monitoring": "Ops health & metrics",
             "Hunter": "Pattern-driven deal sourcing sandbox",
             "Constellation": "Interactive star map of your deal pipeline",
+            "Signal Flow": "Signal counts at each pipeline stage",
         }
 
         # Add Health view at the start, then existing views
         if has_notion and has_db:
-            view_options = ["Health", "Triage", "Batch Publish", "Inbox", "Pipeline", "Signals", "Hunter", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring", "Schedules", "Cost Analysis", "Ops Monitoring", "Drift Monitoring"]
+            view_options = ["Health", "Triage", "Batch Publish", "Inbox", "Pipeline", "Signals", "Hunter", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring", "Schedules", "Cost Analysis", "Ops Monitoring", "Drift Monitoring", "Signal Flow"]
         elif has_notion:
-            view_options = ["Health", "Triage", "Batch Publish", "Inbox", "Pipeline", "Hunter", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring", "Schedules", "Cost Analysis", "Ops Monitoring", "Drift Monitoring"]
+            view_options = ["Health", "Triage", "Batch Publish", "Inbox", "Pipeline", "Hunter", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring", "Schedules", "Cost Analysis", "Ops Monitoring", "Drift Monitoring", "Signal Flow"]
         else:
-            view_options = ["Health", "Triage", "Batch Publish", "Inbox", "Signals", "Hunter", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring", "Schedules", "Cost Analysis", "Ops Monitoring", "Drift Monitoring"]
+            view_options = ["Health", "Triage", "Batch Publish", "Inbox", "Signals", "Hunter", "Mini-Scout", "URL Profiler", "Analytics", "Monitoring", "Schedules", "Cost Analysis", "Ops Monitoring", "Drift Monitoring", "Signal Flow"]
 
         # Add Constellation view behind feature flag
         if STARWATCHER_ENABLED:
@@ -2460,6 +2462,12 @@ def main():
     # ==========================================================================
     elif view == "Drift Monitoring":
         render_drift_monitoring_page()
+
+    # ==========================================================================
+    # SIGNAL FLOW VIEW
+    # ==========================================================================
+    elif view == "Signal Flow":
+        render_signal_flow_page()
 
     # ==========================================================================
     # CONSTELLATION VIEW (Starwatcher)
