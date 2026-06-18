@@ -20,17 +20,34 @@ def test_daily_pipeline_requires_paired_database_restore() -> None:
     assert "artifact-tmp/signals.db" in workflow
     assert "artifact-tmp/.omx/state/db_watermark.json" in workflow
     assert "Daily Pipeline requires paired restore" in workflow
-    assert '[ "$RESTORED_DB" != "true" ] || [ "$RESTORED_WATERMARK" != "true" ]' in workflow
+    assert '[ "$RESTORED_DB" != "true" ]' in workflow
+    assert '[ "$RESTORED_WATERMARK" != "true" ]' in workflow
     assert "restore_accepted=true" in workflow
     assert workflow.index("Validate restored database state") < workflow.index(
         "Sync portfolio companies"
     )
 
 
-def test_daily_pipeline_does_not_bootstrap_or_recreate_state() -> None:
+def test_daily_pipeline_legacy_recovery_requires_manual_operator_approval() -> None:
     workflow = _workflow()
 
-    assert "python run_pipeline.py init-watermark" not in workflow
+    assert "recover_legacy_artifact" in workflow
+    assert "One-time operator-approved migration" in workflow
+    assert "GITHUB_EVENT_NAME" in workflow
+    assert 'RECOVER_LEGACY_ARTIFACT" != "true"' in workflow
+    assert "manually dispatch with recover_legacy_artifact=true" in workflow
+    assert "python run_pipeline.py init-watermark --db-path" in workflow
+    assert "legacy_watermark_migrated=true" in workflow
+    assert workflow.index("Validating database integrity") < workflow.index(
+        "python run_pipeline.py init-watermark --db-path"
+    )
+
+
+def test_daily_pipeline_does_not_silently_bootstrap_or_recreate_state() -> None:
+    workflow = _workflow()
+
+    assert "python run_pipeline.py init-watermark" in workflow
+    assert 'RECOVER_LEGACY_ARTIFACT" != "true"' in workflow
     assert "Initializing fresh database" not in workflow
     assert "SignalStore('signals.db')" not in workflow
     assert "Database corrupted, reinitializing" not in workflow
