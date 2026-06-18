@@ -18,12 +18,13 @@ from utils.thesis_llm_model import DEFAULT_THESIS_LLM_MODEL, THESIS_LLM_MODEL_EN
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--db", default=resolve_db_path_env())
+    ap.add_argument("--db", default=None)
     model_help = f"Defaults to ${THESIS_LLM_MODEL_ENV} or {DEFAULT_THESIS_LLM_MODEL}"
     ap.add_argument("--model", default=None, help=model_help)
     ap.add_argument("--prompt-version", default="quality-ops-v1")
     ap.add_argument("signal_id", type=int)
     args = ap.parse_args()
+    args.db = resolve_db_path_env(args.db)
 
     with quality_conn(args.db) as conn:
         r = classify_signal_llm(conn, signal_id=args.signal_id, model=args.model, prompt_version=args.prompt_version)

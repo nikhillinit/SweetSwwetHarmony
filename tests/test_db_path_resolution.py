@@ -1,5 +1,6 @@
 """Tests for guarded DB path resolution precedence."""
 
+import ast
 from argparse import Namespace
 from pathlib import Path
 
@@ -8,6 +9,16 @@ import pytest
 
 def _resolved(path: Path) -> str:
     return str(path.resolve())
+
+
+def _call_name(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Call):
+        return _call_name(node.func)
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Attribute):
+        return node.attr
+    return None
 
 
 class TestResolveDbPathEnv:
@@ -83,6 +94,51 @@ class TestResolveDbPathEnv:
         from utils.db_path_helper import resolve_db_path_env
 
         assert resolve_db_path_env() == _resolved(secondary)
+
+
+class TestProductionDbPathDetection:
+    """Tests for production DB path comparisons used by write guards."""
+
+    def test_explicit_out_of_tree_candidate_is_not_production_when_default_rejected(
+        self, monkeypatch, tmp_path
+    ):
+        """A rejected canonical default must not abort explicit safe DB commands."""
+        from storage.db_paths import REPO_ROOT
+        from utils.db_path_helper import is_production_db_path
+
+        monkeypatch.delenv("DISCOVERY_DB_PATH", raising=False)
+        monkeypatch.delenv("SIGNAL_DB_PATH", raising=False)
+        monkeypatch.delenv("HARMONIC_ALLOW_IN_TREE_DB", raising=False)
+        monkeypatch.chdir(REPO_ROOT)
+
+        assert is_production_db_path(tmp_path / "explicit.db") is False
+
+
+class TestArgparseDbDefaults:
+    """Tests that argparse entrypoints defer guarded DB resolution."""
+
+    def test_script_argparse_db_defaults_are_not_eagerly_resolved(self):
+        """Scripts must parse explicit --db values before applying the DB guard."""
+        from storage.db_paths import REPO_ROOT
+
+        offenders = []
+        for script in sorted((REPO_ROOT / "scripts").rglob("*.py")):
+            tree = ast.parse(script.read_text(encoding="utf-8"))
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                if _call_name(node.func) != "add_argument":
+                    continue
+                if not any(
+                    isinstance(arg, ast.Constant) and arg.value in {"--db", "--db-path"}
+                    for arg in node.args
+                ):
+                    continue
+                for keyword in node.keywords:
+                    if keyword.arg == "default" and _call_name(keyword.value) == "resolve_db_path_env":
+                        offenders.append(f"{script.relative_to(REPO_ROOT)}:{node.lineno}")
+
+        assert offenders == []
 
 
 class TestResolveDbPath:
