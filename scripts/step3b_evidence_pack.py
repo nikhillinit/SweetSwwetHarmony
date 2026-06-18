@@ -207,9 +207,10 @@ def _write_decision_note(
 
 def main():
     parser = argparse.ArgumentParser(description="Generate Step 3B evidence pack")
-    parser.add_argument("--db", default=resolve_db_path_env())
+    parser.add_argument("--db", default=None)
     parser.add_argument("--out-dir", default="artifacts/step3b")
     args = parser.parse_args()
+    args.db = resolve_db_path_env(args.db)
     asyncio.run(generate_evidence_pack(args.db, args.out_dir))
 
 

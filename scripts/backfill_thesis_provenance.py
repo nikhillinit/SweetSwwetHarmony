@@ -216,12 +216,13 @@ def _print_summary(metrics: dict[str, Any]) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Backfill thesis provenance metadata")
-    parser.add_argument("--db", default=resolve_db_path_env(), help="Database path")
+    parser.add_argument("--db", default=None, help="Database path")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", action="store_true", help="Preview without writing")
     mode.add_argument("--commit", action="store_true", help="Apply provenance updates")
     parser.add_argument("--report", default="", help="Optional path to write a JSON report envelope")
     args = parser.parse_args()
+    args.db = resolve_db_path_env(args.db)
 
     tool_name = "backfill_thesis_provenance"
     action = "backfill_thesis_provenance"

@@ -21,11 +21,12 @@ from utils.db_path_helper import resolve_db_path_env
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--db", default=resolve_db_path_env())
+    ap.add_argument("--db", default=None)
     ap.add_argument("--days-to-count", type=int, default=30)
     ap.add_argument("--since-days", type=int, default=None)
     ap.add_argument("--override-manual", action="store_true", default=False)
     args = ap.parse_args()
+    args.db = resolve_db_path_env(args.db)
 
     with quality_conn(args.db) as conn:
         stats = backfill_outcomes_from_events(

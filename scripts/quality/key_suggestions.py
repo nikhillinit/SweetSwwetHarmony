@@ -18,12 +18,13 @@ from utils.db_path_helper import resolve_db_path_env
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--db", default=resolve_db_path_env())
+    ap.add_argument("--db", default=None)
     ap.add_argument("--min-signals", type=int, default=5)
     ap.add_argument("--limit", type=int, default=100)
     ap.add_argument("--fp-only", action="store_true", default=False)
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
+    args.db = resolve_db_path_env(args.db)
 
     with quality_conn(args.db) as conn:
         suggestions = suggest_key_strengthening(conn, min_signals=args.min_signals, limit=args.limit, fp_only=bool(args.fp_only))

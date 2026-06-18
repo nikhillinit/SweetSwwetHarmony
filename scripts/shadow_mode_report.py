@@ -123,9 +123,10 @@ async def generate_report(db_path: str, days: int) -> Dict[str, Any]:
 
 def main():
     parser = argparse.ArgumentParser(description="Shadow Mode Report for Warm Intro Indicators")
-    parser.add_argument("--db", default=resolve_db_path_env(), help="Database path")
+    parser.add_argument("--db", default=None, help="Database path")
     parser.add_argument("--days", type=int, default=30, help="Lookback window in days")
     args = parser.parse_args()
+    args.db = resolve_db_path_env(args.db)
 
     report = asyncio.run(generate_report(args.db, args.days))
 
