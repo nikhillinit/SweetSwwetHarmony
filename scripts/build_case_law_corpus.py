@@ -549,7 +549,7 @@ async def main() -> int:
     from storage.signal_store import SignalStore
 
     parser = argparse.ArgumentParser(description="Build case-law corpus from labeled signals")
-    parser.add_argument("--db", default=resolve_db_path_env(), help="Database path")
+    parser.add_argument("--db", default=None, help="Database path")
     parser.add_argument("--version", default="v1.0.0", help="Vectorizer version")
     parser.add_argument("--dry-run", action="store_true", help="Print stats without writing")
     parser.add_argument("--commit", action="store_true", help="Write vectorizer artifacts and DB rows")
@@ -558,6 +558,7 @@ async def main() -> int:
     parser.add_argument("--vectorizer-dir", default=None, help="Vectorizer output directory")
     parser.add_argument("--report", default="", help="Optional path to write a JSON report envelope")
     args = parser.parse_args()
+    args.db = resolve_db_path_env(args.db)
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
 

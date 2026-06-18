@@ -17,7 +17,7 @@ from argparse import ArgumentParser, Namespace
 from pathlib import Path
 from typing import Union
 
-from storage.db_paths import guard_db_path, resolve_canonical_db_path
+from storage.db_paths import InTreeDatabaseError, guard_db_path, resolve_canonical_db_path
 
 
 _SQLITE_MEMORY_DB = ":memory:"
@@ -57,7 +57,11 @@ def is_production_db_path(candidate: Union[str, Path, None]) -> bool:
     """Return True when *candidate* resolves to the configured production DB path."""
     if candidate is None:
         return False
-    return Path(candidate).resolve() == get_production_db_path()
+    try:
+        production_db = get_production_db_path()
+    except InTreeDatabaseError:
+        return False
+    return Path(candidate).resolve() == production_db
 
 
 def get_signal_count_watermark_path() -> Path:

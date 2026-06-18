@@ -24,10 +24,11 @@ from utils.db_path_helper import resolve_db_path_env
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--db", default=resolve_db_path_env())
+    ap.add_argument("--db", default=None)
     ap.add_argument("--baseline-new-keys", action="store_true", default=True)
     ap.add_argument("--no-baseline-new-keys", action="store_false", dest="baseline_new_keys")
     args = ap.parse_args()
+    args.db = resolve_db_path_env(args.db)
 
     with quality_conn(args.db) as conn:
         stats = asyncio.run(

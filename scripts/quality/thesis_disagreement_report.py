@@ -16,11 +16,12 @@ from utils.db_path_helper import resolve_db_path_env
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--db", default=resolve_db_path_env())
+    ap.add_argument("--db", default=None)
     ap.add_argument("--days", type=int, default=30)
     ap.add_argument("--keyword-threshold", type=float, default=0.40)
     ap.add_argument("--out", default=None)
     args = ap.parse_args()
+    args.db = resolve_db_path_env(args.db)
 
     with quality_conn(args.db) as conn:
         report = generate_disagreement_report(

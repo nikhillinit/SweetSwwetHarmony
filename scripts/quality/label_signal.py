@@ -18,13 +18,14 @@ from utils.db_path_helper import resolve_db_path_env
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--db", default=resolve_db_path_env())
+    ap.add_argument("--db", default=None)
     ap.add_argument("--by", dest="created_by", default=os.getenv("USER", "human"))
     ap.add_argument("--reason", default=None)
     ap.add_argument("--notes", default=None)
     ap.add_argument("signal_id", type=int)
     ap.add_argument("label", choices=["TP", "FP", "UNSURE", "ADJ"])
     args = ap.parse_args()
+    args.db = resolve_db_path_env(args.db)
 
     with quality_conn(args.db) as conn:
         feedback_id, upsert = label_signal_manual(

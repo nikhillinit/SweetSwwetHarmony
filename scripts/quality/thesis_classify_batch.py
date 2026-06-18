@@ -17,7 +17,7 @@ from utils.thesis_llm_model import DEFAULT_THESIS_LLM_MODEL, THESIS_LLM_MODEL_EN
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--db", default=resolve_db_path_env())
+    ap.add_argument("--db", default=None)
     ap.add_argument("--days", type=int, default=30)
     ap.add_argument("--limit", type=int, default=200)
     model_help = f"Defaults to ${THESIS_LLM_MODEL_ENV} or {DEFAULT_THESIS_LLM_MODEL}"
@@ -25,6 +25,7 @@ def main() -> None:
     ap.add_argument("--prompt-version", default="quality-ops-v1")
     ap.add_argument("--stop-on-error", action="store_true", default=False)
     args = ap.parse_args()
+    args.db = resolve_db_path_env(args.db)
 
     with quality_conn(args.db) as conn:
         summary = batch_classify_missing_thesis(

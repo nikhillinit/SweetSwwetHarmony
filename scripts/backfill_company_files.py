@@ -482,7 +482,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(
         description="Backfill company_files from existing signals using standardized canonical keys."
     )
-    parser.add_argument("--db", default=resolve_db_path_env(), help="Path to SQLite database")
+    parser.add_argument("--db", default=None, help="Path to SQLite database")
     parser.add_argument(
         "--write",
         action="store_true",
@@ -495,6 +495,7 @@ def main() -> int:
     )
     parser.add_argument("--report", default="", help="Optional path to write a JSON report envelope")
     args = parser.parse_args()
+    args.db = resolve_db_path_env(args.db)
 
     # Windows console encoding fix
     if sys.platform == "win32":

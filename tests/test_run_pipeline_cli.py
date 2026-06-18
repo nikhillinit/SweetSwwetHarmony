@@ -1085,6 +1085,34 @@ class TestProductionDbSignalCountGuard:
         mock_cmd.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_bypasses_explicit_safe_db_when_canonical_default_is_rejected(
+        self, monkeypatch, tmp_path
+    ):
+        from storage.db_paths import REPO_ROOT
+
+        scratch_db = tmp_path / "scratch.db"
+        _create_signal_count_db(scratch_db, 4)
+        monkeypatch.delenv("DISCOVERY_DB_PATH", raising=False)
+        monkeypatch.delenv("SIGNAL_DB_PATH", raising=False)
+        monkeypatch.delenv("HARMONIC_ALLOW_IN_TREE_DB", raising=False)
+        monkeypatch.chdir(REPO_ROOT)
+
+        args = self._mock_args(command="process", db_path=str(scratch_db))
+
+        with patch("run_pipeline.create_parser") as mock_parser, \
+             patch("run_pipeline.setup_logging"), \
+             patch("utils.config_validator.validate_config", return_value=[]), \
+             patch("utils.config_validator.print_config_report", return_value=False), \
+             patch("utils.db_guard.check_db_health") as mock_check_health, \
+             patch("run_pipeline.cmd_process", new_callable=AsyncMock, return_value=0) as mock_cmd:
+            mock_parser.return_value.parse_args.return_value = args
+            from run_pipeline import main
+            await main()
+
+        mock_check_health.assert_not_called()
+        mock_cmd.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_sync_blocks_without_recovery_override(self, monkeypatch, tmp_path):
         prod_db = tmp_path / "signals.db"
         watermark = tmp_path / "watermark.json"
