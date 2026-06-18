@@ -12,25 +12,46 @@
 
 ---
 
-## Status snapshot (2026-06-16, verified at HEAD `de00bb0`)
+## Status snapshot (2026-06-18, verified at HEAD `4f19d66`)
 
-| Milestone | Status | Evidence |
-|-----------|--------|----------|
+> **Reconciled 2026-06-18.** The prior snapshot was pinned to `de00bb0` and was ~33 commits
+> stale. Live `origin/main` is now **`4f19d66`** (merge of PR #282). Two findings from the
+> red-team reviews in this directory are folded in below: (1) most milestone *code* already
+> merged (commit `7f02719` and the present-on-main check), so these are no longer "OPEN
+> implementation" tasks — they are **code-landed but unratified**, with specific wiring gaps;
+> (2) the DB-path hardening PRs **#281** (`da48563`) and **#282** (`4f19d66`) landed since the
+> last snapshot and materially change P0-1's DB-safety posture. See
+> `red-team-ratification-spec.md` and `deliberation-debate-red-teaming.md` for the caveats
+> behind each 🟡 below. **Do not treat 🟡 as DONE** — code on main is not the same as a ratified
+> claim (this is the central lesson of the red-team reviews).
+
+| Milestone | Status | Evidence / caveat |
+|-----------|--------|-------------------|
 | P0-0 Gemini paid tier | ✅ DONE | F6 = 0.9375 |
 | P0-2 Gate hardening PR #271 | ✅ DONE | merged `275cded` |
 | P0-1 DB untrack + resolver + Daily Pipeline repoint | ✅ DONE | PRs #272/#273/#275 |
-| P0-1 bounded recovery + anomaly check + close #149 | 🔴 OPEN | this plan |
+| **DB-path hardening (canonical resolution, in-tree guard, Hermes task paths)** | 🟢 **MERGED** | **PR #281 (`da48563`) + #282 (`4f19d66`)** — `guard_db_path` / `resolve_task_db_path` / `InTreeDatabaseError` fail-closed on main; **CI-green-on-merge unconfirmed** |
+| P0-1 bounded recovery + anomaly check + close #149 | 🔴 OPEN | unratified; needs Phase-2 ratification audit from artifacts |
 | P0-3 Dry-run immutability | 🔴 OPEN | this plan |
-| M1A db_anomaly.py | 🔴 OPEN | prerequisite for M1B |
-| M1B restore_db.py Litestream-safe hardening | 🔴 OPEN | blocks: W1, W2 deliberation findings |
-| M2 v52 migration with writer coordination | 🔴 OPEN | blocks: W4 |
-| M3 collector_health v2 + circuit breaker | 🔴 OPEN | blocks: W5, prereq for M7 |
-| M4 vcrpy cassette lifecycle | 🔴 OPEN | blocks: W6 |
-| M5 parity gate (temperature=0.0 or delta<0.02) | 🔴 OPEN | blocks: W3 |
-| M6 PR evidence enforcement | 🔴 OPEN | blocks: W7 |
-| M7 trust status CLI | 🔴 OPEN | hard-dep on M3 (W9) |
+| M1A db_anomaly.py | 🟡 CODE ON MAIN | file present; minimal (sha/row/size/watermark only) — v2 hot/deep split still open |
+| M1B restore_db.py Litestream-safe hardening | 🔴 **OPEN (critical)** | `restore_with_integrity_check` + `litestream_ctrl.py` exist, but **Litestream lifecycle is NOT wired into the real `restore_backup()` path** (red-team F4); `MAINTENANCE_LOCK_TIMEOUT_SECONDS` is a dead constant (F5). W1/W2 effectively unmitigated. |
+| M2 v52 migration with writer coordination | 🔴 **OPEN (collision)** | `run_migration.py` merged but **orphaned** — reads a non-existent `schema_version` table and targets v52, which production already uses for a different migration (F2/F3). Real schema is at `CURRENT_SCHEMA_VERSION=53`. Rework against `schema_migrations`. |
+| M3 collector_health v2 + circuit breaker | 🟡 CODE ON MAIN | `REPORT_SCHEMA_VERSION=2`, statuses + `SuspensionStore` merged (`7f02719`); suspension store concurrency/env-var caveats (red-team S1) open |
+| M4 vcrpy cassette lifecycle | 🟡 CODE ON MAIN | `cassette_policy.py` present; regeneration cadence/storage policy unverified |
+| M5 parity gate (temperature=0.0 or delta<0.02) | 🟡 CODE ON MAIN | `run_thesis_parity_gate.py` present; tests cover arithmetic only — CLI honoring `temperature=0.0` is untested (S3) |
+| M6 PR evidence enforcement | 🟡 CODE ON MAIN — **hardening required** | `check_pr_evidence.py` present but accepts `/actions/runs/0` and any-repo URLs; **Phase-0 hardening is the recommended first patch** |
+| M7 trust status CLI | 🟡 CODE ON MAIN | `trust_status.py` present (45 lines, minimal); v2 max-age/expiry semantics open |
 
-**Operating guardrail (until M1B merges):** do not run any mutating pipeline command (`process`/`collect` without `--dry-run`, restore, migrate) against the canonical DB. Use scratch copies only.
+**Operating guardrail (still in force):** the in-tree DB-path guard (#281/#282) now blocks
+accidental writes to a repo-root `signals.db`, but **restore is still not Litestream-safe**
+(M1B/F4). Continue to **not** run mutating `restore`/`migrate`/non-`--dry-run` pipeline commands
+against the canonical DB until M1B wires the Litestream lifecycle into `restore_backup()`. Use
+scratch copies (`HARMONIC_SCRATCH_DB=1`) only.
+
+**Revised critical path (post-merge):** (1) harden `check_pr_evidence.py` (M6/Phase-0) → (2) ratify
+landed claims + #281/#282 fail-closed behavior from artifacts → (3) wire M1B Litestream-safe restore
+(F4) → (4) rework M2 against `schema_migrations` (F2/F3) → (5) refresh `active-sprint.md`
+(currently stale at `275cded`) and this plan to `4f19d66`.
 
 ---
 
