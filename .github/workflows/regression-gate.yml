@@ -101,8 +101,8 @@ jobs:
           uid=$(docker run --rm --entrypoint id harmonic:${{ github.sha }} -u harmonic)
           gid=$(docker run --rm --entrypoint id harmonic:${{ github.sha }} -g harmonic)
           docker run -d --name harmonic-ci -p 8000:8000 \
-            --tmpfs /app/data:rw,mode=0775,uid=${uid},gid=${gid} \
-            -e DISCOVERY_DB_PATH=/app/data/signals.db \
+            --tmpfs /tmp/harmonic:rw,mode=0775,uid=${uid},gid=${gid} \
+            -e DISCOVERY_DB_PATH=/tmp/harmonic/signals.db \
             -e DELIVERY_MODE=staging_only \
             -e STRICT_CONFIG_VALIDATION=false \
             harmonic:${{ github.sha }}
@@ -124,7 +124,7 @@ jobs:
         if: failure()
         run: |
           docker ps -a || true
-          docker exec harmonic-ci sh -c "id; ls -ld /app /app/data || true" || true
+          docker exec harmonic-ci sh -c "id; ls -ld /app /tmp/harmonic || true" || true
           docker logs harmonic-ci || true
 
       - name: Stop container
