@@ -24,6 +24,11 @@ on:
         type: boolean
         required: false
         default: false
+      recover_legacy_artifact:
+        description: One-time operator-approved migration for a DB-only legacy artifact
+        type: boolean
+        required: false
+        default: false
 
 concurrency:
   group: daily-pipeline
@@ -112,24 +117,44 @@ jobs:
         env:
           RESTORED_DB: ${{ steps.restore-state.outputs.restored_db }}
           RESTORED_WATERMARK: ${{ steps.restore-state.outputs.restored_watermark }}
+          RECOVER_LEGACY_ARTIFACT: ${{ github.event.inputs.recover_legacy_artifact || 'false' }}
         run: |
           echo "restore_accepted=false" >> "$GITHUB_OUTPUT"
+          echo "legacy_watermark_migrated=false" >> "$GITHUB_OUTPUT"
 
-          if [ "$RESTORED_DB" != "true" ] || [ "$RESTORED_WATERMARK" != "true" ]; then
+          if [ "$RESTORED_DB" != "true" ]; then
             echo "::error::Daily Pipeline requires paired restore of signals.db and .omx/state/db_watermark.json"
             echo "Restored signals.db: $RESTORED_DB"
             echo "Restored watermark: $RESTORED_WATERMARK"
             exit 1
           fi
 
-          if [ ! -f "$DISCOVERY_DB_PATH" ] || [ ! -f .omx/state/db_watermark.json ]; then
-            echo "::error::Restored database state is incomplete after artifact unpack"
+          if [ ! -f "$DISCOVERY_DB_PATH" ]; then
+            echo "::error::Restored signals.db is missing after artifact unpack"
             exit 1
           fi
 
           echo "Validating database integrity..."
           if ! sqlite3 "$DISCOVERY_DB_PATH" "PRAGMA integrity_check;" | grep -q "^ok$"; then
             echo "::error::Restored signals.db failed integrity check"
+            exit 1
+          fi
+
+          if [ "$RESTORED_WATERMARK" != "true" ]; then
+            if [ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ] || [ "$RECOVER_LEGACY_ARTIFACT" != "true" ]; then
+              echo "::error::Daily Pipeline requires paired restore of signals.db and .omx/state/db_watermark.json"
+              echo "Restored signals.db: $RESTORED_DB"
+              echo "Restored watermark: $RESTORED_WATERMARK"
+              echo "For a one-time legacy artifact migration, manually dispatch with recover_legacy_artifact=true."
+              exit 1
+            fi
+            echo "::warning::Recovering DB guard watermark from a legacy DB-only artifact under explicit operator approval"
+            python run_pipeline.py init-watermark --db-path "$DISCOVERY_DB_PATH"
+            echo "legacy_watermark_migrated=true" >> "$GITHUB_OUTPUT"
+          fi
+
+          if [ ! -f .omx/state/db_watermark.json ]; then
+            echo "::error::Restored database state is incomplete after artifact unpack"
             exit 1
           fi
 
