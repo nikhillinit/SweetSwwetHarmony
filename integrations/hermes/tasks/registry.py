@@ -113,14 +113,14 @@ def add_task_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--json", action="store_true", dest="json_output")
 
     parser.add_argument("--backup")
-    parser.add_argument("--target", default="signals.db")
+    parser.add_argument("--target", default=None)
     parser.add_argument("--allow-target-create", action="store_true")
     parser.add_argument("--handle-sidecars", action="store_true")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--api-url")
     parser.add_argument("--expected-schema-version", type=int)
     parser.add_argument("--min-row-count", type=int, default=0)
-    parser.add_argument("--db-path", default="signals.db")
+    parser.add_argument("--db-path", default=None)
     parser.add_argument("--ttl-days", type=int, default=7)
     cleanup_group = parser.add_mutually_exclusive_group()
     cleanup_group.add_argument(

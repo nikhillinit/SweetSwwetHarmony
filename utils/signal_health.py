@@ -546,7 +546,7 @@ async def main():
 
     from storage.signal_store import SignalStore
 
-    db_path = sys.argv[1] if len(sys.argv) > 1 else "signals.db"
+    db_path = sys.argv[1] if len(sys.argv) > 1 else None
 
     print(f"Analyzing signals from: {db_path}")
     print()

@@ -36,6 +36,7 @@ from ops.collector_config import (
     load_collector_config,
 )
 from ops.collector_heartbeat import load_collector_state
+from utils.db_path_helper import resolve_db_path_env
 
 REPORT_SCHEMA_VERSION = 2
 DEFAULT_LOOKBACK_DAYS = 90
@@ -66,8 +67,6 @@ class CollectorHealthReport:
     def __post_init__(self) -> None:
         if self.status not in VALID_STATUSES:
             raise ValueError(f"unknown status {self.status!r}; valid: {VALID_STATUSES}")
-DEFAULT_DB_PATH = "signals.db"
-
 # Collectors whose ``source_api`` value(s) in the signals table differ from the
 # collector name, or which legitimately emit multiple ``source_api`` rows.
 # Anything not listed here defaults to ``(collector_name,)``.
@@ -627,8 +626,8 @@ def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--db",
-        default=os.getenv("DISCOVERY_DB_PATH", DEFAULT_DB_PATH),
-        help="Path to signals.db (default: $DISCOVERY_DB_PATH or signals.db).",
+        default=None,
+        help="Path to signals.db (default: canonical DISCOVERY_DB_PATH).",
     )
     parser.add_argument(
         "--lookback-days",
@@ -657,13 +656,14 @@ def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = _parse_args(argv)
+    db_path = resolve_db_path_env(args.db)
     state = load_collector_state(args.state, config_path=args.config)
-    counts = aggregate_signal_counts(args.db, lookback_days=args.lookback_days)
-    outbox_health = aggregate_outbox_health(args.db)
+    counts = aggregate_signal_counts(db_path, lookback_days=args.lookback_days)
+    outbox_health = aggregate_outbox_health(db_path)
     report = build_health_report(
         state,
         counts,
-        db_path=args.db,
+        db_path=db_path,
         lookback_days=args.lookback_days,
         config_path=args.config,
         outbox_health=outbox_health,

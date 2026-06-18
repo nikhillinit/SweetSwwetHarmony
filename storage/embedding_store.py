@@ -27,6 +27,7 @@ import aiosqlite
 import numpy as np
 
 from utils.embedding_generator import serialize_embedding, deserialize_embedding
+from utils.db_path_helper import resolve_db_path_env
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +98,7 @@ class EmbeddingStore:
 
     def __init__(
         self,
-        db_path: str | Path = "signals.db",
+        db_path: str | Path | None = None,
         embedding_kind: str = DEFAULT_EMBEDDING_KIND,
         embedding_model: str = DEFAULT_EMBEDDING_MODEL,
         embedding_version: str = DEFAULT_EMBEDDING_VERSION,
@@ -111,7 +112,7 @@ class EmbeddingStore:
             embedding_model: Model used for embedding
             embedding_version: Version for cache invalidation
         """
-        self.db_path = Path(db_path)
+        self.db_path = Path(resolve_db_path_env(db_path))
         self.embedding_kind = embedding_kind
         self.embedding_model = embedding_model
         self.embedding_version = embedding_version
