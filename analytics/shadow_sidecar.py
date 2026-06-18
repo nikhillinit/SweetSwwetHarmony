@@ -36,6 +36,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Iterator, List, Mapping, Optional
 
+from storage.db_paths import guard_db_path, resolve_canonical_db_path
 from utils.db_tool_lock import DBToolLock
 
 logger = logging.getLogger(__name__)
@@ -47,6 +48,10 @@ DEFAULT_PRODUCTION_DB = Path("signals.db")
 DEFAULT_SHADOW_ROOT = Path("data/shadow")
 DEFAULT_SHADOW_DB = DEFAULT_SHADOW_ROOT / "discovery.db"
 DEFAULT_SNAPSHOT_DB = DEFAULT_SHADOW_ROOT / "signals_snapshot.db"
+
+
+def _default_production_db() -> Path:
+    return resolve_canonical_db_path()
 
 
 class ReadMode(str, Enum):
@@ -88,11 +93,14 @@ class ShadowSidecarConfig:
     All paths are relative to the project root unless absolute.
     """
 
-    production_db: Path = field(default_factory=lambda: DEFAULT_PRODUCTION_DB)
+    production_db: Path = field(default_factory=_default_production_db)
     shadow_db: Path = field(default_factory=lambda: DEFAULT_SHADOW_DB)
     snapshot_db: Path = field(default_factory=lambda: DEFAULT_SNAPSHOT_DB)
     read_mode: ReadMode = ReadMode.IMMUTABLE_URI
     register_dbtool_lock: bool = True
+
+    def __post_init__(self) -> None:
+        self.production_db = guard_db_path(Path(self.production_db).expanduser().resolve())
 
 
 class ShadowSidecar:

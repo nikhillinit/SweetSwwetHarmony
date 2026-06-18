@@ -32,6 +32,7 @@ from integrations.hermes.plan_contract import (
     CURRENT_CONTRACT_VERSION,
     attach_plan_contract,
 )
+from storage.db_paths import guard_db_path, resolve_canonical_db_path
 
 TaskMode = Literal["plan-only", "preflight-only", "dry-run", "execute"]
 TaskRisk = Literal["low", "medium", "high", "critical"]
@@ -143,6 +144,16 @@ class TaskContext:
         if path.is_absolute():
             return path
         return self.root / path
+
+
+def resolve_task_db_path(context: TaskContext, value: str | Path | None) -> Path:
+    """Resolve a Hermes task DB target through the canonical in-tree guard."""
+    if value in (None, ""):
+        return resolve_canonical_db_path()
+    resolved = context.resolve(value)
+    if resolved is None:
+        return resolve_canonical_db_path()
+    return guard_db_path(resolved.expanduser().resolve())
 
 
 class HermesTask:

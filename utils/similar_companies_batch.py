@@ -275,7 +275,7 @@ class SimilarCompaniesBatch:
 # =============================================================================
 
 async def run_batch_job(
-    db_path: str = "signals.db",
+    db_path: str | None = None,
     force_recompute: bool = False,
     limit: Optional[int] = None,
 ) -> BatchResult:
@@ -309,8 +309,8 @@ def main():
     parser = argparse.ArgumentParser(description="Pre-compute company embeddings")
     parser.add_argument(
         "--db",
-        default="signals.db",
-        help="Path to database (default: signals.db)",
+        default=None,
+        help="Path to database (default: canonical DISCOVERY_DB_PATH)",
     )
     parser.add_argument(
         "--force",

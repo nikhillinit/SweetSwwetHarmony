@@ -46,6 +46,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from storage.signal_store import SignalStore, SuppressionEntry
 from connectors.notion_connector_v2 import NotionConnector
+from utils.db_path_helper import resolve_db_path_env
 from utils.canonical_keys import (
     normalize_domain,
     is_strong_key,
@@ -461,8 +462,8 @@ async def main():
     parser.add_argument(
         "--db-path",
         type=str,
-        default="signals.db",
-        help="Path to SQLite database (default: signals.db)",
+        default=None,
+        help="Path to SQLite database (default: canonical DISCOVERY_DB_PATH)",
     )
     parser.add_argument(
         "--ttl-days",
@@ -513,6 +514,8 @@ async def main():
     from dotenv import load_dotenv
     load_dotenv()
 
+    db_path = resolve_db_path_env(args.db_path)
+
     notion_api_key = os.environ.get("NOTION_API_KEY")
     notion_database_id = os.environ.get("NOTION_DATABASE_ID")
 
@@ -531,11 +534,11 @@ async def main():
     )
 
     store = SignalStore(
-        db_path=args.db_path,
+        db_path=db_path,
         suppression_ttl_days=args.ttl_days,
         read_only=args.dry_run,
     )
-    if not args.dry_run or Path(args.db_path).exists():
+    if not args.dry_run or Path(db_path).exists():
         await store.initialize()
 
     try:

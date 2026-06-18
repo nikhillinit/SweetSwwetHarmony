@@ -697,7 +697,7 @@ class NotionPusher:
 # =============================================================================
 
 async def run_batch_push(
-    db_path: str = "signals.db",
+    db_path: str | None = None,
     limit: Optional[int] = None,
     dry_run: bool = False
 ) -> BatchResult:
@@ -748,7 +748,7 @@ async def main():
     import sys
 
     parser = argparse.ArgumentParser(description="Push verified signals to Notion")
-    parser.add_argument("--db", default="signals.db", help="Signal database path")
+    parser.add_argument("--db", default=None, help="Signal database path")
     parser.add_argument("--limit", type=int, help="Max signals to process")
     parser.add_argument("--dry-run", action="store_true", help="Don't actually push")
     parser.add_argument("--verbose", "-v", action="store_true", help="Verbose logging")

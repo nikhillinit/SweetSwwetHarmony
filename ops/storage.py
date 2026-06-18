@@ -17,6 +17,8 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Optional, List, Union
 
+from utils.db_path_helper import resolve_db_path_env
+
 logger = logging.getLogger(__name__)
 
 
@@ -63,9 +65,9 @@ class OpsStorage:
     fallback — but NEVER touches signals/companies/signal_processing.
     """
 
-    def __init__(self, db_path: str = "signals.db"):
-        self.db_path = db_path
-        self.pool = ConnectionPool(db_path)
+    def __init__(self, db_path: str | None = None):
+        self.db_path = resolve_db_path_env(db_path)
+        self.pool = ConnectionPool(self.db_path)
         self._ensure_ops_tables()
 
     @staticmethod
