@@ -825,7 +825,7 @@ async def async_main(args: argparse.Namespace) -> Dict[str, Any]:
 def main():
     parser = argparse.ArgumentParser(description="Pipeline Report 4A")
     parser.add_argument(
-        "--db", default=resolve_db_path_env(),
+        "--db", default=None,
         help="Database path (default: DISCOVERY_DB_PATH or signals.db)",
     )
     parser.add_argument(
@@ -841,6 +841,7 @@ def main():
         help="Max pipeline runs to include (default: 10, max: 25)",
     )
     args = parser.parse_args()
+    args.db = resolve_db_path_env(args.db)
     args.limit = min(args.limit, _MAX_LIMIT)
 
     if sys.platform == "win32":

@@ -303,7 +303,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Compare Step 3/4 activation readiness with active SPC settings versus defaults"
     )
-    parser.add_argument("--db", default=resolve_db_path_env(), help="Database path")
+    parser.add_argument("--db", default=None, help="Database path")
     parser.add_argument(
         "--steps",
         type=int,
@@ -324,6 +324,7 @@ def main(argv: list[str] | None = None) -> int:
         help="Optional path to write the JSON report",
     )
     args = parser.parse_args(argv)
+    args.db = resolve_db_path_env(args.db)
 
     report = evaluate_override_decision(args.db, steps=tuple(args.steps), backfill_days=args.days)
     if args.report_path:

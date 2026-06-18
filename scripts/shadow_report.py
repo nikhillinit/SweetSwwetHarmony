@@ -600,7 +600,7 @@ def main():
     export_parser.add_argument(
         "--db-path",
         type=str,
-        default=resolve_db_path_env(),
+        default=None,
         help="Path to SignalStore database (default: signals.db)",
     )
 
@@ -669,6 +669,9 @@ def main():
 
     if args.verbose:
         logging.getLogger().setLevel(logging.DEBUG)
+
+    if hasattr(args, "db_path"):
+        args.db_path = resolve_db_path_env(args.db_path)
 
     # Dispatch to command handler
     if args.command == "export":
