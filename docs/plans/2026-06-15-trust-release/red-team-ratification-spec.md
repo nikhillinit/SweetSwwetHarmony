@@ -170,6 +170,32 @@ should not block the release being declared trustworthy.
 Phase-2 ratification), C1 (treat new trust subsystems as un-ratified until they have their own
 evidence).
 
+## Addendum — 2026-06-18: PR #281 merged
+
+PR #281 was **merged** (`merged_at` 2026-06-18T04:31Z by `nikhillinit`). New main HEAD is
+**`da48563`** (merge commit), superseding `6023a29`. Final size: **40 files, +485/−321, 3 commits**
+(grew from the 38/+455/2 I reviewed). Impact on this review:
+
+- **O2 / O3 — resolved.** #281 is settled, so DB-path is no longer an open gate and Phase-2
+  ratification can now run against a *fixed* DB-path model. The sequencing risk is gone.
+- **Spec Phase 1 — closed**, but note it was **merged**, and earlier its combined status was
+  `pending` (`total_count: 0`) with `mergeable_state: unstable`. If it merged without the
+  spec's own DB-path review checklist (Phase 1) and green required checks, that is a mild
+  process gap for a release branded "trust" — worth a one-line confirmation that CI went green
+  on `da48563`.
+- **New staleness, immediately.** Every artifact that hardcodes `current_main_sha: 6023a29`
+  — the spec's evidence-freeze JSON and `release-ledger.json` schema both do — is **stale on
+  arrival** and must be regenerated at `da48563`. This is a live demonstration of finding **O1**:
+  any max-age/SHA CI gate would now be firing against unrelated work. Pin freeze/ledger artifacts
+  to `da48563` and treat SHA-staleness as a warning with an owner, not a hard fail.
+- **The strategic findings stand unchanged.** D1 (scope explosion), D2/D3 (gate/priority
+  contradiction), S1 (evidence-checker bootstrap paradox), O1 (self-DoS ledger) are design issues
+  independent of #281. Descope recommendation is unaffected.
+
+Revised next slice: it now starts at **evidence-checker hardening** (Phase 0) — #281 is done —
+then ratification of landed claims *plus* #281's fail-closed behavior, then the doc/ledger refresh
+to `da48563`.
+
 ## Recommendation
 
 **PROCEED WITH CAUTION.** Adopt the spec's "concrete next implementation slice" essentially as
