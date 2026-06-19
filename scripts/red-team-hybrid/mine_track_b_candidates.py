@@ -56,7 +56,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-DEFAULT_DB_PATH: str = "signals.db"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from storage.db_paths import InTreeDatabaseError
+from utils.db_path_helper import resolve_db_path_env
+
 DEFAULT_OUT_PATH: str = "data/shadow/track_b_episodes.csv"
 DEFAULT_OPERATIONAL_COLLECTORS: tuple[str, ...] = (
     "hacker_news",
@@ -246,10 +252,20 @@ def write_csv(out_path: Path, rows: list[dict[str, str]], generated_at: str) -> 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Mine Track B candidates from signals.db (REC-01).")
-    parser.add_argument("--db", type=Path, default=Path(DEFAULT_DB_PATH))
+    parser.add_argument(
+        "--db",
+        type=Path,
+        default=None,
+        help="Path to signals database (default: canonical DISCOVERY_DB_PATH)",
+    )
     parser.add_argument("--out", type=Path, default=Path(DEFAULT_OUT_PATH))
     parser.add_argument("--json", action="store_true", help="Emit JSON summary to stdout")
     args = parser.parse_args(argv)
+    try:
+        args.db = Path(resolve_db_path_env(args.db))
+    except InTreeDatabaseError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 2
 
     try:
         conn = _ro_conn(args.db)
