@@ -246,7 +246,7 @@ class OpenVCImporter:
     Imports OpenVC CSV exports into SignalStore.
 
     Usage:
-        store = SignalStore("signals.db")
+        store = SignalStore()
         await store.initialize()
 
         importer = OpenVCImporter(store)
@@ -388,7 +388,7 @@ class OpenVCImporter:
 
 async def run_import(
     file_path: str,
-    db_path: str = "signals.db",
+    db_path: Optional[str] = None,
     dry_run: bool = False,
     sector_filter: Optional[List[str]] = None,
     stage_filter: Optional[List[str]] = None,

@@ -15,7 +15,7 @@ Tables:
   - schema_migrations: Track applied migrations
 
 Usage:
-    store = SignalStore("signals.db")
+    store = SignalStore()
     await store.initialize()
 
     # Save a signal

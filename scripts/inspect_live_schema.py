@@ -27,9 +27,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
+from utils.db_path_helper import resolve_db_path_env
+
 DEFAULT_CONTRACT_PATH = Path(".omx") / "wave6" / "live_schema_contract.json"
 DEFAULT_OUT_DIR = Path(".omx") / "wave6"
-DEFAULT_DB_PATH = "signals.db"
 
 EXIT_OK = 0
 EXIT_CONTRACT_VIOLATION = 2
@@ -201,8 +202,8 @@ def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--db",
-        default=os.getenv("DISCOVERY_DB_PATH", DEFAULT_DB_PATH),
-        help="Path to signals.db (default: $DISCOVERY_DB_PATH or signals.db).",
+        default=None,
+        help="Path to SQLite DB (default: DISCOVERY_DB_PATH).",
     )
     parser.add_argument(
         "--contract",
@@ -219,6 +220,7 @@ def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = _parse_args(argv)
+    args.db = resolve_db_path_env(args.db)
     contract_path = Path(args.contract)
     out_dir = Path(args.out_dir)
 

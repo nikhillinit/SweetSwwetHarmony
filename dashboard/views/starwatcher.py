@@ -12,7 +12,6 @@ thesis score range, and signal source.
 """
 
 import json
-import os
 from dataclasses import asdict
 from typing import Any, Dict, List
 
@@ -30,6 +29,7 @@ from dashboard.adapters.starwatcher_adapter import (
     build_constellation_props,
     to_status_label,
 )
+from utils.db_path_helper import resolve_db_path_env
 
 # =============================================================================
 # CONSTANTS
@@ -707,7 +707,7 @@ def render_starwatcher_page() -> None:
         pass
 
     # ── Load data ──────────────────────────────────────────────────────────
-    db_path = os.environ.get("DISCOVERY_DB_PATH", "signals.db")
+    db_path = resolve_db_path_env()
     props = build_constellation_props(
         db_path=db_path,
         canvas_width=float(CANVAS_WIDTH),

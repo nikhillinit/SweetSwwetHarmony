@@ -51,8 +51,8 @@ from scripts.inspect_live_schema import (  # noqa: E402  (post-bootstrap import)
     inspect_database,
     load_contract,
 )
+from utils.db_path_helper import resolve_db_path_env  # noqa: E402
 
-DEFAULT_DB_PATH = "signals.db"
 DEFAULT_OUT_DIR = Path("state")
 DEFAULT_SEED = 42
 
@@ -392,8 +392,8 @@ def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--db",
-        default=os.getenv("DISCOVERY_DB_PATH", DEFAULT_DB_PATH),
-        help="Path to signals.db.",
+        default=None,
+        help="Path to SQLite DB (default: DISCOVERY_DB_PATH).",
     )
     parser.add_argument(
         "--contract",
@@ -450,6 +450,7 @@ def _preflight(db_path: str, contract_path: str) -> tuple[bool, dict[str, Any]]:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = _parse_args(argv)
+    args.db = resolve_db_path_env(args.db)
     fractions = {
         "train": float(args.train_fraction),
         "calibration": float(args.calibration_fraction),

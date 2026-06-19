@@ -49,6 +49,7 @@ import httpx
 # Storage
 from storage.db_paths import resolve_canonical_db_path
 from storage.signal_store import SignalStore, StoredSignal
+from utils.db_path_helper import resolve_db_path_env
 from utils.signal_consolidator import SignalConsolidator, ConsolidatedSignal
 from utils.enrichment_boost import EnrichmentBoostCalculator, EnrichmentConfig
 from utils.thesis_filter import ThesisFilter, ThesisFilterConfig, RoutingDecision
@@ -155,7 +156,7 @@ class PipelineConfig:
     """Configuration for the discovery pipeline"""
 
     # Storage
-    db_path: str = "signals.db"
+    db_path: Optional[str] = None
     asset_store_path: str = "assets.db"  # SourceAssetStore path
 
     # Notion
@@ -240,6 +241,8 @@ class PipelineConfig:
 
     def __post_init__(self):
         """Validate configuration after initialization."""
+        self.db_path = resolve_db_path_env(self.db_path)
+
         if self.use_warm_intro_enrichment and not self.user_email:
             raise ValueError(
                 "USER_EMAIL environment variable is required when "
@@ -559,6 +562,10 @@ class DiscoveryPipeline:
 
         # Collector metrics for current run
         self._collector_metrics: List[CollectorMetrics] = []
+
+    def _relationship_store_db_path(self) -> str:
+        """Return the configured private graph path for warm intro enrichment."""
+        return self.config.private_graph_db_path
 
     async def initialize(self, read_only: Optional[bool] = None) -> None:
         """Initialize pipeline components"""
@@ -944,7 +951,7 @@ class DiscoveryPipeline:
             raise RuntimeError(
                 f"Phase 1a requires Phase G tables (migration 19). "
                 f"Missing: {missing}. "
-                f"Run: python -m storage.migrate --db signals.db"
+                f"Run: python -m storage.migrate --db \"$DISCOVERY_DB_PATH\""
             )
 
         logger.debug("Phase G table validation passed")
@@ -2750,7 +2757,7 @@ class DiscoveryPipeline:
 
                 enricher = WarmIntroEnricher(
                     relationship_store=RelationshipStore(
-                        db_path=self.config.db_path.replace("signals.db", "private_graph.db")
+                        db_path=self._relationship_store_db_path()
                     ),
                     warm_intro_boost=WarmIntroBoost(),
                 )
