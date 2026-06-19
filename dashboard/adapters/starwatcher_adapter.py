@@ -8,11 +8,13 @@ the Starwatcher v9.1.6 integration contract.
 
 import hashlib
 import math
-import os
 import sqlite3
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+from utils.db_path_helper import resolve_db_path_env
 
 # ─── Status Mapping ──────────────────────────────────────────────────────────
 
@@ -270,9 +272,9 @@ def build_constellation_props(
     Reads signals + company_files to construct nodes and edges.
     """
     if db_path is None:
-        db_path = os.environ.get("DISCOVERY_DB_PATH", "signals.db")
+        db_path = resolve_db_path_env()
 
-    if not os.path.exists(db_path):
+    if not Path(db_path).exists():
         return ConstellationProps(
             nodes=[],
             edges=[],

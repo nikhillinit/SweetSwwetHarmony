@@ -14,7 +14,6 @@ CRUD and trigger endpoints for pipeline schedules:
 """
 
 import logging
-import os
 from sqlite3 import IntegrityError
 from typing import Any, Dict, List, Optional
 
@@ -26,6 +25,7 @@ from pydantic import BaseModel, field_validator
 from api.auth.rbac import OperatorContext, Permission, require_permission
 from ops.scheduler import PipelineScheduler, ScheduleConfig
 from ops.storage import OpsStorage
+from utils.db_path_helper import resolve_db_path_env
 
 logger = logging.getLogger(__name__)
 
@@ -80,8 +80,7 @@ class TriggerResponse(BaseModel):
 
 def get_scheduler() -> PipelineScheduler:
     """Get a PipelineScheduler instance."""
-    db_path = os.getenv("DISCOVERY_DB_PATH", "signals.db")
-    storage = OpsStorage(db_path)
+    storage = OpsStorage(resolve_db_path_env())
     return PipelineScheduler(storage)
 
 

@@ -12,7 +12,7 @@ Tables:
   - saas_tech_stacks: Technology stack data linked to entities
 
 Usage:
-    store = SaaSEnrichmentStore("signals.db")
+    store = SaaSEnrichmentStore()
     await store.initialize()
 
     # Save a G2 review

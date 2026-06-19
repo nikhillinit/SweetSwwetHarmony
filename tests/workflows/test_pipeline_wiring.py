@@ -509,6 +509,37 @@ class TestPhaseGTableValidation:
             except OSError:
                 pass
 
+    @pytest.mark.asyncio
+    async def test_missing_tables_message_uses_configured_db_path(self):
+        """Validation failure should not suggest repo-local signals.db."""
+        from workflows.pipeline import DiscoveryPipeline, PipelineConfig
+
+        class _Cursor:
+            async def fetchall(self):
+                return []
+
+        class _Db:
+            async def execute(self, query, params):
+                return _Cursor()
+
+        class _Store:
+            _db = _Db()
+
+        config = PipelineConfig(
+            db_path=":memory:",
+            use_thin_files=True,
+            warmup_suppression_cache=False,
+        )
+        pipeline = DiscoveryPipeline(config)
+        pipeline._store = _Store()
+
+        with pytest.raises(RuntimeError) as exc_info:
+            await pipeline._validate_phase_g_tables()
+
+        msg = str(exc_info.value)
+        assert '--db "$DISCOVERY_DB_PATH"' in msg
+        assert "--db signals.db" not in msg
+
 
 # =============================================================================
 # PROMOTION SWEEP FROM PIPELINE

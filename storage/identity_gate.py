@@ -35,7 +35,7 @@ async def check_identity_integrity(store: SignalStore) -> None:
             f"{result['null_count']} signals have NULL company_id. "
             f"Run backfill first:\n"
             f"  python -m storage.migrations.backfill_v28_identity "
-            f"--db signals.db --apply"
+            f"--db \"$DISCOVERY_DB_PATH\" --apply"
         )
 
     logger.debug(

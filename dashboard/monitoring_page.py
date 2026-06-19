@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 import logging
 
+from utils.db_path_helper import resolve_db_path_env
+
 logger = logging.getLogger(__name__)
 
 
@@ -157,8 +159,9 @@ def format_time_ago(dt: Optional[datetime]) -> str:
         return f"{days}d ago"
 
 
-def render_monitoring_page(db_path: str = "signals.db"):
+def render_monitoring_page(db_path: Optional[str] = None):
     """Render the monitoring dashboard page."""
+    db_path = resolve_db_path_env(db_path)
     inject_monitoring_css()
 
     st.title("Website Monitoring")
@@ -473,6 +476,4 @@ def render_alerts(monitor_store):
 
 # Entry point for standalone testing
 if __name__ == "__main__":
-    import os
-    db_path = os.getenv("DISCOVERY_DB_PATH", "signals.db")
-    render_monitoring_page(db_path)
+    render_monitoring_page()

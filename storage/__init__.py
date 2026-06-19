@@ -12,7 +12,7 @@ Main components:
 Quick start:
     from storage import signal_store
 
-    async with signal_store("signals.db") as store:
+    async with signal_store() as store:
         # Save a signal
         signal_id = await store.save_signal(
             signal_type="github_spike",

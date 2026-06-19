@@ -43,13 +43,13 @@ from ops.gp_workload import (
     EVENT_LABELS_APPLIED,
     EVENT_REVIEW_SET_GENERATED,
 )
+from utils.db_path_helper import resolve_db_path_env
 
 EXIT_OK = 0
 EXIT_CONTRACT_VIOLATION = 2
 EXIT_IO_ERROR = 3
 EXIT_MISSING_MARKER = 4
 
-DEFAULT_DB_PATH = "signals.db"
 DEFAULT_CONTRACT_PATH = Path(".omx") / "wave6" / "live_schema_contract.json"
 DEFAULT_SUMMARY_PATH = Path("state") / "evaluation_splits_summary.json"
 DEFAULT_HOLDOUT_PATH = Path("state") / "holdout_ids.json"
@@ -1113,8 +1113,8 @@ def _parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
     )
     parser.add_argument(
         "--db",
-        default=os.getenv("DISCOVERY_DB_PATH", DEFAULT_DB_PATH),
-        help="path to signals.db (default: $DISCOVERY_DB_PATH or signals.db)",
+        default=None,
+        help="Path to SQLite DB (default: DISCOVERY_DB_PATH)",
     )
     parser.add_argument(
         "--schema-contract",
@@ -1192,7 +1192,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             return EXIT_CONTRACT_VIOLATION
 
     # 2. Build all five blocks. None of these raise.
-    db_path = Path(args.db)
+    db_path = Path(resolve_db_path_env(args.db))
     contract_path = Path(args.schema_contract)
     summary_path = Path(args.split_summary)
     holdout_path = Path(args.holdout_ids)

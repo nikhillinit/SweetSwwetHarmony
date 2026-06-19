@@ -693,7 +693,7 @@ async def with_store(
     Usage:
         from storage.signal_store import signal_store
 
-        async with signal_store("signals.db") as store:
+        async with signal_store() as store:
             async with with_store(MyCollector, store=store, **kwargs) as collector:
                 result = await collector.run(dry_run=False)
 

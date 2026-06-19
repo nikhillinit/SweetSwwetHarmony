@@ -872,7 +872,7 @@ async def consumer_store(
     Context manager for ConsumerStore.
 
     Usage:
-        async with consumer_store("signals.db") as store:
+        async with consumer_store() as store:
             await store.save_signal(...)
     """
     store = ConsumerStore(db_path)

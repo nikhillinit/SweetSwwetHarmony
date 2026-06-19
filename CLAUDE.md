@@ -55,7 +55,7 @@ python run_pipeline.py sync
 python run_pipeline.py health --json
 
 # Quality ops
-python -m ops.cli quality stats --db signals.db --days 30
+python -m ops.cli quality stats --db "$DISCOVERY_DB_PATH" --days 30
 python -m ops.cli quality label 123 FP --reason "B2B SaaS"
 python -m ops.cli quality find-patterns --days 30 --out patterns.json
 python -m ops.cli quality export --days 90 --format csv --out dataset.csv

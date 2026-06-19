@@ -45,7 +45,7 @@ Overall verdict must be `pass` or `warn` before proceeding.
 ## 5. First Backup
 
 ```bash
-python scripts/backup_db.py --db signals.db --out-dir backups/ --retain 7
+python scripts/backup_db.py --db-path "$DISCOVERY_DB_PATH" --out-dir backups/ --retain 7
 ```
 
 Verify backup was created:
@@ -76,7 +76,7 @@ Follow the 4-step progressive activation in
 
 ```bash
 python scripts/preflight_check.py --json
-python scripts/backup_db.py
+python scripts/backup_db.py --db-path "$DISCOVERY_DB_PATH"
 ```
 
 **Step 1 flags** (shadow — observe only, no mutations):
@@ -131,7 +131,7 @@ python -m pytest tests/smoke/ -q
 
 ```bash
 # Stop the API server first, then:
-python scripts/restore_db.py backups/signals-YYYYMMDD-HHMMSS.db --db-path signals.db
+python scripts/restore_db.py backups/signals-YYYYMMDD-HHMMSS.db --db-path "$DISCOVERY_DB_PATH"
 ```
 
 **Detailed runbooks:**
@@ -146,9 +146,9 @@ python scripts/restore_db.py backups/signals-YYYYMMDD-HHMMSS.db --db-path signal
 | `python run_pipeline.py full --dry-run` | Dry-run pipeline |
 | `python run_pipeline.py health --json` | Health check |
 | `python run_pipeline.py activation-check --step N` | Gate check |
-| `python scripts/spc_override_decision.py --db signals.db --json` | Compare Step 3/4 SPC coverage with active vs default SPC settings |
+| `python scripts/spc_override_decision.py --db "$DISCOVERY_DB_PATH" --json` | Compare Step 3/4 SPC coverage with active vs default SPC settings |
 | `python scripts/preflight_check.py --json` | Pre-flight |
 | `python scripts/backup_db.py` | Create backup |
-| `python scripts/restore_db.py <file> --db-path signals.db` | Restore backup |
+| `python scripts/restore_db.py <file> --db-path "$DISCOVERY_DB_PATH"` | Restore backup |
 | `python scripts/validate_env.py` | Validate env |
-| `python -m ops.cli quality stats --db signals.db` | Quality stats |
+| `python -m ops.cli quality stats --db "$DISCOVERY_DB_PATH"` | Quality stats |
