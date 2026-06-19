@@ -58,7 +58,13 @@ import sys
 from pathlib import Path
 from typing import Any
 
-DEFAULT_DB_PATH: str = "signals.db"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from storage.db_paths import InTreeDatabaseError
+from utils.db_path_helper import resolve_db_path_env
+
 DEFAULT_OUT_PATH: str = "artifacts/rec-04/founder_candidates_raw.csv"
 DEFAULT_MAX_PER_COLLECTOR: int = 40
 OPERATIONAL_COLLECTORS: tuple[str, ...] = ("arxiv", "hacker_news", "news_api")
@@ -247,11 +253,21 @@ def write_candidates(out_path: Path, rows: list[dict[str, str]]) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Extract founder candidates from signals.db (REC-04).")
-    parser.add_argument("--db", type=Path, default=Path(DEFAULT_DB_PATH))
+    parser.add_argument(
+        "--db",
+        type=Path,
+        default=None,
+        help="Path to signals database (default: canonical DISCOVERY_DB_PATH)",
+    )
     parser.add_argument("--out", type=Path, default=Path(DEFAULT_OUT_PATH))
     parser.add_argument("--max-per-collector", type=int, default=DEFAULT_MAX_PER_COLLECTOR)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
+    try:
+        args.db = Path(resolve_db_path_env(args.db))
+    except InTreeDatabaseError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 2
 
     try:
         conn = _ro_conn(args.db)

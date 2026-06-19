@@ -70,6 +70,13 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from storage.db_paths import InTreeDatabaseError
+from utils.db_path_helper import resolve_db_path_env
+
 # Default operational collectors. These are the collectors that produce new
 # signals at daily+ cadence under normal pipeline operation. news_api is
 # optional enrichment for funding/PR/mainstream press coverage; the current
@@ -84,7 +91,6 @@ DEFAULT_OPERATIONAL_COLLECTORS: tuple[str, ...] = (
 )
 
 DEFAULT_THRESHOLD_HOURS: int = 36
-DEFAULT_DB_PATH: str = "signals.db"
 
 
 def _parse_iso(ts: str) -> datetime:
@@ -341,8 +347,8 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument(
         "--db",
-        default=DEFAULT_DB_PATH,
-        help=f"path to signals.db (default: {DEFAULT_DB_PATH})",
+        default=None,
+        help="path to signals DB (default: canonical DISCOVERY_DB_PATH)",
     )
     parser.add_argument(
         "--threshold-hours",
@@ -382,6 +388,11 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     args = parser.parse_args(argv)
+    try:
+        db_path = Path(resolve_db_path_env(args.db))
+    except InTreeDatabaseError as e:
+        sys.stderr.write(f"ERROR: {e}\n")
+        return 2
 
     operational = tuple(
         name.strip() for name in args.operational.split(",") if name.strip()
@@ -402,7 +413,7 @@ def main(argv: list[str] | None = None) -> int:
             return 2
 
     try:
-        freshness = query_freshness(Path(args.db))
+        freshness = query_freshness(db_path)
     except FileNotFoundError as exc:
         sys.stderr.write(f"ERROR: {exc}\n")
         return 2
