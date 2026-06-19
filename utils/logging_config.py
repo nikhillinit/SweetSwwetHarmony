@@ -16,6 +16,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import IO, List, Optional
 
+from storage.db_paths import InTreeDatabaseError
+from utils.db_path_helper import resolve_db_path_env
+
 # ---------------------------------------------------------------------------
 # Context variable for request ID propagation
 # ---------------------------------------------------------------------------
@@ -121,7 +124,12 @@ def startup_check(db_path: Optional[str] = None) -> List[str]:
     Returns a list of warning strings (empty = all good).
     """
     issues: List[str] = []
-    path = db_path or os.getenv("DISCOVERY_DB_PATH", "signals.db")
+    try:
+        path = resolve_db_path_env(db_path)
+    except InTreeDatabaseError as exc:
+        issues.append(str(exc))
+        return issues
+
     if not Path(path).exists():
         issues.append(f"Database file not found: {path}")
     return issues

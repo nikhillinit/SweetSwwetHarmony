@@ -113,6 +113,7 @@ from workflows.pipeline import (
 from utils.db_path_helper import (
     is_production_db_path,
     resolve_db_path,
+    resolve_db_path_env,
 )
 import utils.db_guard as db_guard
 from utils.signal_health import SignalHealthMonitor
@@ -1650,8 +1651,9 @@ async def cmd_warm_intros(args):
 # PIPELINE DASHBOARD COMMANDS
 # =============================================================================
 
-async def cmd_pipeline_status(db_path: str = "signals.db") -> None:
+async def cmd_pipeline_status(db_path: Optional[str] = None) -> None:
     """Show pipeline status overview."""
+    db_path = resolve_db_path_env(db_path)
     store = SignalStore(db_path)
     await store.initialize()
 
@@ -1677,10 +1679,11 @@ async def cmd_pipeline_status(db_path: str = "signals.db") -> None:
 
 
 async def cmd_pipeline_qualified(
-    db_path: str = "signals.db",
+    db_path: Optional[str] = None,
     limit: int = 20,
 ) -> None:
     """List qualified signals ready for push."""
+    db_path = resolve_db_path_env(db_path)
     store = SignalStore(db_path)
     await store.initialize()
 
@@ -1716,12 +1719,8 @@ async def cmd_pipeline_push(
     signal_id: Optional[int] = None,
 ) -> None:
     """Push qualified signals to Notion."""
-    from storage.db_paths import resolve_canonical_db_path, guard_db_path
-    if db_path is None:
-        resolved = resolve_canonical_db_path()
-    else:
-        resolved = guard_db_path(Path(db_path).resolve())
-    store = SignalStore(str(resolved))
+    db_path = resolve_db_path_env(db_path)
+    store = SignalStore(db_path)
     await store.initialize()
 
     try:
@@ -1872,7 +1871,7 @@ def _print_stats(stats: PipelineStats):
 
 async def cmd_pipeline_claims(
     entity_id: str,
-    db_path: str = "signals.db",
+    db_path: Optional[str] = None,
     show_history: bool = False,
     at_time: Optional[str] = None,
     predicate: Optional[str] = None,
@@ -1880,6 +1879,7 @@ async def cmd_pipeline_claims(
     """Query claim facts for an entity."""
     from storage.claim_fact_store import ClaimFactStore
 
+    db_path = resolve_db_path_env(db_path)
     store = SignalStore(db_path)
     await store.initialize()
     claim_store = ClaimFactStore(store)
@@ -1943,10 +1943,11 @@ def _print_fact(fact: dict) -> None:
 
 
 async def cmd_pipeline_entities(
-    db_path: str = "signals.db",
+    db_path: Optional[str] = None,
     limit: int = 20,
 ) -> None:
     """Show entity resolution statistics."""
+    db_path = resolve_db_path_env(db_path)
     store = SignalStore(db_path)
     await store.initialize()
 
@@ -2708,7 +2709,7 @@ Examples:
   python run_pipeline.py health
 
 Environment variables:
-  DISCOVERY_DB_PATH          - Path to SQLite database (default: signals.db)
+  DISCOVERY_DB_PATH          - Path to SQLite database (keep outside repo tree)
   NOTION_API_KEY             - Notion integration token
   NOTION_DATABASE_ID         - Notion database ID
   GITHUB_TOKEN               - GitHub API token

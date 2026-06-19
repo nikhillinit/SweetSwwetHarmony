@@ -13,7 +13,7 @@ Tables:
   - founder_signals: Links founders to signals
 
 Usage:
-    store = FounderStore("signals.db")
+    store = FounderStore()
     await store.initialize()
 
     # Save a founder profile

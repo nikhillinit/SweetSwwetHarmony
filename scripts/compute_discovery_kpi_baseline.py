@@ -69,11 +69,11 @@ from analytics.evidence_ontology import (
 )
 from analytics.kg_bridge import class_for_signal_row
 from analytics.shadow_sidecar import (
-    DEFAULT_PRODUCTION_DB,
     ReadMode,
     ShadowSidecar,
     ShadowSidecarConfig,
 )
+from utils.db_path_helper import resolve_db_path_env
 
 logger = logging.getLogger(__name__)
 
@@ -458,10 +458,11 @@ def _compute_cross_source_convergence(conn) -> Dict[str, Any]:
 
 def compute_baseline(
     *,
-    production_db: Path = DEFAULT_PRODUCTION_DB,
+    production_db: Optional[Path] = None,
     window_days: int = 90,
     queue_size: int = 20,
 ) -> KpiBaseline:
+    production_db = Path(resolve_db_path_env()) if production_db is None else production_db
     cfg = ShadowSidecarConfig(
         production_db=production_db,
         read_mode=ReadMode.IMMUTABLE_URI,
@@ -647,7 +648,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--days", type=int, default=90)
     parser.add_argument("--queue-size", type=int, default=20)
     parser.add_argument(
-        "--production-db", type=Path, default=DEFAULT_PRODUCTION_DB
+        "--production-db",
+        type=Path,
+        default=None,
+        help="Production DB path (default: DISCOVERY_DB_PATH)",
     )
     parser.add_argument(
         "--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR

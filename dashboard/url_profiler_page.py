@@ -10,6 +10,8 @@ from datetime import datetime
 from typing import Dict, Any, Optional
 import logging
 
+from utils.db_path_helper import resolve_db_path_env
+
 logger = logging.getLogger(__name__)
 
 
@@ -297,7 +299,7 @@ def render_similar_companies(similar_companies: list) -> None:
         render_similar_company_card(company)
 
 
-def find_similar_companies(canonical_key: str, db_path: str = "signals.db"):
+def find_similar_companies(canonical_key: str | None, db_path: str | None = None):
     """
     Find similar companies for the given canonical key.
 
@@ -313,8 +315,10 @@ def find_similar_companies(canonical_key: str, db_path: str = "signals.db"):
         from utils.embedding_generator import EmbeddingGenerator
         from utils.similarity_engine import SimilarityEngine
 
+        resolved_db_path = resolve_db_path_env(db_path)
+
         async def run_search():
-            async with EmbeddingStore(db_path=db_path) as store:
+            async with EmbeddingStore(db_path=resolved_db_path) as store:
                 generator = EmbeddingGenerator()
                 engine = SimilarityEngine(
                     embedding_store=store,

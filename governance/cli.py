@@ -95,7 +95,15 @@ def resolve_db_path_for_governance(
 
     Raises SystemExit on failure (fail-closed).
     """
-    db_path = direct_db or os.environ.get("DISCOVERY_DB_PATH", "signals.db")
+    from storage.db_paths import InTreeDatabaseError
+    from utils.db_path_helper import resolve_db_path_env
+
+    try:
+        db_path = resolve_db_path_env(direct_db)
+    except InTreeDatabaseError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
     if not os.path.isfile(db_path):
         print(f"Error: DB not found: {db_path}", file=sys.stderr)
         sys.exit(1)

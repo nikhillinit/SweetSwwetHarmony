@@ -24,6 +24,7 @@ from api.db import get_store
 from api.auth.rbac import OperatorContext, Permission, require_permission
 from storage.signal_store import SignalStore, CURRENT_SCHEMA_VERSION
 from api.health_bounds import BoundedParams
+from utils.db_path_helper import resolve_db_path_env
 
 logger = logging.getLogger(__name__)
 
@@ -617,8 +618,7 @@ def _get_ops_storage():
         return _cached_ops_storage
     try:
         from ops.storage import OpsStorage
-        db_path = os.getenv("DISCOVERY_DB_PATH", "signals.db")
-        _cached_ops_storage = OpsStorage(db_path)
+        _cached_ops_storage = OpsStorage(resolve_db_path_env())
         return _cached_ops_storage
     except Exception as e:
         logger.warning("Could not init OpsStorage: %s", e)

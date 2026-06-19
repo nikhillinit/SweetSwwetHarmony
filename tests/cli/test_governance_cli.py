@@ -56,6 +56,29 @@ class TestResolveDbPath:
         with pytest.raises(SystemExit):
             resolve_db_path_for_governance(None)
 
+    def test_default_in_tree_db_exits_via_guard(self, monkeypatch):
+        from storage.db_paths import REPO_ROOT
+
+        monkeypatch.delenv("DISCOVERY_DB_PATH", raising=False)
+        monkeypatch.delenv("SIGNAL_DB_PATH", raising=False)
+        monkeypatch.delenv("HARMONIC_ALLOW_IN_TREE_DB", raising=False)
+        monkeypatch.chdir(REPO_ROOT)
+
+        with pytest.raises(SystemExit) as exc_info:
+            resolve_db_path_for_governance(None)
+
+        assert exc_info.value.code == 1
+
+    def test_direct_in_tree_db_exits_via_guard(self, monkeypatch):
+        from storage.db_paths import REPO_ROOT
+
+        monkeypatch.delenv("HARMONIC_ALLOW_IN_TREE_DB", raising=False)
+
+        with pytest.raises(SystemExit) as exc_info:
+            resolve_db_path_for_governance(str(REPO_ROOT / "signals.db"))
+
+        assert exc_info.value.code == 1
+
 
 # ── DELIVERY_MODE promote via direct DB ─────────────────────────────────
 
