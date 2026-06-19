@@ -12,7 +12,7 @@ Tables:
   - health_publications: Scientific publications from PubMed
 
 Usage:
-    store = HealthEnrichmentStore("signals.db")
+    store = HealthEnrichmentStore()
     await store.initialize()
 
     # Save a clinical trial

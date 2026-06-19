@@ -98,7 +98,7 @@ class ConsumerPipeline:
     4. poll_decisions() - Sync user decisions from Notion
 
     Usage:
-        async with consumer_store("signals.db") as store:
+        async with consumer_store("consumer_signals.db") as store:
             pipeline = ConsumerPipeline(store)
             result = await pipeline.run()
     """

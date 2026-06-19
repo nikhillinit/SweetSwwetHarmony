@@ -32,6 +32,23 @@ class TestPipelineStatusCommand:
         mock_store.close.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_cmd_pipeline_status_default_uses_guarded_resolution(self, monkeypatch):
+        """Direct helper calls should not silently fall through to repo signals.db."""
+        from run_pipeline import cmd_pipeline_status
+        from storage.db_paths import InTreeDatabaseError, REPO_ROOT
+
+        monkeypatch.delenv("DISCOVERY_DB_PATH", raising=False)
+        monkeypatch.delenv("SIGNAL_DB_PATH", raising=False)
+        monkeypatch.delenv("HARMONIC_ALLOW_IN_TREE_DB", raising=False)
+        monkeypatch.chdir(REPO_ROOT)
+
+        with patch("run_pipeline.SignalStore") as mock_store:
+            with pytest.raises(InTreeDatabaseError):
+                await cmd_pipeline_status()
+
+        mock_store.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_cmd_pipeline_status_handles_empty_counts(self):
         """Status command should handle empty counts."""
         from run_pipeline import cmd_pipeline_status
@@ -98,6 +115,23 @@ class TestPipelineQualifiedCommand:
             await cmd_pipeline_qualified(db_path="test.db", limit=50)
 
         mock_store.get_signals_by_status.assert_called_once_with("qualified", limit=50)
+
+    @pytest.mark.asyncio
+    async def test_cmd_pipeline_qualified_default_uses_guarded_resolution(self, monkeypatch):
+        """Direct helper calls should resolve through the shared DB guard."""
+        from run_pipeline import cmd_pipeline_qualified
+        from storage.db_paths import InTreeDatabaseError, REPO_ROOT
+
+        monkeypatch.delenv("DISCOVERY_DB_PATH", raising=False)
+        monkeypatch.delenv("SIGNAL_DB_PATH", raising=False)
+        monkeypatch.delenv("HARMONIC_ALLOW_IN_TREE_DB", raising=False)
+        monkeypatch.chdir(REPO_ROOT)
+
+        with patch("run_pipeline.SignalStore") as mock_store:
+            with pytest.raises(InTreeDatabaseError):
+                await cmd_pipeline_qualified()
+
+        mock_store.assert_not_called()
 
 
 class TestPipelinePushCommand:

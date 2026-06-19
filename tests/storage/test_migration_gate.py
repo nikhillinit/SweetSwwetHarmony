@@ -151,4 +151,5 @@ class TestMigrationGate:
 
         msg = str(exc_info.value)
         assert "backfill_v28_identity" in msg, "Should reference backfill module"
+        assert '--db "$DISCOVERY_DB_PATH"' in msg, "Should avoid repo-local DB path"
         assert "--apply" in msg, "Should include --apply flag"

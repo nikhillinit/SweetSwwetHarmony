@@ -39,6 +39,8 @@ from typing import Any, Iterable, Mapping, Optional, Sequence
 
 import numpy as np
 
+from utils.db_path_helper import resolve_db_path_env
+
 # Bootstrap project root so this script can import sibling scripts when run
 # directly (mirrors scripts/create_evaluation_splits.py).
 _PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -79,7 +81,6 @@ LABEL_COLUMN = "human_label"
 # Frozen at 0.7 in workflows/pipeline.py:2410 (non-goal: do not modify it).
 HIGH_CONFIDENCE_THRESHOLD_AT_RUN_TIME = 0.7
 
-DEFAULT_DB_PATH = "signals.db"
 DEFAULT_CONTRACT_PATH = Path(".omx") / "wave6" / "live_schema_contract.json"
 DEFAULT_STATE_DIR = Path("state")
 DEFAULT_CALIBRATION_FILE = DEFAULT_STATE_DIR / "calibration_ids.json"
@@ -820,7 +821,7 @@ def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--db",
         type=Path,
-        default=Path(os.environ.get("DISCOVERY_DB_PATH", DEFAULT_DB_PATH)),
+        default=None,
     )
     parser.add_argument(
         "--schema-contract",
@@ -857,6 +858,7 @@ def _parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
     args = _parse_args(argv)
+    args.db = Path(resolve_db_path_env(args.db))
 
     # CLI argument validation that argparse does not cover.
     if not (100 <= args.bootstrap_iterations <= 100_000):

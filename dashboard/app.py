@@ -60,12 +60,13 @@ from dashboard.views.scheduler import render_scheduler_page
 from dashboard.views.cost_analysis import render_cost_analysis_page
 from dashboard.views.drift_monitoring import render_drift_monitoring_page
 from dashboard.views.signal_flow import render_signal_flow_page
+from utils.db_path_helper import resolve_db_path_env
 
 # =============================================================================
 # CONFIG
 # =============================================================================
 
-DB_PATH = os.environ.get("DISCOVERY_DB_PATH", "signals.db")
+DB_PATH = resolve_db_path_env()
 NOTION_API_KEY = os.environ.get("NOTION_API_KEY", "")
 NOTION_DATABASE_ID = os.environ.get("NOTION_DATABASE_ID", "")
 STARWATCHER_ENABLED = os.environ.get("STARWATCHER_ENABLED", "").lower() in ("true", "1", "yes")

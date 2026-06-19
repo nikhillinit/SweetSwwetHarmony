@@ -66,6 +66,20 @@ class TestPipelineConfigWarmIntro:
             assert config.user_email == "user@example.com"
             assert config.private_graph_db_path == "/custom/path/private.db"
 
+    def test_pipeline_uses_configured_private_graph_path(self, tmp_path):
+        """Warm intro relationship DB path should not be derived from the signal DB name."""
+        from workflows.pipeline import DiscoveryPipeline
+
+        config = PipelineConfig(
+            db_path=str(tmp_path / "production.sqlite"),
+            private_graph_db_path=str(tmp_path / "relationships.sqlite"),
+        )
+        pipeline = DiscoveryPipeline(config)
+
+        assert pipeline._relationship_store_db_path() == str(
+            tmp_path / "relationships.sqlite"
+        )
+
 
 class TestPipelineConfigValidation:
     """Tests for PipelineConfig validation."""
@@ -106,6 +120,17 @@ class TestPipelineConfigValidation:
 
 class TestPipelineConfigDbPathGuard:
     """from_env() routes db_path through the #149 in-tree fail-fast guard."""
+
+    def test_direct_config_fails_closed_on_in_tree_default(self, monkeypatch):
+        """Direct PipelineConfig() construction must not retain bare signals.db."""
+        from storage.db_paths import REPO_ROOT, InTreeDatabaseError
+
+        monkeypatch.delenv("DISCOVERY_DB_PATH", raising=False)
+        monkeypatch.delenv("SIGNAL_DB_PATH", raising=False)
+        monkeypatch.delenv("HARMONIC_ALLOW_IN_TREE_DB", raising=False)
+        monkeypatch.chdir(REPO_ROOT)
+        with pytest.raises(InTreeDatabaseError):
+            PipelineConfig()
 
     def test_from_env_fails_closed_on_in_tree_default(self, monkeypatch):
         """The bare "signals.db" default resolves in-tree (the incident path) and

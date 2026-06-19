@@ -46,12 +46,12 @@ from pathlib import Path
 from typing import Iterator, List, Optional
 
 from analytics.shadow_sidecar import (
-    DEFAULT_PRODUCTION_DB,
     DEFAULT_SHADOW_ROOT,
     ReadMode,
     ShadowSidecar,
     ShadowSidecarConfig,
 )
+from utils.db_path_helper import resolve_db_path_env
 
 logger = logging.getLogger(__name__)
 
@@ -211,11 +211,12 @@ def build_watchlist(
     *,
     output: Path = DEFAULT_OUTPUT,
     limit: int = DEFAULT_LIMIT,
-    production_db: Path = DEFAULT_PRODUCTION_DB,
+    production_db: Optional[Path] = None,
     seed_path: Path = MANUAL_SEED_PATH,
     dry_run: bool = False,
 ) -> int:
     """Build the founder watchlist CSV. Returns the number of rows written."""
+    production_db = Path(resolve_db_path_env()) if production_db is None else production_db
     cfg = ShadowSidecarConfig(
         production_db=production_db,
         read_mode=ReadMode.IMMUTABLE_URI,
@@ -282,8 +283,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument(
         "--production-db",
         type=Path,
-        default=DEFAULT_PRODUCTION_DB,
-        help=f"Production signals.db path (default: {DEFAULT_PRODUCTION_DB})",
+        default=None,
+        help="Production DB path (default: DISCOVERY_DB_PATH)",
     )
     parser.add_argument(
         "--seed",

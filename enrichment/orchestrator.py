@@ -10,7 +10,7 @@ Data Sources:
 - PubMed: Scientific publications
 
 Usage:
-    orchestrator = HealthEnrichmentOrchestrator("signals.db")
+    orchestrator = HealthEnrichmentOrchestrator()
     await orchestrator.initialize()
 
     # Enrich a single entity
@@ -80,18 +80,18 @@ class HealthEnrichmentOrchestrator:
     - Batch processing support
     """
 
-    def __init__(self, db_path: str = "signals.db"):
+    def __init__(self, db_path: Optional[str] = None):
         """
         Initialize the health enrichment orchestrator.
 
         Args:
             db_path: Path to SQLite database file. Use ":memory:" for testing.
         """
-        self.db_path = db_path
         self.trials_client = ClinicalTrialsClient()
         self.fda_client = OpenFDAClient()
         self.pubmed_client = PubMedClient()
         self.store = HealthEnrichmentStore(db_path)
+        self.db_path = self.store.db_path
         self._initialized = False
 
     async def initialize(self) -> None:

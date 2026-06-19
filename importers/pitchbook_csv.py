@@ -304,7 +304,7 @@ class PitchBookImporter:
     Imports PitchBook CSV exports into SignalStore.
 
     Usage:
-        store = SignalStore("signals.db")
+        store = SignalStore()
         await store.initialize()
 
         importer = PitchBookImporter(store)
@@ -458,7 +458,7 @@ class PitchBookImporter:
 
 async def run_import(
     file_path: str,
-    db_path: str = "signals.db",
+    db_path: Optional[str] = None,
     dry_run: bool = False,
     sector_filter: Optional[List[str]] = None,
     stage_filter: Optional[List[str]] = None,
