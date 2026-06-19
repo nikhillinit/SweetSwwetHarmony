@@ -65,11 +65,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from storage.db_paths import InTreeDatabaseError
+from utils.db_path_helper import resolve_db_path_env
+
 # REC-02 constants. Changes require updating .planning/REQUIREMENTS.md
 # and docs/plans/2026-04-06-red-team-hybrid/05-holdout-cohort-design.md.
 DEFAULT_SEED: int = 20260406
 DEFAULT_HOLDOUT_FRACTION: float = 0.3
-DEFAULT_DB_PATH: str = "signals.db"
 DEFAULT_OUT_PATH: str = "data/shadow/holdout_split/episodes_v1.csv"
 DEFAULT_OPERATIONAL_COLLECTORS: tuple[str, ...] = (
     "hacker_news",
@@ -189,12 +195,22 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Deterministic hold-out split for Track C (REC-02)."
     )
-    parser.add_argument("--db", type=Path, default=Path(DEFAULT_DB_PATH))
+    parser.add_argument(
+        "--db",
+        type=Path,
+        default=None,
+        help="Path to signals database (default: canonical DISCOVERY_DB_PATH)",
+    )
     parser.add_argument("--out", type=Path, default=Path(DEFAULT_OUT_PATH))
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--holdout-fraction", type=float, default=DEFAULT_HOLDOUT_FRACTION)
     parser.add_argument("--json", action="store_true", help="Emit JSON summary to stdout")
     args = parser.parse_args(argv)
+    try:
+        args.db = Path(resolve_db_path_env(args.db))
+    except InTreeDatabaseError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        return 2
 
     try:
         candidates = query_candidates(args.db)
