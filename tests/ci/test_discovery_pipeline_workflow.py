@@ -11,6 +11,12 @@ def _workflow() -> str:
     return WORKFLOW.read_text(encoding="utf-8")
 
 
+def _step_block(workflow: str, name: str) -> str:
+    block = workflow.split(f"      - name: {name}", maxsplit=1)[1]
+    next_step = block.find("\n      - name:")
+    return block if next_step == -1 else block[:next_step]
+
+
 def test_daily_pipeline_requires_paired_database_restore() -> None:
     workflow = _workflow()
 
@@ -62,6 +68,24 @@ def test_daily_pipeline_validates_restored_state_before_running() -> None:
     assert "python -m json.tool .omx/state/db_watermark.json >/dev/null" in workflow
 
 
+def test_daily_pipeline_artifact_publication_requires_anomaly_success() -> None:
+    workflow = _workflow()
+
+    anomaly = _step_block(workflow, "Anomaly check on restored database")
+    finalize = _step_block(workflow, "Finalize database")
+
+    assert "id: anomaly-check" in anomaly
+    assert "python scripts/db_anomaly.py" in anomaly
+    assert "steps.anomaly-check.outcome" in finalize
+    assert '"success"' in finalize
+    assert "Restore/anomaly gate was not accepted; skipping artifact publication" in finalize
+    assert "steps.validate-restore.outputs.restore_accepted" not in finalize
+
+    assert workflow.index("python scripts/db_anomaly.py") < workflow.index(
+        "steps.anomaly-check.outcome"
+    )
+
+
 def test_daily_pipeline_operates_database_out_of_tree() -> None:
     """#149: the canonical DB must operate outside the git working tree.
 
@@ -88,7 +112,7 @@ def test_daily_pipeline_artifact_uploads_are_fail_closed() -> None:
 
     assert 'publish_artifacts=false" >> "$GITHUB_OUTPUT"' in workflow
     assert 'publish_artifacts=true" >> "$GITHUB_OUTPUT"' in workflow
-    assert "Restore gate was not accepted; skipping artifact publication" in workflow
+    assert "Restore/anomaly gate was not accepted; skipping artifact publication" in workflow
 
     upload_latest = workflow.split(
         "      - name: Upload signals database artifact", maxsplit=1
