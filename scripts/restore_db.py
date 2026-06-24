@@ -251,7 +251,7 @@ def restore_backup_with_lock_and_ledger(
     force: bool = False,
     api_url: str = DEFAULT_API_URL,
     *,
-    lock_timeout_seconds: int = LOCK_TIMEOUT_SECONDS,
+    lock_timeout_seconds: int = MAINTENANCE_LOCK_TIMEOUT_SECONDS,
 ) -> RestoreBackupResult:
     """Restore a backup while owning DB tool lock and DB ops ledger writes."""
 
@@ -514,6 +514,15 @@ def main(argv: list[str] | None = None) -> int:
         default=DEFAULT_API_URL,
         help=f"API health endpoint URL (default: {DEFAULT_API_URL})",
     )
+    parser.add_argument(
+        "--lock-timeout-seconds",
+        type=int,
+        default=MAINTENANCE_LOCK_TIMEOUT_SECONDS,
+        help=(
+            "Seconds to wait for the DB tool lock during restore "
+            f"(default: {MAINTENANCE_LOCK_TIMEOUT_SECONDS})"
+        ),
+    )
     args = parser.parse_args(argv)
     resolved_db_path = resolve_db_path(args)
 
@@ -528,6 +537,7 @@ def main(argv: list[str] | None = None) -> int:
             resolved_db_path,
             args.force,
             args.api_url,
+            lock_timeout_seconds=args.lock_timeout_seconds,
         )
         print(f"Restore complete. Pre-restore backup: {result.pre_restore_backup}")
         return 0
