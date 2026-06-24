@@ -1,0 +1,60 @@
+name: PR Evidence Gate
+
+# Enforces the evidence-bundle policy from CONTRIBUTING.md for storage- and
+# thesis-sensitive PRs: the PR body must cite a GitHub Actions run that exists,
+# is tied to this PR's head SHA, and concluded success (`--live`). If live
+# verification cannot run (e.g. a `gh` API outage, or a bootstrap PR that
+# hardens the checker itself), add an `EVIDENCE-OVERRIDE: <reason>` line to the
+# PR body — it is recorded as a logged manual override.
+#
+# Scoped to the same paths as the evidence-bundle policy so trivial PRs are not
+# forced to cite a run URL. Mark "PR Evidence Gate" as required in branch
+# protection to make it blocking.
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+    branches: [main]
+    paths:
+      - 'workflows/pipeline.py'
+      - 'workflows/run_manager.py'
+      - 'storage/**'
+      - 'tests/fixtures/thesis_llm_golden_set.**'
+
+concurrency:
+  group: pr-evidence-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  actions: read
+  pull-requests: read
+
+env:
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  evidence:
+    name: PR Evidence Gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Verify PR evidence (live, tied to head SHA)
+        # PR body / head SHA are passed via env, never interpolated into the
+        # shell, to avoid script injection from untrusted PR content.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python scripts/check_pr_evidence.py \
+            --body "$PR_BODY" \
+            --live \
+            --head-sha "$PR_HEAD_SHA"

@@ -41,6 +41,7 @@ Changes touching `utils/thesis_matcher.py`, `workflows/pipeline.py` thesis-class
 | Hermes Ledger Audit | `hermes-ledger-audit.yml` | all PRs |
 | Local Artifact Validation | `local-artifact-validation.yml` | all PRs |
 | Dry-Run Immutability Canary | `process-dry-run-canary.yml` | PRs touching `workflows/pipeline.py`, `workflows/run_manager.py`, `storage/**` |
+| PR Evidence Gate | `pr-evidence.yml` | PRs touching `workflows/pipeline.py`, `workflows/run_manager.py`, `storage/**`, thesis fixtures |
 
 ## Structural bypass labels (tracked, never deleted)
 
