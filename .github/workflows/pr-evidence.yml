@@ -8,11 +8,11 @@ name: PR Evidence Gate
 # PR body — it is recorded as a logged manual override.
 #
 # ALWAYS-ON for PRs to main: the gate decides *in-job* whether evidence is
-# required (via scripts/ci/detect_evidence_scope.py), so it can be a REQUIRED
-# check without ever parking a PR on a `Pending` status — a trigger-level path
-# filter would skip the check, and a required-but-skipped check never reports,
-# deadlocking merge. The scope set also covers the gate's own source files, so a
-# PR that weakens the gate is itself gated.
+# required from a trusted base checkout, so it can be a REQUIRED check without
+# ever parking a PR on a `Pending` status — a trigger-level path filter would
+# skip the check, and a required-but-skipped check never reports, deadlocking
+# merge. The scope set also covers the gate's own source files, so a PR that
+# weakens the gate is itself gated.
 
 on:
   pull_request:
@@ -36,8 +36,11 @@ jobs:
     name: PR Evidence Gate
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout trusted base
         uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -50,22 +53,57 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR_BODY: ${{ github.event.pull_request.body }}
+          PR_CHANGED_FILES: ${{ github.event.pull_request.changed_files }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
+          if ! [[ "$PR_CHANGED_FILES" =~ ^[0-9]+$ ]]; then
+            echo "::error::Invalid pull_request.changed_files value: ${PR_CHANGED_FILES}"
+            exit 1
+          fi
+          if [ "$PR_CHANGED_FILES" -gt 3000 ]; then
+            echo "::error::PR changed_files=${PR_CHANGED_FILES} exceeds the GitHub pull request files API cap of 3000; failing closed instead of scoping from an incomplete file list."
+            exit 1
+          fi
           # Paginated files API: the non-paginated changed-files listing
           # truncates large PRs and could let a sensitive file slip past this
           # self-protecting gate.
           CHANGED="$(gh api --paginate \
             "repos/${REPO}/pulls/${PR_NUMBER}/files" \
-            --jq '.[].path')"
+            --jq '.[].filename')"
+          FILE_COUNT="$(printf '%s\n' "$CHANGED" | awk 'NF { count++ } END { print count + 0 }')"
+          if [ "$FILE_COUNT" -ne "$PR_CHANGED_FILES" ]; then
+            echo "::error::GitHub files API returned ${FILE_COUNT} paths but the PR reports ${PR_CHANGED_FILES} changed files; failing closed."
+            exit 1
+          fi
           echo "Changed files:"
           echo "$CHANGED"
-          # The scope helper prints true/false and exits 0 — capture stdout and
-          # compare; do NOT branch on exit status.
-          REQUIRED="$(python -m scripts.ci.detect_evidence_scope --changed-files "$CHANGED")"
+          detect_required_from_inline_scope() {
+            local path
+            while IFS= read -r path; do
+              case "$path" in
+                workflows/pipeline.py|workflows/run_manager.py|storage/*|tests/fixtures/thesis_llm_golden_set*|scripts/check_pr_evidence.py|scripts/ci/detect_evidence_scope.py|.github/workflows/pr-evidence.yml|tests/ci/test_pr_evidence_workflow.py|tests/ci/test_detect_evidence_scope.py|tests/scripts/test_check_pr_evidence.py)
+                  echo "true"
+                  return
+                  ;;
+              esac
+            done <<< "$CHANGED"
+            echo "false"
+          }
+          # Run scope/checker code from the trusted base checkout. This PR
+          # bootstraps the scope helper, so retain an inline matcher until the
+          # helper exists on the protected base ref.
+          if [ -f scripts/ci/detect_evidence_scope.py ]; then
+            REQUIRED="$(python -m scripts.ci.detect_evidence_scope --changed-files "$CHANGED")"
+          else
+            REQUIRED="$(detect_required_from_inline_scope)"
+          fi
+          if [ "$REQUIRED" != "true" ] && [ "$REQUIRED" != "false" ]; then
+            echo "::error::Evidence scope detection returned unexpected value: ${REQUIRED}"
+            exit 1
+          fi
           if [ "$REQUIRED" = "true" ]; then
             echo "PR Evidence Gate: evidence required for changed paths"
             python scripts/check_pr_evidence.py \

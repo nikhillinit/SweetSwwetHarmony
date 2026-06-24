@@ -60,6 +60,10 @@ def test_pr_evidence_workflow_contract_test_is_self_protected():
     assert is_evidence_required(["tests/ci/test_pr_evidence_workflow.py"]) is True
 
 
+def test_scope_helper_contract_test_is_self_protected():
+    assert is_evidence_required(["tests/ci/test_detect_evidence_scope.py"]) is True
+
+
 def test_check_pr_evidence_test_is_self_protected():
     assert is_evidence_required(["tests/scripts/test_check_pr_evidence.py"]) is True
 

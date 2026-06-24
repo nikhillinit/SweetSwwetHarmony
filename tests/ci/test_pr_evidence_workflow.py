@@ -56,6 +56,14 @@ def test_pr_evidence_has_read_only_permissions() -> None:
     assert "pull-requests: write" not in wf
 
 
+def test_pr_evidence_checks_out_trusted_base_ref() -> None:
+    wf = _workflow()
+    assert "Checkout trusted base" in wf
+    assert "ref: ${{ github.event.pull_request.base.sha }}" in wf
+    assert "persist-credentials: false" in wf
+    assert "ref: ${{ github.event.pull_request.head.sha }}" not in wf
+
+
 def test_pr_evidence_runs_live_check_tied_to_head_sha() -> None:
     wf = _workflow()
     assert "scripts/check_pr_evidence.py" in wf
@@ -85,15 +93,35 @@ def test_pr_evidence_uses_paginated_files_api_not_truncating_pr_view() -> None:
     # slip past the self-protecting gate. Use the paginated files API instead.
     assert "--paginate" in wf
     assert "/files" in wf
+    assert ".[].filename" in wf
+    assert ".[].path" not in wf
     assert "pr view" not in wf
 
 
-def test_pr_evidence_parses_scope_helper_stdout_not_exit_status() -> None:
+def test_pr_evidence_fails_closed_when_files_api_can_truncate() -> None:
     wf = _workflow()
-    # The helper prints true/false and exits 0; the workflow must capture stdout
-    # (command substitution) and compare to "true", not branch on exit status.
+    assert "PR_CHANGED_FILES: ${{ github.event.pull_request.changed_files }}" in wf
+    assert "-gt 3000" in wf
+    assert "exceeds the GitHub pull request files API cap of 3000" in wf
+    assert "failing closed" in wf
+
+
+def test_pr_evidence_fails_closed_on_changed_file_count_mismatch() -> None:
+    wf = _workflow()
+    assert "FILE_COUNT=" in wf
+    assert "GitHub files API returned" in wf
+    assert 'if [ "$FILE_COUNT" -ne "$PR_CHANGED_FILES" ]; then' in wf
+
+
+def test_pr_evidence_runs_scope_from_trusted_base_or_inline_fallback() -> None:
+    wf = _workflow()
+    # Once the helper is on main, the trusted base checkout supplies it. This
+    # PR also carries an inline bootstrap matcher because the helper is new.
     assert "detect_evidence_scope" in wf
     assert "--changed-files" in wf
+    assert "detect_required_from_inline_scope" in wf
+    assert "scripts/ci/detect_evidence_scope.py" in wf
+    assert ".github/workflows/pr-evidence.yml" in wf
     assert '= "true"' in wf
 
 
@@ -104,6 +132,7 @@ def test_gate_own_surface_is_in_sensitive_set() -> None:
         "scripts/ci/detect_evidence_scope.py",
         ".github/workflows/pr-evidence.yml",
         "tests/ci/test_pr_evidence_workflow.py",
+        "tests/ci/test_detect_evidence_scope.py",
         "tests/scripts/test_check_pr_evidence.py",
     ):
         assert is_evidence_required([path]) is True, path

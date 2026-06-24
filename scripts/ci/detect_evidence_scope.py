@@ -34,6 +34,7 @@ EVIDENCE_REQUIRED_PATTERNS = [
     "scripts/ci/detect_evidence_scope.py",
     ".github/workflows/pr-evidence.yml",
     "tests/ci/test_pr_evidence_workflow.py",
+    "tests/ci/test_detect_evidence_scope.py",
     "tests/scripts/test_check_pr_evidence.py",
 ]
 
