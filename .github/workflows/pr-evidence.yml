@@ -7,19 +7,17 @@ name: PR Evidence Gate
 # hardens the checker itself), add an `EVIDENCE-OVERRIDE: <reason>` line to the
 # PR body — it is recorded as a logged manual override.
 #
-# Scoped to the same paths as the evidence-bundle policy so trivial PRs are not
-# forced to cite a run URL. Mark "PR Evidence Gate" as required in branch
-# protection to make it blocking.
+# ALWAYS-ON for PRs to main: the gate decides *in-job* whether evidence is
+# required (via scripts/ci/detect_evidence_scope.py), so it can be a REQUIRED
+# check without ever parking a PR on a `Pending` status — a trigger-level path
+# filter would skip the check, and a required-but-skipped check never reports,
+# deadlocking merge. The scope set also covers the gate's own source files, so a
+# PR that weakens the gate is itself gated.
 
 on:
   pull_request:
     types: [opened, edited, synchronize, reopened]
     branches: [main]
-    paths:
-      - 'workflows/pipeline.py'
-      - 'workflows/run_manager.py'
-      - 'storage/**'
-      - 'tests/fixtures/thesis_llm_golden_set.**'
 
 concurrency:
   group: pr-evidence-${{ github.head_ref || github.ref }}
@@ -46,15 +44,35 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Verify PR evidence (live, tied to head SHA)
+      - name: Scope evidence and verify (live, tied to head SHA)
         # PR body / head SHA are passed via env, never interpolated into the
         # shell, to avoid script injection from untrusted PR content.
         env:
           GH_TOKEN: ${{ github.token }}
           PR_BODY: ${{ github.event.pull_request.body }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
         run: |
-          python scripts/check_pr_evidence.py \
-            --body "$PR_BODY" \
-            --live \
-            --head-sha "$PR_HEAD_SHA"
+          set -euo pipefail
+          # Paginated files API: the non-paginated changed-files listing
+          # truncates large PRs and could let a sensitive file slip past this
+          # self-protecting gate.
+          CHANGED="$(gh api --paginate \
+            "repos/${REPO}/pulls/${PR_NUMBER}/files" \
+            --jq '.[].path')"
+          echo "Changed files:"
+          echo "$CHANGED"
+          # The scope helper prints true/false and exits 0 — capture stdout and
+          # compare; do NOT branch on exit status.
+          REQUIRED="$(python -m scripts.ci.detect_evidence_scope --changed-files "$CHANGED")"
+          if [ "$REQUIRED" = "true" ]; then
+            echo "PR Evidence Gate: evidence required for changed paths"
+            python scripts/check_pr_evidence.py \
+              --body "$PR_BODY" \
+              --live \
+              --head-sha "$PR_HEAD_SHA"
+          else
+            echo "PR Evidence Gate: evidence not required for changed paths"
+            exit 0
+          fi
