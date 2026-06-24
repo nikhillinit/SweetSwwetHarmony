@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import json
 import sqlite3
 import sys
@@ -9,7 +10,11 @@ from pathlib import Path
 import pytest
 
 from scripts import restore_db
-from scripts.restore_db import RestoreError, restore_backup_with_lock_and_ledger
+from scripts.restore_db import (
+    MAINTENANCE_LOCK_TIMEOUT_SECONDS,
+    RestoreError,
+    restore_backup_with_lock_and_ledger,
+)
 from utils.db_tool_lock import DBToolLock
 
 
@@ -291,3 +296,86 @@ def test_cli_main_preserves_error_exit_behavior(
     assert exit_code == 1
     assert captured.out == ""
     assert "ERROR: nope" in captured.err
+
+
+def test_restore_helper_defaults_to_maintenance_lock_timeout() -> None:
+    """The restore entry path must default to the 180s maintenance timeout, not the 5s
+    LOCK_TIMEOUT_SECONDS the code comment itself calls 'insufficient' for a 30-120s restore."""
+    default = (
+        inspect.signature(restore_backup_with_lock_and_ledger)
+        .parameters["lock_timeout_seconds"]
+        .default
+    )
+    assert default == MAINTENANCE_LOCK_TIMEOUT_SECONDS
+    assert default >= 120
+
+
+def test_restore_helper_acquires_lock_with_maintenance_timeout(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Behavioral: with no explicit lock_timeout_seconds, the helper must acquire the DB tool
+    lock using the 180s maintenance timeout (regression — was silently 5s)."""
+    from utils.db_tool_lock import DBToolLock
+
+    backup = _write_db(tmp_path / "backup.db", rows=5)
+    target = _write_db(tmp_path / "signals.db", rows=1)
+    ledger = tmp_path / "db_ops_ledger.jsonl"
+    monkeypatch.setenv("DB_OPS_LEDGER_PATH", str(ledger))
+    monkeypatch.setattr(restore_db, "_check_api_reachable", lambda _url: False)
+
+    recorded: dict[str, int] = {}
+    real_acquire = DBToolLock.acquire
+
+    def spy_acquire(self, timeout_seconds: int = 30) -> bool:
+        recorded["timeout"] = timeout_seconds
+        return real_acquire(self, timeout_seconds=timeout_seconds)
+
+    monkeypatch.setattr(DBToolLock, "acquire", spy_acquire)
+
+    restore_backup_with_lock_and_ledger(
+        backup,
+        target,
+        api_url="http://127.0.0.1:9/health",
+    )
+
+    assert recorded["timeout"] == MAINTENANCE_LOCK_TIMEOUT_SECONDS
+
+
+def test_cli_main_threads_lock_timeout_flag(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The CLI threads --lock-timeout-seconds through as a keyword arg, and defaults to the 180s
+    maintenance timeout when the flag is omitted."""
+    backup = tmp_path / "backup.db"
+    target = tmp_path / "signals.db"
+    called: dict[str, object] = {}
+
+    def fake_helper(*args: object, **kwargs: object) -> restore_db.RestoreBackupResult:
+        called["kwargs"] = kwargs
+        return restore_db.RestoreBackupResult(
+            backup_path=backup,
+            db_path=target.resolve(),
+            pre_restore_backup=tmp_path / "pre-restore.db",
+            target_sha256_before="before",
+            target_sha256_after="after",
+            backup_sha256="backup",
+            integrity_check="ok",
+            schema_version=41,
+            db_ops_ledger_status="success",
+            lock_path=target.resolve().with_suffix(".db.dbtool.lock"),
+        )
+
+    monkeypatch.setattr(restore_db, "restore_backup_with_lock_and_ledger", fake_helper)
+
+    # explicit override
+    assert restore_db.main(
+        [str(backup), "--db-path", str(target), "--lock-timeout-seconds", "240"]
+    ) == 0
+    assert called["kwargs"]["lock_timeout_seconds"] == 240
+
+    # default when flag omitted
+    called.clear()
+    assert restore_db.main([str(backup), "--db-path", str(target)]) == 0
+    assert called["kwargs"]["lock_timeout_seconds"] == MAINTENANCE_LOCK_TIMEOUT_SECONDS
