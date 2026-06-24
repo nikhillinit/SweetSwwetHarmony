@@ -548,188 +548,25 @@ git commit -m "feat(durability): litestream-safe restore orchestration — SIGTE
 
 ---
 
-### Task M2: v52 migration with single-writer coordination (R4/W4)
+### Task M2: v52 migration runner — REMOVED as unnecessary (scrubbed)
 
-> **Deliberation required change R4:** ADD COLUMN requires an exclusive SQLite write lock. Under WAL mode, if collector processes are running, the exclusive lock may block indefinitely. Must: acquire a maintenance lock (or pause collectors), run migration in a single-writer window, validate schema version before starting app workers.
-
-**Files:**
-- Modify: `storage/migrations/` (v52 migration module — confirm path with `ls storage/migrations/`)
-- Create: `scripts/run_migration.py` (maintenance-window migration runner)
-- Create: `tests/scripts/test_run_migration.py`
-
-- [ ] **Step 1: Confirm the migration path and current schema version**
-
-```powershell
-python -c "from storage.signal_store import CURRENT_SCHEMA_VERSION; print(CURRENT_SCHEMA_VERSION)"
-ls storage/migrations/
-```
-
-Note the current version and the migration file for v52.
-
-- [ ] **Step 2: Write the failing test**
-
-```python
-# tests/scripts/test_run_migration.py
-import sqlite3
-from pathlib import Path
-import pytest
-from scripts.run_migration import MigrationRunner, MigrationError
-
-def make_v51_db(tmp_path: Path) -> Path:
-    db = tmp_path / "signals.db"
-    con = sqlite3.connect(db)
-    con.execute("PRAGMA journal_mode=WAL")
-    con.execute("CREATE TABLE signals (id INTEGER PRIMARY KEY, collector TEXT)")
-    con.execute("CREATE TABLE schema_version (version INTEGER)")
-    con.execute("INSERT INTO schema_version VALUES (51)")
-    con.commit()
-    con.close()
-    return db
-
-def test_migration_adds_v52_columns(tmp_path):
-    db = make_v51_db(tmp_path)
-    runner = MigrationRunner(db, target_version=52)
-    runner.run()
-    con = sqlite3.connect(db)
-    cols = [row[1] for row in con.execute("PRAGMA table_info(signals)").fetchall()]
-    con.close()
-    assert "rows_returned_this_iter" in cols
-    assert "rows_after_filter_this_iter" in cols
-    assert "last_failure_mode" in cols
-
-def test_migration_bumps_schema_version(tmp_path):
-    db = make_v51_db(tmp_path)
-    MigrationRunner(db, target_version=52).run()
-    con = sqlite3.connect(db)
-    v = con.execute("SELECT version FROM schema_version").fetchone()[0]
-    con.close()
-    assert v == 52
-
-def test_migration_fails_if_writer_detected(tmp_path):
-    db = make_v51_db(tmp_path)
-    # Simulate active writer via a writable connection
-    writer_con = sqlite3.connect(db)
-    writer_con.execute("BEGIN EXCLUSIVE")
-    runner = MigrationRunner(db, target_version=52, writer_check_timeout=0.1)
-    with pytest.raises(MigrationError, match="active writer"):
-        runner.run()
-    writer_con.rollback()
-    writer_con.close()
-
-def test_migration_is_idempotent(tmp_path):
-    db = make_v51_db(tmp_path)
-    MigrationRunner(db, target_version=52).run()
-    MigrationRunner(db, target_version=52).run()  # second run should not raise
-    con = sqlite3.connect(db)
-    v = con.execute("SELECT version FROM schema_version").fetchone()[0]
-    con.close()
-    assert v == 52
-```
-
-- [ ] **Step 3: Run test to verify it fails**
-
-```powershell
-python -m pytest tests/scripts/test_run_migration.py -v
-```
-
-Expected: `ModuleNotFoundError: No module named 'scripts.run_migration'`
-
-- [ ] **Step 4: Implement MigrationRunner**
-
-```python
-# scripts/run_migration.py
-from __future__ import annotations
-
-import sqlite3
-import time
-from pathlib import Path
-
-
-class MigrationError(RuntimeError):
-    pass
-
-
-V52_COLUMNS = [
-    ("rows_returned_this_iter", "INTEGER"),
-    ("rows_after_filter_this_iter", "INTEGER"),
-    ("last_failure_mode", "TEXT"),
-]
-
-
-class MigrationRunner:
-    def __init__(self, db_path: Path, target_version: int,
-                 writer_check_timeout: float = 5.0) -> None:
-        self.db_path = Path(db_path)
-        self.target_version = target_version
-        self.writer_check_timeout = writer_check_timeout
-
-    def run(self) -> None:
-        self._assert_no_active_writers()
-        con = sqlite3.connect(self.db_path, timeout=10)
-        con.execute("PRAGMA journal_mode=WAL")
-        try:
-            current = con.execute("SELECT version FROM schema_version").fetchone()[0]
-            if current >= self.target_version:
-                return  # idempotent
-            if self.target_version == 52:
-                self._apply_v52(con)
-            con.execute("UPDATE schema_version SET version = ?", (self.target_version,))
-            con.commit()
-        finally:
-            con.close()
-
-    def _assert_no_active_writers(self) -> None:
-        deadline = time.monotonic() + self.writer_check_timeout
-        while time.monotonic() < deadline:
-            try:
-                con = sqlite3.connect(self.db_path, timeout=0.05)
-                con.execute("BEGIN EXCLUSIVE")
-                con.rollback()
-                con.close()
-                return  # got exclusive lock — no active writers
-            except sqlite3.OperationalError:
-                time.sleep(0.05)
-        raise MigrationError(
-            f"active writer detected on {self.db_path} after "
-            f"{self.writer_check_timeout}s — stop all collectors before migrating"
-        )
-
-    def _apply_v52(self, con: sqlite3.Connection) -> None:
-        existing = {row[1] for row in con.execute("PRAGMA table_info(signals)")}
-        for col_name, col_type in V52_COLUMNS:
-            if col_name not in existing:
-                con.execute(f"ALTER TABLE signals ADD COLUMN {col_name} {col_type}")
-
-
-if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument("db_path")
-    parser.add_argument("--target-version", type=int, required=True)
-    parser.add_argument("--writer-check-timeout", type=float, default=5.0)
-    args = parser.parse_args()
-    MigrationRunner(
-        Path(args.db_path),
-        target_version=args.target_version,
-        writer_check_timeout=args.writer_check_timeout,
-    ).run()
-    print(f"Migration to v{args.target_version} complete.")
-```
-
-- [ ] **Step 5: Run tests**
-
-```powershell
-python -m pytest tests/scripts/test_run_migration.py -v
-```
-
-Expected: 4 tests PASS
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add scripts/run_migration.py tests/scripts/test_run_migration.py
-git commit -m "feat(migration): v52 migration runner with single-writer coordination — blocks on active writers, idempotent, explicit schema version bump"
-```
+> **Status: DONE (removed).** `scripts/run_migration.py` and
+> `tests/scripts/test_run_migration.py` were deleted on `main` after audit + code
+> review found no live consumer of the runner. It used a fabricated
+> `schema_version` table and a synthetic v52 that diverged from production. The
+> historical create-recipe that previously lived here has been scrubbed so no
+> operator re-introduces the legacy single-writer-runner / `schema_version`-table
+> pattern (Phase 4 of the 2026-06-15 trust-recovery procedure).
+>
+> **Migration truth on `main`:** `storage.signal_store.MIGRATIONS` + the
+> `schema_migrations` table, with `CURRENT_SCHEMA_VERSION == max(MIGRATIONS) == 53`.
+> The real v52/v53 columns (`classification_status`, `primary_end_user`,
+> `paying_customer`, `sells_to_or_operates_in`) already exist and are consumed by
+> `ops/quality/thesis.py` and `consumer/thesis_filter/llm_classifier.py`.
+>
+> **Operator CLI:** `python -m storage.migrations {list,validate,info} <db_path>`.
+> Do **not** re-add a standalone migration runner or a manual `schema_version`-table
+> path. See the M2 row in the status snapshot above for the full rationale.
 
 ---
 
