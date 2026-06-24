@@ -89,12 +89,19 @@
       "risk": "low",
       "preferredExecutors": ["gemini"],
       "fallbackExecutors": ["claude", "codex"]
+    },
+    "durability": {
+      "keywords": ["restore", "backup", "litestream"],
+      "risk": "high",
+      "preferredExecutors": ["codex"],
+      "fallbackExecutors": ["kimi", "gemini"]
     }
   },
   "riskDefaults": {
     "noSpecialist": "medium",
     "highRiskKeywords": [
-      "migration", "schema", "production", "delete", "credential", "secret", "notion"
+      "migration", "schema", "production", "delete from", "drop table", "delete data",
+      "credential", "secret", "notion"
     ]
   },
   "routing": {
