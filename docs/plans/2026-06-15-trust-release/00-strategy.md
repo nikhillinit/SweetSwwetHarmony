@@ -12,29 +12,98 @@
 
 ---
 
-## Status snapshot (2026-06-16, verified at HEAD `de00bb0`)
+## Status snapshot (2026-06-18, verified at HEAD `4f19d66`)
 
-| Milestone | Status | Evidence |
-|-----------|--------|----------|
+> **Reconciled 2026-06-18.** The prior snapshot was pinned to `de00bb0` and was
+> ~33 commits stale. Live `origin/main` is now `4f19d66`, the merge commit for
+> PR #282, after PR #281 merged at `da48563`. The old task recipes below still
+> contain useful design intent, but they are no longer an executable checklist:
+> most "create this file" tasks already landed on main, and several landed
+> modules are not wired into production paths. Treat code-on-main as
+> **unratified** until the acceptance evidence below is produced.
+
+> **Staleness note (added 2026-06-24).** Local `main` has since advanced to
+> `9b8e3b0` (PRs #286/#287 + discovery-pipeline CI hardening). The milestone
+> reclassification below has **not** been re-verified at that newer SHA; treat
+> each row's evidence as accurate as of `4f19d66` unless re-checked. The next
+> doc refresh should regenerate this table from `ops/trust_status.py` /
+> `ledger-audit operatorSummary` rather than hand-maintaining it.
+
+| Milestone | Status | Evidence / caveat |
+|-----------|--------|-------------------|
 | P0-0 Gemini paid tier | ✅ DONE | F6 = 0.9375 |
 | P0-2 Gate hardening PR #271 | ✅ DONE | merged `275cded` |
 | P0-1 DB untrack + resolver + Daily Pipeline repoint | ✅ DONE | PRs #272/#273/#275 |
-| P0-1 bounded recovery + anomaly check + close #149 | 🔴 OPEN | this plan |
-| P0-3 Dry-run immutability | 🔴 OPEN | this plan |
-| M1A db_anomaly.py | 🔴 OPEN | prerequisite for M1B |
-| M1B restore_db.py Litestream-safe hardening | 🔴 OPEN | blocks: W1, W2 deliberation findings |
-| M2 v52 migration with writer coordination | 🔴 OPEN | blocks: W4 |
-| M3 collector_health v2 + circuit breaker | 🔴 OPEN | blocks: W5, prereq for M7 |
-| M4 vcrpy cassette lifecycle | 🔴 OPEN | blocks: W6 |
-| M5 parity gate (temperature=0.0 or delta<0.02) | 🔴 OPEN | blocks: W3 |
-| M6 PR evidence enforcement | 🔴 OPEN | blocks: W7 |
-| M7 trust status CLI | 🔴 OPEN | hard-dep on M3 (W9) |
+| DB-path hardening: canonical resolution, in-tree guard, Hermes task paths | 🟢 MERGED | PR #281 (`da48563`) + PR #282 (`4f19d66`); local tree contains `guard_db_path`, `resolve_task_db_path`, `InTreeDatabaseError`, and follow-up script hardening. CI-green-on-merge remains unconfirmed because `gh pr view` currently returns HTTP 401 in this environment. |
+| P0-1 bounded recovery + anomaly check + close #149 | 🔴 OPEN | Needs artifact-based ratification at the current DB-path model, not another implementation pass. |
+| P0-3 Dry-run immutability | 🔴 OPEN | Still needs proof that `process_pending(dry_run=True)` and related CLI paths do not persist or mutate routed rows. |
+| M1A `db_anomaly.py` | 🟡 CODE ON MAIN | `scripts/db_anomaly.py` exists; current scope is minimal sha/row-count/size/known-bad/watermark checking. Hot/deep semantic anomaly checks are follow-on hardening, not a prerequisite to the minimal trust release. |
+| M1B `restore_db.py` Litestream-safe hardening | 🔴 OPEN (critical) | `restore_with_integrity_check()` and `scripts/litestream_ctrl.py` exist, but the real restore path is `scripts.restore_db.restore_backup()` / `restore_backup_with_lock_and_ledger()`. That path does not yet orchestrate Litestream stop, WAL sync verification, generation reset, restart, or a binary smoke check. |
+| M2 migration with writer coordination | 🔴 OPEN (rework) | `scripts/run_migration.py` exists but uses a fabricated `schema_version` table and targets v52. Production uses `schema_migrations` plus `storage.signal_store.CURRENT_SCHEMA_VERSION = 53`; any new migration must use the next real version and the `MIGRATIONS` mechanism, or be dropped if no consumer needs the columns. |
+| M3 collector health v2 + circuit breaker | 🟡 CODE ON MAIN | `ops.collector_health.REPORT_SCHEMA_VERSION = 2` and `storage/collector_suspension.py` exist. Remaining risks: JSON store concurrency, env-var bypass semantics, and release ratification from real collector artifacts. |
+| M4 vcrpy cassette lifecycle | 🟡 CODE ON MAIN | `tests/support/cassette_policy.py` exists. Regeneration cadence and storage policy are unratified. |
+| M5 parity gate | 🟡 CODE ON MAIN | `scripts/ci/run_thesis_parity_gate.py` exists. Current tests cover arithmetic/config defaults; they do not prove the CLI path honors `temperature=0.0`. |
+| M6 PR evidence enforcement | 🟡 CODE ON MAIN, hardening first | `scripts/check_pr_evidence.py` exists but accepts any GitHub repo and `/actions/runs/0` style URLs. This is the first patch because future evidence depends on it. |
+| M7 trust status CLI | 🟡 CODE ON MAIN | `ops/trust_status.py` exists and requires schema v2. Max-age/expiry semantics and release-readiness truth table are follow-on hardening. |
 
-**Operating guardrail (until M1B merges):** do not run any mutating pipeline command (`process`/`collect` without `--dry-run`, restore, migrate) against the canonical DB. Use scratch copies only.
+**Operating guardrail (still in force):** the DB-path guard from PR #281/#282 now blocks
+accidental in-repo canonical DB writes, but restore and migration are still not ratified as safe.
+Do not run mutating `restore`, `migrate`, `process`, or `collect` commands against the canonical DB.
+Use scratch copies only, with `HARMONIC_SCRATCH_DB=1` where the command supports that contract.
+
+## Execution reset (authoritative from 2026-06-18)
+
+The active plan is no longer "implement M1A-M7 from scratch." The active plan is a minimal
+trust-core ratification and hardening sequence:
+
+1. **Bootstrap credible PR evidence (M6 Phase 0).** Harden `scripts/check_pr_evidence.py` before
+   relying on any PR-body evidence:
+   - reject run id `0`, wrong-repo URLs, placeholder-only evidence, and syntactically valid links
+     that are not from `nikhillinit/SweetSwwetHarmony`;
+   - represent evidence state explicitly as `syntax_only`, `live_verified`, or `manual_override`;
+   - require out-of-band human attestation for the evidence-checker hardening PR itself, because
+     the old checker cannot validate the patch that fixes it;
+   - make live GitHub verification a release-evidence requirement, with a logged manual override
+     path for GitHub API/auth outages rather than silent pass/fail ambiguity.
+
+2. **Ratify what already landed.** Produce a one-page ratification note at `4f19d66` from local
+   tests and artifacts. It must cover:
+   - DB-path fail-closed behavior from `tests/test_db_path_resolution.py`,
+     `tests/ops/hermes/test_task_db_path_hardening.py`, and `tests/test_run_pipeline_cli.py`;
+   - dry-run immutability from the real pipeline and storage call paths, not only helper tests;
+   - M3/M4/M5/M7 as "code present, risk accepted or follow-up opened" rather than "DONE" unless
+     production-path evidence exists.
+
+3. **Wire the critical production gaps.** Do these before declaring DB operations trustworthy:
+   - M1B: wire the Litestream/restore lifecycle into `restore_backup()` or document a backup-mode
+     branch that makes Litestream intentionally out of scope for this deployment. Add tests that
+     assert the real restore path invokes the controller or records the non-Litestream mode.
+   - M2: replace or remove `scripts/run_migration.py`. If the `signals` columns are still needed,
+     add them through `storage.signal_store.MIGRATIONS` at the next free schema version after 53 and
+     test against `schema_migrations`, not a fabricated `schema_version` table.
+   - M1B/F5: either pass `MAINTENANCE_LOCK_TIMEOUT_SECONDS` to the real lock acquisition path with
+     a comment that it is wait-to-acquire time, or delete the dead constant/test and document that
+     lock expiry is governed by `DBToolLock` TTL.
+
+4. **Refresh current-state docs only after ratification.** Update `docs/claude/active-sprint.md`
+   and this strategy to the ratified SHA once the evidence exists. Do not use doc refresh as a
+   substitute for ratification.
+
+**Minimal release gate:** evidence checker hardened and bootstrapped; DB-path hardening ratified at
+`4f19d66`; M1B restore safety resolved or explicitly scoped out by backup-mode evidence; M2 either
+rewritten against `schema_migrations` or removed as unnecessary; `active-sprint.md` refreshed after
+the audit. Everything else in this document is follow-on hardening unless it is named by that gate.
 
 ---
 
-## Track A — DB Durability + Dry-Run Immutability
+> **Historical recipes below.** The task sections that follow preserve the original deliberation
+> design and example tests. Before executing any checkbox, verify whether the named file/function
+> already exists on `origin/main`; for code-on-main tasks, convert the step to ratification or a
+> targeted patch instead of re-running the old RED/GREEN script literally.
+
+---
+
+## Track A — Historical DB Durability + Dry-Run Recipes
 
 ### Task M1A: db_anomaly.py — anomaly checker (prerequisite for M1B per R7/W8)
 
@@ -664,7 +733,7 @@ git commit -m "feat(migration): v52 migration runner with single-writer coordina
 
 ---
 
-## Track B — CI Hardening + Collector Intelligence
+## Track B — Historical CI Hardening + Collector Intelligence Recipes
 
 ### Task M3: collector_health.py v2 + api_shape_changed circuit breaker (R5/W5)
 
@@ -1462,7 +1531,11 @@ git commit -m "feat(ops): trust status CLI — hard-requires collector_health v2
 
 ---
 
-## Self-review checklist
+## Original self-review checklist (historical)
+
+> This checklist describes coverage of the pre-reconciliation implementation recipe. Use the
+> 2026-06-18 execution reset above for the current release gate and treat this list as design
+> provenance, not release-ready evidence.
 
 **Spec coverage — deliberation required changes:**
 
