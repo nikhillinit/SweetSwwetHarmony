@@ -165,6 +165,7 @@ jobs:
           echo "Database state restore accepted"
 
       - name: Anomaly check on restored database
+        id: anomaly-check
         if: ${{ steps.validate-restore.outputs.restore_accepted == 'true' }}
         run: |
           python scripts/db_anomaly.py "$DISCOVERY_DB_PATH" \
@@ -239,8 +240,8 @@ jobs:
         run: |
           echo "publish_artifacts=false" >> "$GITHUB_OUTPUT"
           echo "Finalizing database..."
-          if [ "${{ steps.validate-restore.outputs.restore_accepted }}" != "true" ]; then
-            echo "Restore gate was not accepted; skipping artifact publication"
+          if [ "${{ steps.anomaly-check.outcome }}" != "success" ]; then
+            echo "Restore/anomaly gate was not accepted; skipping artifact publication"
             exit 0
           fi
           if [ -f "$DISCOVERY_DB_PATH" ]; then
