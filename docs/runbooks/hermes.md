@@ -37,6 +37,8 @@ python -m ops.cli hermes route --json --phase production --task "update runbook 
 python -m ops.cli hermes run --execute --phase planning --task "update runbook docs" --gemini
 python -m ops.cli hermes run --execute --phase production --task "schema migration" --codex
 python -m ops.cli hermes run --execute --phase production --task "schema migration" --codex --ack-risk I-ACK-RISK
+python -m ops.cli hermes task ledger-audit --dry-run --json --check all --finding-severity-threshold low
+python -m ops.cli hermes lock force-unlock --reason "<incident id / run id / specific rationale>"
 ```
 
 ## Track A Hardening Strategy
@@ -92,6 +94,37 @@ operator reports without invoking restore, canary, or Notion-facing paths.
 The audit report also supports a read-only `rehearsals` scope that records the
 registered Hermes task contract surface and fails closed on malformed static
 metadata such as non-canonical task lock declarations.
+
+The exact Ledger Audit CI command (the `Hermes Ledger Audit` workflow runs this
+verbatim) is:
+
+```bash
+python -m ops.cli hermes task ledger-audit --dry-run --json --check all --finding-severity-threshold low
+```
+
+It is read-only: `--dry-run` writes a ledger but executes no provider, `--check
+all` runs every audit scope, and `--finding-severity-threshold low` surfaces all
+findings down to `low`.
+
+## Stale Lock Recovery
+
+The execute path holds the Hermes lock (`ai-logs/hermes/hermes.lock`) and exits 6
+(`EXIT_LOCK_HELD`) if another run already holds it. If a run died and left the
+lock behind, clear it with the full command — `--reason` is required:
+
+```bash
+python -m ops.cli hermes lock force-unlock --reason "<incident id / run id / specific rationale>"
+```
+
+Safety:
+
+- Use `force-unlock` only after confirming no Hermes command or provider is still
+  running (check for a live `ops.cli hermes run --execute` process and the lock
+  holder recorded in the failure event / `S2_lock_held` state).
+- Always include a specific rationale — an incident id, the dead run id, or a
+  concrete explanation. Never a bare or placeholder reason.
+- Never use it to bypass a live task that is still writing artifacts; that risks
+  two executors mutating the same surface concurrently.
 
 ## Safety Rules
 
