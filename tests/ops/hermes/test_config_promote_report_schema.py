@@ -5,7 +5,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from jsonschema import Draft202012Validator
+import pytest
+from jsonschema import Draft202012Validator, ValidationError
 
 from integrations.hermes.config import PROJECT_ROOT
 from integrations.hermes.tasks import config_promote
@@ -161,6 +162,16 @@ def test_config_promote_report_schema_tracks_live_shape_not_overlay_stubs() -> N
     assert properties["task"] == {"const": "config-promote"}
     assert properties["diffArtifact"] == {"const": config_promote.CONFIG_DIFF_ARTIFACT}
     assert "previousSnapshotRef" in properties
+
+
+def test_config_promote_report_schema_rejects_unknown_report_fields(
+    tmp_path: Path,
+) -> None:
+    report = _live_config_promote_report(tmp_path)
+    report["unknownReportField"] = "schema drift"
+
+    with pytest.raises(ValidationError, match="Additional properties"):
+        _validate(_load_schema(), report)
 
 
 def test_config_promote_report_schema_validates_execute_artifact(
