@@ -15,7 +15,17 @@ Every PR that touches `workflows/pipeline.py`, `workflows/run_manager.py`, `stor
 - artifact links: https://github.com/nikhillinit/SweetSwwetHarmony/actions/runs/<run-id>/artifacts/<artifact-id>
 ```
 
-Replace placeholders with real GitHub Actions run URLs. Placeholder-only evidence (`"see CI"`, `"passing"`) is rejected by `scripts/check_pr_evidence.py`.
+Replace placeholders with real GitHub Actions run URLs. Placeholder-only evidence (`"see CI"`, `"passing"`) is rejected by `scripts/check_pr_evidence.py`. URLs must point at this repository (`nikhillinit/SweetSwwetHarmony`); wrong-repo URLs and run id `0` are rejected.
+
+The checker classifies each bundle into one of three states:
+
+- `syntax_only` — a well-formed allow-listed run URL is present (default; no network call).
+- `live_verified` — when run with `--live`, the referenced run is confirmed via `gh api` to exist, match the PR head SHA (with `--head-sha`), and have concluded `success`. A `gh` outage fails closed (it does not silently pass).
+- `manual_override` — for the rare case where live verification cannot run (e.g. `gh` API outage, or a bootstrap PR that hardens the checker itself), add a single line to the PR body and the override is logged:
+
+  ```
+  EVIDENCE-OVERRIDE: <reason — who attested and why live evidence is unavailable>
+  ```
 
 ### Thesis-sensitive changes
 Changes touching `utils/thesis_matcher.py`, `workflows/pipeline.py` thesis-classification paths, `tests/fixtures/thesis_llm_golden_set.*`, or `integrations/hermes/tasks/*thesis*.py` require the Thesis Golden Set Gate to pass (gold or hermes mode). If the gate is rate-limited, add the `thesis-label-drift-approved` label with a comment explaining the bypass.
