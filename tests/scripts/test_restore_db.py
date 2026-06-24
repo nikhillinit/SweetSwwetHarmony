@@ -379,3 +379,79 @@ def test_cli_main_threads_lock_timeout_flag(
     called.clear()
     assert restore_db.main([str(backup), "--db-path", str(target)]) == 0
     assert called["kwargs"]["lock_timeout_seconds"] == MAINTENANCE_LOCK_TIMEOUT_SECONDS
+
+
+def test_restore_helper_records_litestream_mode_off_in_ledger(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mode B: the restore result and ledger row must explicitly record
+    litestream_mode='off' so a non-interactive run is unambiguous that Litestream
+    orchestration did not run (cloud restore is proven by the nightly verify)."""
+    backup = _write_db(tmp_path / "backup.db", rows=5)
+    target = _write_db(tmp_path / "signals.db", rows=1)
+    ledger = tmp_path / "db_ops_ledger.jsonl"
+
+    monkeypatch.setenv("DB_OPS_LEDGER_PATH", str(ledger))
+    monkeypatch.setattr(restore_db, "_check_api_reachable", lambda _url: False)
+
+    result = restore_backup_with_lock_and_ledger(
+        backup,
+        target,
+        api_url="http://127.0.0.1:9/health",
+    )
+
+    assert result.litestream_mode == "off"
+    rows = _read_ledger(ledger)
+    assert len(rows) == 1
+    assert rows[0]["details"]["litestream_mode"] == "off"
+
+
+def test_restore_helper_litestream_mode_defaults_off() -> None:
+    default = (
+        inspect.signature(restore_backup_with_lock_and_ledger)
+        .parameters["litestream_mode"]
+        .default
+    )
+    assert default == restore_db.LITESTREAM_MODE == "off"
+
+
+def test_restore_helper_rejects_mode_a_required(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backup = _write_db(tmp_path / "backup.db", rows=1)
+    target = _write_db(tmp_path / "signals.db", rows=1)
+    monkeypatch.setenv("DB_OPS_LEDGER_PATH", str(tmp_path / "db_ops_ledger.jsonl"))
+    with pytest.raises(RestoreError, match="not supported"):
+        restore_backup_with_lock_and_ledger(backup, target, litestream_mode="required")
+
+
+def test_cli_main_threads_litestream_mode_flag(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    backup = tmp_path / "backup.db"
+    target = tmp_path / "signals.db"
+    called: dict[str, object] = {}
+
+    def fake_helper(*args: object, **kwargs: object) -> restore_db.RestoreBackupResult:
+        called["kwargs"] = kwargs
+        return restore_db.RestoreBackupResult(
+            backup_path=backup,
+            db_path=target.resolve(),
+            pre_restore_backup=tmp_path / "pre-restore.db",
+            target_sha256_before="before",
+            target_sha256_after="after",
+            backup_sha256="backup",
+            integrity_check="ok",
+            schema_version=41,
+            db_ops_ledger_status="success",
+            lock_path=target.resolve().with_suffix(".db.dbtool.lock"),
+        )
+
+    monkeypatch.setattr(restore_db, "restore_backup_with_lock_and_ledger", fake_helper)
+
+    # default when flag omitted
+    assert restore_db.main([str(backup), "--db-path", str(target)]) == 0
+    assert called["kwargs"]["litestream_mode"] == "off"
