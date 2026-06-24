@@ -1,0 +1,56 @@
+{
+  "task": "restore_db Litestream lifecycle mode and maintenance lock timeout fix for production durability",
+  "phase": "production",
+  "recommendedExecutor": "codex",
+  "risk": "high",
+  "specialist": "durability",
+  "score": 2,
+  "matchedKeywords": [
+    "restore",
+    "litestream"
+  ],
+  "alternatives": [
+    "kimi",
+    "gemini",
+    "claude"
+  ],
+  "manualModel": null,
+  "lane": {
+    "specialist": "durability",
+    "risk": "high",
+    "score": 2,
+    "matchedKeywords": [
+      "restore",
+      "litestream"
+    ],
+    "preferredExecutors": [
+      "codex"
+    ],
+    "fallbackExecutors": [
+      "kimi",
+      "gemini"
+    ]
+  },
+  "executorMetadata": {
+    "antigravity": {
+      "enabled": false,
+      "supportsExecute": false
+    },
+    "claude": {
+      "enabled": true,
+      "supportsExecute": false
+    },
+    "codex": {
+      "enabled": true,
+      "supportsExecute": true
+    },
+    "gemini": {
+      "enabled": true,
+      "supportsExecute": true
+    },
+    "kimi": {
+      "enabled": true,
+      "supportsExecute": true
+    }
+  }
+}

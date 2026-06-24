@@ -1,0 +1,54 @@
+{
+  "task": "Hermes runbook add ledger-audit and force-unlock recovery commands",
+  "phase": "production",
+  "recommendedExecutor": "gemini",
+  "risk": "low",
+  "specialist": "docs",
+  "score": 1,
+  "matchedKeywords": [
+    "runbook"
+  ],
+  "alternatives": [
+    "claude",
+    "codex",
+    "kimi"
+  ],
+  "manualModel": null,
+  "lane": {
+    "specialist": "docs",
+    "risk": "low",
+    "score": 1,
+    "matchedKeywords": [
+      "runbook"
+    ],
+    "preferredExecutors": [
+      "gemini"
+    ],
+    "fallbackExecutors": [
+      "claude",
+      "codex"
+    ]
+  },
+  "executorMetadata": {
+    "antigravity": {
+      "enabled": false,
+      "supportsExecute": false
+    },
+    "claude": {
+      "enabled": true,
+      "supportsExecute": false
+    },
+    "codex": {
+      "enabled": true,
+      "supportsExecute": true
+    },
+    "gemini": {
+      "enabled": true,
+      "supportsExecute": true
+    },
+    "kimi": {
+      "enabled": true,
+      "supportsExecute": true
+    }
+  }
+}
