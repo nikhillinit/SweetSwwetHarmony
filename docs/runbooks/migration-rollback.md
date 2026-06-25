@@ -4,23 +4,39 @@
 
 All schema migrations v35+ MUST have a tested downgrade path. This runbook documents the rollback procedure for each migration.
 
+> **Migration truth (canonical).** Schema migrations are defined by
+> `storage.signal_store.MIGRATIONS` and recorded in the **`schema_migrations`**
+> table. The applied version is `MAX(version) FROM schema_migrations`, and
+> `CURRENT_SCHEMA_VERSION == max(MIGRATIONS)` in code. There is **no** separate
+> version table and **no** legacy meta-row holding the schema version — the
+> `schema_migrations` table is the only source of truth. Do not re-introduce a
+> standalone migration runner (`scripts/run_migration.py` was deleted as
+> unnecessary). Inspect and validate schema state with the real CLI:
+>
+> ```bash
+> python -m storage.migrations list <db_path>      # applied migrations + current version
+> python -m storage.migrations info <db_path>      # row counts + size + version
+> python -m storage.migrations validate <db_path>  # tables/columns/indexes present
+> ```
+
 ## General Procedure
 
 ### Pre-flight
-1. Verify current schema version: `SELECT value FROM app_meta WHERE key = 'schema_version'`
+1. Verify current schema version: `python -m storage.migrations list signals.db` (or `SELECT MAX(version) FROM schema_migrations;`)
 2. Backup database: `cp signals.db signals.db.backup-$(date +%Y%m%d-%H%M%S)`
 3. Verify backup integrity: `sqlite3 signals.db.backup-* "PRAGMA integrity_check"`
 
 ### Rollback Steps
 1. Stop the API server and pipeline
-2. Run the downgrade SQL for the target migration (see below)
-3. Update schema version: `UPDATE app_meta SET value = '<prev_version>' WHERE key = 'schema_version'`
-4. Verify tables are removed: `SELECT name FROM sqlite_master WHERE type='table'`
+2. Run the downgrade SQL for the target migration (see below) — this both drops the migration's tables and removes its `schema_migrations` rows, so the next startup re-applies cleanly from `MIGRATIONS`
+3. Verify tables are removed: `SELECT name FROM sqlite_master WHERE type='table'`
+4. Confirm the recorded version: `python -m storage.migrations list signals.db`
 5. Restart services
 6. Run health check: `python run_pipeline.py health --json`
 
 ### Post-rollback Verification
-- Confirm schema version matches expected
+- Confirm schema version matches expected (`python -m storage.migrations list signals.db`)
+- Validate schema integrity: `python -m storage.migrations validate signals.db`
 - Run targeted test suite for the previous version
 - Verify no orphaned data
 
@@ -32,7 +48,8 @@ All schema migrations v35+ MUST have a tested downgrade path. This runbook docum
 ```sql
 DROP TABLE IF EXISTS audit_events;
 DROP TABLE IF EXISTS run_history;
-UPDATE app_meta SET value = '34' WHERE key = 'schema_version';
+-- record the rollback in the migration ledger (current version becomes 34):
+DELETE FROM schema_migrations WHERE version >= 35;
 ```
 
 ### Data Impact
@@ -47,7 +64,8 @@ UPDATE app_meta SET value = '34' WHERE key = 'schema_version';
 ### Downgrade SQL
 ```sql
 DROP TABLE IF EXISTS ach_runs;
-UPDATE app_meta SET value = '35' WHERE key = 'schema_version';
+-- record the rollback in the migration ledger (current version becomes 35):
+DELETE FROM schema_migrations WHERE version >= 36;
 ```
 
 ### Data Impact
@@ -61,7 +79,8 @@ UPDATE app_meta SET value = '35' WHERE key = 'schema_version';
 ```sql
 DROP TABLE IF EXISTS drift_alerts;
 DROP TABLE IF EXISTS canary_runs;
-UPDATE app_meta SET value = '36' WHERE key = 'schema_version';
+-- record the rollback in the migration ledger (current version becomes 36):
+DELETE FROM schema_migrations WHERE version >= 37;
 ```
 
 ### Data Impact
@@ -75,7 +94,8 @@ UPDATE app_meta SET value = '36' WHERE key = 'schema_version';
 ```sql
 DROP TABLE IF EXISTS hunter_queries;
 DROP TABLE IF EXISTS hunter_results;
-UPDATE app_meta SET value = '37' WHERE key = 'schema_version';
+-- record the rollback in the migration ledger (current version becomes 37):
+DELETE FROM schema_migrations WHERE version >= 38;
 ```
 
 ### Data Impact
@@ -93,7 +113,8 @@ DROP INDEX IF EXISTS idx_merge_proposals_winner;
 DROP INDEX IF EXISTS idx_merge_proposals_status;
 DROP INDEX IF EXISTS idx_merge_proposals_suggestion;
 DROP TABLE IF EXISTS merge_proposals;
-UPDATE app_meta SET value = '39' WHERE key = 'schema_version';
+-- record the rollback in the migration ledger (current version becomes 39):
+DELETE FROM schema_migrations WHERE version >= 40;
 ```
 
 ### Data Impact
@@ -113,3 +134,4 @@ If migration fails mid-way:
 1. Restore from backup: `cp signals.db.backup-* signals.db`
 2. Clear WAL: `sqlite3 signals.db "PRAGMA wal_checkpoint(TRUNCATE)"`
 3. Verify: `sqlite3 signals.db "PRAGMA integrity_check"`
+4. Confirm schema state: `python -m storage.migrations validate signals.db`

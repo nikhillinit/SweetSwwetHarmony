@@ -1,0 +1,51 @@
+{
+  "task": "PR Evidence Gate always-run self-protecting required check for production",
+  "phase": "production",
+  "recommendedExecutor": "codex",
+  "risk": "high",
+  "specialist": null,
+  "score": 0,
+  "matchedKeywords": [],
+  "alternatives": [
+    "kimi",
+    "gemini",
+    "claude"
+  ],
+  "manualModel": null,
+  "lane": {
+    "specialist": null,
+    "risk": "high",
+    "score": 0,
+    "matchedKeywords": [],
+    "preferredExecutors": [
+      "codex"
+    ],
+    "fallbackExecutors": [
+      "kimi",
+      "gemini",
+      "claude"
+    ]
+  },
+  "executorMetadata": {
+    "antigravity": {
+      "enabled": false,
+      "supportsExecute": false
+    },
+    "claude": {
+      "enabled": true,
+      "supportsExecute": false
+    },
+    "codex": {
+      "enabled": true,
+      "supportsExecute": true
+    },
+    "gemini": {
+      "enabled": true,
+      "supportsExecute": true
+    },
+    "kimi": {
+      "enabled": true,
+      "supportsExecute": true
+    }
+  }
+}

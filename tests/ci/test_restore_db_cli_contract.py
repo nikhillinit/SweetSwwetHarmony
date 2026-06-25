@@ -43,3 +43,17 @@ def test_restore_db_no_longer_declares_local_default_db_constant() -> None:
     }
 
     assert "DEFAULT_DB" not in names
+
+
+def test_restore_db_declares_litestream_mode_off() -> None:
+    # Mode B is explicit in source so the lifecycle position is unambiguous.
+    source = RESTORE_DB.read_text(encoding="utf-8")
+    assert 'LITESTREAM_MODE = "off"' in source
+    assert 'SUPPORTED_LITESTREAM_MODES = ("off",)' in source
+
+
+def test_restore_db_cli_exposes_litestream_mode_flag_default_off() -> None:
+    source = RESTORE_DB.read_text(encoding="utf-8")
+    assert "--litestream-mode" in source
+    assert "choices=SUPPORTED_LITESTREAM_MODES" in source
+    assert "default=LITESTREAM_MODE" in source

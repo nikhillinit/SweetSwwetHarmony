@@ -7,8 +7,18 @@ Safety rules:
 - Validates backup integrity before and after restore.
 - Verifies schema version matches CURRENT_SCHEMA_VERSION post-restore.
 
+Litestream lifecycle position (Mode B -- intentionally out of scope):
+    This script performs artifact / local-file restore only. It does NOT
+    orchestrate Litestream (stop / WAL-flush / generation-reset / restart).
+    S3/R2 cloud-restore durability is proven independently by
+    .github/workflows/litestream-restore-verify-nightly.yml. Every restore
+    ledger row records litestream_mode="off" so a non-interactive run is
+    unambiguous about which path executed. (Litestream is pinned to 0.5.2,
+    whose stop/generations commands cannot safely drive the lifecycle; the
+    helper scripts/litestream_ctrl.py is quarantined for that reason.)
+
 Usage:
-    python scripts/restore_db.py <backup-file> [--db-path signals.db] [--db signals.db] [--force] [--api-url URL]
+    python scripts/restore_db.py <backup-file> [--db-path signals.db] [--db signals.db] [--force] [--api-url URL] [--litestream-mode off]
 """
 
 from __future__ import annotations
@@ -34,6 +44,12 @@ DEFAULT_API_URL = "http://localhost:8000/api/v1/health"
 PRE_RESTORE_PREFIX = "pre-restore-"
 LOCK_TIMEOUT_SECONDS = 5
 MAINTENANCE_LOCK_TIMEOUT_SECONDS = 180  # restore can take 30-120s; 5s default is insufficient
+
+# Litestream lifecycle position. Mode B (the only supported mode here) means
+# restore_db.py does artifact/local-file restore only and does NOT orchestrate
+# Litestream; cloud restore is proven by litestream-restore-verify-nightly.yml.
+LITESTREAM_MODE = "off"
+SUPPORTED_LITESTREAM_MODES = ("off",)
 
 
 def restore_with_integrity_check(backup: Path, target: Path) -> None:
@@ -74,6 +90,7 @@ class RestoreBackupResult:
     schema_version: int | None
     db_ops_ledger_status: str
     lock_path: Path
+    litestream_mode: str = "off"
 
 
 class RestoreError(DBToolError):
@@ -226,6 +243,7 @@ def _restore_ledger_details(
     backup_sha256: str | None = None,
     integrity_check: str | None = None,
     schema_version: int | None = None,
+    litestream_mode: str = LITESTREAM_MODE,
     extra: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     details = {
@@ -237,6 +255,7 @@ def _restore_ledger_details(
         "backup_sha256": backup_sha256,
         "integrity_check": integrity_check,
         "schema_version": schema_version,
+        "litestream_mode": litestream_mode,
         "db_ops_ledger_status": status,
         "lock_path": str(lock_path),
     }
@@ -252,11 +271,25 @@ def restore_backup_with_lock_and_ledger(
     api_url: str = DEFAULT_API_URL,
     *,
     lock_timeout_seconds: int = MAINTENANCE_LOCK_TIMEOUT_SECONDS,
+    litestream_mode: str = LITESTREAM_MODE,
 ) -> RestoreBackupResult:
-    """Restore a backup while owning DB tool lock and DB ops ledger writes."""
+    """Restore a backup while owning DB tool lock and DB ops ledger writes.
+
+    litestream_mode is recorded in every ledger row. Only "off" (Mode B) is
+    supported here: restore is artifact/local-file only and does not orchestrate
+    Litestream; cloud restore is proven by litestream-restore-verify-nightly.yml.
+    Passing "required" (Mode A) is rejected because that lifecycle is not wired.
+    """
 
     from utils.db_ops_ledger import append_db_ops_ledger
     from utils.db_tool_lock import DBToolLock
+
+    if litestream_mode not in SUPPORTED_LITESTREAM_MODES:
+        raise RestoreError(
+            f"litestream_mode={litestream_mode!r} is not supported; only "
+            f"{SUPPORTED_LITESTREAM_MODES} (Mode B) is wired. Cloud restore is "
+            "proven by litestream-restore-verify-nightly.yml."
+        )
 
     backup = Path(backup_path)
     resolved_db_path = Path(resolve_db_path_env(db_path)).resolve()
@@ -309,6 +342,7 @@ def restore_backup_with_lock_and_ledger(
             schema_version=schema_version,
             db_ops_ledger_status="success",
             lock_path=lock_path,
+            litestream_mode=litestream_mode,
         )
         append_db_ops_ledger(
             tool_name="restore_db",
@@ -325,6 +359,7 @@ def restore_backup_with_lock_and_ledger(
                 backup_sha256=result.backup_sha256,
                 integrity_check=result.integrity_check,
                 schema_version=result.schema_version,
+                litestream_mode=result.litestream_mode,
             ),
         )
         return result
@@ -523,6 +558,16 @@ def main(argv: list[str] | None = None) -> int:
             f"(default: {MAINTENANCE_LOCK_TIMEOUT_SECONDS})"
         ),
     )
+    parser.add_argument(
+        "--litestream-mode",
+        choices=SUPPORTED_LITESTREAM_MODES,
+        default=LITESTREAM_MODE,
+        help=(
+            "Litestream lifecycle position recorded in the restore ledger. "
+            "Only 'off' (Mode B) is supported: restore is artifact/local-file "
+            "only; cloud restore is proven by litestream-restore-verify-nightly.yml."
+        ),
+    )
     args = parser.parse_args(argv)
     resolved_db_path = resolve_db_path(args)
 
@@ -538,6 +583,7 @@ def main(argv: list[str] | None = None) -> int:
             args.force,
             args.api_url,
             lock_timeout_seconds=args.lock_timeout_seconds,
+            litestream_mode=args.litestream_mode,
         )
         print(f"Restore complete. Pre-restore backup: {result.pre_restore_backup}")
         return 0
