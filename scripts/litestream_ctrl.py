@@ -1,80 +1,56 @@
+"""QUARANTINED (Litestream Mode B — orchestration out of scope).
+
+Litestream lifecycle orchestration is intentionally NOT wired into the restore
+path. The real restore path (``scripts.restore_db.restore_backup`` /
+``restore_backup_with_lock_and_ledger``) performs artifact / local-file restore
+only and records ``litestream_mode="off"`` in every ledger row. S3/R2 cloud
+restore durability is proven independently by
+``.github/workflows/litestream-restore-verify-nightly.yml``.
+
+Why this module is quarantined rather than used: Litestream is pinned to 0.5.2
+in this deployment, and the controller that previously lived here issued
+commands that are unsafe or incorrect on 0.5.2 —
+
+  * ``litestream stop`` / ``litestream replicate -config`` under a 10s subprocess
+    timeout cannot hold a long-lived daemon;
+  * ``litestream generations`` is a *listing* command, not a generation reset;
+  * there is no ``status`` command, and ``litestream reset`` is a 0.5.7-only
+    command absent from 0.5.2.
+
+Leaving those callable would let a non-interactive run believe a 0.5.2 lifecycle
+exists when it does not. So the orchestration surface is removed: constructing
+``LitestreamCtrl`` raises ``LitestreamUnsupportedError``. If a Litestream-managed
+restore (Mode A) is ever required, re-introduce a controller built ONLY on
+commands proven by a recorded ``litestream <cmd> -h`` capability smoke test on
+the pinned version.
+"""
 from __future__ import annotations
 
-import subprocess
-import time
-from pathlib import Path
+# Mode B: Litestream orchestration is off. Mirrors scripts.restore_db.LITESTREAM_MODE.
+LITESTREAM_MODE = "off"
 
 
 class LitestreamError(RuntimeError):
-    pass
+    """Base error for the (quarantined) Litestream controller surface."""
+
+
+class LitestreamUnsupportedError(LitestreamError):
+    """Raised when code attempts to drive Litestream, which is out of scope (Mode B)."""
 
 
 class LitestreamCtrl:
-    """Stop/start/generation-reset Litestream safely around a DB restore.
+    """Quarantined stub — see module docstring.
 
-    Required restore sequence (must follow this exact order):
-      1. ctrl.stop()                    -- SIGTERM + wait; Litestream flushes WAL to S3
-      2. ctrl.assert_wal_flushed(db)    -- guard: no stale WAL sidecar before file copy
-      3. restore_with_integrity_check(backup, db)  -- copy + PRAGMA integrity_check
-      4. ctrl.reset_generation()        -- tell replica this is a new generation
-      5. ctrl.start()                   -- restart replication
-
-    Skipping or reordering any step risks the replica overwriting the restored
-    file before the generation reset, or a stale WAL being applied post-copy.
+    Constructing this raises ``LitestreamUnsupportedError`` so the unsafe 0.5.2
+    stop/replicate/generations commands cannot be invoked as if supported.
     """
 
-    def __init__(
-        self,
-        replica_url: str,
-        config_path: Path,
-        stop_timeout: int = 30,
-    ) -> None:
-        self.replica_url = replica_url
-        self.config_path = Path(config_path)
-        self.stop_timeout = stop_timeout
-
-    def stop(self) -> None:
-        result = subprocess.run(
-            ["litestream", "stop", "-config", str(self.config_path)],
-            capture_output=True,
-            timeout=self.stop_timeout,
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        raise LitestreamUnsupportedError(
+            "Litestream lifecycle orchestration is out of scope (Mode B). "
+            "restore_db.py performs artifact/local-file restore only and records "
+            'litestream_mode="off"; S3/R2 restore is proven by '
+            "litestream-restore-verify-nightly.yml. Do not drive Litestream from "
+            "the restore path on the pinned 0.5.2 — its stop/generations commands "
+            "cannot safely run the lifecycle."
         )
-        if result.returncode != 0:
-            raise LitestreamError(
-                f"litestream stop failed (rc={result.returncode}): "
-                f"{result.stderr.decode(errors='replace')}"
-            )
-        time.sleep(2)
-
-    def start(self) -> None:
-        result = subprocess.run(
-            ["litestream", "replicate", "-config", str(self.config_path)],
-            capture_output=True,
-            timeout=10,
-        )
-        if result.returncode not in (0,):
-            raise LitestreamError(
-                f"litestream start failed (rc={result.returncode}): "
-                f"{result.stderr.decode(errors='replace')}"
-            )
-
-    def assert_wal_flushed(self, db_path: Path) -> None:
-        wal = Path(str(db_path) + "-wal")
-        if wal.exists() and wal.stat().st_size > 0:
-            raise LitestreamError(
-                f"WAL file {wal} is non-empty ({wal.stat().st_size} bytes) after "
-                "litestream stop — WAL was not fully flushed to S3. "
-                "Do not copy the backup until the WAL is flushed."
-            )
-
-    def reset_generation(self) -> None:
-        result = subprocess.run(
-            ["litestream", "generations", "-config", str(self.config_path)],
-            capture_output=True,
-            timeout=15,
-        )
-        if result.returncode != 0:
-            raise LitestreamError(
-                f"litestream generation reset failed: "
-                f"{result.stderr.decode(errors='replace')}"
-            )

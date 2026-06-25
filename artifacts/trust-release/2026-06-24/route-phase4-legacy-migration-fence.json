@@ -1,0 +1,54 @@
+{
+  "task": "Fence off legacy migration surface guard test docs point to storage.migrations",
+  "phase": "production",
+  "recommendedExecutor": "gemini",
+  "risk": "high",
+  "specialist": "docs",
+  "score": 1,
+  "matchedKeywords": [
+    "docs"
+  ],
+  "alternatives": [
+    "claude",
+    "codex",
+    "kimi"
+  ],
+  "manualModel": null,
+  "lane": {
+    "specialist": "docs",
+    "risk": "high",
+    "score": 1,
+    "matchedKeywords": [
+      "docs"
+    ],
+    "preferredExecutors": [
+      "gemini"
+    ],
+    "fallbackExecutors": [
+      "claude",
+      "codex"
+    ]
+  },
+  "executorMetadata": {
+    "antigravity": {
+      "enabled": false,
+      "supportsExecute": false
+    },
+    "claude": {
+      "enabled": true,
+      "supportsExecute": false
+    },
+    "codex": {
+      "enabled": true,
+      "supportsExecute": true
+    },
+    "gemini": {
+      "enabled": true,
+      "supportsExecute": true
+    },
+    "kimi": {
+      "enabled": true,
+      "supportsExecute": true
+    }
+  }
+}

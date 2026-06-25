@@ -1,0 +1,88 @@
+{
+  "mode": "dry-run",
+  "exitCode": 0,
+  "runId": "hermes_20260624_223751_dfe30a12",
+  "runDir": "C:\\dev\\Harmonic\\ai-logs\\hermes\\runs\\hermes_20260624_223751_dfe30a12",
+  "plan": {
+    "task": "Phase 4 fence off legacy migration surface guard test docs to storage.migrations",
+    "phase": "production",
+    "recommendedExecutor": "gemini",
+    "risk": "high",
+    "specialist": "docs",
+    "score": 1,
+    "matchedKeywords": [
+      "docs"
+    ],
+    "alternatives": [
+      "claude",
+      "codex",
+      "kimi"
+    ],
+    "manualModel": null,
+    "lane": {
+      "specialist": "docs",
+      "risk": "high",
+      "score": 1,
+      "matchedKeywords": [
+        "docs"
+      ],
+      "preferredExecutors": [
+        "gemini"
+      ],
+      "fallbackExecutors": [
+        "claude",
+        "codex"
+      ]
+    },
+    "executorMetadata": {
+      "antigravity": {
+        "enabled": false,
+        "supportsExecute": false
+      },
+      "claude": {
+        "enabled": true,
+        "supportsExecute": false
+      },
+      "codex": {
+        "enabled": true,
+        "supportsExecute": true
+      },
+      "gemini": {
+        "enabled": true,
+        "supportsExecute": true
+      },
+      "kimi": {
+        "enabled": true,
+        "supportsExecute": true
+      }
+    }
+  },
+  "preflight": {
+    "phase": "preflight",
+    "success": true,
+    "results": [
+      {
+        "name": "hermes-tests",
+        "command": [
+          "python",
+          "-m",
+          "pytest",
+          "tests/ops/hermes/",
+          "-q"
+        ],
+        "returnCode": 0,
+        "stdout": "........................................................................ [ 16%]\r\n........................................................................ [ 33%]\r\n........................................................................ [ 50%]\r\n........................................................................ [ 67%]\r\n........................................................................ [ 84%]\r\n................................................................         [100%]\r\n424 passed in 72.92s (0:01:12)\r\n",
+        "stderr": "",
+        "durationMs": 74665,
+        "timedOut": false,
+        "success": true
+      }
+    ]
+  },
+  "postflight": {
+    "phase": "postflight",
+    "success": true,
+    "results": []
+  },
+  "error": null
+}
