@@ -107,7 +107,18 @@
   "routing": {
     "manualOverrideAllowed": true,
     "fallbackOrder": ["codex", "kimi", "gemini", "claude"],
-    "unknownTaskExecutor": "codex"
+    "unknownTaskExecutor": "codex",
+    "runtimeFallbackEnabled": false
+  },
+  "rateLimits": {
+    "enabled": true,
+    "defaultCooldownMinutes": 60,
+    "signatures": {
+      "codex": ["429", "rate limit", "too many requests", "quota exceeded"],
+      "kimi": ["429", "rate limit", "too many requests", "quota exceeded"],
+      "gemini": ["429", "rate limit", "too many requests", "quota exceeded", "RESOURCE_EXHAUSTED"],
+      "claude": ["429", "rate limit", "too many requests", "quota exceeded", "overloaded_error"]
+    }
   },
   "gates": {
     "preflight": [
@@ -125,6 +136,8 @@
       "sk-[A-Za-z0-9_-]+",
       "secret_[A-Za-z0-9]+",
       "gh[pousr]_[A-Za-z0-9_]+",
+      "github_pat_[A-Za-z0-9_]+",
+      "AIza[0-9A-Za-z_-]{35}",
       "xox[abp]-[A-Za-z0-9-]+",
       "AKIA[0-9A-Z]{16}",
       "Bearer\\s+[A-Za-z0-9._~+/=-]+",

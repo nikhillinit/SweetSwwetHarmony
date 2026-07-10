@@ -5,8 +5,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from .adapters import HermesExecutor, build_executor
+from .adapters import ExecutorResult, HermesExecutor, build_executor
 from .config import PROJECT_ROOT, RoutingConfig, load_config
+from .cooldown import ProviderCooldownStore
+from .failures import (
+    FAILURE_RATE_LIMITED,
+    FAILURE_SPAWN_ERROR,
+    classify_execution,
+    compile_rate_limit_signatures,
+)
 from .gates import GateBatch, run_gates
 from .ledger import HermesLedger, HermesRun
 from .locks import HermesLock
@@ -301,9 +308,29 @@ async def _execute_with_gates(
             )
 
         factory = executor_factory or build_executor
-        executor = factory(plan.recommended_executor, config)
-        execution = await executor.execute(build_prompt(plan), context_files=None)
-        ledger.write_state(run, "S3_execution", execution.to_dict())
+        cooldown_store = ProviderCooldownStore(
+            _resolve_repo_path(config.ledger.root) / "provider-state.json",
+            default_minutes=config.rate_limits.default_cooldown_minutes,
+        )
+        outcome = await _execute_ladder(
+            config=config,
+            plan=plan,
+            prompt=build_prompt(plan),
+            factory=factory,
+            cooldown_store=cooldown_store,
+        )
+        execution = outcome.execution
+        ledger.write_state(
+            run,
+            "S3_execution",
+            {
+                **execution.to_dict(),
+                "requestedExecutor": outcome.requested,
+                "selectedExecutor": outcome.selected,
+                "failureKind": outcome.failure_kind,
+                "providerDiagnostics": outcome.diagnostics,
+            },
+        )
         if not execution.success:
             exit_code = execution.exit_code or 1
             next_action = (
@@ -314,7 +341,10 @@ async def _execute_with_gates(
                 run,
                 failure_type="executor",
                 executor=execution.executor,
-                arguments={"error": execution.error},
+                arguments={
+                    "error": execution.error,
+                    "failureKind": outcome.failure_kind,
+                },
                 exit_code=exit_code,
                 routing_plan=plan.to_dict(),
                 state_paths=_state_paths(run),
@@ -330,6 +360,8 @@ async def _execute_with_gates(
                 details={
                     "executor": execution.executor,
                     "error": execution.error,
+                    "failureKind": outcome.failure_kind,
+                    "providerDiagnostics": outcome.diagnostics,
                 },
                 next_action=next_action,
             )
@@ -387,6 +419,159 @@ async def _execute_with_gates(
         )
     finally:
         lock.release()
+
+
+@dataclass(frozen=True)
+class _LadderOutcome:
+    execution: ExecutorResult
+    requested: str
+    selected: str
+    failure_kind: str | None
+    diagnostics: list[dict[str, Any]]
+
+
+# Pre-mutation failures only: a rate-limited or unspawnable executor cannot
+# have touched the repo, so advancing to the next rung is safe. A nonzero
+# exit or timeout may follow partial work and must stay terminal.
+_FALLBACK_ELIGIBLE_FAILURES = frozenset({FAILURE_RATE_LIMITED, FAILURE_SPAWN_ERROR})
+
+
+async def _execute_ladder(
+    *,
+    config: RoutingConfig,
+    plan: RoutingPlan,
+    prompt: str,
+    factory: Callable[[str, RoutingConfig], HermesExecutor],
+    cooldown_store: ProviderCooldownStore,
+) -> _LadderOutcome:
+    signatures = compile_rate_limit_signatures(config)
+    rungs = [plan.recommended_executor, *plan.alternatives]
+    requested = plan.recommended_executor
+    allow_fallback = (
+        config.routing.runtime_fallback_enabled
+        and plan.manual_model is None
+        and plan.risk != "high"
+    )
+    diagnostics: list[dict[str, Any]] = []
+    attempted: set[str] = set()
+
+    def next_available() -> str | None:
+        for candidate in rungs:
+            if candidate in attempted:
+                continue
+            if cooldown_store.is_cooling(candidate):
+                until = cooldown_store.cooling_until(candidate)
+                diagnostics.append(
+                    {
+                        "executor": candidate,
+                        "status": "skipped",
+                        "detail": (
+                            f"{candidate} cooling until "
+                            f"{until.isoformat() if until else 'unknown'}"
+                        ),
+                    }
+                )
+                attempted.add(candidate)
+                continue
+            return candidate
+        return None
+
+    current = (next_available() if allow_fallback else None) or requested
+
+    while True:
+        attempted.add(current)
+        try:
+            executor = factory(current, config)
+            execution = await executor.execute(prompt, context_files=None)
+        except Exception as exc:  # spawn-level failure: nothing ran, nothing mutated
+            execution = ExecutorResult(
+                executor=current,
+                success=False,
+                exit_code=1,
+                content="",
+                duration_ms=0,
+                error=str(exc),
+            )
+        failure_kind = classify_execution(execution, signatures.get(current, ()))
+        if failure_kind is None:
+            return _LadderOutcome(
+                execution=execution,
+                requested=requested,
+                selected=current,
+                failure_kind=None,
+                diagnostics=diagnostics,
+            )
+
+        diagnostics.append(
+            {
+                "executor": current,
+                "status": "failed",
+                "detail": f"{current} failed ({failure_kind})",
+            }
+        )
+        if failure_kind == FAILURE_RATE_LIMITED:
+            hint = "\n".join(
+                part for part in (execution.error, execution.content) if part
+            )
+            cooldown_store.set_cooldown(current, message=hint)
+
+        next_executor = (
+            next_available()
+            if allow_fallback and failure_kind in _FALLBACK_ELIGIBLE_FAILURES
+            else None
+        )
+        if next_executor is None:
+            diagnostics.append(
+                {
+                    "executor": current,
+                    "status": "blocked",
+                    "detail": _fallback_blocked_detail(
+                        plan, config, current, failure_kind
+                    ),
+                }
+            )
+            return _LadderOutcome(
+                execution=execution,
+                requested=requested,
+                selected=current,
+                failure_kind=failure_kind,
+                diagnostics=diagnostics,
+            )
+
+        diagnostics.append(
+            {
+                "executor": next_executor,
+                "status": "fallback",
+                "detail": f"advanced from {current} after {failure_kind}",
+            }
+        )
+        current = next_executor
+
+
+def _fallback_blocked_detail(
+    plan: RoutingPlan,
+    config: RoutingConfig,
+    executor: str,
+    failure_kind: str,
+) -> str:
+    if plan.manual_model is not None:
+        return f"manual executor {executor} failed ({failure_kind}); fallback disabled"
+    if plan.risk == "high":
+        return (
+            f"executor {executor} failed ({failure_kind}); high-risk plan "
+            "refuses runtime fallback"
+        )
+    if not config.routing.runtime_fallback_enabled:
+        return (
+            f"executor {executor} failed ({failure_kind}); runtime fallback "
+            "is disabled in routing config"
+        )
+    if failure_kind not in _FALLBACK_ELIGIBLE_FAILURES:
+        return (
+            f"executor {executor} failed ({failure_kind}); post-work failures "
+            "never fall back"
+        )
+    return f"no available fallback executor after {executor} failed ({failure_kind})"
 
 
 def build_prompt(plan: RoutingPlan) -> str:
