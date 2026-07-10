@@ -211,6 +211,34 @@
       "title": "PhaseConfig",
       "type": "object"
     },
+    "RateLimitsConfig": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "signatures": {
+          "additionalProperties": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "title": "Signatures",
+          "type": "object"
+        },
+        "defaultCooldownMinutes": {
+          "default": 60,
+          "minimum": 1,
+          "title": "Defaultcooldownminutes",
+          "type": "integer"
+        }
+      },
+      "title": "RateLimitsConfig",
+      "type": "object"
+    },
     "RiskDefaultsConfig": {
       "additionalProperties": false,
       "properties": {
@@ -256,6 +284,11 @@
         "unknownTaskExecutor": {
           "title": "Unknowntaskexecutor",
           "type": "string"
+        },
+        "runtimeFallbackEnabled": {
+          "default": false,
+          "title": "Runtimefallbackenabled",
+          "type": "boolean"
         }
       },
       "required": [
@@ -350,6 +383,9 @@
     },
     "routing": {
       "$ref": "#/$defs/RoutingRulesConfig"
+    },
+    "rateLimits": {
+      "$ref": "#/$defs/RateLimitsConfig"
     },
     "gates": {
       "$ref": "#/$defs/GatesConfig"
