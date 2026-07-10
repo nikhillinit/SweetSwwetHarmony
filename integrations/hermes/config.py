@@ -58,6 +58,20 @@ class RoutingRulesConfig(HermesBaseModel):
     manual_override_allowed: bool = Field(default=True, alias="manualOverrideAllowed")
     fallback_order: list[str] = Field(alias="fallbackOrder", min_length=1)
     unknown_task_executor: str = Field(alias="unknownTaskExecutor")
+    runtime_fallback_enabled: bool = Field(
+        default=False,
+        alias="runtimeFallbackEnabled",
+    )
+
+
+class RateLimitsConfig(HermesBaseModel):
+    enabled: bool = False
+    signatures: dict[str, list[str]] = Field(default_factory=dict)
+    default_cooldown_minutes: int = Field(
+        default=60,
+        alias="defaultCooldownMinutes",
+        ge=1,
+    )
 
 
 class GateSpec(HermesBaseModel):
@@ -88,6 +102,10 @@ class RoutingConfig(HermesBaseModel):
     specialists: dict[str, SpecialistConfig]
     risk_defaults: RiskDefaultsConfig = Field(alias="riskDefaults")
     routing: RoutingRulesConfig
+    rate_limits: RateLimitsConfig = Field(
+        default_factory=RateLimitsConfig,
+        alias="rateLimits",
+    )
     gates: GatesConfig
     ledger: LedgerConfig
     modes: list[HermesMode] = Field(min_length=1)
