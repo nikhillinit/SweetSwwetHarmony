@@ -30,19 +30,19 @@
     },
     "gemini": {
       "provider": "gemini",
-      "displayName": "Gemini CLI",
-      "enabled": true,
+      "displayName": "Gemini CLI (auth-dead; Google lane is agy)",
+      "enabled": false,
       "required": false,
       "binary": "gemini",
       "env": [],
-      "supportsExecute": true
+      "supportsExecute": false
     },
     "antigravity": {
       "provider": "antigravity",
-      "displayName": "Google Antigravity",
-      "enabled": false,
+      "displayName": "Google Antigravity (agy)",
+      "enabled": true,
       "required": false,
-      "binary": "antigravity",
+      "binary": "agy",
       "env": [],
       "supportsExecute": false
     }
@@ -52,17 +52,17 @@
     "planning": {
       "riskOrder": ["low", "medium", "high"],
       "preferredExecutors": ["codex"],
-      "fallbackExecutors": ["kimi", "gemini", "claude"]
+      "fallbackExecutors": ["kimi", "antigravity", "claude"]
     },
     "development": {
       "riskOrder": ["medium", "high", "low"],
       "preferredExecutors": ["codex"],
-      "fallbackExecutors": ["kimi", "gemini", "claude"]
+      "fallbackExecutors": ["kimi", "antigravity", "claude"]
     },
     "production": {
       "riskOrder": ["high", "medium", "low"],
       "preferredExecutors": ["codex"],
-      "fallbackExecutors": ["kimi", "gemini", "claude"]
+      "fallbackExecutors": ["kimi", "antigravity", "claude"]
     }
   },
   "specialists": {
@@ -70,31 +70,31 @@
       "keywords": ["schema", "migration", "database", "signal store", "sqlite"],
       "risk": "high",
       "preferredExecutors": ["codex"],
-      "fallbackExecutors": ["kimi", "gemini"]
+      "fallbackExecutors": ["kimi", "antigravity"]
     },
     "thesis": {
       "keywords": ["thesis", "filter", "classifier", "false positive", "regression"],
       "risk": "medium",
       "preferredExecutors": ["kimi"],
-      "fallbackExecutors": ["codex", "gemini"]
+      "fallbackExecutors": ["codex", "antigravity"]
     },
     "security": {
       "keywords": ["secret", "token", "auth", "permission", "risk"],
       "risk": "high",
       "preferredExecutors": ["codex"],
-      "fallbackExecutors": ["gemini", "claude"]
+      "fallbackExecutors": ["antigravity", "claude"]
     },
     "docs": {
       "keywords": ["docs", "runbook", "handoff", "readme"],
       "risk": "low",
-      "preferredExecutors": ["gemini"],
+      "preferredExecutors": ["antigravity"],
       "fallbackExecutors": ["claude", "codex"]
     },
     "durability": {
       "keywords": ["restore", "backup", "litestream"],
       "risk": "high",
       "preferredExecutors": ["codex"],
-      "fallbackExecutors": ["kimi", "gemini"]
+      "fallbackExecutors": ["kimi", "antigravity"]
     }
   },
   "riskDefaults": {
@@ -106,7 +106,7 @@
   },
   "routing": {
     "manualOverrideAllowed": true,
-    "fallbackOrder": ["codex", "kimi", "gemini", "claude"],
+    "fallbackOrder": ["codex", "kimi", "antigravity", "claude"],
     "unknownTaskExecutor": "codex",
     "runtimeFallbackEnabled": false
   },
@@ -117,6 +117,7 @@
       "codex": ["429", "rate limit", "too many requests", "quota exceeded"],
       "kimi": ["429", "rate limit", "too many requests", "quota exceeded"],
       "gemini": ["429", "rate limit", "too many requests", "quota exceeded", "RESOURCE_EXHAUSTED"],
+      "antigravity": ["429", "rate limit", "too many requests", "quota exceeded", "RESOURCE_EXHAUSTED"],
       "claude": ["429", "rate limit", "too many requests", "quota exceeded", "overloaded_error"]
     }
   },
