@@ -62,8 +62,11 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from storage.db_paths import InTreeDatabaseError
-from utils.db_path_helper import resolve_db_path_env
+# Import-light startup contract: storage.db_paths / utils.db_path_helper are
+# imported lazily inside main() (after argparse) because importing them
+# executes storage/__init__.py, which pulls in aiosqlite. `--help` must work
+# without application dependencies. See tests/scripts/
+# test_red_team_startup_contract.py (PR #285 review follow-up).
 
 DEFAULT_OUT_PATH: str = "artifacts/rec-04/founder_candidates_raw.csv"
 DEFAULT_MAX_PER_COLLECTOR: int = 40
@@ -263,6 +266,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-per-collector", type=int, default=DEFAULT_MAX_PER_COLLECTOR)
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args(argv)
+
+    # Deferred import (see module-level note): keeps `--help` import-light
+    # while the fail-closed in-tree DB guard still runs on every real run.
+    from storage.db_paths import InTreeDatabaseError
+    from utils.db_path_helper import resolve_db_path_env
+
     try:
         args.db = Path(resolve_db_path_env(args.db))
     except InTreeDatabaseError as e:
