@@ -1,0 +1,42 @@
+{
+  "name": "Core Regression Suite",
+  "target": "branch",
+  "enforcement": "active",
+  "conditions": {
+    "ref_name": {
+      "exclude": [],
+      "include": ["~DEFAULT_BRANCH"]
+    }
+  },
+  "bypass_actors": [],
+  "rules": [
+    { "type": "deletion" },
+    { "type": "non_fast_forward" },
+    {
+      "type": "pull_request",
+      "parameters": {
+        "required_approving_review_count": 0,
+        "dismiss_stale_reviews_on_push": true,
+        "require_code_owner_review": false,
+        "require_last_push_approval": false,
+        "required_review_thread_resolution": false
+      }
+    },
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "strict_required_status_checks_policy": true,
+        "do_not_enforce_on_create": false,
+        "required_status_checks": [
+          { "context": "Core Regression Suite", "integration_id": 15368 },
+          { "context": "Docker Build & Smoke", "integration_id": 15368 },
+          { "context": "PR Evidence Gate", "integration_id": 15368 },
+          { "context": "Thesis Golden Set Gate", "integration_id": 15368 },
+          { "context": "SQLite Durability Smoke", "integration_id": 15368 },
+          { "context": "Hermes Ledger Audit", "integration_id": 15368 },
+          { "context": "Local Artifact Validation", "integration_id": 15368 }
+        ]
+      }
+    }
+  ]
+}
