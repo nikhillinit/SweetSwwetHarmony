@@ -183,6 +183,94 @@ def test_restore_helper_writes_lock_blocked_ledger_row(
     )
 
 
+def test_overwritten_state_fingerprint_is_computed_after_lock_acquire(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression (PR #290 review): the recorded overwritten-state fingerprint must be
+    computed AFTER the restore lock is acquired and BEFORE the overwrite. A concurrent
+    writer that mutates the target while restore waits for the lock must not make the
+    recorded target_sha256_before stale."""
+    backup = _write_db(tmp_path / "backup.db", rows=5)
+    target = _write_db(tmp_path / "signals.db", rows=1)
+    ledger = tmp_path / "db_ops_ledger.jsonl"
+    stale_pre_wait_hash = _sha256(target)
+
+    monkeypatch.setenv("DB_OPS_LEDGER_PATH", str(ledger))
+    monkeypatch.setattr(restore_db, "_check_api_reachable", lambda _url: False)
+
+    recorded: dict[str, str] = {}
+    real_acquire = DBToolLock.acquire
+
+    def concurrent_writer_then_acquire(self, timeout_seconds: int = 30) -> bool:
+        # Simulate a concurrent writer committing while restore waits for the lock.
+        conn = sqlite3.connect(target)
+        try:
+            conn.execute("INSERT INTO data (value) VALUES (?)", ("written-during-lock-wait",))
+            conn.commit()
+        finally:
+            conn.close()
+        recorded["post_wait_hash"] = _sha256(target)
+        return real_acquire(self, timeout_seconds=timeout_seconds)
+
+    monkeypatch.setattr(DBToolLock, "acquire", concurrent_writer_then_acquire)
+
+    result = restore_backup_with_lock_and_ledger(
+        backup,
+        target,
+        api_url="http://127.0.0.1:9/health",
+    )
+
+    post_wait_hash = recorded["post_wait_hash"]
+    assert post_wait_hash != stale_pre_wait_hash
+    assert result.target_sha256_before == post_wait_hash
+    assert result.target_sha256_before != stale_pre_wait_hash
+    # The pre-restore safety backup captured the same overwritten state.
+    assert _sha256(result.pre_restore_backup) == post_wait_hash
+
+    rows = _read_ledger(ledger)
+    assert len(rows) == 1
+    assert rows[0]["details"]["target_sha256_before"] == post_wait_hash
+
+
+def test_lock_blocked_evidence_does_not_claim_overwritten_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When restore never owns the lock, evidence must not present a target hash as
+    authoritative overwritten-state: target_sha256_before is omitted (None) and any
+    observed hash is explicitly labeled as an attempt-time observation."""
+    backup = _write_db(tmp_path / "backup.db", rows=2)
+    target = _write_db(tmp_path / "signals.db", rows=1)
+    ledger = tmp_path / "db_ops_ledger.jsonl"
+    holder = DBToolLock(target, tool_name="test-holder")
+    assert holder.acquire(timeout_seconds=0) is True
+
+    monkeypatch.setenv("DB_OPS_LEDGER_PATH", str(ledger))
+
+    try:
+        with pytest.raises(RestoreError, match="Could not acquire DB tool lock"):
+            restore_backup_with_lock_and_ledger(
+                backup,
+                target,
+                lock_timeout_seconds=0,
+            )
+    finally:
+        holder.release()
+
+    rows = _read_ledger(ledger)
+    assert len(rows) == 1
+    details = rows[0]["details"]
+    # Lock-holder data remains accurate.
+    assert details["holder"]["tool_name"] == "test-holder"
+    # No authoritative overwritten-state claim without lock ownership.
+    assert details["target_sha256_before"] is None
+    # Attempt-time observation is present and explicitly labeled as such.
+    assert details["target_sha256_at_attempt"] == _sha256(target)
+    assert "attempt-time observation" in details["target_sha256_at_attempt_note"]
+    assert "not an authoritative" in details["target_sha256_at_attempt_note"]
+
+
 def test_restore_helper_refuses_overwrite_after_lock_health_is_lost(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
