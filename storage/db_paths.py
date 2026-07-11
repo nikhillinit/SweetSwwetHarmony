@@ -63,6 +63,30 @@ def resolve_canonical_db_path() -> Path:
     return path
 
 
+def resolve_private_graph_db_path() -> Path:
+    """Resolve the private graph (warm intro) DB path, failing closed in-tree.
+
+    The private graph DB holds privacy-sensitive relationship data and must
+    never silently land inside the git working tree (the same failure mode as
+    the 2026-05 signals.db incident).
+
+    Resolution order: ``PRIVATE_GRAPH_DB_PATH`` (empty string treated as
+    unset) > ``private_graph.db`` placed beside the canonical signals DB
+    (``resolve_canonical_db_path().parent``).
+
+    Returns:
+        The resolved absolute :class:`~pathlib.Path` to the private graph DB.
+
+    Raises:
+        InTreeDatabaseError: if the resolved path is inside the repo working
+            tree and ``HARMONIC_ALLOW_IN_TREE_DB`` is not truthy.
+    """
+    raw = (os.getenv("PRIVATE_GRAPH_DB_PATH") or "").strip()
+    if raw:
+        return guard_db_path(Path(raw).expanduser().resolve())
+    return guard_db_path(resolve_canonical_db_path().parent / "private_graph.db")
+
+
 def guard_db_path(path: Path) -> Path:
     """Apply the in-tree safety check to any already-resolved path.
 
