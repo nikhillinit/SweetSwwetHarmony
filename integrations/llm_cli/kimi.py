@@ -14,6 +14,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from ..cli_errors import missing_binary_error
+
 
 @dataclass(frozen=True)
 class KimiCLIResponse:
@@ -75,7 +77,7 @@ class KimiCLIClient:
                 model=self.model,
                 finish_reason="missing_binary",
                 execution_time_ms=int((time.perf_counter() - start) * 1000),
-                error=f"{self.binary!r} not found on PATH",
+                error=missing_binary_error(self.binary),
                 exit_code=127,
             )
 

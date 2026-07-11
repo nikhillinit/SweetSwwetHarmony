@@ -4,6 +4,8 @@ import re
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Pattern, Sequence
 
+from ..cli_errors import MISSING_BINARY_HINT
+
 if TYPE_CHECKING:
     from .adapters import ExecutorResult
     from .config import RoutingConfig
@@ -21,6 +23,9 @@ _SPAWN_HINTS = (
     "winerror 2",
     "enoent",
     "executable not found",
+    # Shared wrapper contract (integrations.cli_errors.MISSING_BINARY_ERROR):
+    # all three production wrappers report a missing binary with this wording.
+    MISSING_BINARY_HINT.lower(),
 )
 
 _RELATIVE_RETRY = re.compile(
