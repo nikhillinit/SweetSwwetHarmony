@@ -35,6 +35,11 @@ jobs:
   evaluate:
     name: Run Thesis Evaluation
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      accuracy: ${{ steps.parse-results.outputs.accuracy }}
+      low_accuracy: ${{ steps.check-threshold.outputs.low_accuracy }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -55,75 +60,74 @@ jobs:
         id: check-dataset
         run: |
           if [ -f "datasets/thesis_ground_truth.jsonl" ]; then
-            echo "dataset_exists=true" >> $GITHUB_OUTPUT
+            echo "dataset_exists=true" >> "$GITHUB_OUTPUT"
             echo "Dataset found"
           else
-            echo "dataset_exists=false" >> $GITHUB_OUTPUT
+            echo "dataset_exists=false" >> "$GITHUB_OUTPUT"
             echo "Dataset not found - will use sample data"
           fi
 
-      - name: Run evaluation (with dataset)
-        if: steps.check-dataset.outputs.dataset_exists == 'true'
+      - name: Run evaluation
         env:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: |
           MODEL="${{ github.event.inputs.model || 'google/gemini-3.5-flash' }}"
-          SOLVER="${{ github.event.inputs.solver || 'thesis_with_cot' }}"
-          echo "Running evaluation with model=$MODEL, solver=$SOLVER"
-          inspect eval tests/evaluation/thesis_eval.py:$SOLVER \
+          if [ "${{ steps.check-dataset.outputs.dataset_exists }}" = "true" ]; then
+            TASK="${{ github.event.inputs.solver || 'thesis_with_cot' }}"
+          else
+            TASK="thesis_sample_data"
+          fi
+          echo "Running evaluation with model=$MODEL, task=$TASK"
+          # inspect_ai resolves task selectors as <file>@<task> (split_spec
+          # rsplits on '@'); a ':' separator is treated as part of the path
+          inspect eval "tests/evaluation/thesis_eval.py@$TASK" \
             --model "$MODEL" \
-            --log-dir logs/thesis_eval
-
-      - name: Run evaluation (sample data)
-        if: steps.check-dataset.outputs.dataset_exists == 'false'
-        env:
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
-        run: |
-          MODEL="${{ github.event.inputs.model || 'google/gemini-3.5-flash' }}"
-          echo "Running evaluation with sample data, model=$MODEL"
-          inspect eval tests/evaluation/thesis_eval.py:thesis_sample_data \
-            --model "$MODEL" \
-            --log-dir logs/thesis_eval
+            --log-dir logs/thesis_eval \
+            --log-format json
 
       - name: Parse evaluation results
         id: parse-results
         run: |
           LOG_FILE=$(ls -t logs/thesis_eval/*.json 2>/dev/null | head -1)
           if [ -z "$LOG_FILE" ]; then
-            echo "No evaluation log found"
-            echo "accuracy=0" >> $GITHUB_OUTPUT
-            exit 0
+            echo "::error::No evaluation log found - infrastructure failure"
+            exit 1
           fi
           ACCURACY=$(python -c "
-          import json
-          with open('$LOG_FILE') as f:
+          import json, sys
+          with open('$LOG_FILE', encoding='utf-8') as f:
               data = json.load(f)
-          metrics = data.get('results', {}).get('scores', [])
-          for m in metrics:
-              if m.get('name') == 'accuracy':
-                  print(f\"{m.get('value', 0):.4f}\")
+          if data.get('status') != 'success':
+              sys.exit('eval log status is not success - infrastructure failure')
+          for score in (data.get('results') or {}).get('scores', []):
+              metric = (score.get('metrics') or {}).get('accuracy')
+              if metric is not None and isinstance(metric.get('value'), (int, float)):
+                  print('{:.4f}'.format(metric['value']))
                   break
           else:
-              print('0')
-          " 2>/dev/null || echo "0")
-          echo "accuracy=$ACCURACY" >> $GITHUB_OUTPUT
+              sys.exit('no accuracy metric in eval log - infrastructure failure')
+          ")
+          echo "accuracy=$ACCURACY" >> "$GITHUB_OUTPUT"
           echo "Accuracy: $ACCURACY"
 
       - name: Check accuracy threshold
+        id: check-threshold
         run: |
           ACCURACY="${{ steps.parse-results.outputs.accuracy }}"
           THRESHOLD="${{ env.ACCURACY_THRESHOLD }}"
           echo "Evaluation accuracy: $ACCURACY"
           echo "Threshold: $THRESHOLD"
           if (( $(echo "$ACCURACY < $THRESHOLD" | bc -l) )); then
-            echo "::warning::Accuracy ($ACCURACY) is below threshold ($THRESHOLD)"
-          else
-            echo "Accuracy ($ACCURACY) meets threshold ($THRESHOLD)"
+            echo "low_accuracy=true" >> "$GITHUB_OUTPUT"
+            echo "::error::Accuracy ($ACCURACY) is below threshold ($THRESHOLD)"
+            exit 1
           fi
+          echo "low_accuracy=false" >> "$GITHUB_OUTPUT"
+          echo "Accuracy ($ACCURACY) meets threshold ($THRESHOLD)"
 
       - name: Upload evaluation logs
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: thesis-eval-logs
@@ -131,6 +135,7 @@ jobs:
           retention-days: 30
 
       - name: Create summary
+        if: always()
         run: |
           echo "## Thesis Classification Evaluation Results" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -138,54 +143,67 @@ jobs:
           echo "|--------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| Model | ${{ github.event.inputs.model || 'google/gemini-3.5-flash' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Solver | ${{ github.event.inputs.solver || 'thesis_with_cot' }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Accuracy | ${{ steps.parse-results.outputs.accuracy }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Accuracy | ${{ steps.parse-results.outputs.accuracy || 'none (infrastructure failure)' }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Threshold | ${{ env.ACCURACY_THRESHOLD }} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "View full results in the uploaded artifacts." >> $GITHUB_STEP_SUMMARY
 
   notify-on-failure:
-    name: Notify on Low Accuracy
+    name: Notify on Evaluation Failure
     runs-on: ubuntu-latest
     needs: evaluate
-    if: failure()
+    if: always() && needs.evaluate.result == 'failure'
+    permissions:
+      contents: read
+      issues: write
     steps:
-      - name: Create issue for low accuracy
-        uses: actions/github-script@v7
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Open or update low-accuracy alert issue
+        if: needs.evaluate.outputs.low_accuracy == 'true'
+        uses: ./.github/actions/failure-issue
         with:
-          script: |
-            const accuracy = '${{ needs.evaluate.outputs.accuracy }}' || 'unknown';
-            const threshold = '${{ env.ACCURACY_THRESHOLD }}';
-            const title = 'Thesis Evaluation: Accuracy below threshold';
-            const body = `
+          title: 'Thesis Evaluation: Accuracy below threshold'
+          label: thesis-eval-alert
+          workflow-name: ${{ github.workflow }}
+          body: |
             ## Thesis Classification Accuracy Alert
 
-            The weekly thesis classification evaluation detected accuracy below threshold.
+            The weekly thesis classification evaluation completed and reported
+            accuracy below threshold.
 
             | Metric | Value |
             |--------|-------|
-            | Current Accuracy | ${accuracy} |
-            | Threshold | ${threshold} |
-            | Run Date | ${new Date().toISOString()} |
+            | Current Accuracy | ${{ needs.evaluate.outputs.accuracy }} |
+            | Threshold | ${{ env.ACCURACY_THRESHOLD }} |
 
             ### Actions Required
             1. Review recent changes to thesis_matcher.py or llm_classifier.py
             2. Check the evaluation logs in the workflow artifacts
             3. Consider retraining or adjusting classification thresholds
 
-            [View Workflow Run](${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID})
-            `;
-            const issues = await github.rest.issues.listForRepo({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              state: 'open',
-              labels: 'thesis-eval-alert'
-            });
-            if (issues.data.length === 0) {
-              await github.rest.issues.create({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                title: title,
-                body: body,
-                labels: ['thesis-eval-alert', 'automated']
-              });
-            }
+      - name: Open or update infrastructure failure issue
+        if: needs.evaluate.outputs.low_accuracy != 'true'
+        uses: ./.github/actions/failure-issue
+        with:
+          title: 'Thesis Evaluation: infrastructure failure'
+          label: thesis-eval-infra
+          workflow-name: ${{ github.workflow }}
+          body: |
+            ## Thesis Evaluation Infrastructure Failure
+
+            The evaluation job failed before producing a valid accuracy score.
+            This is an infrastructure failure (task discovery, dependency
+            install, provider access, or log parsing) - NOT a genuine
+            below-threshold accuracy result.
+
+            | Metric | Value |
+            |--------|-------|
+            | Reported Accuracy | ${{ needs.evaluate.outputs.accuracy || 'none (no score produced)' }} |
+            | Threshold | ${{ env.ACCURACY_THRESHOLD }} |
+
+            ### Actions Required
+            1. Open the failed run below and inspect the evaluate job logs
+            2. Verify the inspect_ai task selector and dependency install
+            3. Re-run the workflow once the infrastructure issue is fixed
