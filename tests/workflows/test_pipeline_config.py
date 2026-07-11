@@ -44,27 +44,34 @@ class TestPipelineConfigTimeouts:
 class TestPipelineConfigWarmIntro:
     """Tests for warm intro enrichment configuration."""
 
-    def test_warm_intro_defaults_disabled(self):
-        """C0.2: Warm intro enrichment is disabled by default."""
+    def test_warm_intro_defaults_disabled(self, monkeypatch, tmp_path):
+        """C0.2: Warm intro enrichment is disabled by default; the private
+        graph DB defaults BESIDE the canonical signals DB, not into the cwd."""
+        monkeypatch.setenv("DISCOVERY_DB_PATH", str(tmp_path / "signals.db"))
+        monkeypatch.delenv("SIGNAL_DB_PATH", raising=False)
+        monkeypatch.delenv("PRIVATE_GRAPH_DB_PATH", raising=False)
         config = PipelineConfig()
 
         assert config.use_warm_intro_enrichment is False
         assert config.user_email is None
-        assert config.private_graph_db_path == "private_graph.db"
+        assert config.private_graph_db_path == str(
+            (tmp_path / "private_graph.db").resolve()
+        )
 
-    def test_warm_intro_fields_from_env(self):
+    def test_warm_intro_fields_from_env(self, tmp_path):
         """C0.3: Warm intro fields loaded from environment."""
+        custom = tmp_path / "custom" / "private.db"
         env = {
             "ENABLE_WARM_INTRO_ENRICHMENT": "true",
             "USER_EMAIL": "user@example.com",
-            "PRIVATE_GRAPH_DB_PATH": "/custom/path/private.db",
+            "PRIVATE_GRAPH_DB_PATH": str(custom),
         }
         with mock.patch.dict(os.environ, env, clear=False):
             config = PipelineConfig.from_env()
 
             assert config.use_warm_intro_enrichment is True
             assert config.user_email == "user@example.com"
-            assert config.private_graph_db_path == "/custom/path/private.db"
+            assert config.private_graph_db_path == str(custom.resolve())
 
     def test_pipeline_uses_configured_private_graph_path(self, tmp_path):
         """Warm intro relationship DB path should not be derived from the signal DB name."""
@@ -79,6 +86,71 @@ class TestPipelineConfigWarmIntro:
         assert pipeline._relationship_store_db_path() == str(
             tmp_path / "relationships.sqlite"
         )
+
+
+class TestPipelineConfigPrivateGraphPath:
+    """Q7: both PipelineConfig default sites resolve via the shared resolver."""
+
+    def test_dataclass_default_resolves_beside_canonical_db(
+        self, monkeypatch, tmp_path
+    ):
+        """AC1 (dataclass default path): no PRIVATE_GRAPH_DB_PATH -> beside signals DB."""
+        monkeypatch.setenv("DISCOVERY_DB_PATH", str(tmp_path / "signals.db"))
+        monkeypatch.delenv("SIGNAL_DB_PATH", raising=False)
+        monkeypatch.delenv("PRIVATE_GRAPH_DB_PATH", raising=False)
+        monkeypatch.delenv("HARMONIC_ALLOW_IN_TREE_DB", raising=False)
+        config = PipelineConfig()
+        assert config.private_graph_db_path == str(
+            (tmp_path / "private_graph.db").resolve()
+        )
+
+    def test_from_env_default_resolves_beside_canonical_db(
+        self, monkeypatch, tmp_path
+    ):
+        """AC1 (from_env path): no PRIVATE_GRAPH_DB_PATH -> beside signals DB."""
+        monkeypatch.setenv("DISCOVERY_DB_PATH", str(tmp_path / "signals.db"))
+        monkeypatch.delenv("SIGNAL_DB_PATH", raising=False)
+        monkeypatch.delenv("PRIVATE_GRAPH_DB_PATH", raising=False)
+        monkeypatch.delenv("HARMONIC_ALLOW_IN_TREE_DB", raising=False)
+        monkeypatch.delenv("ENABLE_WARM_INTRO_ENRICHMENT", raising=False)
+        config = PipelineConfig.from_env()
+        assert config.private_graph_db_path == str(
+            (tmp_path / "private_graph.db").resolve()
+        )
+
+    def test_explicit_env_var_wins_in_dataclass_default(self, monkeypatch, tmp_path):
+        """AC2 (dataclass default path): explicit PRIVATE_GRAPH_DB_PATH wins."""
+        custom = tmp_path / "custom" / "graph.db"
+        monkeypatch.setenv("DISCOVERY_DB_PATH", str(tmp_path / "signals.db"))
+        monkeypatch.setenv("PRIVATE_GRAPH_DB_PATH", str(custom))
+        monkeypatch.delenv("HARMONIC_ALLOW_IN_TREE_DB", raising=False)
+        config = PipelineConfig()
+        assert config.private_graph_db_path == str(custom.resolve())
+
+    def test_explicit_constructor_arg_is_preserved(self, monkeypatch, tmp_path):
+        """An explicitly passed private_graph_db_path is kept verbatim."""
+        explicit = str(tmp_path / "relationships.sqlite")
+        monkeypatch.setenv("DISCOVERY_DB_PATH", str(tmp_path / "signals.db"))
+        monkeypatch.setenv(
+            "PRIVATE_GRAPH_DB_PATH", str(tmp_path / "ignored" / "graph.db")
+        )
+        config = PipelineConfig(private_graph_db_path=explicit)
+        assert config.private_graph_db_path == explicit
+
+    def test_in_tree_private_graph_env_fails_closed_from_env(
+        self, monkeypatch, tmp_path
+    ):
+        """AC3: an unsafe in-tree PRIVATE_GRAPH_DB_PATH fails closed in from_env,
+        even when the canonical signals DB itself is safely out of tree."""
+        from storage.db_paths import REPO_ROOT, InTreeDatabaseError
+
+        monkeypatch.setenv("DISCOVERY_DB_PATH", str(tmp_path / "signals.db"))
+        monkeypatch.setenv(
+            "PRIVATE_GRAPH_DB_PATH", str(REPO_ROOT / "private_graph.db")
+        )
+        monkeypatch.delenv("HARMONIC_ALLOW_IN_TREE_DB", raising=False)
+        with pytest.raises(InTreeDatabaseError):
+            PipelineConfig.from_env()
 
 
 class TestPipelineConfigValidation:
