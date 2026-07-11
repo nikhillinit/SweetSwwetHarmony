@@ -52,8 +52,14 @@ from typing import Any, Optional
 
 from dotenv import load_dotenv
 
+from .cli_errors import missing_binary_error
+
 # Load environment variables from .env file
 load_dotenv()
+
+_CODEX_MISSING_BINARY_ERROR = (
+    f"{missing_binary_error('codex')}. Install with: npm install -g @openai/codex"
+)
 
 logger = logging.getLogger("codex-cli")
 
@@ -225,9 +231,7 @@ class CodexCLI:
         if self._codex_path is None:
             self._codex_path = shutil.which("codex")
             if not self._codex_path:
-                raise RuntimeError(
-                    "Codex CLI not found. Install with: npm install -g @openai/codex"
-                )
+                raise RuntimeError(_CODEX_MISSING_BINARY_ERROR)
         return self._codex_path
 
     def is_installed(self) -> bool:
@@ -789,7 +793,7 @@ Verify the implementation meets all requirements. Identify any remaining issues.
                 command=command_str,
                 sandbox_mode=self.sandbox_mode.value,
                 execution_time_ms=0,
-                error="Codex CLI not found. Install with: npm install -g @openai/codex",
+                error=_CODEX_MISSING_BINARY_ERROR,
             )
         except Exception as e:
             return CodexResponse(
