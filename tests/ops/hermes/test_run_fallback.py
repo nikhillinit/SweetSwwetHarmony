@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from integrations.cli_errors import missing_binary_error
 from integrations.hermes.adapters import ExecutorResult
 from integrations.hermes.run import RISK_ACK, run_hermes
 
@@ -361,6 +362,74 @@ async def test_executor_exception_without_fallback_writes_failure_event(
     )
     assert event["failureType"] == "executor"
     assert event["details"]["failureKind"] == "spawn_error"
+
+
+async def test_missing_binary_result_falls_back(tmp_path: Path) -> None:
+    config_path = _write_fallback_config(tmp_path)
+    factory = _Factory(
+        {
+            "kimi": _ScriptedExecutor(
+                "kimi",
+                success=False,
+                exit_code=127,
+                error=missing_binary_error("kimi-cli"),
+            ),
+            "codex": _ScriptedExecutor("codex"),
+        }
+    )
+
+    result = await run_hermes(
+        task="thesis filter regression",
+        phase="production",
+        mode="execute",
+        config_path=config_path,
+        ack_risk=RISK_ACK,
+        executor_factory=factory,
+    )
+
+    assert result.exit_code == 0
+    assert factory.built == ["kimi", "codex"]
+    execution = _execution_state(result.run_dir)
+    assert execution["selectedExecutor"] == "codex"
+    statuses = [
+        (entry["executor"], entry["status"])
+        for entry in execution["providerDiagnostics"]
+    ]
+    assert ("kimi", "failed") in statuses
+    assert ("codex", "fallback") in statuses
+
+
+async def test_timeout_never_falls_back(tmp_path: Path) -> None:
+    config_path = _write_fallback_config(tmp_path)
+    factory = _Factory(
+        {
+            "kimi": _ScriptedExecutor(
+                "kimi",
+                success=False,
+                exit_code=-1,
+                error="'kimi-cli' timed out after 5s: ",
+            ),
+            "codex": _ScriptedExecutor("codex"),
+        }
+    )
+
+    result = await run_hermes(
+        task="thesis filter regression",
+        phase="production",
+        mode="execute",
+        config_path=config_path,
+        ack_risk=RISK_ACK,
+        executor_factory=factory,
+    )
+
+    assert result.exit_code != 0
+    assert factory.built == ["kimi"]
+    execution = _execution_state(result.run_dir)
+    statuses = [
+        (entry["executor"], entry["status"])
+        for entry in execution["providerDiagnostics"]
+    ]
+    assert ("kimi", "blocked") in statuses
 
 
 async def test_nonzero_exit_never_falls_back(tmp_path: Path) -> None:

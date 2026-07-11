@@ -21,7 +21,21 @@ Usage:
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
+
+# ---------------------------------------------------------------------------
+# Import bootstrap (required for `inspect eval <file>@<task>` loading)
+#
+# Inspect AI loads task files standalone via chdir_python(file.parent), which
+# puts only tests/evaluation on sys.path -- NOT the project root. The
+# absolute imports of tests.evaluation.* below would therefore fail with
+# ModuleNotFoundError unless we put the project root back on sys.path.
+# Harmless under pytest (root is already present, so this is a no-op).
+# ---------------------------------------------------------------------------
+_PROJECT_ROOT = str(Path(__file__).resolve().parents[2])
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
 
 from inspect_ai import Task, task
 from inspect_ai.dataset import json_dataset, Sample

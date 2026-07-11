@@ -203,6 +203,7 @@ def _build_executor(
             or GeminiAntigravityClient(
                 binary=executor.binary or "antigravity",
                 model="antigravity",
+                flavor="antigravity",
             )
         )
 
