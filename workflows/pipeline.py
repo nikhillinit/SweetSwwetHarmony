@@ -47,7 +47,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 import httpx
 
 # Storage
-from storage.db_paths import resolve_canonical_db_path
+from storage.db_paths import resolve_canonical_db_path, resolve_private_graph_db_path
 from storage.signal_store import SignalStore, StoredSignal
 from utils.db_path_helper import resolve_db_path_env
 from utils.signal_consolidator import SignalConsolidator, ConsolidatedSignal
@@ -231,7 +231,10 @@ class PipelineConfig:
     use_warm_intro_enrichment: bool = False   # Enable warm intro enrichment
     warm_intro_notion_mode: str = "off"       # off | shadow | live
     user_email: Optional[str] = None          # Required when use_warm_intro_enrichment=True
-    private_graph_db_path: str = "private_graph.db"  # Privacy boundary for relationship data
+    # Privacy boundary for relationship data. None -> resolved in __post_init__
+    # via resolve_private_graph_db_path() (PRIVATE_GRAPH_DB_PATH env, else
+    # beside the canonical signals DB; fails closed on in-tree paths).
+    private_graph_db_path: Optional[str] = None
 
     # Per-collector concurrency / backpressure (Phase C)
     github_concurrency: int = 5
@@ -242,6 +245,10 @@ class PipelineConfig:
     def __post_init__(self):
         """Validate configuration after initialization."""
         self.db_path = resolve_db_path_env(self.db_path)
+
+        # Q7: never default the privacy-sensitive graph DB into the cwd.
+        if self.private_graph_db_path is None:
+            self.private_graph_db_path = str(resolve_private_graph_db_path())
 
         if self.use_warm_intro_enrichment and not self.user_email:
             raise ValueError(
@@ -307,7 +314,9 @@ class PipelineConfig:
             use_warm_intro_enrichment=os.getenv("ENABLE_WARM_INTRO_ENRICHMENT", "false").lower() == "true",
             warm_intro_notion_mode=os.getenv("WARM_INTRO_NOTION_MODE", "off").lower(),
             user_email=os.getenv("USER_EMAIL"),
-            private_graph_db_path=os.getenv("PRIVATE_GRAPH_DB_PATH", "private_graph.db"),
+            # Q7 guard: PRIVATE_GRAPH_DB_PATH wins, else beside the canonical
+            # signals DB; fails closed on in-tree paths (see storage/db_paths.py).
+            private_graph_db_path=str(resolve_private_graph_db_path()),
             # Per-collector concurrency
             github_concurrency=int(os.getenv("GITHUB_CONCURRENCY", "5")),
             github_burst=int(os.getenv("GITHUB_BURST", "0")) or None,
