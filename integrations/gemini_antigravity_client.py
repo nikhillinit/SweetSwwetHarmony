@@ -14,6 +14,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .cli_errors import missing_binary_error
+
+# Flag surfaces differ per installed binary: "gemini" is the Gemini CLI
+# (approval-mode/output-format/skip-trust), "antigravity" is the agy binary,
+# which rejects those flags ("flags provided but not defined").
+_SUPPORTED_FLAVORS = ("gemini", "antigravity")
+
 
 @dataclass(frozen=True)
 class GeminiResponse:
@@ -57,8 +64,13 @@ class GeminiAntigravityClient:
         approval_mode: str = "plan",
         output_format: str = "text",
         skip_trust: bool = True,
+        flavor: str = "gemini",
         cwd: str | Path | None = None,
     ) -> None:
+        if flavor not in _SUPPORTED_FLAVORS:
+            raise ValueError(
+                f"unsupported flavor {flavor!r}; expected one of {_SUPPORTED_FLAVORS}"
+            )
         self.binary = binary
         self.model = model
         self.timeout_seconds = timeout_seconds
@@ -66,6 +78,7 @@ class GeminiAntigravityClient:
         self.approval_mode = approval_mode
         self.output_format = output_format
         self.skip_trust = skip_trust
+        self.flavor = flavor
         self.cwd = Path(cwd) if cwd is not None else _default_cli_cwd()
 
     async def exec(
@@ -81,7 +94,7 @@ class GeminiAntigravityClient:
                 model=self.model,
                 finish_reason="missing_binary",
                 execution_time_ms=int((time.perf_counter() - start) * 1000),
-                error=f"{self.binary!r} not found on PATH",
+                error=missing_binary_error(self.binary),
                 exit_code=127,
             )
 
@@ -94,13 +107,20 @@ class GeminiAntigravityClient:
         if self.env:
             env.update(self.env)
 
-        process = await _create_cli_process(
-            _gemini_cli_args(
+        if self.flavor == "antigravity":
+            cli_args = _agy_cli_args(
+                resolved,
+                print_timeout_seconds=self.timeout_seconds,
+            )
+        else:
+            cli_args = _gemini_cli_args(
                 resolved,
                 approval_mode=self.approval_mode,
                 output_format=self.output_format,
                 skip_trust=self.skip_trust,
-            ),
+            )
+        process = await _create_cli_process(
+            cli_args,
             env=env,
             cwd=self.cwd,
         )
@@ -158,6 +178,29 @@ def _gemini_cli_args(
     if skip_trust:
         args.append("--skip-trust")
     return args
+
+
+def _agy_cli_args(
+    resolved_binary: str,
+    *,
+    print_timeout_seconds: int,
+) -> list[str]:
+    """Build a headless invocation for the installed agy binary.
+
+    Verified against ``agy --help`` (2026-07-10): agy defines --print (alias
+    --prompt), --print-timeout, --sandbox, --add-dir, --log-file, etc. It does
+    NOT define --approval-mode, --output-format, or --skip-trust and rejects
+    them with "flags provided but not defined". The prompt is supplied on
+    stdin; --print runs a single prompt non-interactively. --print is kept
+    last so a flag-parse failure surfaces at spawn rather than swallowing a
+    following flag.
+    """
+    return [
+        resolved_binary,
+        "--print-timeout",
+        f"{print_timeout_seconds}s",
+        "--print",
+    ]
 
 
 async def _create_cli_process(
