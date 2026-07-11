@@ -19,7 +19,8 @@ jobs:
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
       AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
       AWS_REGION: ${{ secrets.AWS_REGION || vars.AWS_REGION || 'us-east-1' }}
-      SQLITE_RESTORE_MIN_SIGNALS: ${{ vars.SQLITE_RESTORE_MIN_SIGNALS || '1' }}
+      # 6A: no inline fallback - an unset variable must fail the settings guard
+      SQLITE_RESTORE_MIN_SIGNALS: ${{ vars.SQLITE_RESTORE_MIN_SIGNALS }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -69,6 +70,7 @@ jobs:
           test -n "$SQLITE_BACKUP_BUCKET"
           test -n "$AWS_ACCESS_KEY_ID"
           test -n "$AWS_SECRET_ACCESS_KEY"
+          test -n "$SQLITE_RESTORE_MIN_SIGNALS"
 
       - name: Restore replica into temp DB and verify
         shell: bash
@@ -88,3 +90,35 @@ jobs:
           name: litestream-restore-verify-summary
           path: artifacts/litestream-restore-verify/
           if-no-files-found: warn
+
+  notify-on-failure:
+    name: Notify on Failure
+    runs-on: ubuntu-latest
+    needs: restore-verify
+    if: failure()
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      # local composite actions cannot be resolved without a checkout
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Open or update failure tracking issue
+        uses: ./.github/actions/failure-issue
+        with:
+          title: 'Litestream Restore Verify: nightly verification failed'
+          label: litestream-verify-failure
+          workflow-name: ${{ github.workflow }}
+          body: |
+            ## Litestream Restore Verify Failure
+
+            The nightly cloud-restore verification failed. The S3/R2 replica
+            may not be restorable, may be stale, or the required backup
+            settings are missing - treat this as a durability incident until
+            proven otherwise.
+
+            ### Actions Required
+            1. Open the failed run below and inspect the restore-verify job logs
+            2. Check the required-settings guard (bucket, AWS credentials, SQLITE_RESTORE_MIN_SIGNALS)
+            3. Verify the replica with a manual restore before trusting backups again

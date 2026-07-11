@@ -29,6 +29,13 @@ on:
         type: boolean
         required: false
         default: false
+      bootstrap_from_replica:
+        description: >-
+          Operator-approved bootstrap: when no signals-db-latest artifact
+          exists, restore signals.db from the Litestream S3 replica
+        type: boolean
+        required: false
+        default: false
 
 concurrency:
   group: daily-pipeline
@@ -42,6 +49,9 @@ jobs:
   run-pipeline:
     name: Run Pipeline
     runs-on: ubuntu-latest
+    # T2-A: backup secrets are provisioned environment-scoped (same environment
+    # the nightly litestream-restore-verify already uses); secret names unchanged
+    environment: sqlite-production-backups
     env:
       SQLITE_BACKUP_BUCKET: ${{ secrets.SQLITE_BACKUP_BUCKET }}   # empty string when unset — safe
       AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -112,20 +122,63 @@ jobs:
             echo "No complete database artifact found"
           fi
 
+      # 3A: operator-approved bootstrap when no signals-db-latest artifact
+      # survived (e.g. retention lapsed). Restores from the SAME replica URL
+      # the replicate step publishes to, then hands the DB to the unchanged
+      # integrity + anomaly gates below. Fail closed on missing bucket,
+      # failed restore, or failed integrity check.
+      - name: Bootstrap database from Litestream replica
+        id: bootstrap-replica
+        if: >-
+          github.event_name == 'workflow_dispatch' &&
+          github.event.inputs.bootstrap_from_replica == 'true' &&
+          steps.restore-state.outputs.restored_db != 'true'
+        run: |
+          echo "bootstrapped=false" >> "$GITHUB_OUTPUT"
+
+          if [ -z "$SQLITE_BACKUP_BUCKET" ]; then
+            echo "::error::bootstrap_from_replica requires SQLITE_BACKUP_BUCKET to be configured"
+            exit 1
+          fi
+
+          REPLICA_URL="s3://${SQLITE_BACKUP_BUCKET}/sweetswwetharmony/litestream/signals.db/"
+          echo "::warning::Bootstrapping signals.db from the Litestream replica under explicit operator approval"
+          echo "Restoring $REPLICA_URL to $DISCOVERY_DB_PATH"
+          litestream restore -o "$DISCOVERY_DB_PATH" "$REPLICA_URL"
+
+          if [ ! -f "$DISCOVERY_DB_PATH" ]; then
+            echo "::error::Litestream restore did not produce a database file"
+            exit 1
+          fi
+
+          echo "Validating database integrity of bootstrapped replica..."
+          if ! sqlite3 "$DISCOVERY_DB_PATH" "PRAGMA integrity_check;" | grep -q "^ok$"; then
+            echo "::error::Bootstrapped signals.db failed integrity check"
+            exit 1
+          fi
+
+          echo "Initializing DB guard watermark for bootstrapped database..."
+          python run_pipeline.py init-watermark --db-path "$DISCOVERY_DB_PATH"
+
+          echo "bootstrapped=true" >> "$GITHUB_OUTPUT"
+          echo "Replica bootstrap complete; proceeding through the standard gates"
+
       - name: Validate restored database state
         id: validate-restore
         env:
           RESTORED_DB: ${{ steps.restore-state.outputs.restored_db }}
           RESTORED_WATERMARK: ${{ steps.restore-state.outputs.restored_watermark }}
           RECOVER_LEGACY_ARTIFACT: ${{ github.event.inputs.recover_legacy_artifact || 'false' }}
+          BOOTSTRAPPED_DB: ${{ steps.bootstrap-replica.outputs.bootstrapped || 'false' }}
         run: |
           echo "restore_accepted=false" >> "$GITHUB_OUTPUT"
           echo "legacy_watermark_migrated=false" >> "$GITHUB_OUTPUT"
 
-          if [ "$RESTORED_DB" != "true" ]; then
+          if [ "$RESTORED_DB" != "true" ] && [ "$BOOTSTRAPPED_DB" != "true" ]; then
             echo "::error::Daily Pipeline requires paired restore of signals.db and .omx/state/db_watermark.json"
             echo "Restored signals.db: $RESTORED_DB"
             echo "Restored watermark: $RESTORED_WATERMARK"
+            echo "If the artifact expired, manually dispatch with bootstrap_from_replica=true to restore from the Litestream replica."
             exit 1
           fi
 
@@ -140,7 +193,7 @@ jobs:
             exit 1
           fi
 
-          if [ "$RESTORED_WATERMARK" != "true" ]; then
+          if [ "$RESTORED_WATERMARK" != "true" ] && [ "$BOOTSTRAPPED_DB" != "true" ]; then
             if [ "$GITHUB_EVENT_NAME" != "workflow_dispatch" ] || [ "$RECOVER_LEGACY_ARTIFACT" != "true" ]; then
               echo "::error::Daily Pipeline requires paired restore of signals.db and .omx/state/db_watermark.json"
               echo "Restored signals.db: $RESTORED_DB"
@@ -283,7 +336,8 @@ jobs:
             ${{ runner.temp }}/artifact-out/signals.db-wal
             ${{ runner.temp }}/artifact-out/signals.db-shm
             ${{ runner.temp }}/artifact-out/.omx/state/db_watermark.json
-          retention-days: 30
+          # 1A: the recovery artifact must survive extended pipeline outages
+          retention-days: 90
           if-no-files-found: warn
           include-hidden-files: true
 
@@ -326,7 +380,36 @@ jobs:
     runs-on: ubuntu-latest
     needs: run-pipeline
     if: failure()
+    permissions:
+      contents: read
+      issues: write
     steps:
+      # local composite actions cannot be resolved without a checkout
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Open or update failure tracking issue
+        uses: ./.github/actions/failure-issue
+        with:
+          title: 'Daily Pipeline: run failed'
+          label: daily-pipeline-failure
+          workflow-name: ${{ github.workflow }}
+          body: |
+            ## Daily Pipeline Failure
+
+            The Daily Pipeline run failed.
+
+            | Field | Value |
+            |-------|-------|
+            | Run | #${{ github.run_number }} |
+            | Trigger | ${{ github.event_name }} |
+
+            ### Actions Required
+            1. Open the failed run below and inspect the run-pipeline job logs
+            2. Check the restore/validation/anomaly gates first, then collector steps
+            3. Re-run the workflow once the underlying issue is fixed
+
+      # best-effort secondary channel; self-skips when the webhook is missing
       - name: Send Slack failure notification
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

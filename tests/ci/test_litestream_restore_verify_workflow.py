@@ -67,3 +67,42 @@ def test_uploads_summary_artifact_always() -> None:
     assert "litestream-restore-verify-summary" in wf
     upload = wf.split("Upload restore summary", maxsplit=1)[1]
     assert "if: always()" in upload
+
+
+# ---------------------------------------------------------------------------
+# Q2+Q3 adjudicated changes (2026-07 operator queue)
+# ---------------------------------------------------------------------------
+
+
+def test_min_signals_has_no_inline_fallback() -> None:
+    """6A: an unset SQLITE_RESTORE_MIN_SIGNALS must fail closed, not
+    silently degrade the row-count gate to 1."""
+    wf = _workflow()
+    assert "SQLITE_RESTORE_MIN_SIGNALS: ${{ vars.SQLITE_RESTORE_MIN_SIGNALS }}" in wf
+    assert "|| '1'" not in wf
+
+
+def test_required_settings_check_min_signals_non_empty() -> None:
+    """6A: the required-settings guard covers the row-count threshold too."""
+    wf = _workflow()
+    settings = wf.split("Verify required backup settings", maxsplit=1)[1]
+    settings = settings[: settings.find("\n      - name:")]
+    assert 'test -n "$SQLITE_BACKUP_BUCKET"' in settings
+    assert 'test -n "$SQLITE_RESTORE_MIN_SIGNALS"' in settings
+
+
+def test_notifier_job_uses_failure_issue_composite_action() -> None:
+    """2A: failures open/update ONE tracking issue via the shared composite
+    action; issues: write is the 403 regression guard."""
+    wf = _workflow()
+    notify = wf.split("\n  notify-on-failure:", maxsplit=1)[1]
+
+    assert "needs: restore-verify" in notify
+    assert "if: failure()" in notify
+    assert "permissions:" in notify
+    assert "contents: read" in notify
+    assert "issues: write" in notify
+    # local composite actions require a checkout first
+    assert "actions/checkout@v4" in notify
+    assert "uses: ./.github/actions/failure-issue" in notify
+    assert "label: litestream-verify-failure" in notify
