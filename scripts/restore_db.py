@@ -295,18 +295,28 @@ def restore_backup_with_lock_and_ledger(
     resolved_db_path = Path(resolve_db_path_env(db_path)).resolve()
     lock = DBToolLock(resolved_db_path, tool_name="restore_db")
     lock_path = lock.lock_path
-    target_sha256_before = _sha256_if_exists(resolved_db_path)
     backup_sha256 = _sha256_if_exists(backup)
 
     if not lock.acquire(timeout_seconds=lock_timeout_seconds):
         holder = lock.get_holder_info()
+        # This process never owned the lock, so any target hash observed here
+        # is NOT an authoritative overwritten-state fingerprint (the holder may
+        # be writing). Record it only as an explicitly labeled attempt-time
+        # observation and leave target_sha256_before unset.
         details = _restore_ledger_details(
             backup_path=backup,
             lock_path=lock_path,
             status="lock_blocked",
-            target_sha256_before=target_sha256_before,
             backup_sha256=backup_sha256,
-            extra={"holder": holder},
+            extra={
+                "holder": holder,
+                "target_sha256_at_attempt": _sha256_if_exists(resolved_db_path),
+                "target_sha256_at_attempt_note": (
+                    "attempt-time observation; the restore lock was never "
+                    "acquired, so this is not an authoritative "
+                    "overwritten-state fingerprint"
+                ),
+            },
         )
         append_db_ops_ledger(
             tool_name="restore_db",
@@ -320,7 +330,12 @@ def restore_backup_with_lock_and_ledger(
             partial_evidence=details,
         )
 
+    # Fingerprint the overwritten state only AFTER the lock is owned (and
+    # before the overwrite) so a writer active during the lock wait cannot
+    # make this evidence stale (PR #290 review finding).
+    target_sha256_before: str | None = None
     try:
+        target_sha256_before = _sha256_if_exists(resolved_db_path)
         pre_restore = restore_backup(
             backup,
             resolved_db_path,
