@@ -16,6 +16,14 @@ def test_hermes_thesis_task_path_is_sensitive():
     assert is_sensitive(["integrations/hermes/tasks/thesis_eval.py"]) is True
 
 
+def test_canonical_thesis_eval_workflow_is_sensitive():
+    assert is_sensitive([".github/workflows/thesis-eval.yml"]) is True
+
+
+def test_scheduled_recovery_observer_is_not_thesis_sensitive():
+    assert is_sensitive([".github/workflows/thesis-eval-recovery.yml"]) is False
+
+
 def test_non_thesis_hermes_task_path_is_not_sensitive():
     assert is_sensitive(["integrations/hermes/tasks/deliberation.py"]) is False
 

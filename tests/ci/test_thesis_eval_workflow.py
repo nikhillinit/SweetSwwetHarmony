@@ -32,11 +32,7 @@ def _action() -> str:
 
 def _job_block(workflow: str, job: str) -> str:
     block = workflow.split(f"\n  {job}:", maxsplit=1)[1]
-    for other in (
-        "\n  evaluate:",
-        "\n  close-failure-tracker:",
-        "\n  notify-on-failure:",
-    ):
+    for other in ("\n  evaluate:", "\n  notify-on-failure:"):
         cut = block.find(other)
         if cut != -1:
             block = block[:cut]
