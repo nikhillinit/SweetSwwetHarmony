@@ -735,12 +735,17 @@ Verify the implementation meets all requirements. Identify any remaining issues.
             # On Windows, .cmd files can't be launched via create_subprocess_exec
             # (raises FileNotFoundError). Use subprocess.list2cmdline for proper
             # quoting, then run through create_subprocess_shell.
+            #
+            # stdin is ALWAYS a pipe we close ourselves: codex >= 0.144 reads
+            # piped stdin to EOF even when the prompt is an argument, so an
+            # inherited open pipe (any non-TTY parent: CI, Hermes
+            # orchestration) hangs the run until timeout with empty content.
             import sys
             if sys.platform == "win32":
                 shell_cmd = subprocess.list2cmdline(full_command)
                 process = await asyncio.create_subprocess_shell(
                     shell_cmd,
-                    stdin=asyncio.subprocess.PIPE if stdin_data else None,
+                    stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     env={**os.environ, "CODEX_APPROVAL": self.approval_mode.value},
@@ -748,7 +753,7 @@ Verify the implementation meets all requirements. Identify any remaining issues.
             else:
                 process = await asyncio.create_subprocess_exec(
                     *full_command,
-                    stdin=asyncio.subprocess.PIPE if stdin_data else None,
+                    stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
                     env={**os.environ, "CODEX_APPROVAL": self.approval_mode.value},
@@ -756,7 +761,7 @@ Verify the implementation meets all requirements. Identify any remaining issues.
 
             try:
                 stdout, stderr = await asyncio.wait_for(
-                    process.communicate(input=stdin_data),
+                    process.communicate(input=stdin_data or b""),
                     timeout=self.timeout_seconds,
                 )
             except asyncio.TimeoutError:
