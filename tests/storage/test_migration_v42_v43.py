@@ -3,7 +3,7 @@
 Verifies:
 - Migration from v41 to v43 adds evidence_family and canonical_key_v2 columns
 - Partial indexes are created
-- Fresh DB starts at v43
+- Fresh DB starts at the current schema version (v43 or later)
 """
 
 import sqlite3
@@ -28,16 +28,19 @@ async def test_v41_to_v43_migration(tmp_db):
     store = SignalStore(tmp_db)
     await store.initialize()
 
-    # Verify columns exist via PRAGMA table_info
-    conn = sqlite3.connect(tmp_db)
+    # Close the store in a finally block: a leaked aiosqlite connection keeps
+    # a non-daemon thread alive and hangs the pytest process on failure.
     try:
-        columns = {row[1] for row in conn.execute("PRAGMA table_info(signals)").fetchall()}
-        assert "evidence_family" in columns, "evidence_family column missing"
-        assert "canonical_key_v2" in columns, "canonical_key_v2 column missing"
+        # Verify columns exist via PRAGMA table_info
+        conn = sqlite3.connect(tmp_db)
+        try:
+            columns = {row[1] for row in conn.execute("PRAGMA table_info(signals)").fetchall()}
+            assert "evidence_family" in columns, "evidence_family column missing"
+            assert "canonical_key_v2" in columns, "canonical_key_v2 column missing"
+        finally:
+            conn.close()
     finally:
-        conn.close()
-
-    await store.close()
+        await store.close()
 
 
 @pytest.mark.asyncio
@@ -46,35 +49,39 @@ async def test_partial_indexes_created(tmp_db):
     store = SignalStore(tmp_db)
     await store.initialize()
 
-    conn = sqlite3.connect(tmp_db)
     try:
-        indexes = {row[1] for row in conn.execute(
-            "SELECT * FROM sqlite_master WHERE type='index'"
-        ).fetchall()}
-        assert "idx_signals_evidence_family" in indexes, (
-            f"idx_signals_evidence_family not found in {indexes}"
-        )
-        assert "idx_signals_canonical_key_v2" in indexes, (
-            f"idx_signals_canonical_key_v2 not found in {indexes}"
-        )
+        conn = sqlite3.connect(tmp_db)
+        try:
+            indexes = {row[1] for row in conn.execute(
+                "SELECT * FROM sqlite_master WHERE type='index'"
+            ).fetchall()}
+            assert "idx_signals_evidence_family" in indexes, (
+                f"idx_signals_evidence_family not found in {indexes}"
+            )
+            assert "idx_signals_canonical_key_v2" in indexes, (
+                f"idx_signals_canonical_key_v2 not found in {indexes}"
+            )
+        finally:
+            conn.close()
     finally:
-        conn.close()
-
-    await store.close()
+        await store.close()
 
 
 @pytest.mark.asyncio
-async def test_fresh_db_at_v43(tmp_db):
-    """New store starts at v43."""
+async def test_fresh_db_at_current_schema_version(tmp_db):
+    """New store starts at the current schema version (v43 or later)."""
     store = SignalStore(tmp_db)
     await store.initialize()
 
-    conn = sqlite3.connect(tmp_db)
     try:
-        row = conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()
-        assert row[0] == CURRENT_SCHEMA_VERSION, f"Expected v{CURRENT_SCHEMA_VERSION}, got v{row[0]}"
-        assert CURRENT_SCHEMA_VERSION == 43
+        conn = sqlite3.connect(tmp_db)
+        try:
+            row = conn.execute("SELECT MAX(version) FROM schema_migrations").fetchone()
+            assert row[0] == CURRENT_SCHEMA_VERSION, f"Expected v{CURRENT_SCHEMA_VERSION}, got v{row[0]}"
+            # This file covers the v42/v43 migrations; the schema has moved on
+            # since, so only require that v43 is included, not that it is current.
+            assert CURRENT_SCHEMA_VERSION >= 43
+        finally:
+            conn.close()
     finally:
-        conn.close()
-
-    await store.close()
+        await store.close()
