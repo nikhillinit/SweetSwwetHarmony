@@ -11,6 +11,7 @@ from integrations.hermes.adapters import ExecutorResult
 from integrations.hermes.plan_contract import CURRENT_CONTRACT_VERSION
 from integrations.hermes.tasks.base import EXIT_GATE_FAILURE
 from integrations.hermes.tasks.deliberation import (
+    TASK_TEXT_LIMIT,
     _classify_text_response,
     _parse_reviewer_payload,
     _synthesize,
@@ -470,6 +471,52 @@ def test_preexecution_skips_stay_neutral_and_do_not_fail_lane_gate(
     verdicts = {item["executor"]: item["verdict"] for item in result.outputs["panel"]}
     assert verdicts["missing"] == "skip"
     assert verdicts["antigravity"] == "skip"
+
+
+def test_oversized_plan_fails_preflight_instead_of_silent_truncation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression for 2026-07-10: a 16,366-char queue plan was silently
+    sliced to 12,000 chars and the panel reviewed a document nobody wrote.
+    Oversized input must fail preflight loudly; no reviewer lane may spawn."""
+    calls = _patch_reviewers(
+        monkeypatch,
+        {
+            "codex": {"verdict": "approve", "confidence": 0.9, "concerns": []},
+            "kimi": {"verdict": "approve", "confidence": 0.9, "concerns": []},
+        },
+    )
+    plan_file = tmp_path / "big-plan.md"
+    plan_file.write_text("# big plan\n" + "x" * (TASK_TEXT_LIMIT + 500), encoding="utf-8")
+
+    result = run_registered_task(
+        _args(tmp_path, mode="dry-run", task_text=None, plan=plan_file)
+    )
+
+    assert result.exit_code == EXIT_GATE_FAILURE
+    assert result.status == "preflight_failed"
+    check = next(
+        c for c in result.checks if c.name == "input_within_task_text_limit"
+    )
+    assert check.passed is False
+    assert check.evidence["taskTextChars"] > TASK_TEXT_LIMIT
+    assert check.evidence["limit"] == TASK_TEXT_LIMIT
+    assert calls == []
+    # the recorded input is the real document, not a silently sliced one
+    assert result.plan["input"]["task_text_chars"] > TASK_TEXT_LIMIT
+
+
+def test_within_limit_input_passes_the_limit_gate(
+    tmp_path: Path,
+) -> None:
+    result = run_registered_task(_args(tmp_path, mode="preflight-only"))
+
+    assert result.exit_code == 0
+    check = next(
+        c for c in result.checks if c.name == "input_within_task_text_limit"
+    )
+    assert check.passed is True
 
 
 def test_one_approval_plus_needs_changes_does_not_approve() -> None:
