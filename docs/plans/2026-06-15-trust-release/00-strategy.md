@@ -22,12 +22,15 @@
 > modules are not wired into production paths. Treat code-on-main as
 > **unratified** until the acceptance evidence below is produced.
 
-> **Staleness note (added 2026-06-24).** Local `main` has since advanced to
-> `9b8e3b0` (PRs #286/#287 + discovery-pipeline CI hardening). The milestone
-> reclassification below has **not** been re-verified at that newer SHA; treat
-> each row's evidence as accurate as of `4f19d66` unless re-checked. The next
-> doc refresh should regenerate this table from `ops/trust_status.py` /
-> `ledger-audit operatorSummary` rather than hand-maintaining it.
+> **Refresh note (2026-07-14, at `e6ed3e2`).** Rows touched by the 2026-07-10
+> queue (M1B, P0-1 bounded recovery) were re-verified against live CI evidence
+> and updated below; all other rows remain as-verified at `4f19d66` (2026-06-24
+> note) and were deliberately left untouched. The earlier instruction to
+> regenerate this table from `ops/trust_status.py` / `ledger-audit
+> operatorSummary` is NOT currently executable: `ops/trust_status.py` is the M7
+> collector-health summarizer (no milestone-table output, no `__main__`), and
+> `ops.cli` has no `trust` subcommand. The generator gap is filed in TODOS.md
+> ("trust-release status-table generator does not exist").
 
 | Milestone | Status | Evidence / caveat |
 |-----------|--------|-------------------|
@@ -35,10 +38,10 @@
 | P0-2 Gate hardening PR #271 | ✅ DONE | merged `275cded` |
 | P0-1 DB untrack + resolver + Daily Pipeline repoint | ✅ DONE | PRs #272/#273/#275 |
 | DB-path hardening: canonical resolution, in-tree guard, Hermes task paths | 🟢 MERGED | PR #281 (`da48563`) + PR #282 (`4f19d66`); local tree contains `guard_db_path`, `resolve_task_db_path`, `InTreeDatabaseError`, and follow-up script hardening. CI-green-on-merge remains unconfirmed because `gh pr view` currently returns HTTP 401 in this environment. |
-| P0-1 bounded recovery + anomaly check + close #149 | 🔴 OPEN | Needs artifact-based ratification at the current DB-path model, not another implementation pass. |
+| P0-1 bounded recovery + anomaly check + close #149 | 🟢 RATIFIED (T3-A, 2026-07-14) | Artifact-based ratification produced by the 2026-07-10 queue: Daily Pipeline restore-from-replica bootstrap run 29205726663 (manual) + 29231587906 (scheduled) passed restore -> integrity -> watermark-init -> anomaly gates in production CI and republished `signals-db-latest` (artifact 8271756749, 90d retention); Litestream Restore Verify green 3x (manual 29205727787, scheduled 29247089443 + 29327958072 consecutive), each summary.json = integrity ok / schema 53 / 612 rows / min 500. Issue #149 was closed 2026-06-17; full bundle in `.tmp/queue-exec-20260710/execution-status.md` ("T3-A RECOVERY-COMPLETE GATE: CLOSED 2026-07-14"). |
 | P0-3 Dry-run immutability | 🔴 OPEN | Still needs proof that `process_pending(dry_run=True)` and related CLI paths do not persist or mutate routed rows. |
 | M1A `db_anomaly.py` | 🟡 CODE ON MAIN | `scripts/db_anomaly.py` exists; current scope is minimal sha/row-count/size/known-bad/watermark checking. Hot/deep semantic anomaly checks are follow-on hardening, not a prerequisite to the minimal trust release. |
-| M1B `restore_db.py` Litestream lifecycle position | 🟢 CLOSED (Mode B — intentionally out of scope) | `restore_backup_with_lock_and_ledger()` performs artifact/local-file restore only and records `litestream_mode="off"` in every ledger row; `scripts/litestream_ctrl.py` is quarantined because its pinned-0.5.2 stop/generations commands cannot safely drive the lifecycle. S3/R2 cloud-restore durability is proven independently by `.github/workflows/litestream-restore-verify-nightly.yml`. Resolved by Phase 5 of the 2026-06-15 trust-recovery procedure (Litestream capability proof could not pass: the binary is not installed on the dev host, so Mode A is not wired). The restore-path maintenance lock-timeout defect (defaulting to the 5s `LOCK_TIMEOUT_SECONDS` rather than 180s `MAINTENANCE_LOCK_TIMEOUT_SECONDS`) was already fixed on main by PR #290 and is covered by regression tests in `tests/scripts/test_restore_db.py`. |
+| M1B `restore_db.py` Litestream lifecycle position | 🟢 CLOSED (Mode B — intentionally out of scope) | `restore_backup_with_lock_and_ledger()` performs artifact/local-file restore only and records `litestream_mode="off"` in every ledger row; `scripts/litestream_ctrl.py` is quarantined because its pinned-0.5.2 stop/generations commands cannot safely drive the lifecycle. S3/R2 cloud-restore durability is now PROVEN by `.github/workflows/litestream-restore-verify-nightly.yml`: bucket `harmonic-signals-backup-prod` provisioned + seeded 2026-07-12 (seed verified by restore-from-S3), two consecutive scheduled green verifies 2026-07-13/07-14 (runs 29247089443, 29327958072; integrity ok / schema 53 / 612 rows). Resolved by Phase 5 of the 2026-06-15 trust-recovery procedure (Litestream capability proof could not pass: the binary is not installed on the dev host, so Mode A is not wired). The restore-path maintenance lock-timeout defect (defaulting to the 5s `LOCK_TIMEOUT_SECONDS` rather than 180s `MAINTENANCE_LOCK_TIMEOUT_SECONDS`) was already fixed on main by PR #290 and is covered by regression tests in `tests/scripts/test_restore_db.py`. |
 | M2 migration with writer coordination | ✅ DONE (removed as unnecessary) | `scripts/run_migration.py` and `tests/scripts/test_run_migration.py` deleted on branch `codex/migration-runner-main-audit` after audit + code review confirmed no live consumer imports the runner (no module, CLI, CI workflow, Makefile, or scheduler reference). The runner used a fabricated `schema_version` table and a synthetic v52 that diverged from production's real v52 (`classification_status` on `thesis_classifications`). Migration truth on `main` is `storage.signal_store.MIGRATIONS` + `schema_migrations` with `CURRENT_SCHEMA_VERSION == max(MIGRATIONS) == 53`; no consumer needed the runner's columns, so it was dropped per this gate's "removed as unnecessary" branch. Verified: `tests/storage/test_schema_version_parity.py` + `tests/api/test_health_schema_version.py` = 7 passed. |
 | M3 collector health v2 + circuit breaker | 🟡 CODE ON MAIN | `ops.collector_health.REPORT_SCHEMA_VERSION = 2` and `storage/collector_suspension.py` exist. Remaining risks: JSON store concurrency, env-var bypass semantics, and release ratification from real collector artifacts. |
 | M4 vcrpy cassette lifecycle | 🟡 CODE ON MAIN | `tests/support/cassette_policy.py` exists. Regeneration cadence and storage policy are unratified. |
