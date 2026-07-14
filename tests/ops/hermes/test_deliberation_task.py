@@ -20,7 +20,12 @@ from integrations.hermes.tasks.registry import run_registered_task
 from .conftest import minimal_config_dict
 
 
-def _config_path(tmp_path: Path, *, include_disabled: bool = False) -> Path:
+def _config_path(
+    tmp_path: Path,
+    *,
+    include_disabled: bool = False,
+    include_gemini_reviewer: bool = False,
+) -> Path:
     data = minimal_config_dict()
     data["ledger"]["root"] = str(tmp_path / "ai-logs" / "hermes")
     data["ledger"]["lockPath"] = str(tmp_path / "ai-logs" / "hermes" / "hermes.lock")
@@ -32,6 +37,17 @@ def _config_path(tmp_path: Path, *, include_disabled: bool = False) -> Path:
             "enabled": False,
             "required": False,
             "binary": "antigravity",
+            "env": [],
+            "supportsExecute": False,
+        }
+    if include_gemini_reviewer:
+        data["deferredExecutors"] = {}
+        data["executors"]["gemini"] = {
+            "provider": "gemini",
+            "displayName": "Gemini CLI",
+            "enabled": True,
+            "required": False,
+            "binary": "gemini",
             "env": [],
             "supportsExecute": False,
         }
@@ -48,10 +64,17 @@ def _args(
     plan: Path | None = None,
     panel: str = "codex,kimi",
     include_disabled: bool = False,
+    include_gemini_reviewer: bool = False,
 ) -> argparse.Namespace:
     return argparse.Namespace(
         task_name="deliberate",
-        config=str(_config_path(tmp_path, include_disabled=include_disabled)),
+        config=str(
+            _config_path(
+                tmp_path,
+                include_disabled=include_disabled,
+                include_gemini_reviewer=include_gemini_reviewer,
+            )
+        ),
         plan_only=mode == "plan-only",
         preflight_only=mode == "preflight-only",
         dry_run=mode == "dry-run",
@@ -71,10 +94,18 @@ def _args(
 
 
 class _FakeReviewer:
-    def __init__(self, name: str, payload: dict[str, Any], calls: list[str]) -> None:
+    def __init__(
+        self,
+        name: str,
+        payload: dict[str, Any],
+        calls: list[str],
+        *,
+        mode: str = "ok",
+    ) -> None:
         self.name = name
         self.payload = payload
         self.calls = calls
+        self.mode = mode
 
     async def execute(
         self,
@@ -84,6 +115,26 @@ class _FakeReviewer:
         self.calls.append(self.name)
         assert "Do not mutate files" in prompt
         assert context_files is None
+        if self.mode == "raise":
+            raise RuntimeError("reviewer spawn blew up")
+        if self.mode == "fail":
+            return ExecutorResult(
+                executor=self.name,
+                success=False,
+                exit_code=1,
+                content="",
+                duration_ms=54704,
+                error="ERROR: model requires a newer version of Codex",
+            )
+        if self.mode == "empty":
+            return ExecutorResult(
+                executor=self.name,
+                success=True,
+                exit_code=0,
+                content="",
+                duration_ms=12,
+                token_usage={},
+            )
         return ExecutorResult(
             executor=self.name,
             success=True,
@@ -97,11 +148,17 @@ class _FakeReviewer:
 def _patch_reviewers(
     monkeypatch: pytest.MonkeyPatch,
     payloads: dict[str, dict[str, Any]],
+    modes: dict[str, str] | None = None,
 ) -> list[str]:
     calls: list[str] = []
 
     def fake_build_reviewer_executor(name: str, *_: Any, **__: Any) -> _FakeReviewer:
-        return _FakeReviewer(name, payloads[name], calls)
+        return _FakeReviewer(
+            name,
+            payloads.get(name, {}),
+            calls,
+            mode=(modes or {}).get(name, "ok"),
+        )
 
     monkeypatch.setattr(
         "integrations.hermes.tasks.deliberation.build_reviewer_executor",
@@ -134,13 +191,15 @@ def _approval(executor: str) -> dict[str, Any]:
     }
 
 
-def test_empty_reviewer_content_yields_skip_and_cannot_approve_alone() -> None:
+def test_empty_reviewer_content_yields_error_and_cannot_approve_alone() -> None:
     payload = _parse_reviewer_payload(_executor_result(""))
 
-    assert payload["verdict"] == "skip"
+    assert payload["verdict"] == "error"
     assert payload["parsed"] is False
     consensus = _synthesize([{"executor": "codex", "success": True, **payload}])
     assert consensus["status"] == "no_quorum"
+    assert consensus["quorum"]["status"] == "malformed_reviewer_output"
+    assert consensus["quorum"]["malformedReviewers"] == ["codex"]
 
 
 def test_malformed_non_empty_reviewer_content_blocks_approval() -> None:
@@ -157,7 +216,7 @@ def test_malformed_non_empty_reviewer_content_blocks_approval() -> None:
 def test_fallback_text_classifier_never_approves() -> None:
     assert _classify_text_response("approve this plan")["verdict"] == "needs_changes"
     assert _classify_text_response("block this plan")["verdict"] == "block"
-    assert _classify_text_response("")["verdict"] == "skip"
+    assert _classify_text_response("")["verdict"] == "error"
 
 
 def test_invalid_verdict_does_not_count_as_approval() -> None:
@@ -287,6 +346,130 @@ def test_skip_is_neutral_for_approval_quorum() -> None:
 
     assert consensus["status"] == "approved"
     assert consensus["dissent"]["present"] is False
+
+
+def test_executed_but_failed_reviewer_lane_is_error_and_fails_run_despite_quorum(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression for 2026-07-10: a hard-failed codex lane silently became
+    'skip', shrinking the panel without any alarm. Even when the remaining
+    trusted lanes satisfy quorum, an executed-but-failed lane must fail the
+    run loudly."""
+    _patch_reviewers(
+        monkeypatch,
+        {
+            "kimi": {"verdict": "approve", "confidence": 0.9, "concerns": []},
+            "gemini": {"verdict": "approve", "confidence": 0.9, "concerns": []},
+        },
+        modes={"codex": "fail"},
+    )
+
+    result = run_registered_task(
+        _args(
+            tmp_path,
+            mode="dry-run",
+            panel="codex,kimi,gemini",
+            include_gemini_reviewer=True,
+        )
+    )
+
+    assert result.exit_code == EXIT_GATE_FAILURE
+    assert result.status == "dry_run_failed"
+    verdicts = {item["executor"]: item["verdict"] for item in result.outputs["panel"]}
+    assert verdicts == {"codex": "error", "kimi": "approve", "gemini": "approve"}
+    check = next(c for c in result.checks if c.name == "no_reviewer_lane_errors")
+    assert check.passed is False
+    assert [e["executor"] for e in check.evidence["laneErrors"]] == ["codex"]
+    quorum = result.outputs["consensus"]["quorum"]
+    assert quorum["status"] == "malformed_reviewer_output"
+    assert "codex" in quorum["malformedReviewers"]
+
+
+def test_reviewer_exception_is_error_lane_not_silent_skip(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_reviewers(
+        monkeypatch,
+        {"codex": {"verdict": "approve", "confidence": 0.9, "concerns": []}},
+        modes={"kimi": "raise"},
+    )
+
+    result = run_registered_task(_args(tmp_path, mode="dry-run", panel="codex,kimi"))
+
+    assert result.exit_code == EXIT_GATE_FAILURE
+    verdicts = {item["executor"]: item["verdict"] for item in result.outputs["panel"]}
+    assert verdicts["kimi"] == "error"
+    check = next(c for c in result.checks if c.name == "no_reviewer_lane_errors")
+    assert check.passed is False
+    kimi_item = next(i for i in result.outputs["panel"] if i["executor"] == "kimi")
+    assert "reviewer spawn blew up" in (kimi_item.get("error") or "")
+
+
+def test_empty_content_success_lane_is_error_with_reason(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_reviewers(
+        monkeypatch,
+        {"codex": {"verdict": "approve", "confidence": 0.9, "concerns": []}},
+        modes={"kimi": "empty"},
+    )
+
+    result = run_registered_task(_args(tmp_path, mode="dry-run", panel="codex,kimi"))
+
+    assert result.exit_code == EXIT_GATE_FAILURE
+    kimi_item = next(i for i in result.outputs["panel"] if i["executor"] == "kimi")
+    assert kimi_item["verdict"] == "error"
+    assert kimi_item["success"] is True
+    assert kimi_item["error"] == "empty_reviewer_content"
+    check = next(c for c in result.checks if c.name == "no_reviewer_lane_errors")
+    assert check.passed is False
+
+
+def test_error_lanes_do_not_create_phantom_dissent() -> None:
+    error_lane = {
+        "executor": "codex",
+        "success": False,
+        "parsed": False,
+        "verdict": "error",
+    }
+    consensus = _synthesize([_approval("kimi"), _approval("gemini"), error_lane])
+
+    assert consensus["dissent"]["present"] is False
+    assert consensus["blockers"] == []
+    assert consensus["status"] == "no_quorum"
+    assert consensus["quorum"]["status"] == "malformed_reviewer_output"
+
+
+def test_preexecution_skips_stay_neutral_and_do_not_fail_lane_gate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_reviewers(
+        monkeypatch,
+        {
+            "codex": {"verdict": "approve", "confidence": 0.9, "concerns": []},
+            "kimi": {"verdict": "approve", "confidence": 0.9, "concerns": []},
+        },
+    )
+
+    result = run_registered_task(
+        _args(
+            tmp_path,
+            mode="dry-run",
+            panel="missing,antigravity,codex,kimi",
+            include_disabled=True,
+        )
+    )
+
+    assert result.exit_code == 0
+    check = next(c for c in result.checks if c.name == "no_reviewer_lane_errors")
+    assert check.passed is True
+    verdicts = {item["executor"]: item["verdict"] for item in result.outputs["panel"]}
+    assert verdicts["missing"] == "skip"
+    assert verdicts["antigravity"] == "skip"
 
 
 def test_one_approval_plus_needs_changes_does_not_approve() -> None:

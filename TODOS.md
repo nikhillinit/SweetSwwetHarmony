@@ -2,13 +2,6 @@
 
 Deferred work with enough context to pick up cold. Format: What / Why / Context / Depends on.
 
-## Hermes: codex reviewer lane returns empty content and silently skips
-
-- **What:** Investigate why the codex deliberation reviewer executes (Codex v0.140.0, model gpt-5.6-sol, read-only sandbox) but returns zero content, causing `_run_reviewer` to degrade the lane to `verdict: skip` with no alarm.
-- **Why:** A silently-empty reviewer weakens every deliberation quorum. On 2026-07-10 it turned a 3-lane panel into a 1-lane panel (quorum requires 2 approvals), guaranteeing `insufficient_quorum`.
-- **Context:** Repro in `.tmp/hermes-delib/queue-panel-20260710.json` (`contentExcerpt` empty, `success: false`, error field holds only the CLI banner echo). Prime suspect: output-capture drift in `integrations/codex_wrapper.py` against Codex v0.140.0. Related: `_skipped_result` / `_parse_reviewer_payload` in `integrations/hermes/tasks/deliberation.py` treat empty content as skip rather than a loud lane failure.
-- **Depends on:** nothing. Sibling of the antigravity `-approval-mode` drift fix (queued as item 6b in `.omx/plans/harmonic-prioritized-development-queue-2026-07-10.md`).
-
 ## Hermes: deliberation silently truncates plan input at 12,000 chars
 
 - **What:** `integrations/hermes/tasks/deliberation.py:33` (`TASK_TEXT_LIMIT = 12000`) slices plan text in `_task_text()` (`:466-475`) without recording that it did. Fix: fail preflight on truncation, or stamp `truncated: true` into the prompt packet and record, plus a contract test.

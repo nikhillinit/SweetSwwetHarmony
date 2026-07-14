@@ -136,6 +136,42 @@ def test_deliberation_record_schema_validates_live_record(
     Draft202012Validator(schema).validate(record)
 
 
+class _FailingReviewer:
+    async def execute(
+        self,
+        prompt: str,
+        context_files: list[str] | None = None,
+    ) -> ExecutorResult:
+        return ExecutorResult(
+            executor="codex",
+            success=False,
+            exit_code=1,
+            content="",
+            duration_ms=5,
+            error="ERROR: model requires a newer version of Codex",
+        )
+
+
+def test_deliberation_record_with_error_lane_validates_against_schema(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "integrations.hermes.tasks.deliberation.build_reviewer_executor",
+        lambda *_args, **_kwargs: _FailingReviewer(),
+    )
+    result = run_registered_task(_args(tmp_path))
+    run_dir = Path(result.run_dir or "")
+    record = json.loads(
+        (run_dir / "deliberation_record.json").read_text(encoding="utf-8")
+    )
+
+    verdicts = {item["executor"]: item["verdict"] for item in record["panel"]}
+    assert set(verdicts.values()) == {"error"}
+    schema = _load_schema()
+    Draft202012Validator(schema).validate(record)
+
+
 def test_deliberation_record_schema_tracks_live_camel_case_shape() -> None:
     schema = _load_schema()
     properties = schema["properties"]
@@ -159,6 +195,13 @@ def test_deliberation_record_schema_tracks_live_camel_case_shape() -> None:
     assert panel_item["properties"]["parsed"]["type"] == "boolean"
     assert panel_item["properties"]["requiredChanges"]["type"] == "array"
     assert "required_changes" not in panel_item["properties"]
+    assert panel_item["properties"]["verdict"]["enum"] == [
+        "approve",
+        "block",
+        "needs_changes",
+        "skip",
+        "error",
+    ]
     assert consensus["properties"]["quorum"]["required"] == [
         "status",
         "required",
