@@ -24,30 +24,46 @@
 
 > **Refresh note (2026-07-14, at `e6ed3e2`).** Rows touched by the 2026-07-10
 > queue (M1B, P0-1 bounded recovery) were re-verified against live CI evidence
-> and updated below; all other rows remain as-verified at `4f19d66` (2026-06-24
-> note) and were deliberately left untouched. The earlier instruction to
-> regenerate this table from `ops/trust_status.py` / `ledger-audit
-> operatorSummary` is NOT currently executable: `ops/trust_status.py` is the M7
-> collector-health summarizer (no milestone-table output, no `__main__`), and
-> `ops.cli` has no `trust` subcommand. The generator gap is filed in TODOS.md
-> ("trust-release status-table generator does not exist").
+> and updated; all other rows remain as-verified at `4f19d66` (2026-06-24
+> note).
 
-| Milestone | Status | Evidence / caveat |
-|-----------|--------|-------------------|
-| P0-0 Gemini paid tier | ✅ DONE | F6 = 0.9375 |
-| P0-2 Gate hardening PR #271 | ✅ DONE | merged `275cded` |
-| P0-1 DB untrack + resolver + Daily Pipeline repoint | ✅ DONE | PRs #272/#273/#275 |
-| DB-path hardening: canonical resolution, in-tree guard, Hermes task paths | 🟢 MERGED | PR #281 (`da48563`) + PR #282 (`4f19d66`); local tree contains `guard_db_path`, `resolve_task_db_path`, `InTreeDatabaseError`, and follow-up script hardening. CI-green-on-merge remains unconfirmed because `gh pr view` currently returns HTTP 401 in this environment. |
-| P0-1 bounded recovery + anomaly check + close #149 | 🟢 RATIFIED (T3-A, 2026-07-14) | Artifact-based ratification produced by the 2026-07-10 queue: Daily Pipeline restore-from-replica bootstrap run 29205726663 (manual) + 29231587906 (scheduled) passed restore -> integrity -> watermark-init -> anomaly gates in production CI and republished `signals-db-latest` (artifact 8271756749, 90d retention); Litestream Restore Verify green 3x (manual 29205727787, scheduled 29247089443 + 29327958072 consecutive), each summary.json = integrity ok / schema 53 / 612 rows / min 500. Issue #149 was closed 2026-06-17; full bundle in `.tmp/queue-exec-20260710/execution-status.md` ("T3-A RECOVERY-COMPLETE GATE: CLOSED 2026-07-14"). |
-| P0-3 Dry-run immutability | 🔴 OPEN | Still needs proof that `process_pending(dry_run=True)` and related CLI paths do not persist or mutate routed rows. |
-| M1A `db_anomaly.py` | 🟡 CODE ON MAIN | `scripts/db_anomaly.py` exists; current scope is minimal sha/row-count/size/known-bad/watermark checking. Hot/deep semantic anomaly checks are follow-on hardening, not a prerequisite to the minimal trust release. |
-| M1B `restore_db.py` Litestream lifecycle position | 🟢 CLOSED (Mode B — intentionally out of scope) | `restore_backup_with_lock_and_ledger()` performs artifact/local-file restore only and records `litestream_mode="off"` in every ledger row; `scripts/litestream_ctrl.py` is quarantined because its pinned-0.5.2 stop/generations commands cannot safely drive the lifecycle. S3/R2 cloud-restore durability is now PROVEN by `.github/workflows/litestream-restore-verify-nightly.yml`: bucket `harmonic-signals-backup-prod` provisioned + seeded 2026-07-12 (seed verified by restore-from-S3), two consecutive scheduled green verifies 2026-07-13/07-14 (runs 29247089443, 29327958072; integrity ok / schema 53 / 612 rows). Resolved by Phase 5 of the 2026-06-15 trust-recovery procedure (Litestream capability proof could not pass: the binary is not installed on the dev host, so Mode A is not wired). The restore-path maintenance lock-timeout defect (defaulting to the 5s `LOCK_TIMEOUT_SECONDS` rather than 180s `MAINTENANCE_LOCK_TIMEOUT_SECONDS`) was already fixed on main by PR #290 and is covered by regression tests in `tests/scripts/test_restore_db.py`. |
-| M2 migration with writer coordination | ✅ DONE (removed as unnecessary) | `scripts/run_migration.py` and `tests/scripts/test_run_migration.py` deleted on branch `codex/migration-runner-main-audit` after audit + code review confirmed no live consumer imports the runner (no module, CLI, CI workflow, Makefile, or scheduler reference). The runner used a fabricated `schema_version` table and a synthetic v52 that diverged from production's real v52 (`classification_status` on `thesis_classifications`). Migration truth on `main` is `storage.signal_store.MIGRATIONS` + `schema_migrations` with `CURRENT_SCHEMA_VERSION == max(MIGRATIONS) == 53`; no consumer needed the runner's columns, so it was dropped per this gate's "removed as unnecessary" branch. Verified: `tests/storage/test_schema_version_parity.py` + `tests/api/test_health_schema_version.py` = 7 passed. |
-| M3 collector health v2 + circuit breaker | 🟡 CODE ON MAIN | `ops.collector_health.REPORT_SCHEMA_VERSION = 2` and `storage/collector_suspension.py` exist. Remaining risks: JSON store concurrency, env-var bypass semantics, and release ratification from real collector artifacts. |
-| M4 vcrpy cassette lifecycle | 🟡 CODE ON MAIN | `tests/support/cassette_policy.py` exists. Regeneration cadence and storage policy are unratified. |
-| M5 parity gate | 🟡 CODE ON MAIN | `scripts/ci/run_thesis_parity_gate.py` exists. Current tests cover arithmetic/config defaults; they do not prove the CLI path honors `temperature=0.0`. |
-| M6 PR evidence enforcement | 🟡 CODE ON MAIN, hardening first | `scripts/check_pr_evidence.py` exists but accepts any GitHub repo and `/actions/runs/0` style URLs. This is the first patch because future evidence depends on it. |
-| M7 trust status CLI | 🟡 CODE ON MAIN | `ops/trust_status.py` exists and requires schema v2. Max-age/expiry semantics and release-readiness truth table are follow-on hardening. |
+> **Regeneration.** The table below is emitted by `python -m ops.cli trust
+> status` (flags: `--out <file>` to also write a file, `--evidence
+> <ledger_audit_report.json>` to cite a specific hermes ledger-audit artifact,
+> `--live-gh` to verify cited GitHub run conclusions over the network; offline
+> and read-only by default). Row statuses and evidence are declared once in
+> `ops/trust_release_status.py` (`MILESTONES`) with explicit `manual` vs
+> `derived` provenance; derived rows are corroborated by local read-only
+> checks at generation time. Do NOT hand-edit the table -- edit the config
+> block in `ops/trust_release_status.py` and regenerate (this closes the
+> TODOS.md entry "trust-release status-table generator does not exist").
+
+> Generated by `python -m ops.cli trust status` at 2026-07-14T21:56:06Z.
+> Row statuses and evidence are declared once in `ops/trust_release_status.py` (MILESTONES) with explicit provenance;
+> derived rows are corroborated by local read-only checks at generation time. Do not hand-edit this table —
+> edit the config block and regenerate.
+
+| Milestone | Status | Evidence / caveat | Provenance |
+|-----------|--------|-------------------|------------|
+| P0-0 Gemini paid tier | ✅ DONE | F6 = 0.9375 | manual (verified 2026-06-18 @4f19d66) |
+| P0-2 Gate hardening PR #271 | ✅ DONE | merged `275cded` | manual (verified 2026-06-18 @4f19d66) |
+| P0-1 DB untrack + resolver + Daily Pipeline repoint | ✅ DONE | PRs #272/#273/#275 | manual (verified 2026-06-18 @4f19d66) |
+| DB-path hardening: canonical resolution, in-tree guard, Hermes task paths | 🟢 MERGED | PR #281 (`da48563`) + PR #282 (`4f19d66`); local tree contains `guard_db_path`, `resolve_task_db_path`, `InTreeDatabaseError`, and follow-up script hardening. CI-green-on-merge remains unconfirmed because `gh pr view` currently returns HTTP 401 in this environment. | derived: repo — checks OK |
+| P0-1 bounded recovery + anomaly check + close #149 | 🟢 RATIFIED (T3-A, 2026-07-14) | Artifact-based ratification produced by the 2026-07-10 queue: Daily Pipeline restore-from-replica bootstrap run 29205726663 (manual) + 29231587906 (scheduled) passed restore -> integrity -> watermark-init -> anomaly gates in production CI and republished `signals-db-latest` (artifact 8271756749, 90d retention); Litestream Restore Verify green 3x (manual 29205727787, scheduled 29247089443 + 29327958072 consecutive), each summary.json = integrity ok / schema 53 / 612 rows / min 500. Issue #149 was closed 2026-06-17; full bundle in `.tmp/queue-exec-20260710/execution-status.md` ("T3-A RECOVERY-COMPLETE GATE: CLOSED 2026-07-14"). | manual (verified 2026-07-14 @e6ed3e2) |
+| P0-3 Dry-run immutability | 🔴 OPEN | Still needs proof that `process_pending(dry_run=True)` and related CLI paths do not persist or mutate routed rows. | manual (verified 2026-06-18 @4f19d66) |
+| M1A `db_anomaly.py` | 🟡 CODE ON MAIN | `scripts/db_anomaly.py` exists; current scope is minimal sha/row-count/size/known-bad/watermark checking. Hot/deep semantic anomaly checks are follow-on hardening, not a prerequisite to the minimal trust release. | derived: repo — checks OK |
+| M1B `restore_db.py` Litestream lifecycle position | 🟢 CLOSED (Mode B — intentionally out of scope) | `restore_backup_with_lock_and_ledger()` performs artifact/local-file restore only and records `litestream_mode="off"` in every ledger row; `scripts/litestream_ctrl.py` is quarantined because its pinned-0.5.2 stop/generations commands cannot safely drive the lifecycle. S3/R2 cloud-restore durability is now PROVEN by `.github/workflows/litestream-restore-verify-nightly.yml`: bucket `harmonic-signals-backup-prod` provisioned + seeded 2026-07-12 (seed verified by restore-from-S3), two consecutive scheduled green verifies 2026-07-13/07-14 (runs 29247089443, 29327958072; integrity ok / schema 53 / 612 rows). Resolved by Phase 5 of the 2026-06-15 trust-recovery procedure (Litestream capability proof could not pass: the binary is not installed on the dev host, so Mode A is not wired). The restore-path maintenance lock-timeout defect (defaulting to the 5s `LOCK_TIMEOUT_SECONDS` rather than 180s `MAINTENANCE_LOCK_TIMEOUT_SECONDS`) was already fixed on main by PR #290 and is covered by regression tests in `tests/scripts/test_restore_db.py`. | manual (verified 2026-07-14 @e6ed3e2) |
+| M2 migration with writer coordination | ✅ DONE (removed as unnecessary) | `scripts/run_migration.py` and `tests/scripts/test_run_migration.py` deleted on branch `codex/migration-runner-main-audit` after audit + code review confirmed no live consumer imports the runner (no module, CLI, CI workflow, Makefile, or scheduler reference). The runner used a fabricated `schema_version` table and a synthetic v52 that diverged from production's real v52 (`classification_status` on `thesis_classifications`). Migration truth on `main` is `storage.signal_store.MIGRATIONS` + `schema_migrations` with `CURRENT_SCHEMA_VERSION == max(MIGRATIONS) == 53`; no consumer needed the runner's columns, so it was dropped per this gate's "removed as unnecessary" branch. Verified: `tests/storage/test_schema_version_parity.py` + `tests/api/test_health_schema_version.py` = 7 passed. | derived: repo — checks OK |
+| M3 collector health v2 + circuit breaker | 🟡 CODE ON MAIN | `ops.collector_health.REPORT_SCHEMA_VERSION = 2` and `storage/collector_suspension.py` exist. Remaining risks: JSON store concurrency, env-var bypass semantics, and release ratification from real collector artifacts. | derived: repo+import — checks OK |
+| M4 vcrpy cassette lifecycle | 🟡 CODE ON MAIN | `tests/support/cassette_policy.py` exists. Regeneration cadence and storage policy are unratified. | derived: repo — checks OK |
+| M5 parity gate | 🟡 CODE ON MAIN | `scripts/ci/run_thesis_parity_gate.py` exists. Current tests cover arithmetic/config defaults; they do not prove the CLI path honors `temperature=0.0`. | derived: repo — checks OK |
+| M6 PR evidence enforcement | 🟡 CODE ON MAIN, hardening first | `scripts/check_pr_evidence.py` exists but accepts any GitHub repo and `/actions/runs/0` style URLs. This is the first patch because future evidence depends on it. | derived: repo — checks OK |
+| M7 trust status CLI | 🟡 CODE ON MAIN | `ops/trust_status.py` exists and requires schema v2. Max-age/expiry semantics and release-readiness truth table are follow-on hardening. Milestone-table generation now lives in `ops.cli trust status` (this generator). | derived: repo+import — checks OK |
+
+### Live evidence appendix
+
+- Hermes ledger-audit `ledger-audit-20260714T183505Z` (generated 2026-07-14T18:35:05.127837+00:00): status `action_required`, blocking findings 11 (low=0, medium=0, high=0, critical=11); subsystems with findings: restore_sqlite. Source (read-only): `C:\dev\Harmonic\ai-logs\hermes\runs\hermes_20260714_183501_081efde1\ledger_audit_report.json`.
+- GitHub run verification: skipped (offline default). Pass `--live-gh` to query cited run conclusions via the gh CLI.
 
 **Operating guardrail (still in force):** the DB-path guard from PR #281/#282 now blocks
 accidental in-repo canonical DB writes, but restore and migration are still not ratified as safe.
