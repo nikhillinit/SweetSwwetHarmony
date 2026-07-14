@@ -7,7 +7,7 @@ Deferred work with enough context to pick up cold. Format: What / Why / Context 
 - **What:** Fix `tests/ops/hermes/test_gemini_provider.py::test_project_config_enables_gemini_cli_without_api_key` — it expects gemini `supportsExecute=true`, but cbcab36 disabled the auth-dead gemini lane. Update the expectation (or parametrize on the provider-config state).
 - **Why:** A permanently-red local test erodes the signal of the local suite; it is not in CI gates, so it will never force itself onto anyone's queue.
 - **Context:** Documented in `.tmp/queue-exec-20260710/execution-status.md` follow-ups (2026-07-10). Local-only failure.
-- **Depends on:** a decision whether gemini stays disabled (current state: disabled, auth-dead).
+- **Depends on:** RESOLVED 2026-07-14 -- operator ruled gemini permanently deprecated (the Google lane is agy only). Fix the expectation to the deprecated state; do not propose re-enabling gemini.
 
 ## Local suite: pre-existing failing tests on main (not in CI gates)
 
@@ -22,10 +22,3 @@ Deferred work with enough context to pick up cold. Format: What / Why / Context 
 - **Why:** `docs/plans/2026-06-15-trust-release/00-strategy.md` and the wiki hot-cache both point to `python -m ops.cli trust status`, which does not exist (`ops.cli` has no `trust` subcommand; `ops/trust_status.py` is the M7 collector-health summarizer with no `__main__`). Every doc refresh currently violates the doc's own instruction.
 - **Context:** Discovered during the 2026-07-14 Q9 reconciliation; the 07-14 refresh hand-edited two rows with cited run evidence as the least-bad option.
 - **Depends on:** M7 hardening direction (max-age/expiry semantics) if the generator should consume collector-health reports.
-
-## Docs: CLAUDE.md "Active Sprint" block is stale
-
-- **What:** Regenerate the CLAUDE.md "## Active Sprint" block via the `claude-md-improver` skill (per the block's own maintenance note). It still says branch `prep/red-team-hybrid-prep`, "Move 0 ends 2026-04-19", and Move 0 protected paths.
-- **Why:** CLAUDE.md is loaded into every session; a three-months-stale sprint block misroutes every fresh session until it cross-checks `docs/claude/active-sprint.md` (refreshed 2026-07-14).
-- **Context:** Handoff follow-up from `.omx/plans/queue-completion-handoff-20260711.md` item 4. The block's own instructions say to regenerate at the start of each new move rather than hand-edit mid-session.
-- **Depends on:** deciding what the next "move" is (Q10 preparation vs TODOS backlog burn-down).
