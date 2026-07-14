@@ -2,13 +2,6 @@
 
 Deferred work with enough context to pick up cold. Format: What / Why / Context / Depends on.
 
-## Hermes: deliberation silently truncates plan input at 12,000 chars
-
-- **What:** `integrations/hermes/tasks/deliberation.py:33` (`TASK_TEXT_LIMIT = 12000`) slices plan text in `_task_text()` (`:466-475`) without recording that it did. Fix: fail preflight on truncation, or stamp `truncated: true` into the prompt packet and record, plus a contract test.
-- **Why:** A high-risk gate reviewing partial input produces verdicts about a document nobody wrote. On 2026-07-10 the 16,366-char queue plan lost its last ~27% (Queues 8-10 tail, exclusions, verification sequence, risks) and the kimi lane blocked partly on the truncation itself ("Item 8 is truncated mid-sentence").
-- **Context:** Repro in `.tmp/hermes-delib/queue-panel-20260710.json`; plan file `.omx/plans/harmonic-prioritized-development-queue-2026-07-10.md` is complete on disk. Violates the repo's own no-silent-caps/fail-closed posture.
-- **Depends on:** nothing.
-
 ## CI: ruleset-parity drift check (live ruleset vs runbook)
 
 - **What:** Script (or CI job) that reads the active default-branch ruleset via `gh api` and diffs its required checks against the check-list in `docs/runbooks/branch-protection-setup.md`; nonzero exit on drift.

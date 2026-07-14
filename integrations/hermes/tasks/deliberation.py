@@ -87,6 +87,7 @@ class DeliberationTask(HermesTask):
                 },
                 "preflight_gates": [
                     "input_plan_or_task_exists",
+                    "input_within_task_text_limit",
                     "selected_panel_has_available_reviewer",
                     "reviewers_are_non_mutating",
                     "prompt_packet_redacted",
@@ -130,6 +131,18 @@ class DeliberationTask(HermesTask):
                 bool(task_text.strip() or plan_hash),
                 str(plan.get("input", {}).get("plan_path") or "inline task"),
                 dict(plan.get("input", {})),
+            ),
+            CheckResult(
+                "input_within_task_text_limit",
+                len(task_text) <= TASK_TEXT_LIMIT,
+                f"{len(task_text)} chars (limit {TASK_TEXT_LIMIT})"
+                if len(task_text) <= TASK_TEXT_LIMIT
+                else (
+                    f"task text is {len(task_text)} chars, over the "
+                    f"{TASK_TEXT_LIMIT}-char reviewable limit; split the plan "
+                    "instead of letting reviewers see a truncated document"
+                ),
+                {"taskTextChars": len(task_text), "limit": TASK_TEXT_LIMIT},
             ),
             CheckResult(
                 "selected_panel_has_available_reviewer",
@@ -491,15 +504,18 @@ def _plan_path(context: TaskContext) -> Path | None:
 
 
 def _task_text(context: TaskContext, plan_path: Path | None) -> tuple[str, str | None]:
+    # Never slice: oversized input fails the input_within_task_text_limit
+    # preflight gate instead of silently shrinking the reviewed document
+    # (2026-07-10: a 16,366-char plan lost its last ~27% unnoticed).
     inline_text = str(getattr(context.args, "task_text", None) or "")
     if plan_path is None:
-        return inline_text[:TASK_TEXT_LIMIT], None
+        return inline_text, None
     if not plan_path.exists() or not plan_path.is_file():
-        return inline_text[:TASK_TEXT_LIMIT], "plan file missing"
+        return inline_text, "plan file missing"
     try:
-        return plan_path.read_text(encoding="utf-8")[:TASK_TEXT_LIMIT], None
+        return plan_path.read_text(encoding="utf-8"), None
     except OSError as exc:
-        return inline_text[:TASK_TEXT_LIMIT], str(exc)
+        return inline_text, str(exc)
 
 
 def _plan_hash(plan_path: Path | None) -> str | None:
