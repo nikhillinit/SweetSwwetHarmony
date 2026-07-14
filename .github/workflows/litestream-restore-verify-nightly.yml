@@ -91,6 +91,33 @@ jobs:
           path: artifacts/litestream-restore-verify/
           if-no-files-found: warn
 
+  close-failure-tracker:
+    name: Close Failure Tracker on Recovery
+    runs-on: ubuntu-latest
+    needs: restore-verify
+    if: needs.restore-verify.result == 'success'
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      # local composite actions cannot be resolved without a checkout
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Close failure tracking issue with green-run link
+        uses: ./.github/actions/failure-issue
+        with:
+          mode: close
+          title: 'Litestream Restore Verify: nightly verification failed'
+          label: litestream-verify-failure
+          workflow-name: ${{ github.workflow }}
+          body: |
+            ## Recovered
+
+            The nightly cloud-restore verification succeeded. Auto-closing
+            this failure tracker; the link below is the first green run
+            after the tracked failure(s).
+
   notify-on-failure:
     name: Notify on Failure
     runs-on: ubuntu-latest
