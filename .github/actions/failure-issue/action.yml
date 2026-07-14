@@ -30,6 +30,12 @@ inputs:
     description: 'Human-readable workflow name referenced in the issue'
     required: false
     default: ${{ github.workflow }}
+  recovery-run-id:
+    description: >-
+      Run ID linked from recovery comments. Defaults to the current run; a
+      workflow_run observer can pass the ID of the successful source run.
+    required: false
+    default: ${{ github.run_id }}
   github-token:
     description: 'Token used to list/create/comment on issues'
     required: false
@@ -46,6 +52,7 @@ runs:
         ISSUE_BODY: ${{ inputs.body }}
         ISSUE_MODE: ${{ inputs.mode }}
         WORKFLOW_NAME: ${{ inputs.workflow-name }}
+        RECOVERY_RUN_ID: ${{ inputs.recovery-run-id }}
       with:
         github-token: ${{ inputs.github-token }}
         script: |
@@ -53,7 +60,12 @@ runs:
           const label = process.env.ISSUE_LABEL;
           const mode = process.env.ISSUE_MODE || 'open';
           const workflowName = process.env.WORKFLOW_NAME;
-          const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+          const recoveryRunId = process.env.RECOVERY_RUN_ID || process.env.GITHUB_RUN_ID;
+          if (!/^\d+$/.test(recoveryRunId)) {
+            core.setFailed(`Invalid recovery run ID '${recoveryRunId}'`);
+            return;
+          }
+          const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${recoveryRunId}`;
           const body = [
             process.env.ISSUE_BODY,
             '',

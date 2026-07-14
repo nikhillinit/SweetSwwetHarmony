@@ -148,49 +148,6 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "View full results in the uploaded artifacts." >> $GITHUB_STEP_SUMMARY
 
-  close-failure-tracker:
-    name: Close Failure Trackers on Recovery
-    runs-on: ubuntu-latest
-    needs: evaluate
-    if: success()
-    permissions:
-      contents: read
-      issues: write
-    steps:
-      # local composite actions cannot be resolved without a checkout
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      # a successful evaluation means accuracy is at/above threshold AND the
-      # infrastructure worked, so both tracker labels are recovered
-      - name: Close low-accuracy alert issue with green-run link
-        uses: ./.github/actions/failure-issue
-        with:
-          mode: close
-          title: 'Thesis Evaluation: Accuracy below threshold'
-          label: thesis-eval-alert
-          workflow-name: ${{ github.workflow }}
-          body: |
-            ## Recovered
-
-            The weekly thesis evaluation completed with accuracy at or above
-            threshold. Auto-closing this alert; the link below is the first
-            green run after the tracked failure(s).
-
-      - name: Close infrastructure failure issue with green-run link
-        uses: ./.github/actions/failure-issue
-        with:
-          mode: close
-          title: 'Thesis Evaluation: infrastructure failure'
-          label: thesis-eval-infra
-          workflow-name: ${{ github.workflow }}
-          body: |
-            ## Recovered
-
-            The weekly thesis evaluation completed successfully. Auto-closing
-            this infrastructure-failure tracker; the link below is the first
-            green run after the tracked failure(s).
-
   notify-on-failure:
     name: Notify on Evaluation Failure
     runs-on: ubuntu-latest
