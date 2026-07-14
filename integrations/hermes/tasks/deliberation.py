@@ -28,7 +28,12 @@ from .base import (
     sha256_file,
 )
 
-VALID_VERDICTS = {"approve", "block", "needs_changes", "skip"}
+# "error" is harness-assigned only: a lane that was dispatched but failed to
+# produce a usable review (spawn exception, nonzero exit, empty content). It
+# always fails the no_reviewer_lane_errors postflight gate; "skip" stays
+# reserved for lanes that were never dispatched (disabled/deferred/unknown).
+LANE_ERROR_VERDICT = "error"
+VALID_VERDICTS = {"approve", "block", "needs_changes", "skip", LANE_ERROR_VERDICT}
 DEFAULT_PANEL = "codex,kimi,gemini"
 TASK_TEXT_LIMIT = 12000
 HIGH_RISK_APPROVAL_QUORUM = 2
@@ -88,6 +93,7 @@ class DeliberationTask(HermesTask):
                 ],
                 "postflight_gates": [
                     "reviewers_returned_valid_verdicts",
+                    "no_reviewer_lane_errors",
                     "quorum_completed",
                     "no_blocker_or_dissent_verdict",
                     "deliberation_artifacts_written",
@@ -170,12 +176,27 @@ class DeliberationTask(HermesTask):
         record_path = context.run_dir / "deliberation_record.json"
         markdown_path = context.run_dir / "deliberation.md"
 
+        lane_errors = [
+            {"executor": item.get("executor"), "error": item.get("error")}
+            for item in panel
+            if item.get("verdict") == LANE_ERROR_VERDICT
+        ]
+
         return [
             CheckResult(
                 "reviewers_returned_valid_verdicts",
                 all(item.get("verdict") in VALID_VERDICTS for item in panel),
                 "panel verdicts parsed",
                 {"panel": panel},
+            ),
+            CheckResult(
+                "no_reviewer_lane_errors",
+                not lane_errors,
+                "all dispatched reviewer lanes produced content"
+                if not lane_errors
+                else "lane errors: "
+                + ", ".join(str(item["executor"]) for item in lane_errors),
+                {"laneErrors": lane_errors},
             ),
             CheckResult(
                 "quorum_completed",
@@ -260,11 +281,11 @@ async def _run_reviewer(
         executor = build_reviewer_executor(name, config)
         result = await executor.execute(prompt, context_files=None)
     except Exception as exc:
-        return _skipped_result(name, str(exc))
+        return _error_result(name, f"reviewer_execution_failed: {exc}")
 
     payload = _parse_reviewer_payload(result)
     if not result.success:
-        payload["verdict"] = "skip"
+        payload["verdict"] = LANE_ERROR_VERDICT
         payload["parsed"] = False
     payload.update(
         {
@@ -277,6 +298,8 @@ async def _run_reviewer(
     )
     if result.error:
         payload["error"] = result.error
+    elif payload["verdict"] == LANE_ERROR_VERDICT:
+        payload["error"] = "empty_reviewer_content"
     return payload
 
 
@@ -369,7 +392,7 @@ def _required_changes(parsed: dict[str, Any]) -> list[str]:
 def _classify_text_response(content: str) -> dict[str, Any]:
     lower = content.lower()
     if not content:
-        return {"verdict": "skip", "confidence": 0.0}
+        return {"verdict": LANE_ERROR_VERDICT, "confidence": 0.0}
     if "block" in lower or "reject" in lower:
         return {
             "verdict": "block",
@@ -393,7 +416,11 @@ def _synthesize(
     panel: list[dict[str, Any]],
     reviewer_policy: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    active = [item for item in panel if item.get("verdict") != "skip"]
+    active = [
+        item
+        for item in panel
+        if item.get("verdict") not in {"skip", LANE_ERROR_VERDICT}
+    ]
     blockers = [
         item
         for item in active
@@ -514,6 +541,20 @@ def _skipped_result(name: str, reason: str) -> dict[str, Any]:
     return {
         "executor": name,
         "verdict": "skip",
+        "parsed": False,
+        "success": False,
+        "error": reason,
+        "confidence": 0.0,
+        "concerns": [],
+        "requiredChanges": [],
+        "contentExcerpt": "",
+    }
+
+
+def _error_result(name: str, reason: str) -> dict[str, Any]:
+    return {
+        "executor": name,
+        "verdict": LANE_ERROR_VERDICT,
         "parsed": False,
         "success": False,
         "error": reason,
