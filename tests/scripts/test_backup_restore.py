@@ -58,6 +58,15 @@ def _run_backup_script(
     env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
     merged_env = os.environ.copy()
+    # Running the script by file path puts scripts/ (not the repo root) on
+    # sys.path, so absolute imports like utils.db_path_helper fail without
+    # the repo root on PYTHONPATH.
+    existing_pythonpath = merged_env.get("PYTHONPATH")
+    merged_env["PYTHONPATH"] = (
+        str(ROOT)
+        if not existing_pythonpath
+        else str(ROOT) + os.pathsep + existing_pythonpath
+    )
     if env:
         merged_env.update(env)
     return subprocess.run(
