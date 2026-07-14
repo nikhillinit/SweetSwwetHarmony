@@ -9,13 +9,6 @@ Deferred work with enough context to pick up cold. Format: What / Why / Context 
 - **Context:** Repro in `.tmp/hermes-delib/queue-panel-20260710.json`; plan file `.omx/plans/harmonic-prioritized-development-queue-2026-07-10.md` is complete on disk. Violates the repo's own no-silent-caps/fail-closed posture.
 - **Depends on:** nothing.
 
-## CI: failure-issue composite action has no auto-close-on-recovery
-
-- **What:** Extend `.github/actions/failure-issue` (or add a paired step on workflow success) to close its labeled tracking issue with a link to the first green run, instead of leaving it open forever.
-- **Why:** After the 2026-07-12 provisioning failures, issues #300/#301 stayed open across four consecutive green runs and had to be closed by hand; a stale open failure-tracker trains operators to ignore the label.
-- **Context:** Action adopted by all three scheduled workflows (Daily Pipeline, Litestream Restore Verify Nightly, thesis-eval via #294/#298). Close-on-success needs the same label-lookup logic the open path already has.
-- **Depends on:** nothing.
-
 ## Hermes: gemini-provider test expectation broken on main
 
 - **What:** Fix `tests/ops/hermes/test_gemini_provider.py::test_project_config_enables_gemini_cli_without_api_key` — it expects gemini `supportsExecute=true`, but cbcab36 disabled the auth-dead gemini lane. Update the expectation (or parametrize on the provider-config state).
