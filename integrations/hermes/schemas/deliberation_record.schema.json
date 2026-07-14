@@ -63,7 +63,7 @@
         ],
         "properties": {
           "executor": {"type": "string", "minLength": 1},
-          "verdict": {"enum": ["approve", "block", "needs_changes", "skip"]},
+          "verdict": {"enum": ["approve", "block", "needs_changes", "skip", "error"]},
           "parsed": {"type": "boolean"},
           "success": {"type": "boolean"},
           "confidence": {"type": "number", "minimum": 0, "maximum": 1},
