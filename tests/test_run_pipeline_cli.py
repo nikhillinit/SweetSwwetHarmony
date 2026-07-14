@@ -1301,3 +1301,49 @@ class TestProductionDbSignalCountGuard:
 
         assert exc_info.value.code == 2
         mock_cmd.assert_not_called()
+
+
+class TestPrivateGraphDbPathDefaults:
+    """Q7 residual: the four private-graph subcommands must not default
+    --db-path to a cwd-relative private_graph.db (stray-DB bug class,
+    reproduced live 2026-07-14 from a worktree cwd)."""
+
+    @pytest.mark.parametrize(
+        "argv",
+        [
+            ["import-emails", "--mbox", "x.mbox", "--email", "me@x.com"],
+            ["sync-lps"],
+            ["relationship-health"],
+            ["warm-intros", "--domain", "a.com"],
+        ],
+        ids=["import-emails", "sync-lps", "relationship-health", "warm-intros"],
+    )
+    def test_private_graph_subcommands_have_no_cwd_default(self, argv):
+        parser = create_parser()
+        args = parser.parse_args(argv)
+        assert args.db_path is None
+
+    def test_source_has_no_cwd_relative_private_graph_fallback(self):
+        import run_pipeline
+        from pathlib import Path
+
+        source = Path(run_pipeline.__file__).read_text(encoding="utf-8")
+        assert 'or "private_graph.db"' not in source
+        assert 'default="private_graph.db"' not in source
+
+    def test_helper_resolves_via_private_graph_resolver(self, monkeypatch, tmp_path):
+        from pathlib import Path
+
+        from run_pipeline import _private_graph_db_path
+
+        target = tmp_path / "pg.db"
+        monkeypatch.setenv("PRIVATE_GRAPH_DB_PATH", str(target))
+        args = SimpleNamespace(db_path=None)
+        assert Path(_private_graph_db_path(args)) == target.resolve()
+
+    def test_helper_explicit_db_path_wins(self, tmp_path):
+        from run_pipeline import _private_graph_db_path
+
+        explicit = str(tmp_path / "explicit.db")
+        args = SimpleNamespace(db_path=explicit)
+        assert _private_graph_db_path(args) == explicit
