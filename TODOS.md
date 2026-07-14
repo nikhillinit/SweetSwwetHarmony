@@ -9,13 +9,6 @@ Deferred work with enough context to pick up cold. Format: What / Why / Context 
 - **Context:** Repro in `.tmp/hermes-delib/queue-panel-20260710.json`; plan file `.omx/plans/harmonic-prioritized-development-queue-2026-07-10.md` is complete on disk. Violates the repo's own no-silent-caps/fail-closed posture.
 - **Depends on:** nothing.
 
-## CI: ruleset-parity drift check (live ruleset vs runbook)
-
-- **What:** Script (or CI job) that reads the active default-branch ruleset via `gh api` and diffs its required checks against the check-list in `docs/runbooks/branch-protection-setup.md`; nonzero exit on drift.
-- **Why:** Queue item 1's acceptance criterion "live ruleset output and the runbook list the same checks" is otherwise verified once, manually, then drifts forever — the drift class that left the ruleset requiring only `Core Regression Suite` out of 7 green merge gates.
-- **Context:** Automates Q1's parity criterion after Q1 lands; needs a token with ruleset read scope if run in CI, otherwise a local ops script is enough.
-- **Depends on:** Queue item 1 landed 2026-07-11 (ruleset 12778551 live) — unblocked.
-
 ## Hermes: gemini-provider test expectation broken on main
 
 - **What:** Fix `tests/ops/hermes/test_gemini_provider.py::test_project_config_enables_gemini_cli_without_api_key` — it expects gemini `supportsExecute=true`, but cbcab36 disabled the auth-dead gemini lane. Update the expectation (or parametrize on the provider-config state).
