@@ -19,6 +19,18 @@ from discovery_engine.mcp_server import CollectorResult, CollectorStatus
 # FIXTURES
 # =============================================================================
 
+@pytest.fixture(autouse=True)
+def no_heartbeat_writes():
+    """Keep collector heartbeat bookkeeping from writing state/collectors.json.
+
+    The pipeline records collector heartbeats to a cwd-relative tracked file;
+    these unit tests only exercise collector wiring, so stub the writers out.
+    """
+    with patch("workflows.pipeline.initialize_collector_state"), \
+         patch("workflows.pipeline.record_collector_heartbeat"):
+        yield
+
+
 @pytest.fixture
 def mock_store():
     """Create a mock signal store."""
@@ -31,6 +43,10 @@ def mock_store():
         "qualified": 0,
         "pushed": 0,
     })
+    # The pipeline's per-collector telemetry awaits store._db.execute(...)
+    # when a _db handle is present.  A bare MagicMock is not awaitable, so
+    # expose no DB handle and let the telemetry count short-circuit to None.
+    store._db = None
     return store
 
 
