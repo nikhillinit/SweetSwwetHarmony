@@ -375,6 +375,33 @@ jobs:
 
           echo "Litestream replication complete"
 
+  close-failure-tracker:
+    name: Close Failure Tracker on Recovery
+    runs-on: ubuntu-latest
+    needs: run-pipeline
+    if: success()
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      # local composite actions cannot be resolved without a checkout
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Close failure tracking issue with green-run link
+        uses: ./.github/actions/failure-issue
+        with:
+          mode: close
+          title: 'Daily Pipeline: run failed'
+          label: daily-pipeline-failure
+          workflow-name: ${{ github.workflow }}
+          body: |
+            ## Recovered
+
+            The Daily Pipeline completed successfully. Auto-closing this
+            failure tracker; the link below is the first green run after
+            the tracked failure(s).
+
   notify-on-failure:
     name: Notify on Failure
     runs-on: ubuntu-latest
