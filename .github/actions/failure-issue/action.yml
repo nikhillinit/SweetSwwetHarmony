@@ -1,8 +1,10 @@
 name: 'Failure Issue'
 description: >-
-  Open or update ONE tracking issue for a workflow failure. Deduplicates by
-  label: if an open issue carrying the label exists, a comment with the new
-  occurrence is added instead of creating a duplicate issue. Requires
+  Open or update ONE tracking issue for a workflow failure, or close it on
+  recovery. Deduplicates by label: in 'open' mode, if an open issue carrying
+  the label exists, a comment with the new occurrence is added instead of
+  creating a duplicate issue; in 'close' mode, any open issue carrying the
+  label is commented with the recovering run and closed. Requires
   'issues: write' on the calling job.
 
 inputs:
@@ -12,8 +14,15 @@ inputs:
   label:
     description: >-
       Dedupe label. An open issue with this label is updated (commented on)
-      instead of opening a new one.
+      instead of opening a new one, or closed in 'close' mode.
     required: true
+  mode:
+    description: >-
+      'open' (default) opens or updates the tracking issue on failure.
+      'close' closes any open issue carrying the label, commenting with a
+      link to the recovering (first green) run.
+    required: false
+    default: 'open'
   body:
     description: 'Issue/comment body (markdown). Run metadata is appended automatically.'
     required: true
@@ -21,6 +30,12 @@ inputs:
     description: 'Human-readable workflow name referenced in the issue'
     required: false
     default: ${{ github.workflow }}
+  recovery-run-id:
+    description: >-
+      Run ID linked from recovery comments. Defaults to the current run; a
+      workflow_run observer can pass the ID of the successful source run.
+    required: false
+    default: ${{ github.run_id }}
   github-token:
     description: 'Token used to list/create/comment on issues'
     required: false
@@ -29,20 +44,28 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Open or update tracking issue
+    - name: Open, update, or close tracking issue
       uses: actions/github-script@v7
       env:
         ISSUE_TITLE: ${{ inputs.title }}
         ISSUE_LABEL: ${{ inputs.label }}
         ISSUE_BODY: ${{ inputs.body }}
+        ISSUE_MODE: ${{ inputs.mode }}
         WORKFLOW_NAME: ${{ inputs.workflow-name }}
+        RECOVERY_RUN_ID: ${{ inputs.recovery-run-id }}
       with:
         github-token: ${{ inputs.github-token }}
         script: |
           const title = process.env.ISSUE_TITLE;
           const label = process.env.ISSUE_LABEL;
+          const mode = process.env.ISSUE_MODE || 'open';
           const workflowName = process.env.WORKFLOW_NAME;
-          const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${process.env.GITHUB_RUN_ID}`;
+          const recoveryRunId = process.env.RECOVERY_RUN_ID || process.env.GITHUB_RUN_ID;
+          if (!/^\d+$/.test(recoveryRunId)) {
+            core.setFailed(`Invalid recovery run ID '${recoveryRunId}'`);
+            return;
+          }
+          const runUrl = `${process.env.GITHUB_SERVER_URL}/${process.env.GITHUB_REPOSITORY}/actions/runs/${recoveryRunId}`;
           const body = [
             process.env.ISSUE_BODY,
             '',
@@ -52,12 +75,41 @@ runs:
             `[View workflow run](${runUrl})`,
           ].join('\n');
 
+          if (mode !== 'open' && mode !== 'close') {
+            core.setFailed(`Unknown mode '${mode}' (expected 'open' or 'close')`);
+            return;
+          }
+
           const issues = await github.rest.issues.listForRepo({
             owner: context.repo.owner,
             repo: context.repo.repo,
             state: 'open',
             labels: label,
           });
+
+          if (mode === 'close') {
+            if (issues.data.length === 0) {
+              core.info(`No open tracking issue with label '${label}'; nothing to close`);
+              return;
+            }
+            for (const issue of issues.data) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: body,
+              });
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                state: 'closed',
+                state_reason: 'completed',
+              });
+              core.info(`Closed tracking issue #${issue.number} after recovery`);
+            }
+            return;
+          }
 
           if (issues.data.length > 0) {
             const existing = issues.data[0];
