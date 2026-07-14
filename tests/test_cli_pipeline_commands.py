@@ -315,12 +315,17 @@ class TestSyncLpsCommand:
             assert exc_info.value.code == 1
 
     @pytest.mark.asyncio
-    async def test_sync_lps_default_db_path(self, monkeypatch, tmp_path):
-        """Default --db-path should be 'private_graph.db'."""
+    async def test_sync_lps_default_db_path_resolves_off_cwd(self, monkeypatch, tmp_path):
+        """With no --db-path, the store must open the resolver's path, never a
+        cwd-relative private_graph.db (Q7 residual; stray-DB bug class)."""
+        from pathlib import Path
+
         from run_pipeline import cmd_sync_lps
 
         monkeypatch.setenv("NOTION_API_KEY", "test-key")
         monkeypatch.setenv("NOTION_LP_DATABASE_ID", "test-db-id")
+        target = tmp_path / "pg.db"
+        monkeypatch.setenv("PRIVATE_GRAPH_DB_PATH", str(target))
 
         mock_sync = AsyncMock()
         mock_sync.sync = AsyncMock(return_value=[])
@@ -342,6 +347,49 @@ class TestSyncLpsCommand:
             args.dry_run = False
             args.database_id = None
             args.user_email = "user@example.com"
-            args.db_path = None  # Should fall back to "private_graph.db"
+            args.db_path = None
 
             await cmd_sync_lps(args)
+
+        assert Path(store_init_args["db_path"]) == target.resolve()
+
+
+class TestRelationshipHealthDbPath:
+    """cmd_relationship_health must resolve the private graph DB off the cwd."""
+
+    @pytest.mark.asyncio
+    async def test_relationship_health_default_db_path_resolves_off_cwd(
+        self, monkeypatch, tmp_path
+    ):
+        from pathlib import Path
+
+        from run_pipeline import cmd_relationship_health
+
+        target = tmp_path / "pg.db"
+        monkeypatch.setenv("PRIVATE_GRAPH_DB_PATH", str(target))
+
+        mock_store = MagicMock()
+        mock_store.initialize = AsyncMock()
+        mock_store.close = AsyncMock()
+
+        mock_report = MagicMock()
+        mock_report.to_dict.return_value = {}
+        mock_monitor = MagicMock()
+        mock_monitor.generate_report = AsyncMock(return_value=mock_report)
+
+        with patch(
+            "storage.relationship_store.RelationshipStore", return_value=mock_store
+        ) as store_cls, patch(
+            "utils.relationship_health.RelationshipHealthMonitor",
+            return_value=mock_monitor,
+        ):
+            args = MagicMock()
+            args.db_path = None
+            args.user_email = "user@example.com"
+            args.output_json = True
+            args.email_stale_days = 7
+            args.lp_stale_days = 3
+
+            await cmd_relationship_health(args)
+
+        assert Path(store_cls.call_args.kwargs["db_path"]) == target.resolve()
