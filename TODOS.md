@@ -37,13 +37,6 @@ Deferred work with enough context to pick up cold. Format: What / Why / Context 
 - **Context:** Documented in `.tmp/queue-exec-20260710/execution-status.md` follow-ups (2026-07-10). Local-only failure.
 - **Depends on:** a decision whether gemini stays disabled (current state: disabled, auth-dead).
 
-## Pipeline: Q7 residual private-graph `--db-path` cwd defaults
-
-- **What:** Four `run_pipeline.py` CLI subcommands (import-emails, relationship scan, relationship-health, warm-intros) still default `--db-path` to cwd-relative `private_graph.db` via argparse defaults instead of `resolve_private_graph_db_path()`.
-- **Why:** The same class of cwd-relative DB bug that Q7/#297 fixed in the pipeline path survives on these operator-invoked subcommands; running them from a worktree would create a stray DB.
-- **Context:** Out of 5A scope per the 2026-07-10 queue adjudication; noted in PR #284's resolved review thread as residual exposure.
-- **Depends on:** nothing.
-
 ## Local suite: pre-existing failing tests on main (not in CI gates)
 
 - **What:** Triage/fix the known local-only failures: `test_backup_restore.py` TestBackupMain (subprocess sys.path, 4), `test_db_hardening_priority_scripts.py` (6), `test_healthcheck_startup.py` (14), `test_migration_v42_v43.py` (schema-version assert vs v53), `test_pipeline_news_collectors.py` (stale mock fixture, 9/11).
