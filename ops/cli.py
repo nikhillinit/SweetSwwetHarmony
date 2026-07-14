@@ -1682,6 +1682,15 @@ Tip:
     except Exception as e:
         print(f"Warning: Hermes CLI registration failed: {e}", file=sys.stderr)
 
+    # ── trust-release status commands ───────────────────────────────
+    try:
+        from ops.trust_cli import register_trust_commands
+        register_trust_commands(subparsers)
+    except ImportError:
+        pass  # Trust module not installed
+    except Exception as e:
+        print(f"Warning: Trust CLI registration failed: {e}", file=sys.stderr)
+
     args = parser.parse_args()
 
     try:
