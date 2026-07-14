@@ -159,15 +159,25 @@ async def test_gemini_cli_uses_headless_plan_mode_on_windows_cmd_shim(
     assert captured["kwargs"]["cwd"] != str(PROJECT_ROOT)
 
 
-def test_project_config_enables_gemini_cli_without_api_key(monkeypatch) -> None:
+def test_project_config_keeps_gemini_permanently_deprecated(monkeypatch) -> None:
+    """Pin the operator ruling: gemini is permanently deprecated.
+
+    The Google lane is antigravity (agy), reviewer-only. This test must fail
+    if anyone re-enables the gemini executor or grants it execute support in
+    the project routing config.
+    """
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.setattr("shutil.which", lambda name: f"/usr/bin/{name}")
     config = load_config(PROJECT_ROOT / ".claude" / "hermes" / "model-routing.json")
 
     gemini = config.executors["gemini"]
-    assert gemini.supports_execute is True
+    assert gemini.supports_execute is False
+    assert gemini.enabled is False
     assert gemini.env == []
-    assert "gemini" in config.routing.fallback_order
+    assert "gemini" not in config.routing.fallback_order
+
+    with pytest.raises(ValueError, match="gemini"):
+        build_executor("gemini", config, gemini_client=FakeGeminiClient())
 
     report = doctor(config)
     assert "env:GEMINI_API_KEY" not in report.providers["gemini"].checks_by_name
