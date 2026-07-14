@@ -14,11 +14,11 @@
 
 ## Active Sprint
 
-- **Branch:** `prep/red-team-hybrid-prep` · **Move 0** ends 2026-04-19 · **Next gate:** Step 4B regret check 2026-04-18
-- **Canonical plan:** `docs/plans/2026-04-06-red-team-hybrid/00-strategy.md` (NOT the sibling `lob-progress-eval/`)
-- **Protected paths during Move 0** (enforced by `scripts/red-team-hybrid/check_protected_paths.sh`):
-  `collectors/` `workflows/` `governance/` `monitoring/` `connectors/` `storage/migrations/`
-- **Vocabulary + deeper state:** see `@docs/claude/active-sprint.md`
+- **Move:** "Q10 Fallback Promotion" · started 2026-07-14 · **Track A (TODOS burn-down) COMPLETE** (PRs #304-#308 merged) · **Track B in telemetry accumulation**
+- **Canonical plan:** `.omx/plans/q10-and-backlog-handoff-20260714.md`; live state doc: `docs/claude/active-sprint.md` (rebuilt 2026-07-14 at `2f8edad`)
+- **Next gate:** by-provider FP/FN evidence from real routed Hermes runs -> four donor items -> low-risk canary -> explicit operator promotion decision. `routing.runtimeFallbackEnabled` stays **false** until then; config changes go through `hermes task config-promote --policy-evidence`, never a raw file edit.
+- **Provider truth:** codex repaired (host needs codex-cli >= 0.144.4); **gemini permanently deprecated** (agy is the Google lane, reviewer-only); kimi working; claude orchestrator.
+- **Work discipline:** fresh worktree from origin/main per slice, TDD (RED first), exact-path staging, secret scan, PR through the 7 gates, operator merges.
 - **Maintenance:** regenerate at the start of each new move via the `claude-md-improver` skill; press `#` mid-session to capture incremental learnings.
 
 ## Investment Thesis
