@@ -1274,6 +1274,23 @@ async def cmd_embeddings(args):
 # EMAIL IMPORT COMMAND
 # =============================================================================
 
+def _private_graph_db_path(args) -> str:
+    """Resolve the private graph DB path for CLI subcommands.
+
+    Explicit --db-path wins; otherwise defer to
+    storage.db_paths.resolve_private_graph_db_path() (PRIVATE_GRAPH_DB_PATH
+    env, else beside the canonical signals DB; fails closed on in-tree
+    paths). Never defaults to a cwd-relative private_graph.db -- running
+    from a worktree cwd would silently create a stray DB (Q7 residual).
+    """
+    explicit = getattr(args, "db_path", None)
+    if explicit:
+        return explicit
+    from storage.db_paths import resolve_private_graph_db_path
+
+    return str(resolve_private_graph_db_path())
+
+
 async def cmd_import_emails(args):
     """Import emails from MBOX file into relationship graph."""
     from connectors.local_email_scanner import LocalEmailScanner
@@ -1281,7 +1298,7 @@ async def cmd_import_emails(args):
 
     mbox_path = args.mbox
     my_email = args.email
-    db_path = getattr(args, "db_path", None) or "private_graph.db"
+    db_path = _private_graph_db_path(args)
     dry_run = getattr(args, "dry_run", False)
 
     print(BANNER_SEP)
@@ -1414,7 +1431,7 @@ async def cmd_sync_lps(args):
         print("ERROR: --user-email required or set USER_EMAIL environment variable")
         sys.exit(1)
 
-    db_path = getattr(args, "db_path", None) or "private_graph.db"
+    db_path = _private_graph_db_path(args)
 
     # Store relationships via RelationshipStore
     from storage.relationship_store import RelationshipStore
@@ -1456,7 +1473,7 @@ async def cmd_relationship_health(args):
     from utils.relationship_health import RelationshipHealthMonitor
     from storage.relationship_store import RelationshipStore
 
-    db_path = getattr(args, "db_path", None) or "private_graph.db"
+    db_path = _private_graph_db_path(args)
     user_email = getattr(args, "user_email", None) or os.environ.get("USER_EMAIL", "")
     output_json = getattr(args, "output_json", False)
 
@@ -1534,7 +1551,7 @@ async def cmd_warm_intros(args):
     from utils.warm_intro_boost import WarmIntroBoost
     from utils.warm_intro_enricher import WarmIntroEnricher
 
-    db_path = getattr(args, "db_path", None) or "private_graph.db"
+    db_path = _private_graph_db_path(args)
     user_email = getattr(args, "user_email", None) or os.environ.get("USER_EMAIL", "")
     output_json = getattr(args, "output_json", False)
     verbose = getattr(args, "verbose", False)
@@ -3815,8 +3832,11 @@ Examples:
     import_emails_parser.add_argument(
         "--db-path",
         type=str,
-        default="private_graph.db",
-        help="Path to relationship database (default: private_graph.db)",
+        default=None,
+        help=(
+            "Path to relationship database (default: PRIVATE_GRAPH_DB_PATH "
+            "env, else private_graph.db beside the canonical signals DB)"
+        ),
     )
     import_emails_parser.add_argument(
         "--dry-run",
@@ -3976,8 +3996,11 @@ Examples:
     sync_lps_parser.add_argument(
         "--db-path",
         type=str,
-        default="private_graph.db",
-        help="Path to relationship database (default: private_graph.db)",
+        default=None,
+        help=(
+            "Path to relationship database (default: PRIVATE_GRAPH_DB_PATH "
+            "env, else private_graph.db beside the canonical signals DB)"
+        ),
     )
 
     # --- relationship-health command ---
@@ -4013,8 +4036,11 @@ Examples:
     rel_health_parser.add_argument(
         "--db-path",
         type=str,
-        default="private_graph.db",
-        help="Path to private graph database (default: private_graph.db)",
+        default=None,
+        help=(
+            "Path to private graph database (default: PRIVATE_GRAPH_DB_PATH "
+            "env, else private_graph.db beside the canonical signals DB)"
+        ),
     )
     rel_health_parser.add_argument(
         "--email-stale-days",
@@ -4079,8 +4105,11 @@ Examples:
     warm_intros_parser.add_argument(
         "--db-path",
         type=str,
-        default="private_graph.db",
-        help="Path to private graph database (default: private_graph.db)",
+        default=None,
+        help=(
+            "Path to private graph database (default: PRIVATE_GRAPH_DB_PATH "
+            "env, else private_graph.db beside the canonical signals DB)"
+        ),
     )
     warm_intros_parser.add_argument(
         "--verbose", "-v",
