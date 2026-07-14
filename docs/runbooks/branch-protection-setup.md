@@ -22,6 +22,21 @@ gh api repos/nikhillinit/SweetSwwetHarmony/rulesets
 gh api repos/nikhillinit/SweetSwwetHarmony/rulesets/12778551
 ```
 
+### Parity check (automated)
+
+Diff the live ruleset against this runbook's required-checks table (plus
+enforcement and the strict up-to-date policy) with:
+
+```bash
+python -m scripts.ci.check_ruleset_parity          # human output
+python -m scripts.ci.check_ruleset_parity --json   # machine-readable
+```
+
+Exit 0 = parity, 1 = drift, 2 = fetch/parse error. The script parses the
+table under "Required status checks" below, so keep that table authoritative
+when the check set changes. Contract tests:
+`tests/ci/test_ruleset_parity_check.py`.
+
 The exact JSON captured on 2026-07-10 (before the Q1 change) is stored at
 `docs/runbooks/evidence/ruleset-prior-20260710.json`. At that point the
 ruleset enforced: deletion protection, non-fast-forward protection, and a
