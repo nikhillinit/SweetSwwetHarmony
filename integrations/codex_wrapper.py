@@ -39,7 +39,9 @@ import json
 import logging
 import os
 import shutil
+import signal
 import subprocess
+import sys
 try:
     import tomllib
 except ModuleNotFoundError:  # pragma: no cover - Python < 3.11 fallback
@@ -183,6 +185,52 @@ class CodexResponse:
             "error": self.error,
             "success": self.success,
         }
+
+
+# Bound on how long to wait for a killed process tree to be reaped after the
+# deadline fires. The tree kill closes the inherited pipes, so communicate()
+# should return almost immediately; this only guards against a stuck reap.
+_REAP_TIMEOUT_SECONDS = 10
+
+
+def _terminate_process_tree(pid: int | None) -> None:
+    """Forcefully terminate a process AND all of its descendants.
+
+    The reviewer lane launches through a shell (cmd.exe on Windows), which in
+    turn spawns codex -> node -> many grandchildren. Every descendant inherits
+    the wrapper's stdout/stderr pipe handles, so ``communicate()`` cannot reach
+    EOF while any of them survives. Killing only the immediate child (what
+    ``process.kill()`` does) leaves that tree -- and the pipes it holds open --
+    alive, which is how the 300s reviewer deadline was silently defeated and a
+    lane hung for ~11h (Q10 Track B, 2026-07-15). The deadline handler must
+    reap the whole tree.
+
+    Best-effort and non-raising: cleanup failures must never propagate into the
+    caller, which is already returning a timeout result.
+    """
+    if pid is None:
+        return
+    try:
+        if sys.platform == "win32":
+            # taskkill /T terminates the process and its descendant tree; /F
+            # forces it. This is the one reliable way to close the inherited
+            # pipe handles held by node grandchildren.
+            subprocess.run(
+                ["taskkill", "/T", "/F", "/PID", str(pid)],
+                capture_output=True,
+                check=False,
+            )
+        else:
+            # POSIX best-effort. We deliberately do NOT killpg here: the shell
+            # child is not guaranteed to be a session/group leader, so a
+            # process-group kill could target our own group. Kill the child pid
+            # directly; the Windows path above is the one that hung in prod.
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+    except Exception:  # pragma: no cover - reaping is strictly best-effort
+        pass
 
 
 class CodexCLI:
@@ -740,7 +788,6 @@ Verify the implementation meets all requirements. Identify any remaining issues.
             # piped stdin to EOF even when the prompt is an argument, so an
             # inherited open pipe (any non-TTY parent: CI, Hermes
             # orchestration) hangs the run until timeout with empty content.
-            import sys
             if sys.platform == "win32":
                 shell_cmd = subprocess.list2cmdline(full_command)
                 process = await asyncio.create_subprocess_shell(
@@ -759,14 +806,26 @@ Verify the implementation meets all requirements. Identify any remaining issues.
                     env={**os.environ, "CODEX_APPROVAL": self.approval_mode.value},
                 )
 
-            try:
-                stdout, stderr = await asyncio.wait_for(
-                    process.communicate(input=stdin_data or b""),
-                    timeout=self.timeout_seconds,
-                )
-            except asyncio.TimeoutError:
-                process.kill()
-                await process.wait()
+            # Enforce the deadline WITHOUT relying on wait_for() cancelling
+            # communicate(). On the Windows Proactor loop, cancelling
+            # communicate() can itself block on the same pipe drain that is
+            # stuck (grandchildren hold the inherited pipe handles open), which
+            # silently defeated the 300s deadline and hung a lane ~11h (Q10
+            # Track B, 2026-07-15). Instead: wait on the task without cancelling
+            # it, and on expiry kill the WHOLE process tree first -- that closes
+            # the inherited pipes so communicate() can return -- then reap.
+            comm_task = asyncio.ensure_future(
+                process.communicate(input=stdin_data or b"")
+            )
+            done, _pending = await asyncio.wait(
+                {comm_task}, timeout=self.timeout_seconds
+            )
+            if comm_task not in done:
+                _terminate_process_tree(process.pid)
+                try:
+                    await asyncio.wait_for(comm_task, timeout=_REAP_TIMEOUT_SECONDS)
+                except (asyncio.TimeoutError, Exception):
+                    comm_task.cancel()
                 return CodexResponse(
                     content="",
                     exit_code=-1,
@@ -775,6 +834,8 @@ Verify the implementation meets all requirements. Identify any remaining issues.
                     execution_time_ms=self.timeout_seconds * 1000,
                     error=f"Command timed out after {self.timeout_seconds} seconds",
                 )
+
+            stdout, stderr = comm_task.result()
 
             end_time = datetime.now()
             execution_time_ms = int((end_time - start_time).total_seconds() * 1000)
