@@ -2,11 +2,7 @@
 
 from __future__ import annotations
 
-import asyncio
 import os
-import shutil
-import subprocess
-import sys
 import tempfile
 import time
 from dataclasses import dataclass, field
@@ -15,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from ..cli_errors import missing_binary_error
+from ..process_runtime import ProcessOutcome, resolve_executable, run_process
 
 
 @dataclass(frozen=True)
@@ -70,7 +67,7 @@ class KimiCLIClient:
         context_files: list[str] | None = None,
     ) -> KimiCLIResponse:
         start = time.perf_counter()
-        resolved = shutil.which(self.binary)
+        resolved = resolve_executable(self.binary)
         if resolved is None:
             return KimiCLIResponse(
                 content="",
@@ -86,38 +83,48 @@ class KimiCLIClient:
         if self.env:
             env.update(self.env)
 
-        process = await _create_cli_process(
+        # The owned process boundary reaps the WHOLE tree on timeout. The Kimi
+        # wrapper previously used a parent-only ``process.kill()`` -- the same
+        # class of bug that hung a codex reviewer lane ~11h (Q10 Track B,
+        # 2026-07-15) by leaving pipe-holding grandchildren alive.
+        result = await run_process(
             _kimi_cli_args(resolved, work_dir=self.cwd),
+            stdin_data=stdin.encode("utf-8"),
             env=env,
             cwd=self.cwd,
+            timeout_seconds=self.timeout_seconds,
         )
-        try:
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(stdin.encode("utf-8")),
-                timeout=self.timeout_seconds,
-            )
-        except asyncio.TimeoutError:
-            process.kill()
-            stdout, stderr = await process.communicate()
+        elapsed_ms = int((time.perf_counter() - start) * 1000)
+
+        if result.outcome is ProcessOutcome.PROVIDER_NOT_ESTABLISHED:
+            # Resolved but the provider was never established (exec failure).
+            # Keep the missing-binary shape so the classifier reads spawn_error.
             return KimiCLIResponse(
-                content=stdout.decode("utf-8", errors="replace"),
+                content="",
+                model=self.model,
+                finish_reason="missing_binary",
+                execution_time_ms=elapsed_ms,
+                error=missing_binary_error(self.binary),
+                exit_code=127,
+            )
+
+        if result.outcome is ProcessOutcome.TIMED_OUT:
+            return KimiCLIResponse(
+                content="",
                 model=self.model,
                 finish_reason="timeout",
-                execution_time_ms=int((time.perf_counter() - start) * 1000),
-                error=(
-                    f"{self.binary!r} timed out after {self.timeout_seconds}s: "
-                    + stderr.decode("utf-8", errors="replace")
-                ),
+                execution_time_ms=elapsed_ms,
+                error=f"{self.binary!r} timed out after {self.timeout_seconds}s",
                 exit_code=-1,
             )
 
-        exit_code = process.returncode or 0
-        error = stderr.decode("utf-8", errors="replace") if exit_code else None
+        exit_code = result.exit_code if result.exit_code is not None else 0
+        error = result.stderr.decode("utf-8", errors="replace") if exit_code else None
         return KimiCLIResponse(
-            content=stdout.decode("utf-8", errors="replace"),
+            content=result.stdout.decode("utf-8", errors="replace"),
             model=self.model,
             finish_reason="stop" if exit_code == 0 else "error",
-            execution_time_ms=int((time.perf_counter() - start) * 1000),
+            execution_time_ms=elapsed_ms,
             error=error,
             exit_code=exit_code,
         )
@@ -181,32 +188,6 @@ def _kimi_cli_args(resolved_binary: str, *, work_dir: Path) -> list[str]:
         "text",
         "--final-message-only",
     ]
-
-
-async def _create_cli_process(
-    args: list[str],
-    *,
-    env: dict[str, str],
-    cwd: Path,
-) -> asyncio.subprocess.Process:
-    cwd.mkdir(parents=True, exist_ok=True)
-    if sys.platform == "win32" and Path(args[0]).suffix.lower() in {".cmd", ".bat"}:
-        return await asyncio.create_subprocess_shell(
-            subprocess.list2cmdline(args),
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=env,
-            cwd=str(cwd),
-        )
-    return await asyncio.create_subprocess_exec(
-        *args,
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        env=env,
-        cwd=str(cwd),
-    )
 
 
 def _default_cli_cwd() -> Path:

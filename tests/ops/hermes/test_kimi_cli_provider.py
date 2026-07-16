@@ -38,7 +38,8 @@ async def test_kimi_cli_uses_print_mode_on_windows_cmd_shim(
     tmp_path: Path,
 ) -> None:
     captured = {}
-    monkeypatch.setattr("integrations.llm_cli.kimi.sys.platform", "win32")
+    # The shell-vs-exec decision now lives in the owned process boundary.
+    monkeypatch.setattr("integrations.process_runtime.sys.platform", "win32")
     monkeypatch.setattr(
         "shutil.which",
         lambda binary: r"C:\Users\nikhi\AppData\Roaming\npm\kimi.CMD",
@@ -73,7 +74,7 @@ async def test_kimi_cli_uses_print_mode_on_windows_cmd_shim(
 
 async def test_kimi_cli_uses_exec_for_windows_exe(monkeypatch) -> None:
     captured = {}
-    monkeypatch.setattr("integrations.llm_cli.kimi.sys.platform", "win32")
+    monkeypatch.setattr("integrations.process_runtime.sys.platform", "win32")
     monkeypatch.setattr(
         "shutil.which",
         lambda binary: r"C:\Users\nikhi\.local\bin\kimi-cli.exe",
