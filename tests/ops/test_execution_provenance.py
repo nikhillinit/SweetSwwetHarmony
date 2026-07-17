@@ -45,12 +45,15 @@ def test_direct_exec_establishment_failure_is_sealed_and_non_mutating() -> None:
     assert "secret-bearing" not in str(provenance.to_dict())
 
 
-def test_shell_launch_cannot_claim_provider_not_established() -> None:
-    with pytest.raises(ValueError, match="shell"):
-        ExecutionProvenance(
-            origin=ExecutionOrigin.PROVIDER_NOT_ESTABLISHED,
-            launch_form=LaunchForm.SHELL,
-        )
+def test_shell_spawn_failure_is_safe_but_not_launch_attested() -> None:
+    provenance = ExecutionProvenance(
+        origin=ExecutionOrigin.PROVIDER_NOT_ESTABLISHED,
+        launch_form=LaunchForm.SHELL,
+        diagnostic_code="spawn_oserror",
+    )
+
+    assert provenance.mutation_possible is False
+    assert is_provider_not_established_attested(provenance) is False
 
 
 def test_bare_exit_127_is_runtime_and_mutation_possible() -> None:
@@ -96,6 +99,13 @@ def test_pre_resolver_missing_binary_is_safe_but_not_launch_attested() -> None:
 
 
 def test_provenance_rejects_contradictory_and_unbounded_states() -> None:
+    for invalid_version in (True, 1.0):
+        with pytest.raises(TypeError, match="version"):
+            ExecutionProvenance(
+                version=invalid_version,  # type: ignore[arg-type]
+                origin=ExecutionOrigin.UNKNOWN,
+                launch_form=LaunchForm.UNKNOWN,
+            )
     with pytest.raises(ValueError, match="exit_code"):
         ExecutionProvenance(
             origin=ExecutionOrigin.TIMEOUT,

@@ -56,6 +56,8 @@ class ExecutionProvenance:
     version: int = CURRENT_EXECUTION_PROVENANCE_VERSION
 
     def __post_init__(self) -> None:
+        if isinstance(self.version, bool) or not isinstance(self.version, int):
+            raise TypeError("execution provenance version must be an integer")
         if self.version != CURRENT_EXECUTION_PROVENANCE_VERSION:
             raise ValueError(f"unsupported execution provenance version: {self.version}")
         if not isinstance(self.origin, ExecutionOrigin):
@@ -74,13 +76,6 @@ class ExecutionProvenance:
         ):
             raise ValueError("diagnostic_code must be a bounded non-secret code")
 
-        if (
-            self.origin is ExecutionOrigin.PROVIDER_NOT_ESTABLISHED
-            and self.launch_form is LaunchForm.SHELL
-        ):
-            raise ValueError(
-                "shell launches cannot attest that the provider was not established"
-            )
         if self.origin in {
             ExecutionOrigin.PROVIDER_NOT_ESTABLISHED,
             ExecutionOrigin.PROVIDER_REJECTED_PRE_SESSION,
@@ -199,6 +194,10 @@ def is_provider_not_established_attested(
 ) -> bool:
     """Pure structural attestation only; Hermes policy eligibility is separate."""
 
+    # A shell-process creation OSError can still prove no provider code ran,
+    # so the sealed origin remains PROVIDER_NOT_ESTABLISHED.  The shell launch
+    # form nevertheless stays ineligible: a later missing .cmd/.bat is only a
+    # shell exit and cannot provide the same structural attestation.
     return (
         provenance.origin is ExecutionOrigin.PROVIDER_NOT_ESTABLISHED
         and provenance.launch_form is LaunchForm.DIRECT_EXEC
