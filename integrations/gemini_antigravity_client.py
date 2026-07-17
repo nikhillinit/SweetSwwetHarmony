@@ -18,6 +18,11 @@ from .execution_provenance import (
     unresolved_provider_provenance,
 )
 from .process_runtime import ProcessOutcome, resolve_executable, run_process
+from .provider_environment import (
+    ChildExecutionContext,
+    ProviderIdentity,
+    build_provider_environment,
+)
 
 # Flag surfaces differ per installed binary: "gemini" is the Gemini CLI
 # (approval-mode/output-format/skip-trust), "antigravity" is the agy binary,
@@ -92,6 +97,7 @@ class GeminiAntigravityClient:
         self,
         prompt: str,
         context_files: list[str] | None = None,
+        execution_context: ChildExecutionContext | None = None,
     ) -> GeminiResponse:
         start = time.perf_counter()
         resolved = resolve_executable(self.binary)
@@ -111,9 +117,17 @@ class GeminiAntigravityClient:
         if context:
             stdin = f"{prompt}\n\n# Context files\n{context}"
 
-        env = os.environ.copy()
-        if self.env:
-            env.update(self.env)
+        provider = (
+            ProviderIdentity.ANTIGRAVITY
+            if self.flavor == "antigravity"
+            else ProviderIdentity.GEMINI
+        )
+        env = build_provider_environment(
+            provider,
+            source_env=os.environ,
+            overrides=self.env,
+            execution_context=execution_context,
+        )
 
         if self.flavor == "antigravity":
             cli_args = _agy_cli_args(

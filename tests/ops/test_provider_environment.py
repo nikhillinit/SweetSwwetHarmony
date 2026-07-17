@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 
@@ -189,3 +190,20 @@ def test_proxy_and_ca_inputs_require_explicit_capabilities() -> None:
 
     assert child["HTTPS_PROXY"] == "https://proxy.invalid"
     assert child["SSL_CERT_FILE"] == "/certs/ca.pem"
+
+
+def test_environment_log_contains_key_names_never_values(caplog) -> None:
+    with caplog.at_level(logging.DEBUG, logger="provider-environment"):
+        build_provider_environment(
+            ProviderIdentity.CODEX,
+            source_env=_source_environment(),
+            execution_context=ChildExecutionContext(
+                tool_capabilities=frozenset({ToolCapability.GITHUB})
+            ),
+        )
+
+    log_text = caplog.text
+    assert "OPENAI_API_KEY" in log_text
+    assert "GITHUB_TOKEN" in log_text
+    assert "openai-secret" not in log_text
+    assert "github-secret" not in log_text

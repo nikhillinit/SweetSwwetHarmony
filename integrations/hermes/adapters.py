@@ -11,6 +11,7 @@ from integrations.execution_provenance import (
 )
 from integrations.gemini_antigravity_client import GeminiAntigravityClient
 from integrations.llm_cli import KimiCLIClient
+from integrations.provider_environment import ChildExecutionContext
 
 from .config import RoutingConfig
 
@@ -46,6 +47,7 @@ class HermesExecutor(Protocol):
         self,
         prompt: str,
         context_files: list[str] | None = None,
+        execution_context: ChildExecutionContext | None = None,
     ) -> ExecutorResult:
         ...
 
@@ -61,8 +63,12 @@ class CodexHermesExecutor:
         self,
         prompt: str,
         context_files: list[str] | None = None,
+        execution_context: ChildExecutionContext | None = None,
     ) -> ExecutorResult:
-        response = await self.client.exec(prompt, context_files=context_files)
+        kwargs: dict[str, Any] = {"context_files": context_files}
+        if execution_context is not None:
+            kwargs["execution_context"] = execution_context
+        response = await self.client.exec(prompt, **kwargs)
         return ExecutorResult(
             executor="codex",
             success=response.success,
@@ -85,8 +91,12 @@ class KimiHermesExecutor:
         self,
         prompt: str,
         context_files: list[str] | None = None,
+        execution_context: ChildExecutionContext | None = None,
     ) -> ExecutorResult:
-        response = await self.client.exec(prompt, context_files=context_files)
+        kwargs: dict[str, Any] = {"context_files": context_files}
+        if execution_context is not None:
+            kwargs["execution_context"] = execution_context
+        response = await self.client.exec(prompt, **kwargs)
         return ExecutorResult(
             executor="kimi",
             success=response.success,
@@ -112,8 +122,12 @@ class GeminiHermesExecutor:
         self,
         prompt: str,
         context_files: list[str] | None = None,
+        execution_context: ChildExecutionContext | None = None,
     ) -> ExecutorResult:
-        response = await self.client.exec(prompt, context_files=context_files)
+        kwargs: dict[str, Any] = {"context_files": context_files}
+        if execution_context is not None:
+            kwargs["execution_context"] = execution_context
+        response = await self.client.exec(prompt, **kwargs)
         return ExecutorResult(
             executor=getattr(response, "executor", "gemini"),
             success=response.success,

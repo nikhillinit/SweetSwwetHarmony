@@ -50,8 +50,6 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
 
-from dotenv import load_dotenv
-
 from .cli_errors import missing_binary_error
 from .execution_provenance import (
     ExecutionProvenance,
@@ -59,9 +57,11 @@ from .execution_provenance import (
     unknown_execution_provenance,
 )
 from .process_runtime import ProcessOutcome, run_process
-
-# Load environment variables from .env file
-load_dotenv()
+from .provider_environment import (
+    ChildExecutionContext,
+    ProviderIdentity,
+    build_provider_environment,
+)
 
 _CODEX_MISSING_BINARY_ERROR = (
     f"{missing_binary_error('codex')}. Install with: npm install -g @openai/codex"
@@ -217,6 +217,7 @@ class CodexCLI:
         timeout_seconds: int = 300,
         model: str | None = None,
         reasoning_level: ReasoningLevel = DEFAULT_REASONING_LEVEL,
+        env: dict[str, str] | None = None,
     ):
         """
         Initialize Codex CLI wrapper.
@@ -233,6 +234,7 @@ class CodexCLI:
         self.timeout_seconds = timeout_seconds
         self.model = model or resolve_default_model()
         self.reasoning_level = reasoning_level
+        self.env = dict(env) if env else None
         self._codex_path: Optional[str] = None
 
     @property
@@ -267,6 +269,7 @@ class CodexCLI:
         prompt: str,
         sandbox: Optional[SandboxMode] = None,
         context_files: Optional[list[str]] = None,
+        execution_context: ChildExecutionContext | None = None,
     ) -> CodexResponse:
         """
         Execute a quick Codex consultation.
@@ -314,7 +317,7 @@ class CodexCLI:
         sandbox_mode = sandbox or self.sandbox_mode
         args.extend(["--sandbox", sandbox_mode.value])
 
-        return await self._run_command(args)
+        return await self._run_command(args, execution_context=execution_context)
 
     async def review(
         self,
@@ -702,6 +705,8 @@ Verify the implementation meets all requirements. Identify any remaining issues.
     async def _run_command(
         self,
         args: list[str],
+        *,
+        execution_context: ChildExecutionContext | None = None,
     ) -> CodexResponse:
         """
         Execute a Codex CLI command.
@@ -746,7 +751,15 @@ Verify the implementation meets all requirements. Identify any remaining issues.
         # ``process_runtime`` handles the shell-vs-exec launch and reaps the
         # WHOLE tree on timeout (the class of bug that hung a lane ~11h, Q10
         # Track B 2026-07-15).
-        env = {**os.environ, "CODEX_APPROVAL": self.approval_mode.value}
+        env = build_provider_environment(
+            ProviderIdentity.CODEX,
+            source_env=os.environ,
+            overrides={
+                **(self.env or {}),
+                "CODEX_APPROVAL": self.approval_mode.value,
+            },
+            execution_context=execution_context,
+        )
         start_time = datetime.now()
 
         try:
