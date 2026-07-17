@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import sys
 from typing import Any
 
 import integrations.codex_wrapper as codex_module
@@ -14,7 +16,11 @@ from integrations.execution_provenance import (
     provenance_from_process_result,
 )
 from integrations.gemini_antigravity_client import GeminiAntigravityClient
-from integrations.hermes.adapters import CodexHermesExecutor
+from integrations.hermes.adapters import (
+    CodexHermesExecutor,
+    GeminiHermesExecutor,
+    KimiHermesExecutor,
+)
 from integrations.llm_cli import KimiCLIClient
 from integrations.process_runtime import ProcessOutcome, ProcessRunResult
 from integrations.provider_environment import (
@@ -162,3 +168,63 @@ async def test_adapter_copies_same_sealed_provenance_and_execution_context() -> 
     assert client.execution_context is context
     assert result.provenance is provenance
     assert result.to_dict()["provenance"] == provenance.to_dict()
+
+
+async def test_authorized_mcp_context_flows_adapter_wrapper_to_real_child(
+    monkeypatch,
+) -> None:
+    code = (
+        "import json, os; print(json.dumps({"
+        "'mcp': os.environ.get('MCP_TOKEN'), "
+        "'github': os.environ.get('GITHUB_TOKEN')}))"
+    )
+    monkeypatch.setattr(
+        kimi_module,
+        "_kimi_cli_args",
+        lambda resolved, *, work_dir: [resolved, "-c", code],
+    )
+    client = KimiCLIClient(
+        binary=sys.executable,
+        env={"MCP_TOKEN": "mcp-secret", "GITHUB_TOKEN": "github-secret"},
+    )
+    context = ChildExecutionContext(
+        tool_capabilities=frozenset({ToolCapability.MCP})
+    )
+
+    result = await KimiHermesExecutor(client).execute(
+        "run the authorized MCP tool",
+        execution_context=context,
+    )
+
+    assert result.success is True
+    assert json.loads(result.content) == {"mcp": "mcp-secret", "github": None}
+    assert result.provenance.origin is ExecutionOrigin.RUNTIME
+    assert result.provenance.launch_form is LaunchForm.DIRECT_EXEC
+
+
+async def test_google_adapter_copies_provenance_and_execution_context() -> None:
+    provenance = provenance_from_process_result(_runtime_result())
+
+    class FakeClient:
+        def __init__(self) -> None:
+            self.execution_context = None
+
+        async def exec(self, _prompt, context_files=None, execution_context=None):
+            self.execution_context = execution_context
+            return google_module.GeminiResponse(
+                content="ok",
+                provenance=provenance,
+            )
+
+    client = FakeClient()
+    context = ChildExecutionContext(
+        tool_capabilities=frozenset({ToolCapability.NOTION})
+    )
+
+    result = await GeminiHermesExecutor(client).execute(
+        "review",
+        execution_context=context,
+    )
+
+    assert client.execution_context is context
+    assert result.provenance is provenance

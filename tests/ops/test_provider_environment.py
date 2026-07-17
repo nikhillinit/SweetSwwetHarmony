@@ -22,6 +22,8 @@ def _source_environment() -> dict[str, str]:
     return {
         "PATH": os.environ.get("PATH", os.defpath),
         "PATHEXT": os.environ.get("PATHEXT", ".EXE;.CMD;.BAT"),
+        "COMSPEC": r"C:\Windows\System32\cmd.exe",
+        "SYSTEMROOT": r"C:\Windows",
         "HOME": "/home/hermes",
         "USERPROFILE": r"C:\Users\hermes",
         "APPDATA": r"C:\Users\hermes\AppData\Roaming",
@@ -121,6 +123,8 @@ def test_required_process_home_config_and_locale_variables_are_preserved() -> No
     for key in (
         "PATH",
         "PATHEXT",
+        "COMSPEC",
+        "SYSTEMROOT",
         "HOME",
         "USERPROFILE",
         "APPDATA",
@@ -207,3 +211,33 @@ def test_environment_log_contains_key_names_never_values(caplog) -> None:
     assert "GITHUB_TOKEN" in log_text
     assert "openai-secret" not in log_text
     assert "github-secret" not in log_text
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows .cmd environment contract")
+async def test_scoped_environment_runs_real_windows_cmd_wrapper(tmp_path) -> None:
+    shim = tmp_path / "provider-probe.cmd"
+    shim.write_text(
+        "@echo off\r\n"
+        "if \"%COMSPEC%\"==\"\" exit /b 10\r\n"
+        "if \"%SYSTEMROOT%\"==\"\" exit /b 11\r\n"
+        "where python >nul 2>&1 || exit /b 12\r\n"
+        "python -c \"print('provider-cmd-ok')\"\r\n",
+        encoding="ascii",
+    )
+    child_env = build_provider_environment(
+        ProviderIdentity.CODEX,
+        source_env=os.environ,
+    )
+
+    for key in ("PATH", "PATHEXT", "COMSPEC", "SYSTEMROOT"):
+        assert child_env[key]
+
+    result = await run_process(
+        [str(shim)],
+        env=child_env,
+        timeout_seconds=30,
+    )
+
+    assert result.outcome is ProcessOutcome.COMPLETED
+    assert result.exit_code == 0
+    assert result.stdout.strip() == b"provider-cmd-ok"

@@ -29,7 +29,12 @@ import time
 import pytest
 
 import integrations.process_runtime as process_runtime
-from integrations.execution_provenance import LaunchForm
+from integrations.execution_provenance import (
+    ExecutionOrigin,
+    LaunchForm,
+    is_provider_not_established_attested,
+    provenance_from_process_result,
+)
 from integrations.process_runtime import (
     ProcessOutcome,
     ProcessRunResult,
@@ -169,6 +174,28 @@ async def test_run_process_missing_binary_is_not_established() -> None:
     assert result.exit_code is None
     assert result.establishment_error
     assert result.not_established is True
+
+
+async def test_shell_process_spawn_failure_is_non_attesting_not_established(
+    monkeypatch,
+) -> None:
+    async def fail_shell_spawn(*_args, **_kwargs):
+        raise FileNotFoundError("shell unavailable")
+
+    monkeypatch.setattr(process_runtime.sys, "platform", "win32")
+    monkeypatch.setattr(process_runtime, "_spawn_owned", fail_shell_spawn)
+
+    result = await run_process(
+        [r"C:\tools\provider.cmd"],
+        timeout_seconds=10,
+    )
+    provenance = provenance_from_process_result(result)
+
+    assert result.outcome is ProcessOutcome.PROVIDER_NOT_ESTABLISHED
+    assert result.launch_form is LaunchForm.SHELL
+    assert provenance.origin is ExecutionOrigin.PROVIDER_NOT_ESTABLISHED
+    assert provenance.mutation_possible is False
+    assert is_provider_not_established_attested(provenance) is False
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX exec/permission semantics")

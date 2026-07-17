@@ -78,6 +78,11 @@ jobs:
           python -m pytest ${{ env.PROCESS_BOUNDARY_SUITE }} \
             --tb=short -q
 
+      - name: Hermes provenance artifact compatibility
+        run: |
+          python -m pytest tests/ops/hermes/test_thesis_eval_task.py \
+            --tb=short -q
+
       - name: Run regression suite
         env:
           DELIVERY_MODE: staging_only
