@@ -6,6 +6,11 @@ from integrations.codex_wrapper import CodexCLI, DEFAULT_MODEL
 
 
 class _FakeProcess:
+    # asyncio.subprocess.Process always exposes pid; the POSIX owned-process
+    # boundary captures it when the process is established. Keep the sentinel
+    # outside normal OS PID ranges so an accidental timeout path cannot target
+    # a real process while this healthy-path fake is in use.
+    pid = 2_147_483_647
     returncode = 0
 
     def __init__(self, captured: dict) -> None:
