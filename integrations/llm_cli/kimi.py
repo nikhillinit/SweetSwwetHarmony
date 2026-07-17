@@ -18,6 +18,11 @@ from ..execution_provenance import (
     unresolved_provider_provenance,
 )
 from ..process_runtime import ProcessOutcome, resolve_executable, run_process
+from ..provider_environment import (
+    ChildExecutionContext,
+    ProviderIdentity,
+    build_provider_environment,
+)
 
 
 @dataclass(frozen=True)
@@ -75,6 +80,7 @@ class KimiCLIClient:
         self,
         prompt: str,
         context_files: list[str] | None = None,
+        execution_context: ChildExecutionContext | None = None,
     ) -> KimiCLIResponse:
         start = time.perf_counter()
         resolved = resolve_executable(self.binary)
@@ -90,9 +96,12 @@ class KimiCLIClient:
             )
 
         stdin = _prompt_with_context(prompt, context_files)
-        env = os.environ.copy()
-        if self.env:
-            env.update(self.env)
+        env = build_provider_environment(
+            ProviderIdentity.KIMI,
+            source_env=os.environ,
+            overrides=self.env,
+            execution_context=execution_context,
+        )
 
         # The owned process boundary reaps the WHOLE tree on timeout. The Kimi
         # wrapper previously used a parent-only ``process.kill()`` -- the same
