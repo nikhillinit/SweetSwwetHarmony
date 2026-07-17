@@ -22,6 +22,7 @@ from pathlib import Path
 import pytest
 
 from integrations.gemini_antigravity_client import GeminiAntigravityClient
+from integrations.process_runtime import ProcessOutcome, ProcessRunResult
 
 _AGY_WELL_KNOWN = Path.home() / "AppData" / "Local" / "agy" / "bin" / "agy.EXE"
 
@@ -39,29 +40,24 @@ def _agy_binary() -> str | None:
 
 
 async def _capture_antigravity_args(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """Run the antigravity client's exec path and capture the argv it builds."""
+    """Run the antigravity client's exec path and capture the argv it builds.
+
+    Spawn is now owned by ``integrations.process_runtime``; capture the argv at
+    that boundary instead of the removed wrapper-local ``_create_cli_process``.
+    """
     captured: dict[str, list[str]] = {}
 
-    class _FakeProcess:
-        returncode = 0
-
-        async def communicate(self, input=None):
-            return b"agy done", b""
-
-        def kill(self):  # pragma: no cover - not reached
-            pass
-
-    async def _fake_create(args, **kwargs):
-        captured["args"] = list(args)
-        return _FakeProcess()
+    async def _fake_run(argv, **kwargs):
+        captured["args"] = list(argv)
+        return ProcessRunResult(ProcessOutcome.COMPLETED, 0, b"agy done", b"")
 
     monkeypatch.setattr(
-        "integrations.gemini_antigravity_client.shutil.which",
+        "integrations.process_runtime.shutil.which",
         lambda name: r"C:\Users\test\agy\bin\agy.EXE",
     )
     monkeypatch.setattr(
-        "integrations.gemini_antigravity_client._create_cli_process",
-        _fake_create,
+        "integrations.gemini_antigravity_client.run_process",
+        _fake_run,
     )
     client = GeminiAntigravityClient(
         binary="agy", model="antigravity", flavor="antigravity"
@@ -86,26 +82,17 @@ def test_gemini_flavor_keeps_gemini_cli_flags(
 ) -> None:
     captured: dict[str, list[str]] = {}
 
-    class _FakeProcess:
-        returncode = 0
-
-        async def communicate(self, input=None):
-            return b"gemini done", b""
-
-        def kill(self):  # pragma: no cover - not reached
-            pass
-
-    async def _fake_create(args, **kwargs):
-        captured["args"] = list(args)
-        return _FakeProcess()
+    async def _fake_run(argv, **kwargs):
+        captured["args"] = list(argv)
+        return ProcessRunResult(ProcessOutcome.COMPLETED, 0, b"gemini done", b"")
 
     monkeypatch.setattr(
-        "integrations.gemini_antigravity_client.shutil.which",
+        "integrations.process_runtime.shutil.which",
         lambda name: "/usr/bin/gemini",
     )
     monkeypatch.setattr(
-        "integrations.gemini_antigravity_client._create_cli_process",
-        _fake_create,
+        "integrations.gemini_antigravity_client.run_process",
+        _fake_run,
     )
     client = GeminiAntigravityClient(binary="gemini")
 
