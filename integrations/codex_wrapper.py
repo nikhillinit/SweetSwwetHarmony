@@ -39,6 +39,7 @@ import json
 import logging
 import os
 import shutil
+
 try:
     import tomllib
 except ModuleNotFoundError:  # pragma: no cover - Python < 3.11 fallback
@@ -52,6 +53,11 @@ from typing import Any, Optional
 from dotenv import load_dotenv
 
 from .cli_errors import missing_binary_error
+from .execution_provenance import (
+    ExecutionProvenance,
+    provenance_from_process_result,
+    unknown_execution_provenance,
+)
 from .process_runtime import ProcessOutcome, run_process
 
 # Load environment variables from .env file
@@ -167,6 +173,9 @@ class CodexResponse:
     execution_time_ms: int
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     error: Optional[str] = None
+    provenance: ExecutionProvenance = field(
+        default_factory=unknown_execution_provenance
+    )
 
     @property
     def success(self) -> bool:
@@ -182,6 +191,7 @@ class CodexResponse:
             "timestamp": self.timestamp,
             "error": self.error,
             "success": self.success,
+            "provenance": self.provenance.to_dict(),
         }
 
 
@@ -754,7 +764,10 @@ Verify the implementation meets all requirements. Identify any remaining issues.
                 sandbox_mode=self.sandbox_mode.value,
                 execution_time_ms=0,
                 error=str(e),
+                provenance=unknown_execution_provenance("wrapper_exception"),
             )
+
+        provenance = provenance_from_process_result(result)
 
         if result.outcome is ProcessOutcome.PROVIDER_NOT_ESTABLISHED:
             # Resolver/exec establishment failure: provider code never ran. Keep
@@ -767,6 +780,7 @@ Verify the implementation meets all requirements. Identify any remaining issues.
                 sandbox_mode=self.sandbox_mode.value,
                 execution_time_ms=0,
                 error=_CODEX_MISSING_BINARY_ERROR,
+                provenance=provenance,
             )
 
         if result.outcome is ProcessOutcome.TIMED_OUT:
@@ -777,6 +791,7 @@ Verify the implementation meets all requirements. Identify any remaining issues.
                 sandbox_mode=self.sandbox_mode.value,
                 execution_time_ms=self.timeout_seconds * 1000,
                 error=f"Command timed out after {self.timeout_seconds} seconds",
+                provenance=provenance,
             )
 
         execution_time_ms = int((datetime.now() - start_time).total_seconds() * 1000)
@@ -791,6 +806,7 @@ Verify the implementation meets all requirements. Identify any remaining issues.
             sandbox_mode=self.sandbox_mode.value,
             execution_time_ms=execution_time_ms,
             error=error if error and exit_code != 0 else None,
+            provenance=provenance,
         )
 
 
