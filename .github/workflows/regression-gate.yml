@@ -16,6 +16,7 @@ env:
   # tests only execute on Ubuntu, the Windows taskkill tree reap only on Windows.
   PROCESS_BOUNDARY_SUITE: >-
     tests/ops/test_process_runtime.py
+    tests/ops/test_process_establishment_race_gate0a.py
     tests/ops/test_wrapper_boundary_parity.py
     tests/ops/test_codex_wrapper_timeout.py
     tests/ops/test_codex_wrapper.py
