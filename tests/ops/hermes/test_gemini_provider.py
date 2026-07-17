@@ -130,6 +130,8 @@ async def test_gemini_cli_uses_headless_plan_mode_on_windows_cmd_shim(
     monkeypatch,
 ) -> None:
     captured = {}
+    # The shell-vs-exec decision now lives in the owned process boundary.
+    monkeypatch.setattr("integrations.process_runtime.sys.platform", "win32")
     monkeypatch.setattr(
         "shutil.which",
         lambda binary: r"C:\Users\nikhi\AppData\Roaming\npm\gemini.CMD",
