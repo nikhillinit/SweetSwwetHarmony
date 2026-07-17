@@ -29,6 +29,7 @@ import time
 import pytest
 
 import integrations.process_runtime as process_runtime
+from integrations.execution_provenance import LaunchForm
 from integrations.process_runtime import (
     ProcessOutcome,
     ProcessRunResult,
@@ -109,6 +110,7 @@ async def test_run_process_completed_captures_stdout_stderr() -> None:
         timeout_seconds=30,
     )
     assert result.outcome is ProcessOutcome.COMPLETED
+    assert result.launch_form is LaunchForm.DIRECT_EXEC
     assert result.exit_code == 0
     assert b"hello-out" in result.stdout
     assert b"hello-err" in result.stderr
@@ -163,6 +165,7 @@ async def test_run_process_missing_binary_is_not_established() -> None:
         timeout_seconds=10,
     )
     assert result.outcome is ProcessOutcome.PROVIDER_NOT_ESTABLISHED
+    assert result.launch_form is LaunchForm.DIRECT_EXEC
     assert result.exit_code is None
     assert result.establishment_error
     assert result.not_established is True
@@ -221,6 +224,7 @@ async def test_run_process_timeout_reaps_whole_tree(tmp_path) -> None:
     )
 
     assert result.outcome is ProcessOutcome.TIMED_OUT
+    assert result.launch_form is LaunchForm.DIRECT_EXEC
     assert _wait_until(
         lambda: pid_file.exists() and pid_file.read_text().strip().isdigit()
     ), "grandchild pid never reported"

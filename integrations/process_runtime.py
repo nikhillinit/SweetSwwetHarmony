@@ -44,6 +44,8 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional, Sequence
 
+from .execution_provenance import LaunchForm
+
 # Bound on how long to wait for a killed tree to be reaped after the deadline
 # fires. Tearing down the tree closes the inherited pipes, so ``communicate()``
 # should return almost immediately; this only guards against a stuck reap.
@@ -72,6 +74,8 @@ class ProcessRunResult:
     stdout: bytes
     stderr: bytes
     establishment_error: Optional[str] = None
+    establishment_error_code: Optional[str] = None
+    launch_form: LaunchForm = LaunchForm.UNKNOWN
 
     @property
     def completed(self) -> bool:
@@ -219,6 +223,7 @@ async def run_process(
         cwd_str = str(cwd_path)
 
     use_shell = should_use_shell(argv[0])
+    launch_form = LaunchForm.SHELL if use_shell else LaunchForm.DIRECT_EXEC
 
     try:
         owned = await _spawn_owned(argv, env=env, cwd=cwd_str, use_shell=use_shell)
@@ -231,6 +236,8 @@ async def run_process(
             stdout=b"",
             stderr=b"",
             establishment_error=str(exc),
+            establishment_error_code=_establishment_error_code(exc),
+            launch_form=launch_form,
         )
 
     # Enforce the deadline WITHOUT cancelling communicate(): on the Windows
@@ -256,6 +263,7 @@ async def run_process(
             exit_code=None,
             stdout=b"",
             stderr=b"",
+            launch_form=launch_form,
         )
 
     stdout, stderr = comm_task.result()
@@ -265,4 +273,16 @@ async def run_process(
         exit_code=returncode if returncode is not None else 0,
         stdout=stdout,
         stderr=stderr,
+        launch_form=launch_form,
     )
+
+
+def _establishment_error_code(exc: OSError) -> str:
+    """Return a bounded, non-secret diagnostic code for a spawn failure."""
+
+    winerror = getattr(exc, "winerror", None)
+    if isinstance(winerror, int):
+        return f"winerror_{abs(winerror)}"
+    if isinstance(exc.errno, int):
+        return f"errno_{abs(exc.errno)}"
+    return "spawn_oserror"

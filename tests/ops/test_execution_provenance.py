@@ -114,6 +114,17 @@ def test_provenance_rejects_contradictory_and_unbounded_states() -> None:
             origin=ExecutionOrigin.UNKNOWN,
             launch_form=LaunchForm.UNKNOWN,
         )
+    with pytest.raises(ValueError, match="mutationPossible"):
+        ExecutionProvenance.from_dict(
+            {
+                "version": 1,
+                "origin": "provider_not_established",
+                "mutationPossible": True,
+                "launchForm": "direct_exec",
+                "exitCode": None,
+                "diagnosticCode": "spawn_oserror",
+            }
+        )
 
 
 def test_provenance_is_immutable_and_mutation_flag_is_not_caller_supplied() -> None:

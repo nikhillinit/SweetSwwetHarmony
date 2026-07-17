@@ -38,7 +38,6 @@ mirroring the PR 1 pattern in ``test_process_runtime.py``.
 
 from __future__ import annotations
 
-import asyncio
 import os
 import shutil
 import sys
@@ -49,6 +48,7 @@ from typing import Callable
 import pytest
 
 import integrations.process_runtime as process_runtime
+from integrations.execution_provenance import LaunchForm
 from integrations.process_runtime import (
     ProcessOutcome,
     resolve_executable,
@@ -187,6 +187,7 @@ async def test_posix_establishment_race_maps_to_not_established(tmp_path, monkey
     assert race.spawn_calls == 1  # (2) spawn boundary entered once, post-resolution
     # (3) the typed outcome can only arise from the REAL spawn raising OSError:
     assert result.outcome is ProcessOutcome.PROVIDER_NOT_ESTABLISHED
+    assert result.launch_form is LaunchForm.DIRECT_EXEC
     assert result.exit_code is None
     assert result.establishment_error
     assert not sentinel.exists()  # (4) provider/mutation code never ran
@@ -218,6 +219,7 @@ async def test_posix_permission_race_reaps_failed_exec_bootstrap(tmp_path, monke
 
     assert race.spawn_calls == 1
     assert result.outcome is ProcessOutcome.PROVIDER_NOT_ESTABLISHED
+    assert result.launch_form is LaunchForm.DIRECT_EXEC
     assert result.establishment_error
     assert not sentinel.exists()
 
@@ -276,6 +278,7 @@ async def test_windows_direct_exec_establishment_race_maps_to_not_established(
     assert race.spawn_calls == 1  # (2) spawn boundary entered once, post-resolution
     # (3) the typed outcome can only arise from the REAL spawn raising OSError:
     assert result.outcome is ProcessOutcome.PROVIDER_NOT_ESTABLISHED
+    assert result.launch_form is LaunchForm.DIRECT_EXEC
     assert result.exit_code is None
     assert result.establishment_error
     assert not sentinel.exists()  # (4) provider/mutation code never ran
@@ -297,6 +300,7 @@ async def test_windows_cmd_control_runs_and_writes_sentinel(tmp_path, monkeypatc
 
     result = await run_process([resolved], timeout_seconds=30)
     assert result.outcome is ProcessOutcome.COMPLETED
+    assert result.launch_form is LaunchForm.SHELL
     assert result.exit_code == 0
     assert cmd_sentinel.exists()
 

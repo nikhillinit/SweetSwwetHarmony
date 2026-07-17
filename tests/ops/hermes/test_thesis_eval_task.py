@@ -5,6 +5,11 @@ import json
 from pathlib import Path
 from typing import Any
 
+from integrations.execution_provenance import (
+    ExecutionOrigin,
+    ExecutionProvenance,
+    LaunchForm,
+)
 from integrations.hermes.adapters import ExecutorResult
 from integrations.hermes.tasks.registry import run_registered_task
 from tests.ops.hermes.conftest import minimal_config_dict
@@ -15,8 +20,9 @@ from utils.thesis_benchmark import (
 
 
 class FakeExecutor:
-    def __init__(self, content: str) -> None:
+    def __init__(self, content: str, *, duration_ms: int = 17) -> None:
         self.content = content
+        self.duration_ms = duration_ms
         self.prompts: list[str] = []
 
     async def execute(
@@ -30,8 +36,14 @@ class FakeExecutor:
             success=True,
             exit_code=0,
             content=self.content,
-            duration_ms=17,
+            duration_ms=self.duration_ms,
             token_usage={"input_tokens": 11, "output_tokens": 7},
+            provenance=ExecutionProvenance(
+                origin=ExecutionOrigin.RUNTIME,
+                launch_form=LaunchForm.DIRECT_EXEC,
+                exit_code=0,
+                diagnostic_code="process_exit",
+            ),
         )
 
 
@@ -233,6 +245,30 @@ def test_executor_prompt_does_not_include_target_fields(
     assert '"target"' not in prompt
     assert "sample_qualified" in prompt
     assert "GlowCup" in prompt
+
+
+def test_zero_duration_normalization_preserves_execution_provenance(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    from integrations.hermes.tasks import thesis_eval
+
+    dataset, manifest, samples = _write_dataset(tmp_path)
+    fake = FakeExecutor(_prediction_payload(samples), duration_ms=0)
+    monkeypatch.setattr(thesis_eval, "build_executor", lambda *_args, **_kwargs: fake)
+
+    result = run_registered_task(
+        _args(tmp_path, dataset=dataset, manifest=manifest, mode="execute")
+    )
+
+    assert result.exit_code == 0
+    artifact = json.loads(
+        (Path(result.run_dir or "") / "thesis_eval_executor.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert artifact["provenance"]["origin"] == "runtime"
+    assert artifact["provenance"]["launchForm"] == "direct_exec"
 
 
 def test_fenced_json_executor_output_is_accepted(tmp_path: Path, monkeypatch) -> None:
