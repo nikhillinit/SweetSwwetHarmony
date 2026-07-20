@@ -372,6 +372,7 @@ def _run_thesis_eval(context: TaskContext, plan: dict[str, Any]) -> dict[str, An
                 duration_ms=duration_ms,
                 error=executor_result.error,
                 token_usage=executor_result.token_usage,
+                provenance=executor_result.provenance,
             )
     except TaskFailure:
         raise

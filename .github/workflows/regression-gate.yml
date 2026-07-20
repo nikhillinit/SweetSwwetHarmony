@@ -17,6 +17,9 @@ env:
   PROCESS_BOUNDARY_SUITE: >-
     tests/ops/test_process_runtime.py
     tests/ops/test_process_establishment_race_gate0a.py
+    tests/ops/test_execution_provenance.py
+    tests/ops/test_provider_environment.py
+    tests/ops/test_wrapper_execution_envelope.py
     tests/ops/test_wrapper_boundary_parity.py
     tests/ops/test_codex_wrapper_timeout.py
     tests/ops/test_codex_wrapper.py
@@ -73,6 +76,11 @@ jobs:
       - name: Process-boundary suite (POSIX owned-group + whole-tree reap)
         run: |
           python -m pytest ${{ env.PROCESS_BOUNDARY_SUITE }} \
+            --tb=short -q
+
+      - name: Hermes provenance artifact compatibility
+        run: |
+          python -m pytest tests/ops/hermes/test_thesis_eval_task.py \
             --tb=short -q
 
       - name: Run regression suite

@@ -101,8 +101,12 @@ async def test_kimi_hands_wrapper_env_to_boundary(monkeypatch) -> None:
         return ProcessRunResult(ProcessOutcome.COMPLETED, 0, b"", b"")
 
     monkeypatch.setattr(kimi_mod, "run_process", _capture)
-    await KimiCLIClient(binary="kimi-cli", env={"KIMI_PARITY_PROBE": "1"}).exec("hi")
-    assert seen["env"]["KIMI_PARITY_PROBE"] == "1"
+    await KimiCLIClient(
+        binary="kimi-cli",
+        env={"KIMI_API_KEY": "selected-provider", "KIMI_PARITY_PROBE": "blocked"},
+    ).exec("hi")
+    assert seen["env"]["KIMI_API_KEY"] == "selected-provider"
+    assert "KIMI_PARITY_PROBE" not in seen["env"]
 
 
 # --------------------------------------------------------------------------- #

@@ -11,7 +11,18 @@ from pathlib import Path
 from typing import Any
 
 from ..cli_errors import missing_binary_error
+from ..execution_provenance import (
+    ExecutionProvenance,
+    provenance_from_process_result,
+    unknown_execution_provenance,
+    unresolved_provider_provenance,
+)
 from ..process_runtime import ProcessOutcome, resolve_executable, run_process
+from ..provider_environment import (
+    ChildExecutionContext,
+    ProviderIdentity,
+    build_provider_environment,
+)
 
 
 @dataclass(frozen=True)
@@ -24,6 +35,9 @@ class KimiCLIResponse:
     timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     error: str | None = None
     exit_code: int = 0
+    provenance: ExecutionProvenance = field(
+        default_factory=unknown_execution_provenance
+    )
 
     @property
     def success(self) -> bool:
@@ -40,6 +54,7 @@ class KimiCLIResponse:
             "error": self.error,
             "exit_code": self.exit_code,
             "success": self.success,
+            "provenance": self.provenance.to_dict(),
         }
 
 
@@ -65,6 +80,7 @@ class KimiCLIClient:
         self,
         prompt: str,
         context_files: list[str] | None = None,
+        execution_context: ChildExecutionContext | None = None,
     ) -> KimiCLIResponse:
         start = time.perf_counter()
         resolved = resolve_executable(self.binary)
@@ -76,12 +92,16 @@ class KimiCLIClient:
                 execution_time_ms=int((time.perf_counter() - start) * 1000),
                 error=missing_binary_error(self.binary),
                 exit_code=127,
+                provenance=unresolved_provider_provenance(),
             )
 
         stdin = _prompt_with_context(prompt, context_files)
-        env = os.environ.copy()
-        if self.env:
-            env.update(self.env)
+        env = build_provider_environment(
+            ProviderIdentity.KIMI,
+            source_env=os.environ,
+            overrides=self.env,
+            execution_context=execution_context,
+        )
 
         # The owned process boundary reaps the WHOLE tree on timeout. The Kimi
         # wrapper previously used a parent-only ``process.kill()`` -- the same
@@ -95,6 +115,7 @@ class KimiCLIClient:
             timeout_seconds=self.timeout_seconds,
         )
         elapsed_ms = int((time.perf_counter() - start) * 1000)
+        provenance = provenance_from_process_result(result)
 
         if result.outcome is ProcessOutcome.PROVIDER_NOT_ESTABLISHED:
             # Resolved but the provider was never established (exec failure).
@@ -106,6 +127,7 @@ class KimiCLIClient:
                 execution_time_ms=elapsed_ms,
                 error=missing_binary_error(self.binary),
                 exit_code=127,
+                provenance=provenance,
             )
 
         if result.outcome is ProcessOutcome.TIMED_OUT:
@@ -116,6 +138,7 @@ class KimiCLIClient:
                 execution_time_ms=elapsed_ms,
                 error=f"{self.binary!r} timed out after {self.timeout_seconds}s",
                 exit_code=-1,
+                provenance=provenance,
             )
 
         exit_code = result.exit_code if result.exit_code is not None else 0
@@ -127,6 +150,7 @@ class KimiCLIClient:
             execution_time_ms=elapsed_ms,
             error=error,
             exit_code=exit_code,
+            provenance=provenance,
         )
 
     async def analyze(

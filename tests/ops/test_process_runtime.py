@@ -29,6 +29,12 @@ import time
 import pytest
 
 import integrations.process_runtime as process_runtime
+from integrations.execution_provenance import (
+    ExecutionOrigin,
+    LaunchForm,
+    is_provider_not_established_attested,
+    provenance_from_process_result,
+)
 from integrations.process_runtime import (
     ProcessOutcome,
     ProcessRunResult,
@@ -109,6 +115,7 @@ async def test_run_process_completed_captures_stdout_stderr() -> None:
         timeout_seconds=30,
     )
     assert result.outcome is ProcessOutcome.COMPLETED
+    assert result.launch_form is LaunchForm.DIRECT_EXEC
     assert result.exit_code == 0
     assert b"hello-out" in result.stdout
     assert b"hello-err" in result.stderr
@@ -163,9 +170,32 @@ async def test_run_process_missing_binary_is_not_established() -> None:
         timeout_seconds=10,
     )
     assert result.outcome is ProcessOutcome.PROVIDER_NOT_ESTABLISHED
+    assert result.launch_form is LaunchForm.DIRECT_EXEC
     assert result.exit_code is None
     assert result.establishment_error
     assert result.not_established is True
+
+
+async def test_shell_process_spawn_failure_is_non_attesting_not_established(
+    monkeypatch,
+) -> None:
+    async def fail_shell_spawn(*_args, **_kwargs):
+        raise FileNotFoundError("shell unavailable")
+
+    monkeypatch.setattr(process_runtime.sys, "platform", "win32")
+    monkeypatch.setattr(process_runtime, "_spawn_owned", fail_shell_spawn)
+
+    result = await run_process(
+        [r"C:\tools\provider.cmd"],
+        timeout_seconds=10,
+    )
+    provenance = provenance_from_process_result(result)
+
+    assert result.outcome is ProcessOutcome.PROVIDER_NOT_ESTABLISHED
+    assert result.launch_form is LaunchForm.SHELL
+    assert provenance.origin is ExecutionOrigin.PROVIDER_NOT_ESTABLISHED
+    assert provenance.mutation_possible is False
+    assert is_provider_not_established_attested(provenance) is False
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX exec/permission semantics")
@@ -221,6 +251,7 @@ async def test_run_process_timeout_reaps_whole_tree(tmp_path) -> None:
     )
 
     assert result.outcome is ProcessOutcome.TIMED_OUT
+    assert result.launch_form is LaunchForm.DIRECT_EXEC
     assert _wait_until(
         lambda: pid_file.exists() and pid_file.read_text().strip().isdigit()
     ), "grandchild pid never reported"

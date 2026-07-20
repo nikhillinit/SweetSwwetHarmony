@@ -5,8 +5,13 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from integrations.codex_wrapper import CodexCLI
+from integrations.execution_provenance import (
+    ExecutionProvenance,
+    unknown_execution_provenance,
+)
 from integrations.gemini_antigravity_client import GeminiAntigravityClient
 from integrations.llm_cli import KimiCLIClient
+from integrations.provider_environment import ChildExecutionContext
 
 from .config import RoutingConfig
 
@@ -20,6 +25,9 @@ class ExecutorResult:
     duration_ms: int
     error: str | None = None
     token_usage: dict[str, int] = field(default_factory=dict)
+    provenance: ExecutionProvenance = field(
+        default_factory=unknown_execution_provenance
+    )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -30,6 +38,7 @@ class ExecutorResult:
             "durationMs": self.duration_ms,
             "error": self.error,
             "tokenUsage": self.token_usage,
+            "provenance": self.provenance.to_dict(),
         }
 
 
@@ -38,6 +47,7 @@ class HermesExecutor(Protocol):
         self,
         prompt: str,
         context_files: list[str] | None = None,
+        execution_context: ChildExecutionContext | None = None,
     ) -> ExecutorResult:
         ...
 
@@ -53,8 +63,12 @@ class CodexHermesExecutor:
         self,
         prompt: str,
         context_files: list[str] | None = None,
+        execution_context: ChildExecutionContext | None = None,
     ) -> ExecutorResult:
-        response = await self.client.exec(prompt, context_files=context_files)
+        kwargs: dict[str, Any] = {"context_files": context_files}
+        if execution_context is not None:
+            kwargs["execution_context"] = execution_context
+        response = await self.client.exec(prompt, **kwargs)
         return ExecutorResult(
             executor="codex",
             success=response.success,
@@ -62,6 +76,7 @@ class CodexHermesExecutor:
             content=response.content,
             duration_ms=response.execution_time_ms,
             error=response.error,
+            provenance=response.provenance,
         )
 
 
@@ -76,8 +91,12 @@ class KimiHermesExecutor:
         self,
         prompt: str,
         context_files: list[str] | None = None,
+        execution_context: ChildExecutionContext | None = None,
     ) -> ExecutorResult:
-        response = await self.client.exec(prompt, context_files=context_files)
+        kwargs: dict[str, Any] = {"context_files": context_files}
+        if execution_context is not None:
+            kwargs["execution_context"] = execution_context
+        response = await self.client.exec(prompt, **kwargs)
         return ExecutorResult(
             executor="kimi",
             success=response.success,
@@ -86,6 +105,7 @@ class KimiHermesExecutor:
             duration_ms=response.execution_time_ms,
             error=response.error,
             token_usage=dict(response.usage),
+            provenance=response.provenance,
         )
 
 
@@ -102,8 +122,12 @@ class GeminiHermesExecutor:
         self,
         prompt: str,
         context_files: list[str] | None = None,
+        execution_context: ChildExecutionContext | None = None,
     ) -> ExecutorResult:
-        response = await self.client.exec(prompt, context_files=context_files)
+        kwargs: dict[str, Any] = {"context_files": context_files}
+        if execution_context is not None:
+            kwargs["execution_context"] = execution_context
+        response = await self.client.exec(prompt, **kwargs)
         return ExecutorResult(
             executor=getattr(response, "executor", "gemini"),
             success=response.success,
@@ -112,6 +136,7 @@ class GeminiHermesExecutor:
             duration_ms=response.execution_time_ms,
             error=response.error,
             token_usage=dict(getattr(response, "usage", {}) or {}),
+            provenance=response.provenance,
         )
 
 
