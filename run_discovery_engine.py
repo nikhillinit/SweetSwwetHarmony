@@ -4,6 +4,10 @@ Replaces run_discovery_engine.bat: loads .env from the repo root (python-dotenv 
 runtime dependency), then runs `python -m discovery_engine.mcp_server`. Referenced
 from .mcp.json; interpreter is `${HARMONIC_PYTHON:-python3}` -- set HARMONIC_PYTHON
 on hosts where the interpreter is not named python3 (e.g. `python` on Windows).
+
+Assumes Claude Code spawns project-scope stdio servers with cwd = the directory
+holding .mcp.json (so the bare relative script path in args resolves); the script
+itself chdirs to its own directory, so .env and module imports do not depend on it.
 """
 
 from __future__ import annotations

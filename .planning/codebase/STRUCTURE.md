@@ -101,7 +101,7 @@ Harmonic/
 - **Risk register:** `docs/plans/2026-04-06-red-team-hybrid/10-risk-register.md`
 - **Move 0 charter:** `docs/plans/2026-04-06-red-team-hybrid/01-move-0-charter.md`
 - **Protected paths guard:** `scripts/red-team-hybrid/check_protected_paths.sh`
-- **Hooks:** `.claude/hooks/postedit_protected_paths.ps1`, `inject_context.ps1`, `stop_verify.ps1`
+- **Hooks:** `.claude/hooks/guard_signals_db.py`, `inject_context.py`, `ruff_format_lint.py` (registered, cross-platform); `postedit_protected_paths.ps1`, `stop_verify.ps1` (parked)
 
 ## Naming Conventions
 
