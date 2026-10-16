@@ -47,9 +47,12 @@ When plan spans multiple files (task_plan.md, findings.md, progress.md):
 - Commands must be identical everywhere they appear
 
 ### 6. Environment-appropriate syntax
-This project runs on Windows with PowerShell. Use:
-- `$env:VAR="value"` not `VAR=value`
-- Forward slashes in Python paths, but PowerShell commands use native paths
+This project runs on both Windows (PowerShell) and macOS (zsh). Give commands in
+the syntax of the host the plan will execute on, or both:
+- Env vars: PowerShell `$env:VAR="value"`; zsh `VAR=value cmd` or `export VAR=value`
+- Forward slashes in Python paths on both hosts; PowerShell commands use native paths
+- Interpreter: `python` on Windows, `python3` on macOS (hooks and .mcp.json use
+  `${HARMONIC_PYTHON:-python3}`; set HARMONIC_PYTHON to override)
 - ASCII punctuation in plan files (-- not em-dash, -> not arrow)
 
 ## Anti-Pattern: Analytical Depth Without Fidelity

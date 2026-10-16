@@ -1,5 +1,5 @@
 {
-  "_comment": "Project-level hooks for Harmonic Discovery Engine. ALWAYS-ON: PreToolUse 'guard_signals_db' asks before any tool call that could overwrite/delete the live signals.db; UserPromptSubmit 'inject_context' injects branch + canonical-plan + ownership rules each turn; PostToolUse 'ruff_format_lint' runs ruff on .py edits (advisory/report-only by default -- set HARMONIC_RUFF_MODE=fix to auto-format, HARMONIC_RUFF_BLOCK=1 to make advisory findings blocking). PARKED (scripts still on disk, intentionally unregistered): postedit_protected_paths.ps1 + stop_verify.ps1 enforced the EXPIRED 2026-04-19 Step 4B regret window on the prep/red-team-hybrid-prep branch; firing them on main would re-impose the R19-lifted freeze. For a current freeze use gstack /freeze + /guard. Run /hooks to verify what is loaded.",
+  "_comment": "Project-level hooks for Harmonic Discovery Engine. Cross-platform: each hook is a stdlib-only Python script in .claude/hooks/ run as ${HARMONIC_PYTHON:-python3} (set HARMONIC_PYTHON=python on hosts without a python3 binary). Commands are shell-form, so on Windows they need Git Bash (Claude Code's default hook shell there); the ${VAR:-default} expansion is not valid under PowerShell. ALWAYS-ON: PreToolUse 'guard_signals_db' asks before any tool call that could overwrite/delete the live signals.db; UserPromptSubmit 'inject_context' injects branch + canonical-plan + ownership rules each turn; PostToolUse 'ruff_format_lint' runs ruff on .py edits (advisory/report-only by default -- set HARMONIC_RUFF_MODE=fix to auto-format, HARMONIC_RUFF_BLOCK=1 to make advisory findings blocking; no-op when ruff is not on PATH). Contract tests: tests/hooks/. PARKED (PowerShell scripts still on disk, intentionally unregistered): postedit_protected_paths.ps1 + stop_verify.ps1 enforced the EXPIRED 2026-04-19 Step 4B regret window on the prep/red-team-hybrid-prep branch; firing them on main would re-impose the R19-lifted freeze. For a current freeze use gstack /freeze + /guard. Run /hooks to verify what is loaded.",
   "hooks": {
     "PreToolUse": [
       {
@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"C:\\dev\\Harmonic\\.claude\\hooks\\guard_signals_db.ps1\""
+            "command": "\"${HARMONIC_PYTHON:-python3}\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_signals_db.py\""
           }
         ]
       }
@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"C:\\dev\\Harmonic\\.claude\\hooks\\inject_context.ps1\""
+            "command": "\"${HARMONIC_PYTHON:-python3}\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/inject_context.py\""
           }
         ]
       }
@@ -29,7 +29,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "powershell.exe -NoProfile -ExecutionPolicy Bypass -File \"C:\\dev\\Harmonic\\.claude\\hooks\\ruff_format_lint.ps1\""
+            "command": "\"${HARMONIC_PYTHON:-python3}\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/ruff_format_lint.py\""
           }
         ]
       }
