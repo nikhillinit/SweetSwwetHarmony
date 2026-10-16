@@ -7,7 +7,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${HARMONIC_PYTHON:-python3} \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_signals_db.py\""
+            "command": "\"${HARMONIC_PYTHON:-python3}\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/guard_signals_db.py\""
           }
         ]
       }
@@ -18,7 +18,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${HARMONIC_PYTHON:-python3} \"$CLAUDE_PROJECT_DIR/.claude/hooks/inject_context.py\""
+            "command": "\"${HARMONIC_PYTHON:-python3}\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/inject_context.py\""
           }
         ]
       }
@@ -29,7 +29,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${HARMONIC_PYTHON:-python3} \"$CLAUDE_PROJECT_DIR/.claude/hooks/ruff_format_lint.py\""
+            "command": "\"${HARMONIC_PYTHON:-python3}\" \"$CLAUDE_PROJECT_DIR/.claude/hooks/ruff_format_lint.py\""
           }
         ]
       }

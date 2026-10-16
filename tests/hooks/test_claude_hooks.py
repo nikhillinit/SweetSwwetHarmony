@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -364,3 +365,93 @@ def test_ruff_clean_file_is_silent(tmp_path: Path) -> None:
         env=_ruff_env(HARMONIC_RUFF_BLOCK="1"),
     )
     assert (res.returncode, res.stderr) == (0, "")
+
+
+# ---------------------------------------------------------------- registrations
+
+
+@pytest.mark.parametrize("event", ["PreToolUse", "UserPromptSubmit", "PostToolUse"])
+@pytest.mark.parametrize("interpreter", ["spaced", "normal", "unset", "empty"])
+def test_registered_commands_launch_hooks(
+    tmp_path: Path, event: str, interpreter: str
+) -> None:
+    bash = shutil.which("bash")
+    if bash is None:
+        pytest.skip("registered hook commands require Bash")
+
+    repo = _make_repo(tmp_path / "project with spaces", "feature/hook-launch")
+    shutil.copytree(HOOKS, repo / ".claude" / "hooks")
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    launch_log = tmp_path / "interpreter.log"
+    interpreters = {
+        "spaced": tmp_path / "Program Files" / "Python" / "python3",
+        "normal": bin_dir / "python-override",
+        "fallback": bin_dir / "python3",
+    }
+    for marker, executable in interpreters.items():
+        executable.parent.mkdir(parents=True, exist_ok=True)
+        executable.write_text(
+            "#!/bin/sh\n"
+            f"printf '%s\\n' {shlex.quote(marker)} "
+            f">> {shlex.quote(launch_log.as_posix())}\n"
+            f'exec {shlex.quote(Path(sys.executable).as_posix())} "$@"\n',
+            newline="\n",
+        )
+        executable.chmod(0o755)
+    edited = repo / "example.py"
+    source = "import os\nx=1\n"
+    edited.write_text(source)
+
+    env = dict(os.environ)
+    env.pop("HARMONIC_PYTHON", None)
+    if event == "PostToolUse":
+        env.update(_ruff_env())
+    env.update(
+        CLAUDE_PROJECT_DIR=repo.as_posix(),
+        PATH=str(bin_dir) + os.pathsep + env.get("PATH", ""),
+        HARMONIC_RUFF_MODE="advisory",
+        HARMONIC_RUFF_BLOCK="1",
+    )
+    if interpreter != "unset":
+        env["HARMONIC_PYTHON"] = {
+            "spaced": interpreters["spaced"].as_posix(),
+            "normal": interpreters["normal"].as_posix(),
+            "empty": "",
+        }[interpreter]
+
+    payloads = {
+        "PreToolUse": {"tool_name": "Write", "tool_input": {"file_path": "signals.db"}},
+        "UserPromptSubmit": {},
+        "PostToolUse": _edit_payload(edited),
+    }
+    settings = json.loads((ROOT / ".claude" / "settings.json").read_text())
+    command = settings["hooks"][event][0]["hooks"][0]["command"]
+    result = subprocess.run(
+        [bash, "--noprofile", "--norc", "-c", command],
+        input=json.dumps(payloads[event]),
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=tmp_path,
+        timeout=60,
+    )
+
+    expected_interpreter = (
+        "fallback" if interpreter in ("unset", "empty") else interpreter
+    )
+    assert launch_log.is_file(), result.stderr
+    assert launch_log.read_text().splitlines() == [expected_interpreter]
+    if event == "PreToolUse":
+        assert "Write tool" in _ask_reason(result)
+        assert not (repo / "signals.db").exists()
+    elif event == "UserPromptSubmit":
+        assert result.returncode == 0, result.stderr
+        assert "Branch: feature/hook-launch" in result.stdout
+        assert "Ownership rules" in result.stdout
+    else:
+        assert result.returncode == 2, result.stderr
+        assert f"[ruff advisory] {edited}" in result.stderr
+        assert "- formatting:" in result.stderr
+        assert "F401" in result.stderr
+        assert edited.read_text() == source
